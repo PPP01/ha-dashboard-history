@@ -37,7 +37,11 @@ Die drei Home-Assistant-freien Module laufen ohne laufende Installation. `tests/
 
 ## Live erproben
 
-Die eigene Home-Assistant-Installation liegt unter `/path/to/home-assistant/` (per SSHFS gemountet, Änderungen wirken sofort). Zum Erproben gehört die Integration nach `custom_components/dashboard_history/` — am besten als Symlink auf dieses Repository, damit es nur eine Quelle gibt.
+Die eigene Home-Assistant-Installation liegt unter `/path/to/home-assistant/` (per SSHFS gemountet, Änderungen wirken sofort). Zum Erproben wird die Integration über HACS als eigenes Repository installiert: *HACS → Eigene Repositories* → `https://github.com/PPP01/ha-dashboard-history`, Kategorie Integration. Damit landet sie auf demselben Weg in `custom_components/`, den später jeder Nutzer geht.
+
+**Kein Symlink.** Der Mount ist SSHFS, und ein Symlink würde dort aufgelöst, wo Home Assistant läuft — den Pfad dieses Repositorys gibt es auf der Anlage nicht. Nachgeprüft: Unter dem Mount ist kein einziger Symlink sichtbar, und das Anlegen scheitert bereits am SFTP-Dienst.
+
+Für Aktualisierungen braucht HACS echte Releases mit aufsteigender Versionsnummer. Ein Vorabversions-Suffix sortiert nach Semver **unterhalb** der Grundversion und wird nicht als Aktualisierung erkannt.
 
 ⚠️ **Das ist eine echte Anlage.** Daran hängt Haustechnik. Vor Live-Schritten die Merker in `/path/to/home-assistant/.claude/lessons.md` lesen — insbesondere: **niemals während eines HA-Neustarts anpollen** (IP-Ban-System), und `custom_components/` ist dort nicht versioniert.
 

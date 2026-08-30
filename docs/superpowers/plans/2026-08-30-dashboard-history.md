@@ -436,14 +436,22 @@ sys.path.insert(0, str(_PACKAGE))
 """Tests for the deterministic YAML representation."""
 
 import json
+import os
 import pathlib
 
 import pytest
 import yaml_io
 
 # Real dashboards from the installation this was built against. Optional:
-# without them the synthetic cases still run.
-_STORAGE = pathlib.Path("/path/to/home-assistant/.storage")
+# without them the synthetic cases still run. Point
+# DASHBOARD_HISTORY_REAL_STORAGE at any Home Assistant .storage directory
+# to run these against your own dashboards.
+_STORAGE = pathlib.Path(
+    os.environ.get(
+        "DASHBOARD_HISTORY_REAL_STORAGE",
+        "/path/to/home-assistant/.storage",
+    )
+)
 REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
 
 
