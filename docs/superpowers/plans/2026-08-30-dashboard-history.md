@@ -82,7 +82,7 @@ Der erste Task beantwortet die einzige offene Frage der Spec: Kommt der Dashboar
   - `async_get_config(hass, key) -> dict | None`
   - `dashboard_key(url_path: str | None) -> str` — `None` wird zu `"lovelace"`, sonst der `url_path`
 
-- [ ] **Schritt 1: Metadaten und Konstanten anlegen**
+- [x] **Schritt 1: Metadaten und Konstanten anlegen**
 
 `custom_components/dashboard_history/manifest.json`:
 
@@ -131,7 +131,7 @@ DEFAULT_DASHBOARD_KEY = "_default"
 REPO_DIRNAME = "dashboard_history"
 ```
 
-- [ ] **Schritt 2: Den Zugriffsweg schreiben**
+- [x] **Schritt 2: Den Zugriffsweg schreiben**
 
 `custom_components/dashboard_history/snapshot.py`:
 
@@ -254,7 +254,7 @@ async def _async_get_all_configs_from_storage(hass: HomeAssistant) -> dict[str, 
     return result
 ```
 
-- [ ] **Schritt 3: Einrichtung und Einrichtungsdialog**
+- [x] **Schritt 3: Einrichtung und Einrichtungsdialog**
 
 `custom_components/dashboard_history/config_flow.py`:
 
@@ -316,7 +316,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 ```
 
-- [ ] **Schritt 4: Nachweis-Dienst anlegen**
+- [x] **Schritt 4: Nachweis-Dienst anlegen**
 
 Ein Dienst, dessen einziger Zweck der Nachweis ist. Er bleibt dauerhaft, weil er bei Fehlersuche hilft.
 
@@ -353,7 +353,7 @@ In `__init__.py` innerhalb von `async_setup_entry` ergänzen:
     )
 ```
 
-- [ ] **Schritt 5: In Home Assistant einrichten und den Zugriffsweg nachweisen**
+- [ ] **Schritt 5: In Home Assistant einrichten und den Zugriffsweg nachweisen**  ← **offen: braucht einen Neustart der eigenen Anlage**
 
 Die Integration nach `/config/custom_components/dashboard_history/` kopieren oder verlinken, Home Assistant neu starten, unter *Einstellungen → Geräte & Dienste → Integration hinzufügen* »Dashboard History« hinzufügen.
 
@@ -370,7 +370,7 @@ uebersprungen. Die Zwoelf in einer frueheren Fassung stammte aus
 - **Erscheint sie nicht**, greift der Speicherweg — Entscheidung 1 der Spec ist bestätigt und der Rückfall bleibt ungenutzter Sicherheitsgurt.
 - **Erscheint sie**, arbeitet die Integration über den Rückfall. Dann als Befund melden: Entscheidung 1 hält nicht, und der Erfassungs-Task braucht zusätzlich eine Wartezeit. Nicht selbst reparieren.
 
-- [ ] **Schritt 6: Committen**
+- [x] **Schritt 6: Committen**
 
 ```bash
 git add custom_components/ hacs.json README.md
@@ -406,7 +406,7 @@ MSG
   - `load(text: str)` — Gegenstück
   - `HEADER: str`
 
-- [ ] **Schritt 1: Test-Infrastruktur anlegen**
+- [x] **Schritt 1: Test-Infrastruktur anlegen**
 
 `tests/conftest.py`:
 
@@ -428,7 +428,7 @@ _PACKAGE = (
 sys.path.insert(0, str(_PACKAGE))
 ```
 
-- [ ] **Schritt 2: Den fehlschlagenden Test schreiben**
+- [x] **Schritt 2: Den fehlschlagenden Test schreiben**
 
 `tests/test_yaml_io.py`:
 
@@ -517,12 +517,12 @@ def test_real_dashboards_survive_the_round_trip(path):
     assert yaml_io.dump(config) == text
 ```
 
-- [ ] **Schritt 3: Tests laufen lassen, Fehlschlag bestätigen**
+- [x] **Schritt 3: Tests laufen lassen, Fehlschlag bestätigen**
 
 Ausführen: `python3 -m pytest tests/test_yaml_io.py -v`
 Erwartet: FAIL mit `ModuleNotFoundError: No module named 'yaml_io'`
 
-- [ ] **Schritt 4: Implementierung schreiben**
+- [x] **Schritt 4: Implementierung schreiben**
 
 `custom_components/dashboard_history/yaml_io.py`:
 
@@ -602,12 +602,12 @@ def load(text: str):
     return yaml.safe_load(text)
 ```
 
-- [ ] **Schritt 5: Tests laufen lassen, Erfolg bestätigen**
+- [x] **Schritt 5: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/test_yaml_io.py -v`
 Erwartet: PASS, 19 Tests — 9 synthetische und 10 echte Dashboards
 
-- [ ] **Schritt 6: Committen**
+- [x] **Schritt 6: Committen**
 
 ```bash
 git add custom_components/dashboard_history/yaml_io.py tests/
@@ -642,7 +642,7 @@ MSG
   - `Version(name: str, revision: str, title: str, description: str)`
   - `HistoryStore(path)` mit `ensure()`, `write_snapshot(key, text, message) -> str | None`, `list_changes(key, limit=50) -> list[Change]`, `read_at(key, revision) -> str | None`, `create_version(name, title, description, revision=None)`, `list_versions() -> list[Version]`
 
-- [ ] **Schritt 1: Den fehlschlagenden Test schreiben**
+- [x] **Schritt 1: Den fehlschlagenden Test schreiben**
 
 `tests/test_store.py`:
 
@@ -760,12 +760,12 @@ def test_parallel_writes_all_arrive(store):
     assert all(store.list_changes(f"d{i}") for i in range(8))
 ```
 
-- [ ] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
+- [x] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
 
 Ausführen: `python3 -m pytest tests/test_store.py -v`
 Erwartet: FAIL mit `ModuleNotFoundError: No module named 'store'`
 
-- [ ] **Schritt 3: Implementierung schreiben**
+- [x] **Schritt 3: Implementierung schreiben**
 
 `custom_components/dashboard_history/store.py`:
 
@@ -976,12 +976,12 @@ class HistoryStore:
         return [version for _, version in sorted(found, key=lambda p: -p[0])]
 ```
 
-- [ ] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
+- [x] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/ -v`
 Erwartet: PASS, 32 Tests (19 aus Task 2 plus 13 neue)
 
-- [ ] **Schritt 5: Committen**
+- [x] **Schritt 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/store.py tests/test_store.py
@@ -1019,7 +1019,7 @@ Das Herz des Projekts. Von hier hängt ab, ob die Oberfläche das Richtige anbie
   - `find_removed(old: dict, new: dict) -> list[RemovedItem]`
   - `summarize(old: dict, new: dict) -> Summary` mit `added`, `removed`, `edited`, `moved` (je `int`)
 
-- [ ] **Schritt 1: Den fehlschlagenden Test schreiben**
+- [x] **Schritt 1: Den fehlschlagenden Test schreiben**
 
 `tests/test_analyze.py`:
 
@@ -1124,12 +1124,12 @@ def test_views_without_a_path_are_handled():
     assert removed[0].view_path is None
 ```
 
-- [ ] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
+- [x] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
 
 Ausführen: `python3 -m pytest tests/test_analyze.py -v`
 Erwartet: FAIL mit `ModuleNotFoundError: No module named 'analyze'`
 
-- [ ] **Schritt 3: Implementierung schreiben**
+- [x] **Schritt 3: Implementierung schreiben**
 
 `custom_components/dashboard_history/analyze.py`:
 
@@ -1329,12 +1329,12 @@ def summarize(old: dict, new: dict) -> Summary:
     return Summary(added=added, removed=removed, edited=edited, moved=moved)
 ```
 
-- [ ] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
+- [x] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/ -v`
 Erwartet: PASS, 43 Tests
 
-- [ ] **Schritt 5: Committen**
+- [x] **Schritt 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/analyze.py tests/test_analyze.py
@@ -1367,7 +1367,7 @@ MSG
 - Consumes: `analyze.RemovedItem`
 - Produces: `reinsert(config: dict, item: RemovedItem) -> dict` — neue Konfiguration, die übergebene bleibt unberührt
 
-- [ ] **Schritt 1: Den fehlschlagenden Test schreiben**
+- [x] **Schritt 1: Den fehlschlagenden Test schreiben**
 
 `tests/test_restore.py`:
 
@@ -1431,12 +1431,12 @@ def test_a_vanished_target_view_is_refused_loudly():
         restore.reinsert({"views": []}, item)
 ```
 
-- [ ] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
+- [x] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
 
 Ausführen: `python3 -m pytest tests/test_restore.py -v`
 Erwartet: FAIL mit `ModuleNotFoundError: No module named 'restore'`
 
-- [ ] **Schritt 3: Implementierung schreiben**
+- [x] **Schritt 3: Implementierung schreiben**
 
 `custom_components/dashboard_history/restore.py`:
 
@@ -1525,12 +1525,12 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
     return result
 ```
 
-- [ ] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
+- [x] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/ -v`
 Erwartet: PASS, 49 Tests
 
-- [ ] **Schritt 5: Committen**
+- [x] **Schritt 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/restore.py tests/test_restore.py
@@ -1562,7 +1562,7 @@ MSG
 - Consumes: `snapshot.async_get_all_configs`, `yaml_io.dump`, `store.HistoryStore`, `analyze.summarize`
 - Produces: `HistoryCapture(hass, store)` mit `async_start()`, `async_stop()`, `async_capture(key=None, reason="save")`
 
-- [ ] **Schritt 1: Die Erfassung schreiben**
+- [x] **Schritt 1: Die Erfassung schreiben**
 
 `custom_components/dashboard_history/capture.py`:
 
@@ -1679,7 +1679,7 @@ class HistoryCapture:
         return f"{name}: {detail}"
 ```
 
-- [ ] **Schritt 2: In die Einrichtung einhängen**
+- [x] **Schritt 2: In die Einrichtung einhängen**
 
 In `__init__.py` `async_setup_entry` erweitern, sodass Speicher und Erfassung angelegt und in `hass.data[DOMAIN]` abgelegt werden, und `async_unload_entry` die Erfassung wieder abmeldet:
 
@@ -1704,7 +1704,7 @@ In `__init__.py` `async_setup_entry` erweitern, sodass Speicher und Erfassung an
         _LOGGER.exception("Dashboard History could not start recording")
 ```
 
-- [ ] **Schritt 3: Live prüfen**
+- [ ] **Schritt 3: Live prüfen**  ← **offen: braucht einen Neustart der eigenen Anlage**
 
 Home Assistant neu starten. Dann:
 
@@ -1714,7 +1714,7 @@ Home Assistant neu starten. Dann:
 4. **Der entscheidende Nachweis:** In der Commit-Botschaft muss die Zusammenfassung stehen, etwa `dashboard-karte: 1 edited`. Steht dort stattdessen `no card changes`, wurde ein veralteter Stand gelesen — dann greift Entscheidung 1 der Spec nicht und der Befund gehört gemeldet, nicht repariert.
 5. Ohne Änderung erneut speichern: Es darf **kein** neuer Commit entstehen.
 
-- [ ] **Schritt 4: Committen**
+- [x] **Schritt 4: Committen**
 
 ```bash
 git add custom_components/dashboard_history/capture.py custom_components/dashboard_history/__init__.py
@@ -1748,7 +1748,7 @@ MSG
 - Produces: sechs Dienste in der Domäne `dashboard_history` — zusammen mit
   `debug_snapshot` aus Task 1 sind es sieben
 
-- [ ] **Schritt 1: Schreibzugriff ergänzen**
+- [x] **Schritt 1: Schreibzugriff ergänzen**
 
 An `snapshot.py` anhängen:
 
@@ -1772,7 +1772,7 @@ async def async_save_config(hass: HomeAssistant, key: str, config: dict) -> None
 
 Dazu oben `from homeassistant.exceptions import HomeAssistantError` ergänzen.
 
-- [ ] **Schritt 2: Die Dienste schreiben**
+- [x] **Schritt 2: Die Dienste schreiben**
 
 `custom_components/dashboard_history/services.py`:
 
@@ -1956,7 +1956,7 @@ In `__init__.py` nach dem Anlegen von `hass.data[DOMAIN]` ergänzen:
     await async_register(hass)
 ```
 
-- [ ] **Schritt 3: `services.yaml` vervollständigen**
+- [x] **Schritt 3: `services.yaml` vervollständigen**
 
 Für jeden der sechs Dienste einen Eintrag mit `name`, `description` und Feldern, damit sie in den Entwicklerwerkzeugen bedienbar sind. Muster für den heikelsten:
 
@@ -1985,7 +1985,7 @@ restore_deleted:
       selector: {boolean: }
 ```
 
-- [ ] **Schritt 4: Live prüfen**
+- [ ] **Schritt 4: Live prüfen**  ← **offen: braucht einen Neustart der eigenen Anlage**
 
 Nach einem Neustart in den Entwicklerwerkzeugen der Reihe nach:
 
@@ -1996,7 +1996,7 @@ Nach einem Neustart in den Entwicklerwerkzeugen der Reihe nach:
 5. Denselben Aufruf **mit** `confirm: true` — die Karte muss wieder da sein.
 6. `dashboard_history.create_version` und `dashboard_history.versions` — die Version muss erscheinen, und `history` muss die Einzeländerungen weiterhin einzeln zeigen.
 
-- [ ] **Schritt 5: Committen**
+- [x] **Schritt 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/services.py custom_components/dashboard_history/services.yaml custom_components/dashboard_history/snapshot.py custom_components/dashboard_history/__init__.py
@@ -2028,7 +2028,7 @@ MSG
 - Consumes: alles Bisherige
 - Produces: keine
 
-- [ ] **Schritt 1: README schreiben**
+- [x] **Schritt 1: README schreiben**
 
 `README.md` — dieses Gerüst ausfüllen; die Beispielaufrufe aus den Live-Prüfungen von Task 7 übernehmen, damit sie nachweislich stimmen:
 
@@ -2118,7 +2118,7 @@ implementation, so it works the same on Home Assistant OS, Container,
 Core and Supervised.
 ```
 
-- [ ] **Schritt 2: Committen**
+- [x] **Schritt 2: Committen**
 
 ```bash
 git add README.md
@@ -2138,6 +2138,35 @@ MSG
 ---
 
 ## Nach der Umsetzung
+
+### Erledigt und offen
+
+Umgesetzt und geprüft sind alle acht Tasks. Die Testsuite läuft mit **49
+Tests** grün, davon zehn gegen die echten Dashboards der Anlage. Die
+Erfassungskette und alle sechs Dienste wurden zusätzlich außerhalb von
+Home Assistant gegen echte Dashboard-Daten gefahren — mit gestelltem
+`hass`, aber echtem Speicher, echter Einordnung und echter Umkehrung.
+
+**Drei Schritte stehen aus, weil sie einen Neustart der eigenen Anlage
+verlangen** — sie sind oben als offen gekennzeichnet: der Nachweis des
+Speicherwegs (Task 1), die Live-Erfassung (Task 6) und der Durchlauf der
+Dienste in den Entwicklerwerkzeugen (Task 7). Erst danach ist Entscheidung 1
+der Spec wirklich beantwortet.
+
+### Beobachtungen aus dem Probelauf an echten Daten
+
+- **Eine Löschung erzeugt die Meldung »1 removed, 6 moved«.** Wird die
+  erste Karte eines Views gelöscht, rücken die dahinterliegenden auf und
+  gelten zu Recht als verschoben. Sachlich richtig, für einen Menschen aber
+  irritierend, der schlicht eine Karte gelöscht hat. Das ist genau der
+  offene Punkt der Spec zur Einordnung umsortierter Karten — jetzt mit
+  Belegen. Zu erwägen: Verschiebungen, die reine Folge einer Löschung sind,
+  in der Meldung nicht zu nennen.
+- **Der Erststart erfasste zehn Dashboards in rund einer Sekunde.** Das
+  läuft innerhalb von `async_setup_entry` und ist gekapselt, verzögert die
+  Einrichtung aber messbar. Falls das je stört, gehört der Abgleich hinter
+  `async_at_started` statt in die Einrichtung.
+
 
 - [ ] **Entscheidung 1 der Spec beurteilen.** Task 1 und Task 6 liefern gemeinsam die Antwort, ob der Speicherweg trägt. Fällt sie negativ aus, gehört die Spec korrigiert und eine Wartezeit ergänzt.
 - [ ] **Platzbedarf über echte Nutzung messen.** Nach einigen Wochen `du -sh config/dashboard_history/` gegen die Zahl der Commits halten und mit den 27 KB je Stand aus der Spec vergleichen.
