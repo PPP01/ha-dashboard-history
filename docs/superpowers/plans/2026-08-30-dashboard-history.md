@@ -73,7 +73,7 @@ Der erste Task beantwortet die einzige offene Frage der Spec: Kommt der Dashboar
   "documentation": "https://github.com/PPP01/ha-dashboard-history",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/PPP01/ha-dashboard-history/issues",
-  "requirements": ["dulwich==0.22.14"],
+  "requirements": ["dulwich==1.2.14"],
   "version": "0.1.0"
 }
 ```
