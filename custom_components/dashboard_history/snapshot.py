@@ -201,11 +201,21 @@ async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> b
 
     live = _dashboards_collection(hass)
     if live is not None:
+        # Home Assistant's own listener now registers the panel and builds
+        # the dashboard object; nothing here has to imitate it.
+        _LOGGER.info("Recreating dashboard %s through the live collection", key)
         await live.async_create_item(item)
         return True
 
     # No reachable collection: write the entry through one of our own, then
-    # imitate what Home Assistant's listener would have done.
+    # imitate what Home Assistant's listener would have done. Logged at info
+    # on purpose - after a Home Assistant update, which path ran is the
+    # first question anybody will ask.
+    _LOGGER.info(
+        "Recreating dashboard %s through a collection of our own; "
+        "no live collection was reachable",
+        key,
+    )
     collection = DashboardsCollection(hass)
     await collection.async_load()
     created = await collection.async_create_item(item)

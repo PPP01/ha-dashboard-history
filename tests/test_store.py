@@ -36,6 +36,26 @@ def test_history_is_per_dashboard(store):
     assert [c.message for c in store.list_changes("other")] == ["other first"]
 
 
+def test_a_rename_appears_in_the_history(store):
+    # A rename touches only meta/<key>.yaml. Filtering the walk on the
+    # configuration alone would record it and then never show it - captured
+    # and invisible is the worst of both.
+    store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    store.write_snapshot("home", "a: 1\n", "renamed", meta="title: Kitchen\n")
+    assert [c.message for c in store.list_changes("home")] == ["renamed", "first"]
+
+
+def test_metadata_appearing_later_appears_in_the_history(store):
+    # What every existing installation does on its first start after the
+    # update: same cards, metadata recorded for the first time.
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 1\n", "metadata recorded", meta="title: Home\n")
+    assert [c.message for c in store.list_changes("home")] == [
+        "metadata recorded",
+        "first",
+    ]
+
+
 def test_history_of_unknown_dashboard_is_empty(store):
     assert store.list_changes("nothing") == []
 

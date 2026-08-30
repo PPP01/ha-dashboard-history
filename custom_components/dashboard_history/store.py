@@ -203,7 +203,12 @@ class HistoryStore:
         if repo is None:
             return []
         try:
-            walker = repo.get_walker(paths=[f"{key}.yaml".encode()], max_entries=limit)
+            # Both paths: a rename touches only the metadata, and a change
+            # that is recorded but never shown is the worst of both.
+            walker = repo.get_walker(
+                paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
+                max_entries=limit,
+            )
             return [
                 Change(
                     revision=_as_text(entry.commit.id),

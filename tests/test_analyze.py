@@ -130,6 +130,81 @@ def test_a_wrapper_card_is_labelled_by_what_is_inside():
     assert "light.z" in removed[0].label
 
 
+def test_a_metadata_only_commit_does_not_claim_an_outside_change():
+    # The cards are identical; the commit exists only because the title or
+    # icon was recorded. Calling that "changed outside Home Assistant" is
+    # an accusation, and every existing user would get one per dashboard.
+    config = _config([A, B])
+    assert (
+        analyze.change_message("home", config, config, "startup")
+        == "home: metadata recorded"
+    )
+
+
+def test_an_outside_change_is_still_named_as_one():
+    assert (
+        analyze.change_message("home", _config([A, B]), _config([A]), "startup")
+        == "home: changed outside Home Assistant"
+    )
+
+
+def test_a_save_is_summarised():
+    assert (
+        analyze.change_message("home", _config([A, B]), _config([A]), "save")
+        == "home: 1 removed"
+    )
+
+
+def test_the_first_recorded_state_says_so():
+    assert (
+        analyze.change_message("home", None, _config([A]), "startup")
+        == "home: first recorded state"
+    )
+
+
+def test_a_save_without_card_changes_says_so():
+    config = _config([A])
+    assert (
+        analyze.change_message("home", config, config, "save")
+        == "home: metadata recorded"
+    )
+
+
+def test_a_rename_is_named_in_the_message():
+    # "metadata recorded" is true but useless. Somebody scanning the history
+    # for the moment a dashboard got its new name should find it there.
+    config = _config([A])
+    assert (
+        analyze.change_message(
+            "home", config, config, "reconcile", {"title": "Home"}, {"title": "Kitchen"}
+        )
+        == 'home: renamed to "Kitchen"'
+    )
+
+
+def test_another_metadata_change_names_the_field():
+    config = _config([A])
+    assert (
+        analyze.change_message(
+            "home",
+            config,
+            config,
+            "reconcile",
+            {"title": "Home", "icon": "mdi:a"},
+            {"title": "Home", "icon": "mdi:b"},
+        )
+        == "home: icon changed"
+    )
+
+
+def test_metadata_recorded_for_the_first_time_says_just_that():
+    config = _config([A])
+    assert (
+        analyze.change_message("home", config, config, "startup", None, {"title": "Home"})
+        == "home: metadata recorded"
+    )
+
+
 def test_view_removed_is_found():
     old = {"views": [{"path": "home", "cards": [A]}, {"path": "gone", "cards": [B]}]}
     new = {"views": [{"path": "home", "cards": [A]}]}

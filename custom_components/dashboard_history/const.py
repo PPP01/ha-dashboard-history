@@ -21,3 +21,7 @@ PANEL_ICON = "mdi:history"
 PANEL_COMPONENT = "dashboard-history-panel"
 # Bumped whenever panel.js changes, so browsers do not serve a stale copy.
 PANEL_VERSION = "0.1.0"
+
+# Seconds to wait before reconciling after a panel changed. Long enough to
+# collapse the burst Home Assistant fires while starting up.
+RECONCILE_DELAY = 10

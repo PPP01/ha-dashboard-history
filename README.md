@@ -168,6 +168,15 @@ and does. Whether the dashboard also appears in the sidebar *without a
 restart* is a bonus — if that part fails, the response says so and a
 restart finishes the job. Either way the dashboard is back.
 
+## Renames and other dashboard settings
+
+The title, icon and sidebar setting of a dashboard live in Home Assistant's
+registry rather than in the dashboard configuration, and Home Assistant
+announces no event when they change. They are picked up when a panel moves,
+which covers creating, renaming and deleting a dashboard, so a rename shows
+up in the history as `renamed to "…"` — and a dashboard that is restored
+comes back under the name it had, not the name it started with.
+
 ## Where the data lives
 
 In `config/dashboard_history/`, as a git repository this integration

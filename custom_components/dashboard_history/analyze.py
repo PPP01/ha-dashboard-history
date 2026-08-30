@@ -306,3 +306,58 @@ def summarize(old: dict, new: dict) -> Summary:
             added += sum(len(cards) for _, cards in card_containers(new_view))
 
     return Summary(added=added, removed=removed, edited=edited, moved=moved)
+
+
+def _meta_detail(old_meta: dict | None, new_meta: dict | None) -> str:
+    """What changed about a dashboard, as opposed to on it."""
+    if not new_meta or old_meta is None or old_meta == new_meta:
+        return "metadata recorded"
+    if new_meta.get("title") and old_meta.get("title") != new_meta.get("title"):
+        return f'renamed to "{new_meta["title"]}"'
+    fields = sorted(
+        field
+        for field in set(old_meta) | set(new_meta)
+        if old_meta.get(field) != new_meta.get(field)
+    )
+    return f"{', '.join(fields)} changed" if fields else "metadata recorded"
+
+
+def change_message(
+    name: str,
+    old: dict | None,
+    new: dict,
+    reason: str,
+    old_meta: dict | None = None,
+    new_meta: dict | None = None,
+) -> str:
+    """The one line that will stand in the history for this change.
+
+    People read these while looking for something they lost, so they have
+    to be exactly true. A message that claims more than happened is worse
+    than a vague one - "changed outside Home Assistant" shown to somebody
+    whose dashboard nobody touched is an accusation, not a note.
+
+    `old` is None when nothing was recorded yet. `reason` is "save" for a
+    change Home Assistant announced, and anything else for one found by
+    comparison, where nobody can say what caused it.
+    """
+    if old is None:
+        return f"{name}: first recorded state"
+    if old == new:
+        # Not the cards, then. Something *about* the dashboard changed -
+        # its title, its icon - or nothing did and only metadata was
+        # recorded for the first time. Either way: no outside change.
+        return f"{name}: {_meta_detail(old_meta, new_meta)}"
+    if reason != "save":
+        # Changed while nobody was listening: a restored backup, a
+        # hand-edited storage file, another tool. Recording that as an
+        # ordinary save would hide it.
+        return f"{name}: changed outside Home Assistant"
+    counts = summarize(old, new)
+    parts = [
+        f"{counts.removed} removed" if counts.removed else "",
+        f"{counts.added} added" if counts.added else "",
+        f"{counts.edited} edited" if counts.edited else "",
+        f"{counts.moved} moved" if counts.moved else "",
+    ]
+    return f"{name}: " + (", ".join(part for part in parts if part) or "no card changes")

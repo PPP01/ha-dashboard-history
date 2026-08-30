@@ -10,6 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-dashboard-history-design.md`
 
+> **Zum Stand dieses Dokuments.** Die Code-Blöcke in den Tasks 1 bis 8 zeigen
+> die *ursprüngliche* Umsetzung. Seither ist der Code weitergegangen — es kamen
+> `operations.py`, `websocket_api.py`, `panel.py` und `panel.js` hinzu, und
+> mehrere Stellen wurden aufgrund von Befunden aus dem Live-Betrieb geändert.
+> **Maßgeblich ist der Code im Repository**, nicht die Listings hier. Was sich
+> warum geändert hat, steht unter »Nach der Umsetzung«. Die Listings weiter
+> synchron zu halten wäre Abschreiben ohne Nutzen; ihr Wert liegt in der
+> begründeten Herleitung, und die gilt unverändert.
+
 ## Vor der Umsetzung geprüft (2026-08-30)
 
 Der Code dieses Plans wurde extrahiert und ausgeführt, bevor er umgesetzt
@@ -1002,7 +1011,12 @@ class HistoryStore:
         if repo is None:
             return []
         try:
-            walker = repo.get_walker(paths=[f"{key}.yaml".encode()], max_entries=limit)
+            # Both paths: a rename touches only the metadata, and a change
+            # that is recorded but never shown is the worst of both.
+            walker = repo.get_walker(
+                paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
+                max_entries=limit,
+            )
             return [
                 Change(
                     revision=_as_text(entry.commit.id),
@@ -1881,9 +1895,15 @@ from __future__ import annotations
 import logging
 
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 
-from .analyze import summarize
-from .const import EVENT_LOVELACE_UPDATED
+from .analyze import change_message
+from .const import EVENT_LOVELACE_UPDATED, RECONCILE_DELAY
+
+try:  # The authoritative source; the literal below is only a fallback.
+    from homeassistant.components.frontend import EVENT_PANELS_UPDATED
+except ImportError:  # pragma: no cover - layout differs across releases
+    EVENT_PANELS_UPDATED = "panels_updated"
 from .snapshot import (
     async_get_all_configs,
     async_get_all_meta,
@@ -1902,26 +1922,54 @@ class HistoryCapture:
     def __init__(self, hass: HomeAssistant, store: HistoryStore) -> None:
         self._hass = hass
         self._store = store
-        self._unsubscribe = None
+        self._unsubscribe: list = []
+        self._pending = None
 
     async def async_start(self) -> None:
         """Reconcile once, then listen."""
         await self.async_capture(reason="startup")
-        self._unsubscribe = self._hass.bus.async_listen(
-            EVENT_LOVELACE_UPDATED, self._handle_event
-        )
+        self._unsubscribe = [
+            self._hass.bus.async_listen(EVENT_LOVELACE_UPDATED, self._handle_event),
+            # Home Assistant announces a *saved* dashboard, but says nothing
+            # when one is created, renamed or deleted. All three do move a
+            # panel, though, and that is announced - so this is what tells us
+            # a dashboard is gone or has a new name.
+            self._hass.bus.async_listen(EVENT_PANELS_UPDATED, self._handle_panels),
+        ]
 
     async def async_stop(self) -> None:
         """Stop listening."""
-        if self._unsubscribe is not None:
-            self._unsubscribe()
-            self._unsubscribe = None
+        for unsubscribe in self._unsubscribe:
+            unsubscribe()
+        self._unsubscribe = []
+        if self._pending is not None:
+            self._pending()
+            self._pending = None
 
     @callback
     def _handle_event(self, event: Event) -> None:
         """React to a save without blocking the event bus."""
         key = dashboard_key(event.data.get("url_path"))
         self._hass.async_create_task(self.async_capture(key=key, reason="save"))
+
+    @callback
+    def _handle_panels(self, event: Event) -> None:
+        """A panel moved. Look at everything, shortly, and only once.
+
+        This fires several times in a row while Home Assistant starts and
+        whenever anything touches a panel, so the work is deferred and
+        collapsed: a burst of events costs one reconciliation.
+        """
+        if self._pending is not None:
+            self._pending()
+        self._pending = async_call_later(
+            self._hass, RECONCILE_DELAY, self._async_reconcile
+        )
+
+    async def _async_reconcile(self, _now) -> None:
+        """Compare everything against the history."""
+        self._pending = None
+        await self.async_capture(reason="reconcile")
 
     async def async_capture(self, key: str | None = None, reason: str = "save") -> list[str]:
         """Record the current state of one or all dashboards.
@@ -2009,23 +2057,9 @@ class HistoryCapture:
 
     def _build_message(self, name: str, config: dict, previous: str | None, reason: str) -> str:
         """A readable one-line summary of what happened."""
-        if previous is None:
-            return f"{name}: first recorded state"
-        if reason == "startup":
-            # Something changed while we were not listening: a restored
-            # backup, a hand-edited storage file, another tool. Recording it
-            # as a normal save would hide that.
-            return f"{name}: changed outside Home Assistant"
-        old = load(previous) or {}
-        s = summarize(old, config)
-        parts = [
-            f"{s.removed} removed" if s.removed else "",
-            f"{s.added} added" if s.added else "",
-            f"{s.edited} edited" if s.edited else "",
-            f"{s.moved} moved" if s.moved else "",
-        ]
-        detail = ", ".join(p for p in parts if p) or "no card changes"
-        return f"{name}: {detail}"
+        return change_message(
+            name, load(previous) if previous is not None else None, config, reason
+        )
 ```
 
 - [x] **Schritt 2: In die Einrichtung einhängen**
@@ -2167,11 +2201,21 @@ async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> b
 
     live = _dashboards_collection(hass)
     if live is not None:
+        # Home Assistant's own listener now registers the panel and builds
+        # the dashboard object; nothing here has to imitate it.
+        _LOGGER.info("Recreating dashboard %s through the live collection", key)
         await live.async_create_item(item)
         return True
 
     # No reachable collection: write the entry through one of our own, then
-    # imitate what Home Assistant's listener would have done.
+    # imitate what Home Assistant's listener would have done. Logged at info
+    # on purpose - after a Home Assistant update, which path ran is the
+    # first question anybody will ask.
+    _LOGGER.info(
+        "Recreating dashboard %s through a collection of our own; "
+        "no live collection was reachable",
+        key,
+    )
     collection = DashboardsCollection(hass)
     await collection.async_load()
     created = await collection.async_create_item(item)
@@ -2708,6 +2752,32 @@ ist keine Löschung: Das Standard-Dashboard dieser Anlage hat keinen und
 existiert trotzdem. Gefragt wird deshalb über `async_known_keys`, welche
 Dashboards Home Assistant überhaupt kennt — und kann es die Frage nicht
 beantworten, wird **nichts** vermerkt statt alles.
+
+### Drei Befunde aus dem zweiten Live-Durchlauf, alle behoben
+
+Der Durchlauf bestätigte zuerst das Wichtigste: Ein gelöschtes Dashboard kehrt
+vollständig zurück — mit Titel, Symbol und Sichtbarkeit, **ohne Neustart**, und
+die Konfiguration ist byte-identisch. Danach fielen drei Dinge auf.
+
+- **Der erste Start nach dem Update meldete jedes Dashboard als »changed
+  outside Home Assistant«.** Ein Fehlalarm, und der unangenehmste: Die Meldung
+  behauptet einen Eingriff von außen, während in Wahrheit nur zum ersten Mal
+  Metadaten erfasst wurden. Ursache war die Reihenfolge — die Startup-Meldung
+  griff, *bevor* überhaupt verglichen wurde. Die Entscheidung liegt jetzt in
+  `analyze.change_message`, also im Home-Assistant-freien Teil, wo sie prüfbar
+  ist; sie war zuvor in `capture.py` und damit gar nicht getestet.
+- **Reine Metadaten-Änderungen wurden nicht erfasst**, und **eine Löschung im
+  laufenden Betrieb erzeugte keinen Commit.** Dieselbe Ursache: Für Änderungen
+  an der Dashboard-*Sammlung* feuert Home Assistant kein `lovelace_updated`.
+  Alle drei — anlegen, umbenennen, löschen — bewegen aber ein Panel, und *das*
+  wird angekündigt. Es wird jetzt zusätzlich auf `panels_updated` gehorcht,
+  entprellt, weil das Ereignis beim Start mehrfach feuert.
+- **Beim Beheben fiel ein vierter auf**, den niemand gemeldet hatte: Eine
+  Umbenennung berührt nur `meta/<schlüssel>.yaml`, und `list_changes` filterte
+  allein auf die Konfigurationsdatei. Sie wäre also erfasst und trotzdem
+  unsichtbar gewesen — die schlechteste Kombination. Der Verlauf läuft jetzt
+  über beide Pfade, und die Meldung nennt die Umbenennung beim Namen:
+  `renamed to "Neuer Titel"` statt `metadata recorded`.
 
 ### Offen
 
