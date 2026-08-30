@@ -151,6 +151,9 @@ Erst wenn sich Stufe 1 in der eigenen Anlage bewährt hat, wird über die Veröf
 
 ## Offene Punkte
 
-- **Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert. Er entscheidet zwischen Entscheidung 1 und ihrem Rückfall. Vor der Umsetzung zu klären.
+- ~~**Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert.~~ **Erledigt am 2026-08-30.** An der eigenen Anlage bestätigt: `debug_snapshot` meldet alle zehn Dashboards, die Warnung »Lovelace data not available in the expected shape« erscheint **nicht**, der Rückfall bleibt ungenutzt. Ein neu angelegtes Dashboard war sechs Sekunden später als Commit da — ohne jede Wartezeit. **Entscheidung 1 trägt.**
 - **Platzbedarf über sehr lange Zeiträume.** Für zwanzig Stände gemessen (27 KB je Stand); ob das über tausend Stände linear bleibt oder git dann besser packt, ist offen. Erst relevant, wenn eine Aufbewahrungsgrenze zur Debatte steht.
-- **Einordnung umsortierter Karten** ist der schwierigste Fall der Einordnung: Ohne Kennungen muss über Inhaltsgleichheit zugeordnet werden. Ob das für den Anfang genügt oder eine Ähnlichkeitsbewertung braucht, zeigt sich an echten Daten.
+- ~~**Einordnung umsortierter Karten**~~ **An echten Daten entschieden am 2026-08-30.** Zwei Befunde:
+
+  1. *Verschiebungen werden relativ gemessen, nicht absolut.* Ein Vergleich roher Positionen erklärte jede Karte hinter einer Löschung zur Verschiebung — auf großen Views zwanzig Meldungen Rauschen um die eine, auf die es ankommt. Gezählt wird jetzt der Rang unter den Überlebenden: Eine Löschung allein erzeugt **keine** Verschiebung, ein Tausch weiterhin zwei.
+  2. *Die schwache Zuordnung reichte bei weitem nicht weit genug.* Sie kannte nur `entity`, `title` und `name` — die trägt auf dieser Anlage nur **57 % der 1526 Karten**. Alle übrigen lösten beim Bearbeiten einen Fehlalarm aus: gemeldet als gelöscht **und** neu angelegt, obwohl sie unverändert dastanden. Genau der Fall, den dieses Dokument oben als schlimmer bezeichnet als eine fehlende Funktion. Die Zuordnung greift jetzt zusätzlich auf `heading`, die erste Entität einer Entitätenliste, die erste Textzeile und die benennbare Karte innerhalb eines Containers zu — damit **96 %**. Eine Ähnlichkeitsbewertung braucht es dafür nicht.

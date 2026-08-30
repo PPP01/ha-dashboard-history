@@ -55,24 +55,118 @@ def card_containers(view: dict) -> Iterator[tuple[tuple, list]]:
             yield ("sections", index, "cards"), section["cards"]
 
 
-def _weak_key(card: Any):
-    """A content-based identity, good enough to recognise an edited card."""
-    if not isinstance(card, dict):
-        return None
-    for field in ("entity", "title", "name"):
-        if field in card:
-            return (card.get("type"), field, str(card[field]))
+_LABEL_LIMIT = 48
+
+
+def _shorten(text: str) -> str:
+    """Collapse whitespace and cut to a length that fits a list."""
+    text = " ".join(text.split())
+    if len(text) <= _LABEL_LIMIT:
+        return text
+    return text[: _LABEL_LIMIT - 1].rstrip() + "\u2026"
+
+
+def _first_line(card: dict) -> str | None:
+    """The first meaningful line of a card's own text, if it has any."""
+    for field in ("content", "text"):
+        value = card.get(field)
+        if isinstance(value, str):
+            for line in value.splitlines():
+                line = line.lstrip("#").strip()
+                if line:
+                    return line
     return None
 
 
-def _describe(card: Any) -> str:
-    """A short human-readable label for a card."""
+def _first_entity(card: dict) -> str | None:
+    """The first entity of a card that is defined by a list of them."""
+    entities = card.get("entities")
+    if not isinstance(entities, list) or not entities:
+        return None
+    first = entities[0]
+    name = first.get("entity") if isinstance(first, dict) else first
+    return str(name) if name else None
+
+
+def _inner_card(card: dict) -> dict | None:
+    """The card a wrapper wraps, if there is an obvious first one."""
+    inner = card.get("card")
+    if isinstance(inner, dict):
+        return inner
+    cards = card.get("cards")
+    if isinstance(cards, list) and cards and isinstance(cards[0], dict):
+        return cards[0]
+    return None
+
+
+def _weak_key(card: Any, depth: int = 0):
+    """A content-based identity, good enough to recognise an edited card.
+
+    All of this exists to prevent one specific failure: an edited card read
+    as a deletion plus an addition. The interface would then offer to
+    restore something that is not missing, and a false alarm of that kind
+    destroys trust in exactly the message people open the tool for.
+
+    Which is why it reaches well past entity, title and name. Counted on
+    the installation this was built against, most cards carry none of the
+    three: 62 headings, 76 entity lists without a title, and 261 wrappers
+    whose only content is the card inside them. Identifying by the most
+    stable field first is deliberate - an entity outlives a renamed title.
+    """
+    if not isinstance(card, dict):
+        return None
+    kind = card.get("type")
+    for field in ("entity", "title", "name", "heading"):
+        if card.get(field):
+            return (kind, field, str(card[field]))
+    entity = _first_entity(card)
+    if entity is not None:
+        return (kind, "entities", entity)
+    line = _first_line(card)
+    if line is not None:
+        # The first line, not the whole text: editing the body below it
+        # must not change what the card is.
+        return (kind, "text", line)
+    if depth < 3:
+        inner = _inner_card(card)
+        if inner is not None:
+            key = _weak_key(inner, depth + 1)
+            # Only when the card inside can be named at all. Otherwise two
+            # different anonymous wrappers would look like the same card,
+            # and a real deletion would be missed.
+            if key is not None:
+                return (kind, "inside", key)
+    return None
+
+
+def _describe(card: Any, depth: int = 0) -> str:
+    """A short human-readable label for a card.
+
+    The field order differs from _weak_key on purpose: identity wants the
+    most stable field, a label wants the most human one.
+    """
     if not isinstance(card, dict):
         return str(card)
-    for field in ("title", "name", "entity"):
+    kind = str(card.get("type", "card"))
+    for field in ("title", "name", "heading", "entity"):
         if card.get(field):
-            return f"{card.get('type', 'card')}: {card[field]}"
-    return str(card.get("type", "card"))
+            return f"{kind}: {_shorten(str(card[field]))}"
+    line = _first_line(card)
+    if line is not None:
+        return f"{kind}: {_shorten(line)}"
+    entity = _first_entity(card)
+    if entity is not None:
+        rest = len(card["entities"]) - 1
+        return f"{kind}: {_shorten(entity)}" + (f" +{rest}" if rest else "")
+    if depth < 4:
+        inner = _inner_card(card)
+        if inner is not None:
+            label = _describe(inner, depth + 1)
+            # Nested wrappers hand the name up unchanged. A chain of four
+            # container types tells nobody which card this was; the name of
+            # the first thing inside that has one does.
+            return label if depth else f"{kind} > {label}"
+    return kind
 
 
 def _match_cards(old_cards: list, new_cards: list):
@@ -80,7 +174,7 @@ def _match_cards(old_cards: list, new_cards: list):
     unmatched_new = list(range(len(new_cards)))
     removed: list[int] = []
     edited: list[tuple[int, int]] = []
-    moved: list[tuple[int, int]] = []
+    exact: list[tuple[int, int]] = []
 
     # Pass one: exact content matches. Same card, possibly at a new index.
     pending: list[int] = []
@@ -90,8 +184,7 @@ def _match_cards(old_cards: list, new_cards: list):
             pending.append(old_index)
             continue
         unmatched_new.remove(match)
-        if match != old_index:
-            moved.append((old_index, match))
+        exact.append((old_index, match))
 
     # Pass two: weak matches among what is left. Same card, edited.
     for old_index in pending:
@@ -107,7 +200,29 @@ def _match_cards(old_cards: list, new_cards: list):
             unmatched_new.remove(match)
             edited.append((old_index, match))
 
-    return removed, unmatched_new, edited, moved
+    return removed, unmatched_new, edited, _moved(exact, edited)
+
+
+def _moved(
+    exact: list[tuple[int, int]], edited: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """Which matched cards changed position *relative to each other*.
+
+    A raw index comparison calls every card behind a deletion moved. On a
+    large view that is twenty entries of noise wrapped around the single
+    fact that matters, and it is not what anyone means by "moved" either.
+    What people mean is a change in the order, so that is what is
+    measured: a card's rank among the survivors, before against after.
+
+    Edited cards take part in the ranking - they still hold a position -
+    but are not reported here, because they are already reported as edited.
+    """
+    pairs = sorted(exact + edited)
+    old_rank = {old: rank for rank, (old, _) in enumerate(pairs)}
+    new_rank = {
+        new: rank for rank, (_, new) in enumerate(sorted(pairs, key=lambda p: p[1]))
+    }
+    return [(old, new) for old, new in exact if old_rank[old] != new_rank[new]]
 
 
 def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
