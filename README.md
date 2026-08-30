@@ -1,5 +1,8 @@
 # Dashboard History
 
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Records every change to your Home Assistant dashboards and lets you put
 back what disappeared.
 
@@ -137,3 +140,7 @@ without an installation:
 ```bash
 python3 -m pytest tests/ -v
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
