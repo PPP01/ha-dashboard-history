@@ -10,6 +10,28 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-30-dashboard-history-design.md`
 
+## Vor der Umsetzung geprüft (2026-08-30)
+
+Der Code dieses Plans wurde extrahiert und ausgeführt, bevor er umgesetzt
+wurde. Sieben Befunde sind bereits eingearbeitet; sie stehen hier, damit die
+Abweichungen von der ersten Fassung nachvollziehbar bleiben.
+
+| Befund | Folge | Nachweis |
+|---|---|---|
+| `restore.py` nutzte einen relativen Import, den die flache Testeinbindung nicht auflösen kann | Task 5 hätte nie grün werden können | `ImportError: attempted relative import with no known parent package` |
+| `summarize` verdoppelte umsortierte Karten | Test erwartete 2, Code lieferte 4 | Testlauf |
+| `write_snapshot` verglich gegen die Datei statt gegen HEAD, und dulwich sperrt den Index | Von acht parallelen Commits kam einer an; ein so verlorener Stand blieb **dauerhaft und stumm** aus der Historie | gemessen, siehe Kommentar in `store.py` |
+| Der Storage-Rückfall verwechselte `id` mit `url_path` | `energie_2.yaml` neben `energie-2.yaml` — jede Historie hätte sich gegabelt | echte Registry: `id=energie_2`, `url_path=energie-2` |
+| `ConfigNotFound` wurde als Ausnahme protokolliert | Vollständiger Traceback bei jedem Speichern, weil das Standard-Dashboard keine Konfiguration hat | `.storage/lovelace` existiert nicht; Spook behandelt es als `debug` |
+| `lovelace` fehlte als Abhängigkeit im Manifest | `hass.data["lovelace"]` beim Einrichten nicht garantiert vorhanden | HA-Einrichtungsreihenfolge |
+| `DEFAULT_DASHBOARD_KEY = "lovelace"` | Kollision mit dem real vorhandenen Dashboard `url_path: lovelace` | echte Registry |
+
+Bestätigt hat die Prüfung außerdem: `dulwich==1.2.14` ist installiert und
+trägt, ein Commit des 262-KB-Dashboards dauert **31,2 ms** (Spec: 30 ms),
+`hass.data["lovelace"].dashboards` ist die richtige Form — spook und icloud3
+greifen auf derselben Anlage genau so zu —, und `yaml_io` bringt alle zehn
+echten Dashboards verlustfrei und deterministisch durch den Round-Trip.
+
 ## Global Constraints
 
 Diese Vorgaben gelten für **jeden** Task.
@@ -70,6 +92,7 @@ Der erste Task beantwortet die einzige offene Frage der Spec: Kommt der Dashboar
   "name": "Dashboard History",
   "codeowners": ["@PPP01"],
   "config_flow": true,
+  "dependencies": ["lovelace"],
   "documentation": "https://github.com/PPP01/ha-dashboard-history",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/PPP01/ha-dashboard-history/issues",
@@ -99,7 +122,10 @@ DOMAIN = "dashboard_history"
 EVENT_LOVELACE_UPDATED = "lovelace_updated"
 
 # The default dashboard has url_path None; we store it under this key.
-DEFAULT_DASHBOARD_KEY = "lovelace"
+# It deliberately starts with an underscore: a url_path never can, so this
+# cannot collide with a real dashboard. Installations do exist that have a
+# dashboard registered under the url_path "lovelace".
+DEFAULT_DASHBOARD_KEY = "_default"
 
 # Directory inside the configuration folder that holds our git repository.
 REPO_DIRNAME = "dashboard_history"
@@ -127,6 +153,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from homeassistant.components.lovelace.const import ConfigNotFound
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
@@ -135,6 +162,17 @@ from .const import DEFAULT_DASHBOARD_KEY
 _LOGGER = logging.getLogger(__name__)
 
 LOVELACE_DATA_KEY = "lovelace"
+
+# The value LovelaceConfig.mode returns for a storage dashboard. Compared
+# as a literal on purpose: only ConfigNotFound's import path is verified
+# against a running installation, and a wrong import would break setup.
+MODE_STORAGE = "storage"
+
+# Home Assistant's own storage keys. The default dashboard is stored under
+# a bare "lovelace"; every other dashboard under its *id*, which is not the
+# same string as its url_path (id "energie_2" vs url_path "energie-2").
+_STORAGE_KEY_DEFAULT = "lovelace"
+_STORAGE_KEY_TEMPLATE = "lovelace.{}"
 
 
 def dashboard_key(url_path: str | None) -> str:
@@ -165,8 +203,17 @@ async def async_get_all_configs(hass: HomeAssistant) -> dict[str, dict]:
 
     result: dict[str, dict] = {}
     for url_path, dashboard in dashboards.items():
+        if getattr(dashboard, "mode", MODE_STORAGE) != MODE_STORAGE:
+            # A YAML dashboard already lives in a file the user versions
+            # themselves, and it cannot be written back at all.
+            continue
         try:
             config = await dashboard.async_load(False)
+        except ConfigNotFound:
+            # Entirely normal: a dashboard that has never been saved. The
+            # default dashboard is usually in this state.
+            _LOGGER.debug("Dashboard %s has no stored configuration", url_path)
+            continue
         except Exception:  # noqa: BLE001 - a single bad dashboard must not stop the rest
             _LOGGER.exception("Could not load dashboard %s", url_path)
             continue
@@ -190,10 +237,18 @@ async def _async_get_all_configs_from_storage(hass: HomeAssistant) -> dict[str, 
     result: dict[str, dict] = {}
     store = Store(hass, 1, "lovelace_dashboards")
     registry = await store.async_load() or {}
-    keys = [DEFAULT_DASHBOARD_KEY]
-    keys += [item["id"] for item in registry.get("items", [])]
-    for key in keys:
-        raw = await Store(hass, 1, f"lovelace.{key}").async_load()
+
+    # (our key, Home Assistant's storage key) - the two differ, and mixing
+    # them up would file the same dashboard under two different names.
+    wanted = [(DEFAULT_DASHBOARD_KEY, _STORAGE_KEY_DEFAULT)]
+    for item in registry.get("items", []):
+        url_path = item.get("url_path")
+        if url_path is None or "id" not in item:
+            continue
+        wanted.append((dashboard_key(url_path), _STORAGE_KEY_TEMPLATE.format(item["id"])))
+
+    for key, storage_key in wanted:
+        raw = await Store(hass, 1, storage_key).async_load()
         if isinstance(raw, dict) and isinstance(raw.get("config"), dict):
             result[key] = raw["config"]
     return result
@@ -304,7 +359,11 @@ Die Integration nach `/config/custom_components/dashboard_history/` kopieren ode
 
 Dann in den Entwicklerwerkzeugen `dashboard_history.debug_snapshot` ausführen.
 
-**Erwartet:** Eine Antwort mit `count: 12` und je Dashboard der View-Anzahl.
+**Erwartet:** Eine Antwort mit `count: 10` und je Dashboard der View-Anzahl.
+Zehn, nicht zwoelf: Die Anlage hat zehn registrierte Dashboards, und das
+Standard-Dashboard hat keine gespeicherte Konfiguration, wird also
+uebersprungen. Die Zwoelf in einer frueheren Fassung stammte aus
+`dashboards/*.yaml`, wo `_registry.yaml` und `_resources.yaml` mitzaehlten.
 
 **Das ist der eigentliche Nachweis dieses Tasks.** Prüfe zusätzlich im Protokoll, ob die Warnung »Lovelace data not available in the expected shape« erscheint:
 
@@ -376,7 +435,16 @@ sys.path.insert(0, str(_PACKAGE))
 ```python
 """Tests for the deterministic YAML representation."""
 
+import json
+import pathlib
+
+import pytest
 import yaml_io
+
+# Real dashboards from the installation this was built against. Optional:
+# without them the synthetic cases still run.
+_STORAGE = pathlib.Path("/path/to/home-assistant/.storage")
+REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
 
 
 def _body(text):
@@ -433,6 +501,20 @@ def test_header_carries_no_timestamp():
     # Anything varying between runs would produce a commit on every save.
     assert yaml_io.dump({"x": 1}) == yaml_io.dump({"x": 1})
     assert "20" not in yaml_io.HEADER
+
+
+@pytest.mark.skipif(not REAL_DASHBOARDS, reason="no real dashboards available")
+@pytest.mark.parametrize("path", REAL_DASHBOARDS, ids=lambda p: p.name)
+def test_real_dashboards_survive_the_round_trip(path):
+    """The synthetic cases above cannot cover what real dashboards contain.
+
+    This is the test the spec asks for. It is skipped where the storage
+    files are not reachable, so the suite still runs anywhere.
+    """
+    config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
+    text = yaml_io.dump(config)
+    assert yaml_io.load(text) == config
+    assert yaml_io.dump(config) == text
 ```
 
 - [ ] **Schritt 3: Tests laufen lassen, Fehlschlag bestätigen**
@@ -475,7 +557,10 @@ def _can_use_block(text: str) -> bool:
     """
     if "\n" not in text:
         return False
-    if any(char in text for char in ("\r", "\x85", " ", " ")):
+    # Written as escapes on purpose: as literal characters they are
+    # invisible in an editor, and str.splitlines() splits on them, so any
+    # tool that processes this file line by line silently corrupts it.
+    if any(char in text for char in ("\r", "\x85", "\u2028", "\u2029")):
         return False
     if text[:1] in (" ", "\t"):
         return False
@@ -520,7 +605,7 @@ def load(text: str):
 - [ ] **Schritt 5: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/test_yaml_io.py -v`
-Erwartet: PASS, 9 Tests
+Erwartet: PASS, 19 Tests — 9 synthetische und 10 echte Dashboards
 
 - [ ] **Schritt 6: Committen**
 
@@ -564,8 +649,10 @@ MSG
 ```python
 """Tests for the git-backed history store."""
 
-import pytest
+import threading
 
+import pytest
+from dulwich.repo import Repo
 from store import HistoryStore
 
 
@@ -632,11 +719,45 @@ def test_version_marks_a_revision_without_changing_history(store):
     assert len(store.list_changes("home")) == 2
 
 
-def test_snapshot_survives_a_crash_between_write_and_rename(store, tmp_path):
-    # A leftover .tmp must never be mistaken for a dashboard.
+def test_the_temporary_file_is_never_tracked(store, tmp_path):
+    # A leftover .tmp must never end up in the repository.
     store.write_snapshot("home", "a: 1\n", "first")
     (tmp_path / "history" / "home.yaml.tmp").write_text("junk", encoding="utf-8")
-    assert store.list_changes("home.yaml.tmp") == []
+    store.write_snapshot("home", "a: 2\n", "second")
+    repo = Repo(str(tmp_path / "history"))
+    assert sorted(path.decode() for path in repo.open_index()) == ["home.yaml"]
+
+
+def test_a_state_lost_before_the_commit_is_recorded_afterwards(store, tmp_path):
+    # A crash between writing the file and committing leaves the file ahead
+    # of the repository. Comparing against the file would drop that state
+    # from the history for good and without a word; comparing against HEAD
+    # picks it up on the next run.
+    store.write_snapshot("home", "a: 1\n", "first")
+    (tmp_path / "history" / "home.yaml").write_text("a: 2\n", encoding="utf-8")
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+    assert [c.message for c in store.list_changes("home")] == ["second", "first"]
+
+
+def test_an_unchanged_snapshot_repairs_the_working_tree(store, tmp_path):
+    store.write_snapshot("home", "a: 1\n", "first")
+    (tmp_path / "history" / "home.yaml").write_text("tampered\n", encoding="utf-8")
+    assert store.write_snapshot("home", "a: 1\n", "again") is None
+    assert (tmp_path / "history" / "home.yaml").read_text(encoding="utf-8") == "a: 1\n"
+
+
+def test_parallel_writes_all_arrive(store):
+    # dulwich holds an exclusive lock on the git index. Without serialising,
+    # eight parallel writes let exactly one commit through.
+    def write(number):
+        store.write_snapshot(f"d{number}", f"n: {number}\n", f"commit {number}")
+
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert all(store.list_changes(f"d{i}") for i in range(8))
 ```
 
 - [ ] **Schritt 2: Tests laufen lassen, Fehlschlag bestätigen**
@@ -665,6 +786,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -704,11 +826,22 @@ class HistoryStore:
 
     def __init__(self, path) -> None:
         self.path = Path(path)
+        # dulwich takes an exclusive lock on the git index while it writes.
+        # Two dashboards saved in the same moment run in two executor
+        # threads; measured, eight parallel commits let exactly one through
+        # and the other seven raised FileLocked. Writes are serialised here
+        # rather than left to chance.
+        self._lock = threading.Lock()
 
     # -- writing -------------------------------------------------------
 
     def ensure(self) -> None:
         """Create the repository if it does not exist yet."""
+        with self._lock:
+            self._ensure()
+
+    def _ensure(self) -> None:
+        """Same, for callers that already hold the lock."""
         if (self.path / ".git").exists():
             return
         self.path.mkdir(parents=True, exist_ok=True)
@@ -717,29 +850,55 @@ class HistoryStore:
 
     def write_snapshot(self, key: str, text: str, message: str) -> str | None:
         """Record a state. Returns the revision, or None if nothing changed."""
-        self.ensure()
-        target = self.path / f"{key}.yaml"
-        if target.exists() and target.read_text(encoding="utf-8") == text:
-            return None
-        # Write through a temporary file: an interrupted run must not leave
-        # a truncated YAML behind that later looks like a real state.
+        with self._lock:
+            self._ensure()
+            target = self.path / f"{key}.yaml"
+
+            # Compare against the last commit, never against the file on
+            # disk. If an earlier run wrote the file but did not get to
+            # commit it, the file already carries the new text - comparing
+            # against it would drop that state from the history for good,
+            # and silently, which is the one failure this project must not
+            # have. Comparing against HEAD repairs such a gap by itself.
+            if self.read_at(key, "HEAD") == text:
+                # The repository is already right. Keep the working tree
+                # honest anyway: the README invites people to look inside.
+                if not target.exists() or target.read_text(encoding="utf-8") != text:
+                    self._write_file(target, text)
+                return None
+
+            self._write_file(target, text)
+            porcelain.add(str(self.path), [str(target)])
+            revision = porcelain.commit(
+                str(self.path),
+                message=message.encode("utf-8"),
+                author=_IDENTITY,
+                committer=_IDENTITY,
+            )
+            return _as_text(revision)
+
+    @staticmethod
+    def _write_file(target: Path, text: str) -> None:
+        """Write through a temporary file.
+
+        An interrupted run must not leave a truncated YAML behind that
+        later looks like a real state.
+        """
         temp = target.with_name(f"{target.name}.tmp")
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, target)
-        porcelain.add(str(self.path), [str(target)])
-        revision = porcelain.commit(
-            str(self.path),
-            message=message.encode("utf-8"),
-            author=_IDENTITY,
-            committer=_IDENTITY,
-        )
-        return _as_text(revision)
 
     def create_version(
         self, name: str, title: str, description: str, revision: str | None = None
     ) -> None:
         """Mark a point in the history with a name, title and description."""
-        self.ensure()
+        with self._lock:
+            self._ensure()
+            self._create_version(name, title, description, revision)
+
+    def _create_version(
+        self, name: str, title: str, description: str, revision: str | None
+    ) -> None:
         body = f"{title}\n\n{description}".encode("utf-8")
         porcelain.tag_create(
             str(self.path),
@@ -793,26 +952,34 @@ class HistoryStore:
         repo = self._repo()
         if repo is None:
             return []
-        versions: list[Version] = []
+        found: list[tuple[int, Version]] = []
         for ref in repo.refs.as_dict(b"refs/tags"):
             tag = repo[repo.refs[b"refs/tags/" + ref]]
-            message = tag.message.decode("utf-8")
+            if not hasattr(tag, "object"):
+                # A lightweight tag, made by hand. Not ours; skip it rather
+                # than crash on the missing fields.
+                continue
+            message = (tag.message or b"").decode("utf-8")
             title, _, description = message.partition("\n\n")
-            versions.append(
-                Version(
-                    name=ref.decode(),
-                    revision=_as_text(tag.object[1]),
-                    title=title.strip(),
-                    description=description.strip(),
+            found.append(
+                (
+                    tag.tag_time,
+                    Version(
+                        name=ref.decode(),
+                        revision=_as_text(tag.object[1]),
+                        title=title.strip(),
+                        description=description.strip(),
+                    ),
                 )
             )
-        return versions
+        # as_dict has no order of its own; the docstring promises one.
+        return [version for _, version in sorted(found, key=lambda p: -p[0])]
 ```
 
 - [ ] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/ -v`
-Erwartet: PASS, 19 Tests (9 aus Task 2 plus 10 neue)
+Erwartet: PASS, 32 Tests (19 aus Task 2 plus 13 neue)
 
 - [ ] **Schritt 5: Committen**
 
@@ -1150,7 +1317,9 @@ def summarize(old: dict, new: dict) -> Summary:
             removed += len(r)
             added += len(a)
             edited += len(e)
-            moved += len(m) * 2  # a swap moves two cards
+            # One entry per moved card already, so a swap contributes
+            # two. Multiplying would count each of them twice.
+            moved += len(m)
 
     old_keys = {key for key, _ in _views_by_key(old)}
     for key, new_view in _views_by_key(new):
@@ -1163,7 +1332,7 @@ def summarize(old: dict, new: dict) -> Summary:
 - [ ] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/ -v`
-Erwartet: PASS, 30 Tests
+Erwartet: PASS, 43 Tests
 
 - [ ] **Schritt 5: Committen**
 
@@ -1285,8 +1454,14 @@ old state to render a preview against.
 from __future__ import annotations
 
 import copy
+from typing import TYPE_CHECKING
 
-from .analyze import RemovedItem
+if TYPE_CHECKING:
+    # Only needed for the annotations, and `from __future__ import
+    # annotations` keeps those lazy. A real import would have to be
+    # relative inside the integration and absolute in the tests, which
+    # load this module flat - it cannot be both.
+    from .analyze import RemovedItem
 
 
 def _find_view(views: list, item: RemovedItem) -> dict | None:
@@ -1353,7 +1528,7 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
 - [ ] **Schritt 4: Tests laufen lassen, Erfolg bestätigen**
 
 Ausführen: `python3 -m pytest tests/ -v`
-Erwartet: PASS, 36 Tests
+Erwartet: PASS, 49 Tests
 
 - [ ] **Schritt 5: Committen**
 
@@ -1516,10 +1691,17 @@ In `__init__.py` `async_setup_entry` erweitern, sodass Speicher und Erfassung an
     from .store import HistoryStore
 
     store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
-    await hass.async_add_executor_job(store.ensure)
     capture = HistoryCapture(hass, store)
-    await capture.async_start()
     hass.data[DOMAIN] = {"store": store, "capture": capture}
+
+    # Guarded, because the hard rule says so: a repository that cannot be
+    # created - a read-only configuration folder, a full disk - costs the
+    # history, and nothing else. It must not cost the start.
+    try:
+        await hass.async_add_executor_job(store.ensure)
+        await capture.async_start()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Dashboard History could not start recording")
 ```
 
 - [ ] **Schritt 3: Live prüfen**
@@ -1563,7 +1745,8 @@ MSG
 
 **Interfaces:**
 - Consumes: alles Bisherige
-- Produces: fünf Dienste in der Domäne `dashboard_history`
+- Produces: sechs Dienste in der Domäne `dashboard_history` — zusammen mit
+  `debug_snapshot` aus Task 1 sind es sieben
 
 - [ ] **Schritt 1: Schreibzugriff ergänzen**
 
@@ -1685,7 +1868,13 @@ async def async_register(hass: HomeAssistant) -> None:
                 "applied": False,
                 "error": f"position {position} out of range (0..{len(items) - 1})",
             }
-        restored = reinsert(current, items[position])
+        try:
+            restored = reinsert(current, items[position])
+        except LookupError as err:
+            # The place it belonged to is gone. Every other failure here
+            # answers with a message rather than an exception; this one
+            # should too, or the developer tools show a bare traceback.
+            return {"applied": False, "error": str(err)}
         diff = _diff(current, restored, key)
         if not call.data.get("confirm"):
             return {"applied": False, "preview": diff}

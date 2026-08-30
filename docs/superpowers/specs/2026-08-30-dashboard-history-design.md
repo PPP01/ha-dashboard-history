@@ -27,6 +27,8 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 | Die C-Teile von `dulwich` sind optional | reine Geschwindigkeitszugaben, kein Muss |
 | Zielumgebung | HA 2026.8.3, HACS 2.0.5, Container-Python 3.14.6 |
 | Größtes Dashboard | `energie_2`: 570 KB als Storage-JSON, 268 KB als YAML |
+| Zahl der Dashboards | zehn registrierte, dazu das noch unbenutzte Standard-Dashboard |
+| Dashboard-`id` und `url_path` sind verschieden | `id=energie_2` gegen `url_path=energie-2`; die Ablage folgt dem `url_path` |
 | Commit-Dauer, gemessen an diesem Dashboard | System-`git` 15,3 ms · dulwich 30,6 ms (mit C-Teilen) · dulwich 29,5 ms (rein Python) |
 | Platzbedarf, gemessen | 20 Stände desselben Dashboards: 0,54 MB mit dulwich, 0,76 MB mit System-`git` — rund 27 KB je Stand |
 
@@ -109,7 +111,7 @@ Zurueckholen
 
 | Fall | Verhalten |
 |---|---|
-| Zwei Speichervorgänge kurz hintereinander | Zwei Commits. Kein Entprellen nötig, weil es kein Dateirennen gibt |
+| Zwei Speichervorgänge kurz hintereinander | Zwei Commits. Kein Entprellen nötig, weil es kein Dateirennen gibt. Der git-Index verträgt aber keine zwei Schreiber gleichzeitig — gemessen kam von acht parallelen Commits genau einer an, die übrigen scheiterten an `FileLocked`. Die Ablage serialisiert deshalb intern |
 | Speichern ohne inhaltliche Änderung | Kein Commit |
 | Wohin mit einer zurückgeholten Karte? | An ihre alte Position, falls der View noch so viele Karten hat, sonst ans Ende — immer mit Vorschau |
 | Änderung an Home Assistant vorbei (Backup eingespielt, `.storage` von Hand bearbeitet) | Beim Start Abgleich gegen den letzten Commit; bei Abweichung ein Commit »außerhalb erfasst«. Eine unsichtbare Lücke wäre schlimmer als keine Historie, weil man ihr vertraut |
@@ -134,7 +136,7 @@ Herzstück sind die Einordnungs-Tests — von ihnen hängt alles ab.
 | Umkehrung bei geschrumpftem View | fügt ans Ende an, statt zu scheitern |
 | Round-Trip | Konfiguration → YAML → Konfiguration ist verlustfrei |
 | Determinismus | zweimal ablegen ergibt denselben Inhalt, also keinen Commit |
-| Realdaten | zwölf echte Dashboards durch den Round-Trip |
+| Realdaten | zehn echte Dashboards durch den Round-Trip |
 | Speicheroperationen | Commit, Verlauf, alter Stand, Markierung gegen Wegwerf-Verzeichnisse |
 
 Die drei Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Installation.
