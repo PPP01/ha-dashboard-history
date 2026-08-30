@@ -126,9 +126,27 @@ data:
   dashboard: the-deleted-one
 ```
 
-Putting a deleted dashboard *back* is not automated in this version. By hand
-it works: create a dashboard with the same `url_path` again, then use
-`restore_state` with a revision from before the deletion.
+**And it comes back.** `restore_state` with a revision from before the
+deletion recreates the dashboard — with its old title, icon and sidebar
+setting, not just its cards:
+
+```yaml
+action: dashboard_history.restore_state
+data:
+  dashboard: the-deleted-one
+  revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
+  confirm: true
+```
+
+Without `confirm` you get the preview and a `creates_dashboard: true` flag,
+and nothing is written.
+
+A dashboard is created through Home Assistant's dashboard registry, which
+is not a guaranteed extension point. So the two halves are graded
+differently: writing the registry entry and the configuration must work,
+and does. Whether the dashboard also appears in the sidebar *without a
+restart* is a bonus — if that part fails, the response says so and a
+restart finishes the job. Either way the dashboard is back.
 
 ## Where the data lives
 

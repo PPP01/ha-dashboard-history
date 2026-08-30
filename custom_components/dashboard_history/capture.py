@@ -17,7 +17,12 @@ from homeassistant.core import Event, HomeAssistant, callback
 
 from .analyze import summarize
 from .const import EVENT_LOVELACE_UPDATED
-from .snapshot import async_get_all_configs, async_known_keys, dashboard_key
+from .snapshot import (
+    async_get_all_configs,
+    async_get_all_meta,
+    async_known_keys,
+    dashboard_key,
+)
 from .store import HistoryStore
 from .yaml_io import dump, load
 
@@ -66,6 +71,12 @@ class HistoryCapture:
         if key is not None:
             configs = {k: v for k, v in configs.items() if k == key}
 
+        try:
+            metas = await async_get_all_meta(self._hass)
+        except Exception:  # noqa: BLE001 - metadata is a bonus, not the point
+            _LOGGER.exception("Could not read dashboard metadata")
+            metas = {}
+
         revisions: list[str] = []
         if key is None:
             try:
@@ -75,7 +86,7 @@ class HistoryCapture:
         for name, config in sorted(configs.items()):
             try:
                 revision = await self._hass.async_add_executor_job(
-                    self._write_one, name, config, reason
+                    self._write_one, name, config, reason, metas.get(name)
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Could not record dashboard %s", name)
@@ -115,12 +126,16 @@ class HistoryCapture:
                 revisions.append(revision)
         return revisions
 
-    def _write_one(self, name: str, config: dict, reason: str) -> str | None:
+    def _write_one(
+        self, name: str, config: dict, reason: str, meta: dict | None = None
+    ) -> str | None:
         """Blocking part: build the message and write. Runs in an executor."""
         text = dump(config)
         previous = self._store.read_at(name, "HEAD") if self._has_history(name) else None
         message = self._build_message(name, config, previous, reason)
-        return self._store.write_snapshot(name, text, message)
+        return self._store.write_snapshot(
+            name, text, message, dump(meta) if meta else None
+        )
 
     def _has_history(self, name: str) -> bool:
         return bool(self._store.list_changes(name, limit=1))

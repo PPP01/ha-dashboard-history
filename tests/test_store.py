@@ -95,6 +95,38 @@ def test_a_version_resolves_to_the_commit_it_marks(store):
     assert store.resolve(tag.id.decode()) == first
 
 
+def test_metadata_travels_with_the_state(store):
+    first = store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    assert store.read_meta_at("home", first) == "title: Home\n"
+    assert store.read_at("home", first) == "a: 1\n"
+
+
+def test_changed_metadata_alone_creates_a_revision(store):
+    # Renaming a dashboard changes nothing about its cards. Without this it
+    # would leave no trace, and a restore would bring back the old name.
+    store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    second = store.write_snapshot("home", "a: 1\n", "renamed", meta="title: Kitchen\n")
+    assert second is not None
+    assert store.read_meta_at("home", second) == "title: Kitchen\n"
+
+
+def test_unchanged_state_and_metadata_create_nothing(store):
+    store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    assert store.write_snapshot("home", "a: 1\n", "again", meta="title: Home\n") is None
+
+
+def test_metadata_is_not_mistaken_for_a_dashboard(store):
+    store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    assert store.list_dashboards() == ["home"]
+
+
+def test_deleting_a_dashboard_takes_its_metadata_with_it(store):
+    first = store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    store.mark_deleted("home", "home: dashboard deleted")
+    assert store.read_meta_at("home", "HEAD") is None
+    assert store.read_meta_at("home", first) == "title: Home\n"
+
+
 def test_a_deleted_dashboard_is_marked_and_stays_readable(store):
     # Deleting a whole dashboard is the heaviest loss there is, and Home
     # Assistant announces it with no event at all. Leaving no trace would

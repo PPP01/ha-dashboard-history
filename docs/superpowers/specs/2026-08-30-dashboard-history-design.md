@@ -35,6 +35,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 ## Nicht-Ziele (YAGNI)
 
 - **Kein Panel und kein Eintrag im ⋮-Menü.** Beides sind eigene Vorhaben; siehe »Reihenfolge«.
+- ~~Kein Wiederanlegen gelöschter Dashboards.~~ **Am 2026-08-30 in den Umfang genommen**, siehe Entscheidung 8.
 - **Keine Einzelrücknahme von Bearbeitungen** in dieser Fassung. Das Datenmodell hält die Tür offen, gebaut wird sie später.
   - **Erkannt werden Bearbeitungen und Umsortierungen trotzdem, von Anfang an.** Das ist kein Widerspruch, sondern Voraussetzung: Hielte `analyze.py` eine bearbeitete Karte für »gelöscht und neu hinzugefügt«, böte die Oberfläche an, etwas wiederherzustellen, das gar nicht fehlt. Ein solcher Fehlalarm ist schlimmer als eine fehlende Funktion — er untergräbt das Vertrauen in genau die Meldung, derentwegen man das Werkzeug öffnet.
 - **Kein »von wem«.** Home Assistant feuert `lovelace_updated` ohne Kontext, der Benutzer ist an dieser Stelle nicht mehr bekannt. Der einzige saubere Weg ist ein Beitrag an HA Core; bis dahin bleibt das Merkmal weg. Ein Abfangen des WebSocket-Befehls wird **ausgeschlossen** — es ist ein Vertrag ohne Zusicherung und träfe bei einer Veröffentlichung alle Nutzer gleichzeitig.
@@ -107,6 +108,14 @@ Zurueckholen
 
 7. **Nichts wird ohne Vorschau geschrieben.** Jede Wiederherstellung zeigt zuerst den Diff. Derselbe Grundsatz wie beim bestehenden Restore-Werkzeug.
 
+8. **Ein gelöschtes Dashboard wird wiederhergestellt, nicht nur betrauert.** *(Nachgetragen am 2026-08-30. Ursprünglich stand das Wiederanlegen außerhalb dieser Fassung.)*
+
+   Das war falsch herum gedacht. Der schwerste Verlust, den dieses Werkzeug bezeugen kann, wäre dann der einzige gewesen, den es nicht rückgängig machen kann — während es für eine einzelne Karte alles bietet. Wer ein Dashboard löscht, verliert Hunderte Karten auf einmal.
+
+   Der Preis ist bekannt und wird bewusst gezahlt: Ein Dashboard entsteht nur über die Dashboard-Sammlung von Home Assistant, und die ist kein zugesicherter Erweiterungspunkt. Deshalb gilt hier eine Trennung, die der Rest der Integration nicht braucht: **Das Dauerhafte muss gelingen, das Sofortige darf scheitern.** Registry-Eintrag und Konfiguration werden geschrieben; ob das Dashboard auch ohne Neustart in der Seitenleiste erscheint, ist Kür. Misslingt die Kür, wird das gemeldet, und ein Neustart genügt — der Verlust ist dann trotzdem behoben.
+
+   Damit ein Dashboard *vollständig* wiederkehrt, werden ab dieser Fassung auch Titel, Symbol und Sichtbarkeit erfasst, nicht nur die Kartenkonfiguration. Sie liegen unter `meta/<schlüssel>.yaml` im selben Commit. Ein Dashboard mit richtigen Karten, aber falschem Namen wäre nur eine halbe Wiederherstellung.
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
@@ -118,7 +127,7 @@ Zurueckholen
 | Erststart | Ein Commit mit dem Ist-Zustand aller Dashboards als Nullpunkt |
 | Repository fehlt oder ist beschädigt | Neu anlegen, protokollieren, weiterarbeiten |
 | Fehler beim Erfassen | Wird protokolliert und darf **niemals** den Start von Home Assistant aufhalten oder ein Speichern verhindern |
-| Dashboard gelöscht | Beim nächsten Abgleich als Commit »dashboard deleted« festgehalten. Die Datei verlässt den Baum, wie eine gelöschte Datei es in git tut — jeder frühere Stand bleibt über seine Revision lesbar, und die Löschung erscheint im Verlauf **dieses** Dashboards statt nirgends. Home Assistant meldet eine Dashboard-Löschung mit keinem Ereignis, sie fällt deshalb erst beim Vergleich auf. Ein fehlender *Konfigurationsstand* zählt ausdrücklich **nicht** als Löschung — ein nie gespeichertes Dashboard hat auch keinen. Das Wiederanlegen bleibt außerhalb dieser Fassung; von Hand geht es: Dashboard mit demselben `url_path` neu anlegen, dann `restore_state` |
+| Dashboard gelöscht | Beim nächsten Abgleich als Commit »dashboard deleted« festgehalten. Die Datei verlässt den Baum, wie eine gelöschte Datei es in git tut — jeder frühere Stand bleibt über seine Revision lesbar, und die Löschung erscheint im Verlauf **dieses** Dashboards statt nirgends. Home Assistant meldet eine Dashboard-Löschung mit keinem Ereignis, sie fällt deshalb erst beim Vergleich auf. Ein fehlender *Konfigurationsstand* zählt ausdrücklich **nicht** als Löschung — ein nie gespeichertes Dashboard hat auch keinen. **Das Wiederanlegen gehört zu dieser Fassung** — siehe Entscheidung 8 |
 | Ein anderes Dashboard bekommt später denselben `url_path` | Der Löschvermerk zieht die Trennlinie: Da HEAD die Datei nicht mehr führt, beginnt das neue Dashboard ein eigenes Kapitel, statt einen riesigen Diff gegen einen Fremden zu erzeugen |
 | Sehr große Dashboards | `energie_2` ist 268 KB als YAML. Gemessen: 20 Stände belegen 0,54 MB, also rund 27 KB je Stand — hundert Änderungen wären knapp 3 MB |
 

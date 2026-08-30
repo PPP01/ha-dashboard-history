@@ -77,8 +77,9 @@ restore_state:
   name: Restore a whole state
   description: >-
     Set a dashboard back to the state it had at the given revision. This
-    discards everything changed since. Without confirm, only a preview of
-    the change is returned.
+    discards everything changed since. If the dashboard was deleted
+    entirely, it is recreated with its old title and icon. Without
+    confirm, only a preview of the change is returned.
   fields:
     dashboard:
       required: true

@@ -19,7 +19,12 @@ from homeassistant.helpers import config_validation as cv
 from .analyze import find_removed
 from .const import DOMAIN
 from .restore import reinsert
-from .snapshot import async_get_config, async_save_config
+from .snapshot import (
+    async_create_dashboard,
+    async_get_config,
+    async_known_keys,
+    async_save_config,
+)
 from .yaml_io import dump, load
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,7 +49,9 @@ async def async_register(hass: HomeAssistant) -> None:
     data = hass.data[DOMAIN]
     store = data["store"]
 
-    async def _state_at(key: str, revision: str) -> tuple[str | None, str | None]:
+    async def _state_at(
+        key: str, revision: str
+    ) -> tuple[str | None, str | None, str | None]:
         """The dashboard text at a revision, or a message saying why not.
 
         The two failures are told apart on purpose. "Unknown revision" is a
@@ -56,11 +63,11 @@ async def async_register(hass: HomeAssistant) -> None:
         """
         full = await hass.async_add_executor_job(store.resolve, revision)
         if full is None:
-            return None, f"unknown revision: {revision}"
+            return None, None, f"unknown revision: {revision}"
         text = await hass.async_add_executor_job(store.read_at, key, full)
         if text is None:
-            return None, f"{key} did not exist at {full[:10]}"
-        return text, None
+            return full, None, f"{key} did not exist at {full[:10]}"
+        return full, text, None
 
     async def history(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
@@ -75,7 +82,7 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def deleted_since(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        text, error = await _state_at(key, call.data["revision"])
+        _, text, error = await _state_at(key, call.data["revision"])
         if error is not None:
             return {"items": [], "error": error}
         current = await async_get_config(hass, key) or {}
@@ -95,7 +102,7 @@ async def async_register(hass: HomeAssistant) -> None:
     async def restore_deleted(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
         position = call.data["position"]
-        text, error = await _state_at(key, call.data["revision"])
+        _, text, error = await _state_at(key, call.data["revision"])
         if error is not None:
             return {"applied": False, "error": error}
         current = await async_get_config(hass, key) or {}
@@ -122,18 +129,36 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def restore_state(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        text, error = await _state_at(key, call.data["revision"])
+        full, text, error = await _state_at(key, call.data["revision"])
         if error is not None:
             return {"applied": False, "error": error}
         target = load(text) or {}
-        current = await async_get_config(hass, key) or {}
+
+        # A dashboard that is gone entirely is restored, not refused. It is
+        # the heaviest loss this tool can witness; refusing exactly there
+        # while offering everything for a single card made no sense.
+        known = await async_known_keys(hass)
+        missing = known is not None and key not in known
+        current = {} if missing else (await async_get_config(hass, key) or {})
         diff = _diff(current, target, key)
-        if not diff:
+        if not diff and not missing:
             return {"applied": False, "preview": "", "note": "already identical"}
         if not call.data.get("confirm"):
-            return {"applied": False, "preview": diff}
+            return {"applied": False, "preview": diff, "creates_dashboard": missing}
+
+        created = False
+        live = True
+        if missing:
+            meta_text = await hass.async_add_executor_job(
+                store.read_meta_at, key, full
+            )
+            live = await async_create_dashboard(hass, key, load(meta_text) or {})
+            created = True
         await async_save_config(hass, key, target)
-        return {"applied": True, "preview": diff}
+        result = {"applied": True, "preview": diff, "created": created}
+        if created and not live:
+            result["note"] = "restart Home Assistant to see it in the sidebar"
+        return result
 
     async def create_version(call: ServiceCall) -> dict:
         revision = call.data.get("revision")

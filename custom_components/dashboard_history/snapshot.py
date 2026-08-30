@@ -136,6 +136,114 @@ async def _async_get_all_configs_from_storage(hass: HomeAssistant) -> dict[str, 
     return result
 
 
+_META_FIELDS = ("title", "icon", "show_in_sidebar", "require_admin")
+
+
+async def async_get_all_meta(hass: HomeAssistant) -> dict[str, dict]:
+    """What each dashboard *is*, as opposed to what is on it.
+
+    Title, icon and visibility live in Home Assistant's dashboard
+    registry, not in the configuration. Bringing a deleted dashboard back
+    without them would return the cards under a wrong name.
+    """
+    dashboards = _lovelace_dashboards(hass)
+    if dashboards is None:
+        return {}
+    result: dict[str, dict] = {}
+    for url_path, dashboard in dashboards.items():
+        item = getattr(dashboard, "config", None)
+        if not isinstance(item, dict):
+            # The default dashboard has no registry entry of its own.
+            continue
+        result[dashboard_key(url_path)] = {
+            field: item[field] for field in _META_FIELDS if field in item
+        }
+    return result
+
+
+def _dashboards_collection(hass: HomeAssistant):
+    """Home Assistant's live dashboard collection, if it can be reached.
+
+    Creating through the live collection is much the better path: Home
+    Assistant's own listener then registers the panel and builds the
+    dashboard object, and nothing here has to imitate it.
+    """
+    data = hass.data.get(LOVELACE_DATA_KEY)
+    for name in ("dashboards_collection", "dashboard_collection", "collection"):
+        candidate = getattr(data, name, None)
+        if candidate is not None and hasattr(candidate, "async_create_item"):
+            return candidate
+    return None
+
+
+async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> bool:
+    """Recreate a deleted dashboard. Returns whether it is usable at once.
+
+    Two steps, graded differently on purpose. Writing the registry entry
+    **must** succeed - without it the dashboard does not exist and the
+    restore has failed, so a failure here is raised. Making it appear
+    without a restart is the bonus: it needs objects Home Assistant
+    promises nobody, so it is attempted and its failure is only reported.
+    A dashboard that comes back after a restart is a restored dashboard.
+    """
+    from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
+        DashboardsCollection,
+    )
+
+    item = {
+        "url_path": key,
+        "title": meta.get("title") or key,
+        "show_in_sidebar": meta.get("show_in_sidebar", True),
+        "require_admin": meta.get("require_admin", False),
+    }
+    if meta.get("icon"):
+        item["icon"] = meta["icon"]
+
+    live = _dashboards_collection(hass)
+    if live is not None:
+        await live.async_create_item(item)
+        return True
+
+    # No reachable collection: write the entry through one of our own, then
+    # imitate what Home Assistant's listener would have done.
+    collection = DashboardsCollection(hass)
+    await collection.async_load()
+    created = await collection.async_create_item(item)
+    return await _async_make_live(hass, key, created or item)
+
+
+async def _async_make_live(hass: HomeAssistant, key: str, item: dict) -> bool:
+    """Best effort: make a recreated dashboard usable without a restart."""
+    try:
+        from homeassistant.components.frontend import (  # noqa: PLC0415
+            async_register_built_in_panel,
+        )
+        from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
+            LovelaceStorage,
+        )
+
+        dashboards = _lovelace_dashboards(hass)
+        if dashboards is None:
+            return False
+        dashboards[item["url_path"]] = LovelaceStorage(hass, item)
+        kwargs: dict = {
+            "frontend_url_path": item["url_path"],
+            "require_admin": item.get("require_admin", False),
+            "config": {"mode": MODE_STORAGE},
+            "update": False,
+        }
+        if item.get("show_in_sidebar", True):
+            kwargs["sidebar_title"] = item.get("title") or key
+            kwargs["sidebar_icon"] = item.get("icon")
+        async_register_built_in_panel(hass, LOVELACE_DATA_KEY, **kwargs)
+    except Exception:  # noqa: BLE001 - the durable part already succeeded
+        _LOGGER.exception(
+            "Dashboard %s was restored but needs a restart to appear", key
+        )
+        return False
+    return True
+
+
 async def async_save_config(hass: HomeAssistant, key: str, config: dict) -> None:
     """Write a configuration back into a live dashboard.
 

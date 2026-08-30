@@ -875,11 +875,20 @@ class HistoryStore:
         porcelain.init(str(self.path))
         _LOGGER.info("Created dashboard history repository at %s", self.path)
 
-    def write_snapshot(self, key: str, text: str, message: str) -> str | None:
-        """Record a state. Returns the revision, or None if nothing changed."""
+    def write_snapshot(
+        self, key: str, text: str, message: str, meta: str | None = None
+    ) -> str | None:
+        """Record a state. Returns the revision, or None if nothing changed.
+
+        `meta` carries what the dashboard *is*, as opposed to what is on
+        it: title, icon, visibility. It travels in the same commit,
+        because a dashboard brought back with the right cards under the
+        wrong name is only half brought back.
+        """
         with self._lock:
             self._ensure()
             target = self.path / f"{key}.yaml"
+            meta_target = self.path / "meta" / f"{key}.yaml"
 
             # Compare against the last commit, never against the file on
             # disk. If an earlier run wrote the file but did not get to
@@ -887,15 +896,22 @@ class HistoryStore:
             # against it would drop that state from the history for good,
             # and silently, which is the one failure this project must not
             # have. Comparing against HEAD repairs such a gap by itself.
-            if self.read_at(key, "HEAD") == text:
+            if self.read_at(key, "HEAD") == text and (
+                meta is None or self.read_meta_at(key, "HEAD") == meta
+            ):
                 # The repository is already right. Keep the working tree
                 # honest anyway: the README invites people to look inside.
-                if not target.exists() or target.read_text(encoding="utf-8") != text:
-                    self._write_file(target, text)
+                self._write_if_stale(target, text)
+                if meta is not None:
+                    self._write_if_stale(meta_target, meta)
                 return None
 
+            paths = [target]
             self._write_file(target, text)
-            porcelain.add(str(self.path), [str(target)])
+            if meta is not None:
+                self._write_file(meta_target, meta)
+                paths.append(meta_target)
+            porcelain.add(str(self.path), [str(path) for path in paths])
             revision = porcelain.commit(
                 str(self.path),
                 message=message.encode("utf-8"),
@@ -911,9 +927,15 @@ class HistoryStore:
         An interrupted run must not leave a truncated YAML behind that
         later looks like a real state.
         """
+        target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name(f"{target.name}.tmp")
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, target)
+
+    @classmethod
+    def _write_if_stale(cls, target: Path, text: str) -> None:
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
+            cls._write_file(target, text)
 
     def mark_deleted(self, key: str, message: str) -> str | None:
         """Record that a dashboard is gone. Returns the revision, or None.
@@ -934,7 +956,10 @@ class HistoryStore:
             if self.read_at(key, "HEAD") is None:
                 # Never recorded, or already marked deleted.
                 return None
-            porcelain.remove(str(self.path), [str(self.path / f"{key}.yaml")])
+            paths = [self.path / f"{key}.yaml"]
+            if self.read_meta_at(key, "HEAD") is not None:
+                paths.append(self.path / "meta" / f"{key}.yaml")
+            porcelain.remove(str(self.path), [str(path) for path in paths])
             revision = porcelain.commit(
                 str(self.path),
                 message=message.encode("utf-8"),
@@ -1037,6 +1062,13 @@ class HistoryStore:
         must tell those apart with `resolve`; conflating them sends people
         looking for a fault in their dashboard instead of in their input.
         """
+        return self._read(f"{key}.yaml", revision)
+
+    def read_meta_at(self, key: str, revision: str) -> str | None:
+        """What a dashboard *was* at a revision: title, icon, visibility."""
+        return self._read(f"meta/{key}.yaml", revision)
+
+    def _read(self, path: str, revision: str) -> str | None:
         repo = self._repo()
         if repo is None:
             return None
@@ -1045,7 +1077,7 @@ class HistoryStore:
             return None
         try:
             tree = repo[repo[resolved.encode()].tree]
-            _, blob_id = tree.lookup_path(repo.get_object, f"{key}.yaml".encode())
+            _, blob_id = tree.lookup_path(repo.get_object, path.encode())
         except KeyError:
             return None
         return repo[blob_id].data.decode("utf-8")
@@ -1819,7 +1851,12 @@ from homeassistant.core import Event, HomeAssistant, callback
 
 from .analyze import summarize
 from .const import EVENT_LOVELACE_UPDATED
-from .snapshot import async_get_all_configs, async_known_keys, dashboard_key
+from .snapshot import (
+    async_get_all_configs,
+    async_get_all_meta,
+    async_known_keys,
+    dashboard_key,
+)
 from .store import HistoryStore
 from .yaml_io import dump, load
 
@@ -1868,6 +1905,12 @@ class HistoryCapture:
         if key is not None:
             configs = {k: v for k, v in configs.items() if k == key}
 
+        try:
+            metas = await async_get_all_meta(self._hass)
+        except Exception:  # noqa: BLE001 - metadata is a bonus, not the point
+            _LOGGER.exception("Could not read dashboard metadata")
+            metas = {}
+
         revisions: list[str] = []
         if key is None:
             try:
@@ -1877,7 +1920,7 @@ class HistoryCapture:
         for name, config in sorted(configs.items()):
             try:
                 revision = await self._hass.async_add_executor_job(
-                    self._write_one, name, config, reason
+                    self._write_one, name, config, reason, metas.get(name)
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Could not record dashboard %s", name)
@@ -1917,12 +1960,16 @@ class HistoryCapture:
                 revisions.append(revision)
         return revisions
 
-    def _write_one(self, name: str, config: dict, reason: str) -> str | None:
+    def _write_one(
+        self, name: str, config: dict, reason: str, meta: dict | None = None
+    ) -> str | None:
         """Blocking part: build the message and write. Runs in an executor."""
         text = dump(config)
         previous = self._store.read_at(name, "HEAD") if self._has_history(name) else None
         message = self._build_message(name, config, previous, reason)
-        return self._store.write_snapshot(name, text, message)
+        return self._store.write_snapshot(
+            name, text, message, dump(meta) if meta else None
+        )
 
     def _has_history(self, name: str) -> bool:
         return bool(self._store.list_changes(name, limit=1))
@@ -2022,6 +2069,114 @@ MSG
 An `snapshot.py` anhängen:
 
 ```python
+_META_FIELDS = ("title", "icon", "show_in_sidebar", "require_admin")
+
+
+async def async_get_all_meta(hass: HomeAssistant) -> dict[str, dict]:
+    """What each dashboard *is*, as opposed to what is on it.
+
+    Title, icon and visibility live in Home Assistant's dashboard
+    registry, not in the configuration. Bringing a deleted dashboard back
+    without them would return the cards under a wrong name.
+    """
+    dashboards = _lovelace_dashboards(hass)
+    if dashboards is None:
+        return {}
+    result: dict[str, dict] = {}
+    for url_path, dashboard in dashboards.items():
+        item = getattr(dashboard, "config", None)
+        if not isinstance(item, dict):
+            # The default dashboard has no registry entry of its own.
+            continue
+        result[dashboard_key(url_path)] = {
+            field: item[field] for field in _META_FIELDS if field in item
+        }
+    return result
+
+
+def _dashboards_collection(hass: HomeAssistant):
+    """Home Assistant's live dashboard collection, if it can be reached.
+
+    Creating through the live collection is much the better path: Home
+    Assistant's own listener then registers the panel and builds the
+    dashboard object, and nothing here has to imitate it.
+    """
+    data = hass.data.get(LOVELACE_DATA_KEY)
+    for name in ("dashboards_collection", "dashboard_collection", "collection"):
+        candidate = getattr(data, name, None)
+        if candidate is not None and hasattr(candidate, "async_create_item"):
+            return candidate
+    return None
+
+
+async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> bool:
+    """Recreate a deleted dashboard. Returns whether it is usable at once.
+
+    Two steps, graded differently on purpose. Writing the registry entry
+    **must** succeed - without it the dashboard does not exist and the
+    restore has failed, so a failure here is raised. Making it appear
+    without a restart is the bonus: it needs objects Home Assistant
+    promises nobody, so it is attempted and its failure is only reported.
+    A dashboard that comes back after a restart is a restored dashboard.
+    """
+    from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
+        DashboardsCollection,
+    )
+
+    item = {
+        "url_path": key,
+        "title": meta.get("title") or key,
+        "show_in_sidebar": meta.get("show_in_sidebar", True),
+        "require_admin": meta.get("require_admin", False),
+    }
+    if meta.get("icon"):
+        item["icon"] = meta["icon"]
+
+    live = _dashboards_collection(hass)
+    if live is not None:
+        await live.async_create_item(item)
+        return True
+
+    # No reachable collection: write the entry through one of our own, then
+    # imitate what Home Assistant's listener would have done.
+    collection = DashboardsCollection(hass)
+    await collection.async_load()
+    created = await collection.async_create_item(item)
+    return await _async_make_live(hass, key, created or item)
+
+
+async def _async_make_live(hass: HomeAssistant, key: str, item: dict) -> bool:
+    """Best effort: make a recreated dashboard usable without a restart."""
+    try:
+        from homeassistant.components.frontend import (  # noqa: PLC0415
+            async_register_built_in_panel,
+        )
+        from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
+            LovelaceStorage,
+        )
+
+        dashboards = _lovelace_dashboards(hass)
+        if dashboards is None:
+            return False
+        dashboards[item["url_path"]] = LovelaceStorage(hass, item)
+        kwargs: dict = {
+            "frontend_url_path": item["url_path"],
+            "require_admin": item.get("require_admin", False),
+            "config": {"mode": MODE_STORAGE},
+            "update": False,
+        }
+        if item.get("show_in_sidebar", True):
+            kwargs["sidebar_title"] = item.get("title") or key
+            kwargs["sidebar_icon"] = item.get("icon")
+        async_register_built_in_panel(hass, LOVELACE_DATA_KEY, **kwargs)
+    except Exception:  # noqa: BLE001 - the durable part already succeeded
+        _LOGGER.exception(
+            "Dashboard %s was restored but needs a restart to appear", key
+        )
+        return False
+    return True
+
+
 async def async_save_config(hass: HomeAssistant, key: str, config: dict) -> None:
     """Write a configuration back into a live dashboard.
 
@@ -2067,7 +2222,12 @@ from homeassistant.helpers import config_validation as cv
 from .analyze import find_removed
 from .const import DOMAIN
 from .restore import reinsert
-from .snapshot import async_get_config, async_save_config
+from .snapshot import (
+    async_create_dashboard,
+    async_get_config,
+    async_known_keys,
+    async_save_config,
+)
 from .yaml_io import dump, load
 
 _LOGGER = logging.getLogger(__name__)
@@ -2092,7 +2252,9 @@ async def async_register(hass: HomeAssistant) -> None:
     data = hass.data[DOMAIN]
     store = data["store"]
 
-    async def _state_at(key: str, revision: str) -> tuple[str | None, str | None]:
+    async def _state_at(
+        key: str, revision: str
+    ) -> tuple[str | None, str | None, str | None]:
         """The dashboard text at a revision, or a message saying why not.
 
         The two failures are told apart on purpose. "Unknown revision" is a
@@ -2104,11 +2266,11 @@ async def async_register(hass: HomeAssistant) -> None:
         """
         full = await hass.async_add_executor_job(store.resolve, revision)
         if full is None:
-            return None, f"unknown revision: {revision}"
+            return None, None, f"unknown revision: {revision}"
         text = await hass.async_add_executor_job(store.read_at, key, full)
         if text is None:
-            return None, f"{key} did not exist at {full[:10]}"
-        return text, None
+            return full, None, f"{key} did not exist at {full[:10]}"
+        return full, text, None
 
     async def history(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
@@ -2123,7 +2285,7 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def deleted_since(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        text, error = await _state_at(key, call.data["revision"])
+        _, text, error = await _state_at(key, call.data["revision"])
         if error is not None:
             return {"items": [], "error": error}
         current = await async_get_config(hass, key) or {}
@@ -2143,7 +2305,7 @@ async def async_register(hass: HomeAssistant) -> None:
     async def restore_deleted(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
         position = call.data["position"]
-        text, error = await _state_at(key, call.data["revision"])
+        _, text, error = await _state_at(key, call.data["revision"])
         if error is not None:
             return {"applied": False, "error": error}
         current = await async_get_config(hass, key) or {}
@@ -2171,18 +2333,36 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def restore_state(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        text, error = await _state_at(key, call.data["revision"])
+        full, text, error = await _state_at(key, call.data["revision"])
         if error is not None:
             return {"applied": False, "error": error}
         target = load(text) or {}
-        current = await async_get_config(hass, key) or {}
+
+        # A dashboard that is gone entirely is restored, not refused. It is
+        # the heaviest loss this tool can witness; refusing exactly there
+        # while offering everything for a single card made no sense.
+        known = await async_known_keys(hass)
+        missing = known is not None and key not in known
+        current = {} if missing else (await async_get_config(hass, key) or {})
         diff = _diff(current, target, key)
-        if not diff:
+        if not diff and not missing:
             return {"applied": False, "preview": "", "note": "already identical"}
         if not call.data.get("confirm"):
-            return {"applied": False, "preview": diff}
+            return {"applied": False, "preview": diff, "creates_dashboard": missing}
+
+        created = False
+        live = True
+        if missing:
+            meta_text = await hass.async_add_executor_job(
+                store.read_meta_at, key, full
+            )
+            live = await async_create_dashboard(hass, key, load(meta_text) or {})
+            created = True
         await async_save_config(hass, key, target)
-        return {"applied": True, "preview": diff}
+        result = {"applied": True, "preview": diff, "created": created}
+        if created and not live:
+            result["note"] = "restart Home Assistant to see it in the sidebar"
+        return result
 
     async def create_version(call: ServiceCall) -> dict:
         revision = call.data.get("revision")
@@ -2505,10 +2685,11 @@ beantworten, wird **nichts** vermerkt statt alles.
   aber die Oberfläche muss die Stolperstelle gar nicht erst nachbauen: Dort
   klickt man auf die Änderung (»diese Löschung rückgängig«), nicht auf einen
   Zustand.
-- [ ] **Wiederanlegen eines gelöschten Dashboards.** Bleibt laut Spec
-  außerhalb dieser Fassung und braucht einen Eintrag in der
-  Dashboard-Registry, nicht nur `async_save`. Von Hand geht es; im README
-  beschrieben.
+- [x] **Wiederanlegen eines gelöschten Dashboards.** Auf Entscheidung des
+  Nutzers in den Umfang genommen (Spec, Entscheidung 8) und umgesetzt:
+  `restore_state` legt ein fehlendes Dashboard mit Titel, Symbol und
+  Sichtbarkeit neu an. Dafür werden diese Angaben seither unter
+  `meta/<schlüssel>.yaml` miterfasst.
 
 - [x] **Entscheidung 1 der Spec beurteilen.** Beantwortet: Der Speicherweg trägt, keine Wartezeit nötig. Spec und Plan sind entsprechend nachgezogen.
 - [ ] **Platzbedarf über echte Nutzung messen.** Nach einigen Wochen `du -sh config/dashboard_history/` gegen die Zahl der Commits halten und mit den 27 KB je Stand aus der Spec vergleichen.

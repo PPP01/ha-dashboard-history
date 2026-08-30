@@ -76,11 +76,20 @@ class HistoryStore:
         porcelain.init(str(self.path))
         _LOGGER.info("Created dashboard history repository at %s", self.path)
 
-    def write_snapshot(self, key: str, text: str, message: str) -> str | None:
-        """Record a state. Returns the revision, or None if nothing changed."""
+    def write_snapshot(
+        self, key: str, text: str, message: str, meta: str | None = None
+    ) -> str | None:
+        """Record a state. Returns the revision, or None if nothing changed.
+
+        `meta` carries what the dashboard *is*, as opposed to what is on
+        it: title, icon, visibility. It travels in the same commit,
+        because a dashboard brought back with the right cards under the
+        wrong name is only half brought back.
+        """
         with self._lock:
             self._ensure()
             target = self.path / f"{key}.yaml"
+            meta_target = self.path / "meta" / f"{key}.yaml"
 
             # Compare against the last commit, never against the file on
             # disk. If an earlier run wrote the file but did not get to
@@ -88,15 +97,22 @@ class HistoryStore:
             # against it would drop that state from the history for good,
             # and silently, which is the one failure this project must not
             # have. Comparing against HEAD repairs such a gap by itself.
-            if self.read_at(key, "HEAD") == text:
+            if self.read_at(key, "HEAD") == text and (
+                meta is None or self.read_meta_at(key, "HEAD") == meta
+            ):
                 # The repository is already right. Keep the working tree
                 # honest anyway: the README invites people to look inside.
-                if not target.exists() or target.read_text(encoding="utf-8") != text:
-                    self._write_file(target, text)
+                self._write_if_stale(target, text)
+                if meta is not None:
+                    self._write_if_stale(meta_target, meta)
                 return None
 
+            paths = [target]
             self._write_file(target, text)
-            porcelain.add(str(self.path), [str(target)])
+            if meta is not None:
+                self._write_file(meta_target, meta)
+                paths.append(meta_target)
+            porcelain.add(str(self.path), [str(path) for path in paths])
             revision = porcelain.commit(
                 str(self.path),
                 message=message.encode("utf-8"),
@@ -112,9 +128,15 @@ class HistoryStore:
         An interrupted run must not leave a truncated YAML behind that
         later looks like a real state.
         """
+        target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.with_name(f"{target.name}.tmp")
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, target)
+
+    @classmethod
+    def _write_if_stale(cls, target: Path, text: str) -> None:
+        if not target.exists() or target.read_text(encoding="utf-8") != text:
+            cls._write_file(target, text)
 
     def mark_deleted(self, key: str, message: str) -> str | None:
         """Record that a dashboard is gone. Returns the revision, or None.
@@ -135,7 +157,10 @@ class HistoryStore:
             if self.read_at(key, "HEAD") is None:
                 # Never recorded, or already marked deleted.
                 return None
-            porcelain.remove(str(self.path), [str(self.path / f"{key}.yaml")])
+            paths = [self.path / f"{key}.yaml"]
+            if self.read_meta_at(key, "HEAD") is not None:
+                paths.append(self.path / "meta" / f"{key}.yaml")
+            porcelain.remove(str(self.path), [str(path) for path in paths])
             revision = porcelain.commit(
                 str(self.path),
                 message=message.encode("utf-8"),
@@ -238,6 +263,13 @@ class HistoryStore:
         must tell those apart with `resolve`; conflating them sends people
         looking for a fault in their dashboard instead of in their input.
         """
+        return self._read(f"{key}.yaml", revision)
+
+    def read_meta_at(self, key: str, revision: str) -> str | None:
+        """What a dashboard *was* at a revision: title, icon, visibility."""
+        return self._read(f"meta/{key}.yaml", revision)
+
+    def _read(self, path: str, revision: str) -> str | None:
         repo = self._repo()
         if repo is None:
             return None
@@ -246,7 +278,7 @@ class HistoryStore:
             return None
         try:
             tree = repo[repo[resolved.encode()].tree]
-            _, blob_id = tree.lookup_path(repo.get_object, f"{key}.yaml".encode())
+            _, blob_id = tree.lookup_path(repo.get_object, path.encode())
         except KeyError:
             return None
         return repo[blob_id].data.decode("utf-8")
