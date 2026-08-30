@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 
-from .const import DOMAIN
+from .capture import HistoryCapture
+from .const import DOMAIN, REPO_DIRNAME
 from .snapshot import async_get_all_configs
+from .store import HistoryStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,7 +22,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Nothing here may raise: a broken history is an inconvenience, a broken
     Home Assistant start is not.
     """
-    hass.data.setdefault(DOMAIN, {})
+    store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
+    capture = HistoryCapture(hass, store)
+    hass.data[DOMAIN] = {"store": store, "capture": capture}
 
     async def _debug_snapshot(call: ServiceCall) -> dict:
         """Report what the integration can currently see.
@@ -43,11 +48,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
 
+    # Guarded, because the hard rule says so: a repository that cannot be
+    # created - a read-only configuration folder, a full disk - costs the
+    # history, and nothing else. It must not cost the start.
+    try:
+        await hass.async_add_executor_job(store.ensure)
+        await capture.async_start()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Dashboard History could not start recording")
+
     _LOGGER.debug("Dashboard History set up")
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear the integration down."""
-    hass.data.pop(DOMAIN, None)
+    data = hass.data.pop(DOMAIN, None)
+    if data and (capture := data.get("capture")) is not None:
+        await capture.async_stop()
     return True
