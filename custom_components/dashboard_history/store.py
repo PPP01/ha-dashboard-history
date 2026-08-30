@@ -163,13 +163,61 @@ class HistoryStore:
             # No HEAD yet: an empty repository has no history to walk.
             return []
 
+    def resolve(self, revision: str) -> str | None:
+        """Turn a revision into a full commit hash, or None if unknown.
+
+        Accepts what a person is actually likely to paste: a full hash, a
+        ref such as HEAD, an annotated tag, or an abbreviated hash of the
+        kind `git log --oneline` prints. dulwich resolves none of the
+        abbreviated forms by itself, and the abbreviated form is exactly
+        what anyone who looks into the repository will copy out of it.
+        """
+        repo = self._repo()
+        return None if repo is None else self._resolve(repo, revision)
+
+    @staticmethod
+    def _resolve(repo: Repo, revision: str) -> str | None:
+        name = revision.strip().encode()
+        if not name:
+            return None
+        sha = None
+        try:
+            sha = repo[name].id
+        except (KeyError, ValueError):
+            # git itself refuses fewer than four characters; so do we.
+            if 4 <= len(name) < 40:
+                lowered = name.lower()
+                if all(char in b"0123456789abcdef" for char in lowered):
+                    matches = list(repo.object_store.iter_prefix(lowered))
+                    # An ambiguous prefix is refused rather than guessed:
+                    # picking one of two commits would be worse than
+                    # saying it is not clear which was meant.
+                    if len(matches) == 1:
+                        sha = matches[0]
+        if sha is None:
+            return None
+        obj = repo[sha]
+        while obj.type_name == b"tag":
+            # An annotated tag points at the commit; that is what is wanted.
+            obj = repo[obj.object[1]]
+        return _as_text(obj.id)
+
     def read_at(self, key: str, revision: str) -> str | None:
-        """The text of one dashboard at one revision, or None if absent."""
+        """The text of one dashboard at one revision, or None if absent.
+
+        None means two different things - the revision is unknown, or the
+        dashboard did not exist in it. Callers that report to a person
+        must tell those apart with `resolve`; conflating them sends people
+        looking for a fault in their dashboard instead of in their input.
+        """
         repo = self._repo()
         if repo is None:
             return None
+        resolved = self._resolve(repo, revision)
+        if resolved is None:
+            return None
         try:
-            tree = repo[repo[revision.encode()].tree]
+            tree = repo[repo[resolved.encode()].tree]
             _, blob_id = tree.lookup_path(repo.get_object, f"{key}.yaml".encode())
         except KeyError:
             return None

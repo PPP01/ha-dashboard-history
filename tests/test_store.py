@@ -57,6 +57,44 @@ def test_read_at_before_the_file_existed_returns_none(store):
     assert store.read_at("other", first) is None
 
 
+def test_an_abbreviated_revision_is_resolved(store):
+    # `git log --oneline` prints exactly this short form, so it is what
+    # anyone looking into the repository will copy. dulwich does not
+    # resolve it on its own.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    assert store.resolve(first[:7]) == first
+    assert store.read_at("home", first[:7]) == "a: 1\n"
+
+
+def test_a_full_revision_and_head_resolve(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.resolve(first) == first
+    assert store.resolve("HEAD") == first
+    assert store.resolve(f"  {first}  ") == first
+
+
+def test_an_unknown_revision_resolves_to_none(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.resolve("nosuchthing") is None
+    assert store.resolve("ffffffff") is None
+    assert store.resolve("") is None
+
+
+def test_a_too_short_revision_is_refused(store):
+    # Four characters is git's own minimum. Below that an abbreviation
+    # says too little to act on.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.resolve(first[:3]) is None
+
+
+def test_a_version_resolves_to_the_commit_it_marks(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("v1", "Title", "Text.", first)
+    tag = Repo(str(store.path))[b"refs/tags/v1"]
+    assert store.resolve(tag.id.decode()) == first
+
+
 def test_version_marks_a_revision_without_changing_history(store):
     store.write_snapshot("home", "a: 1\n", "first")
     second = store.write_snapshot("home", "a: 2\n", "second")

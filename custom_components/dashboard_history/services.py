@@ -44,6 +44,24 @@ async def async_register(hass: HomeAssistant) -> None:
     data = hass.data[DOMAIN]
     store = data["store"]
 
+    async def _state_at(key: str, revision: str) -> tuple[str | None, str | None]:
+        """The dashboard text at a revision, or a message saying why not.
+
+        The two failures are told apart on purpose. "Unknown revision" is a
+        statement about the input; "did not exist" is a statement about the
+        dashboard's history. Reporting the second when the first is true
+        sends people looking for a fault in their dashboard instead of in
+        what they typed - and an abbreviated hash, which is what `git log
+        --oneline` prints, used to land exactly there.
+        """
+        full = await hass.async_add_executor_job(store.resolve, revision)
+        if full is None:
+            return None, f"unknown revision: {revision}"
+        text = await hass.async_add_executor_job(store.read_at, key, full)
+        if text is None:
+            return None, f"{key} did not exist at {full[:10]}"
+        return text, None
+
     async def history(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
         limit = call.data.get("limit", 50)
@@ -57,10 +75,9 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def deleted_since(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        revision = call.data["revision"]
-        text = await hass.async_add_executor_job(store.read_at, key, revision)
-        if text is None:
-            return {"items": [], "error": f"{key} does not exist at {revision}"}
+        text, error = await _state_at(key, call.data["revision"])
+        if error is not None:
+            return {"items": [], "error": error}
         current = await async_get_config(hass, key) or {}
         items = find_removed(load(text) or {}, current)
         return {
@@ -77,11 +94,10 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def restore_deleted(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        revision = call.data["revision"]
         position = call.data["position"]
-        text = await hass.async_add_executor_job(store.read_at, key, revision)
-        if text is None:
-            return {"applied": False, "error": f"{key} does not exist at {revision}"}
+        text, error = await _state_at(key, call.data["revision"])
+        if error is not None:
+            return {"applied": False, "error": error}
         current = await async_get_config(hass, key) or {}
         items = find_removed(load(text) or {}, current)
         if not items:
@@ -106,10 +122,9 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def restore_state(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        revision = call.data["revision"]
-        text = await hass.async_add_executor_job(store.read_at, key, revision)
-        if text is None:
-            return {"applied": False, "error": f"{key} does not exist at {revision}"}
+        text, error = await _state_at(key, call.data["revision"])
+        if error is not None:
+            return {"applied": False, "error": error}
         target = load(text) or {}
         current = await async_get_config(hass, key) or {}
         diff = _diff(current, target, key)
@@ -121,12 +136,20 @@ async def async_register(hass: HomeAssistant) -> None:
         return {"applied": True, "preview": diff}
 
     async def create_version(call: ServiceCall) -> dict:
+        revision = call.data.get("revision")
+        if revision:
+            revision = await hass.async_add_executor_job(store.resolve, revision)
+            if revision is None:
+                return {
+                    "created": None,
+                    "error": f"unknown revision: {call.data['revision']}",
+                }
         await hass.async_add_executor_job(
             store.create_version,
             call.data["name"],
             call.data["title"],
             call.data.get("description", ""),
-            call.data.get("revision"),
+            revision,
         )
         return {"created": call.data["name"]}
 

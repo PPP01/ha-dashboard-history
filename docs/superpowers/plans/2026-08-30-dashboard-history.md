@@ -943,13 +943,61 @@ class HistoryStore:
             # No HEAD yet: an empty repository has no history to walk.
             return []
 
+    def resolve(self, revision: str) -> str | None:
+        """Turn a revision into a full commit hash, or None if unknown.
+
+        Accepts what a person is actually likely to paste: a full hash, a
+        ref such as HEAD, an annotated tag, or an abbreviated hash of the
+        kind `git log --oneline` prints. dulwich resolves none of the
+        abbreviated forms by itself, and the abbreviated form is exactly
+        what anyone who looks into the repository will copy out of it.
+        """
+        repo = self._repo()
+        return None if repo is None else self._resolve(repo, revision)
+
+    @staticmethod
+    def _resolve(repo: Repo, revision: str) -> str | None:
+        name = revision.strip().encode()
+        if not name:
+            return None
+        sha = None
+        try:
+            sha = repo[name].id
+        except (KeyError, ValueError):
+            # git itself refuses fewer than four characters; so do we.
+            if 4 <= len(name) < 40:
+                lowered = name.lower()
+                if all(char in b"0123456789abcdef" for char in lowered):
+                    matches = list(repo.object_store.iter_prefix(lowered))
+                    # An ambiguous prefix is refused rather than guessed:
+                    # picking one of two commits would be worse than
+                    # saying it is not clear which was meant.
+                    if len(matches) == 1:
+                        sha = matches[0]
+        if sha is None:
+            return None
+        obj = repo[sha]
+        while obj.type_name == b"tag":
+            # An annotated tag points at the commit; that is what is wanted.
+            obj = repo[obj.object[1]]
+        return _as_text(obj.id)
+
     def read_at(self, key: str, revision: str) -> str | None:
-        """The text of one dashboard at one revision, or None if absent."""
+        """The text of one dashboard at one revision, or None if absent.
+
+        None means two different things - the revision is unknown, or the
+        dashboard did not exist in it. Callers that report to a person
+        must tell those apart with `resolve`; conflating them sends people
+        looking for a fault in their dashboard instead of in their input.
+        """
         repo = self._repo()
         if repo is None:
             return None
+        resolved = self._resolve(repo, revision)
+        if resolved is None:
+            return None
         try:
-            tree = repo[repo[revision.encode()].tree]
+            tree = repo[repo[resolved.encode()].tree]
             _, blob_id = tree.lookup_path(repo.get_object, f"{key}.yaml".encode())
         except KeyError:
             return None
@@ -1946,6 +1994,24 @@ async def async_register(hass: HomeAssistant) -> None:
     data = hass.data[DOMAIN]
     store = data["store"]
 
+    async def _state_at(key: str, revision: str) -> tuple[str | None, str | None]:
+        """The dashboard text at a revision, or a message saying why not.
+
+        The two failures are told apart on purpose. "Unknown revision" is a
+        statement about the input; "did not exist" is a statement about the
+        dashboard's history. Reporting the second when the first is true
+        sends people looking for a fault in their dashboard instead of in
+        what they typed - and an abbreviated hash, which is what `git log
+        --oneline` prints, used to land exactly there.
+        """
+        full = await hass.async_add_executor_job(store.resolve, revision)
+        if full is None:
+            return None, f"unknown revision: {revision}"
+        text = await hass.async_add_executor_job(store.read_at, key, full)
+        if text is None:
+            return None, f"{key} did not exist at {full[:10]}"
+        return text, None
+
     async def history(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
         limit = call.data.get("limit", 50)
@@ -1959,10 +2025,9 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def deleted_since(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        revision = call.data["revision"]
-        text = await hass.async_add_executor_job(store.read_at, key, revision)
-        if text is None:
-            return {"items": [], "error": f"{key} does not exist at {revision}"}
+        text, error = await _state_at(key, call.data["revision"])
+        if error is not None:
+            return {"items": [], "error": error}
         current = await async_get_config(hass, key) or {}
         items = find_removed(load(text) or {}, current)
         return {
@@ -1979,11 +2044,10 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def restore_deleted(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        revision = call.data["revision"]
         position = call.data["position"]
-        text = await hass.async_add_executor_job(store.read_at, key, revision)
-        if text is None:
-            return {"applied": False, "error": f"{key} does not exist at {revision}"}
+        text, error = await _state_at(key, call.data["revision"])
+        if error is not None:
+            return {"applied": False, "error": error}
         current = await async_get_config(hass, key) or {}
         items = find_removed(load(text) or {}, current)
         if not items:
@@ -2009,10 +2073,9 @@ async def async_register(hass: HomeAssistant) -> None:
 
     async def restore_state(call: ServiceCall) -> dict:
         key = call.data["dashboard"]
-        revision = call.data["revision"]
-        text = await hass.async_add_executor_job(store.read_at, key, revision)
-        if text is None:
-            return {"applied": False, "error": f"{key} does not exist at {revision}"}
+        text, error = await _state_at(key, call.data["revision"])
+        if error is not None:
+            return {"applied": False, "error": error}
         target = load(text) or {}
         current = await async_get_config(hass, key) or {}
         diff = _diff(current, target, key)
@@ -2024,12 +2087,20 @@ async def async_register(hass: HomeAssistant) -> None:
         return {"applied": True, "preview": diff}
 
     async def create_version(call: ServiceCall) -> dict:
+        revision = call.data.get("revision")
+        if revision:
+            revision = await hass.async_add_executor_job(store.resolve, revision)
+            if revision is None:
+                return {
+                    "created": None,
+                    "error": f"unknown revision: {call.data['revision']}",
+                }
         await hass.async_add_executor_job(
             store.create_version,
             call.data["name"],
             call.data["title"],
             call.data.get("description", ""),
-            call.data.get("revision"),
+            revision,
         )
         return {"created": call.data["name"]}
 
@@ -2282,7 +2353,7 @@ installiert über HACS von `main`):
 
 **Entscheidung 1 der Spec ist damit beantwortet und bestätigt.**
 
-### Zwei Befunde aus dem Live-Durchlauf, beide behoben
+### Drei Befunde aus dem Live-Durchlauf, alle behoben
 
 - **Verschiebungen wurden absolut statt relativ gezählt.** Eine gelöschte
   Karte schob alle dahinterliegenden, und jede davon wurde als Verschiebung
@@ -2296,6 +2367,15 @@ installiert über HACS von `main`):
   wiederherzustellen, das unverändert dastand. Nach der Erweiterung auf
   `heading`, erste Entität, erste Textzeile und die benennbare Karte im
   Container sind es **96 %**.
+- **Eine abgekürzte Revision wurde stillschweigend falsch beantwortet.**
+  `git log --oneline` druckt genau die Kurzform, und dulwich löst sie nicht
+  auf — anders als `git` auf der Kommandozeile. Wer sie kopierte, bekam
+  »dashboard does not exist at 9e8458d« zu lesen. Das ist eine Aussage über
+  die *Historie* des Dashboards, während in Wahrheit die *Eingabe* nicht
+  aufgelöst werden konnte: Man sucht den Fehler am falschen Ort. Der
+  Speicher löst Kurzformen jetzt über `object_store.iter_prefix` auf
+  (mehrdeutige werden abgelehnt statt geraten), und die Dienste
+  unterscheiden »unknown revision« von »did not exist at«.
 
 ### Offen
 
