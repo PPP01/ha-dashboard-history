@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 
 from .capture import HistoryCapture
 from .const import DOMAIN, REPO_DIRNAME
+from .services import async_register
 from .snapshot import async_get_all_configs
 from .store import HistoryStore
 
@@ -47,6 +48,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _debug_snapshot,
         supports_response=SupportsResponse.ONLY,
     )
+
+    # Registered before the recording starts, on purpose: if the repository
+    # cannot be created, a service that answers with the reason is more use
+    # than a service that is not there at all.
+    await async_register(hass)
 
     # Guarded, because the hard rule says so: a repository that cannot be
     # created - a read-only configuration folder, a full disk - costs the

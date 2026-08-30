@@ -1863,6 +1863,9 @@ async def async_register(hass: HomeAssistant) -> None:
             return {"applied": False, "error": f"{key} does not exist at {revision}"}
         current = await async_get_config(hass, key) or {}
         items = find_removed(load(text) or {}, current)
+        if not items:
+            # Otherwise the range below reads "0..-1", which is nonsense.
+            return {"applied": False, "error": "nothing is missing since that revision"}
         if not 0 <= position < len(items):
             return {
                 "applied": False,

@@ -3,3 +3,128 @@ debug_snapshot:
   description: >-
     Return the dashboard configurations as the integration currently sees
     them. Useful to check that the integration can read them at all.
+
+history:
+  name: History
+  description: >-
+    The recorded states of one dashboard, newest first. Each entry has a
+    revision you can pass to the other services.
+  fields:
+    dashboard:
+      required: true
+      description: >-
+        The dashboard key. That is its url_path, or "_default" for the
+        default dashboard. Run debug_snapshot to see the keys.
+      example: dashboard-karte
+      selector:
+        text:
+    limit:
+      description: How many entries to return at most.
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 500
+          mode: box
+
+deleted_since:
+  name: What disappeared
+  description: >-
+    List the cards and views that were present at the given revision and
+    are gone now. Each carries a position for restore_deleted.
+  fields:
+    dashboard:
+      required: true
+      example: dashboard-karte
+      selector:
+        text:
+    revision:
+      required: true
+      description: A revision from the history service.
+      selector:
+        text:
+
+restore_deleted:
+  name: Restore a deleted item
+  description: >-
+    Put a card or view back that disappeared after the given revision.
+    Without confirm, only a preview of the change is returned.
+  fields:
+    dashboard:
+      required: true
+      example: dashboard-karte
+      selector:
+        text:
+    revision:
+      required: true
+      description: A revision from the history service.
+      selector:
+        text:
+    position:
+      required: true
+      description: Index from the deleted_since service.
+      selector:
+        number:
+          min: 0
+          mode: box
+    confirm:
+      description: Without this, nothing is written.
+      default: false
+      selector:
+        boolean:
+
+restore_state:
+  name: Restore a whole state
+  description: >-
+    Set a dashboard back to the state it had at the given revision. This
+    discards everything changed since. Without confirm, only a preview of
+    the change is returned.
+  fields:
+    dashboard:
+      required: true
+      example: dashboard-karte
+      selector:
+        text:
+    revision:
+      required: true
+      description: A revision from the history service.
+      selector:
+        text:
+    confirm:
+      description: Without this, nothing is written.
+      default: false
+      selector:
+        boolean:
+
+create_version:
+  name: Name a version
+  description: >-
+    Mark a point in the history with a name, a title and a description.
+    It groups the changes below it; it never squashes them.
+  fields:
+    name:
+      required: true
+      description: Short identifier, used as the tag name.
+      example: kitchen-rework
+      selector:
+        text:
+    title:
+      required: true
+      example: Kitchen rework
+      selector:
+        text:
+    description:
+      description: What this version is about.
+      default: ""
+      selector:
+        text:
+          multiline: true
+    revision:
+      description: >-
+        Which revision to mark. Defaults to the most recent one.
+      selector:
+        text:
+
+versions:
+  name: Versions
+  description: The named points in the history, newest first.

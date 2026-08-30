@@ -17,6 +17,7 @@ from typing import Any
 
 from homeassistant.components.lovelace.const import ConfigNotFound
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_DASHBOARD_KEY
@@ -114,3 +115,20 @@ async def _async_get_all_configs_from_storage(hass: HomeAssistant) -> dict[str, 
         if isinstance(raw, dict) and isinstance(raw.get("config"), dict):
             result[key] = raw["config"]
     return result
+
+
+async def async_save_config(hass: HomeAssistant, key: str, config: dict) -> None:
+    """Write a configuration back into a live dashboard.
+
+    Goes through the same Lovelace object the interface uses, so Home
+    Assistant fires its own events and every other listener sees the
+    change - including our own recording.
+    """
+    dashboards = _lovelace_dashboards(hass)
+    if dashboards is None:
+        raise HomeAssistantError("Lovelace data is not available")
+    for url_path, dashboard in dashboards.items():
+        if dashboard_key(url_path) == key:
+            await dashboard.async_save(config)
+            return
+    raise HomeAssistantError(f"unknown dashboard: {key}")
