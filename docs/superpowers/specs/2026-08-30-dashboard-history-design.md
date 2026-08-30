@@ -26,7 +26,9 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 | Eine reine Python-Umsetzung von git genügt | `dulwich` mit `PURE_PYTHON=1`: Commit, Verlauf, alter Dateistand, Markierung — alle vier geprüft |
 | Die C-Teile von `dulwich` sind optional | reine Geschwindigkeitszugaben, kein Muss |
 | Zielumgebung | HA 2026.8.3, HACS 2.0.5, Container-Python 3.14.6 |
-| Größtes Dashboard | `energie_2`, 570 KB |
+| Größtes Dashboard | `energie_2`: 570 KB als Storage-JSON, 268 KB als YAML |
+| Commit-Dauer, gemessen an diesem Dashboard | System-`git` 15,3 ms · dulwich 30,6 ms (mit C-Teilen) · dulwich 29,5 ms (rein Python) |
+| Platzbedarf, gemessen | 20 Stände desselben Dashboards: 0,54 MB mit dulwich, 0,76 MB mit System-`git` — rund 27 KB je Stand |
 
 ## Nicht-Ziele (YAGNI)
 
@@ -85,7 +87,15 @@ Zurueckholen
 
 2. **git als Ablage, nicht selbst gebaut.** Das Vorhaben *ist* Versionsverwaltung. Deduplizierung, Komprimierung, Verlauf, Diffs und Markierungen selbst zu implementieren wäre der klassische Fehlgriff. Preis ist eine Abhängigkeit; sie ist reine Python und läuft nachweislich auch ohne ihre optionalen C-Teile.
 
-3. **Kein Systemaufruf von `git`.** Ob ein `git`-Programm vorhanden ist, unterscheidet sich zwischen HA OS, Container, Core und Supervised. Eine Integration, die auf manchen Installationen nicht funktioniert, ist keine.
+3. **Kein Systemaufruf von `git`** — auch nicht als bevorzugter Weg mit der Python-Umsetzung als Rückfall.
+
+   Ob ein `git`-Programm vorhanden ist, unterscheidet sich zwischen HA OS, Container, Core und Supervised. Aber selbst wo eines liegt, lohnt der zweite Codepfad nicht. Gemessen am größten Dashboard dieser Anlage: **15,3 ms gegen 29,5 ms je Commit** — ein Unterschied von rund 15 Millisekunden, einmal pro Speichervorgang. Beide Wege müssten ohnehin in einen Hintergrund-Thread ausgelagert werden, weil 30 ms nichts im Event-Loop verloren haben; auch dort also kein Vorteil.
+
+   Dem stünde eine verdoppelte Verhaltensfläche gegenüber, und die Unterschiede sind real. Beim ersten Messlauf trat sofort einer zutage: **`git commit` verweigert einen leeren Commit mit Exit-Code 1, dulwich legt ihn an.** Weitere sind absehbar — eine globale `commit.gpgsign`-Einstellung ließe `git` auf eine Passphrase warten, `safe.directory` kann den Zugriff verweigern, Hooks können dazwischenfunken. Nichts davon geschieht auf der eigenen Maschine; alles davon erzeugt in fremden Installationen Fehlerberichte, die sich nicht nachstellen lassen, weil unklar bleibt, welcher Pfad gelaufen ist.
+
+   Nebenbefund derselben Messung: **Die C-Teile von dulwich bringen keinen messbaren Gewinn** (30,6 gegen 29,5 ms). Damit ist auch die Frage nach vorkompilierten Paketen je Architektur gegenstandslos. Und dulwich erzeugt das *kleinere* Repository.
+
+   Sollte Geschwindigkeit später doch drücken, ist die Antwort nicht ein zweiter Pfad, sondern Bündelung mehrerer Änderungen in einen Commit.
 
 4. **Zurückgeholt wird nur, was verschwunden ist — und ganze Stände.** Das ist keine Sparmaßnahme, sondern folgt aus der Datenlage: Karten haben keine Kennung, sind also nur über ihre Position bestimmt. Eine **ersetzende** Rücknahme (»diese Bearbeitung zurück, spätere behalten«) ist deshalb eine Zusammenführung ohne Identitäten und in verschränkten Fällen nicht eindeutig. Eine **additive** Rücknahme (»das hier fehlt, setze es wieder ein«) überschreibt nichts und ist immer wohldefiniert. Und die schmerzhaften Fälle sind genau die additiven: Eine verschobene Karte schiebt man zurück, eine gelöschte ist weg.
 
@@ -107,7 +117,7 @@ Zurueckholen
 | Repository fehlt oder ist beschädigt | Neu anlegen, protokollieren, weiterarbeiten |
 | Fehler beim Erfassen | Wird protokolliert und darf **niemals** den Start von Home Assistant aufhalten oder ein Speichern verhindern |
 | Dashboard gelöscht | Letzter Stand bleibt im Verlauf; das Wiederanlegen eines gelöschten Dashboards ist nicht Teil dieser Fassung |
-| Sehr große Dashboards | `energie_2` ist 570 KB. Wie gut git über hundert Stände zusammenfasst, wird gemessen, nicht geschätzt |
+| Sehr große Dashboards | `energie_2` ist 268 KB als YAML. Gemessen: 20 Stände belegen 0,54 MB, also rund 27 KB je Stand — hundert Änderungen wären knapp 3 MB |
 
 ## Test-Plan
 
@@ -140,5 +150,5 @@ Erst wenn sich Stufe 1 in der eigenen Anlage bewährt hat, wird über die Veröf
 ## Offene Punkte
 
 - **Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert. Er entscheidet zwischen Entscheidung 1 und ihrem Rückfall. Vor der Umsetzung zu klären.
-- **Platzbedarf des Repositories** über viele Stände hinweg — messen, sobald die Ablage steht.
+- **Platzbedarf über sehr lange Zeiträume.** Für zwanzig Stände gemessen (27 KB je Stand); ob das über tausend Stände linear bleibt oder git dann besser packt, ist offen. Erst relevant, wenn eine Aufbewahrungsgrenze zur Debatte steht.
 - **Einordnung umsortierter Karten** ist der schwierigste Fall der Einordnung: Ohne Kennungen muss über Inhaltsgleichheit zugeordnet werden. Ob das für den Anfang genügt oder eine Ähnlichkeitsbewertung braucht, zeigt sich an echten Daten.
