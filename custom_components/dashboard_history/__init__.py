@@ -8,6 +8,7 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 
+from . import panel, websocket_api
 from .capture import HistoryCapture
 from .const import DOMAIN, REPO_DIRNAME
 from .services import async_register
@@ -50,9 +51,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # Registered before the recording starts, on purpose: if the repository
-    # cannot be created, a service that answers with the reason is more use
-    # than a service that is not there at all.
+    # cannot be created, an interface that answers with the reason is more
+    # use than one that is not there at all.
     await async_register(hass)
+    websocket_api.async_register(hass)
+    await panel.async_register(hass)
 
     # Guarded, because the hard rule says so: a repository that cannot be
     # created - a read-only configuration folder, a full disk - costs the
@@ -69,6 +72,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear the integration down."""
+    panel.async_unregister(hass)
     data = hass.data.pop(DOMAIN, None)
     if data and (capture := data.get("capture")) is not None:
         await capture.async_stop()

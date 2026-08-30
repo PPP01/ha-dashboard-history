@@ -13,3 +13,11 @@ DEFAULT_DASHBOARD_KEY = "_default"
 
 # Directory inside the configuration folder that holds our git repository.
 REPO_DIRNAME = "dashboard_history"
+
+# The sidebar panel. The url_path needs a hyphen; the domain has none.
+PANEL_URL_PATH = "dashboard-history"
+PANEL_TITLE = "Dashboard History"
+PANEL_ICON = "mdi:history"
+PANEL_COMPONENT = "dashboard-history-panel"
+# Bumped whenever panel.js changes, so browsers do not serve a stale copy.
+PANEL_VERSION = "0.1.0"

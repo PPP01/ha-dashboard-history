@@ -298,6 +298,39 @@ class HistoryStore:
             if entry.path.endswith(b".yaml")
         )
 
+    def list_all_dashboards(self, limit: int = 1000) -> list[str]:
+        """Every dashboard the history has ever held, deleted ones included.
+
+        The deleted ones are the whole point of the method: a dashboard
+        that is gone is exactly the one somebody comes looking for, and it
+        is no longer in HEAD to be found.
+        """
+        repo = self._repo()
+        if repo is None or self._resolve(repo, "HEAD") is None:
+            return []
+        names: set[str] = set()
+        for entry in repo.get_walker(max_entries=limit):
+            for change in entry.changes():
+                for one in change if isinstance(change, list) else [change]:
+                    for side in (one.old, one.new):
+                        path = getattr(side, "path", None)
+                        # Top level only: meta/<key>.yaml is not a dashboard.
+                        if path and b"/" not in path and path.endswith(b".yaml"):
+                            names.add(path.decode()[: -len(".yaml")])
+        return sorted(names)
+
+    def last_known_meta(self, key: str, limit: int = 5) -> str | None:
+        """The most recent metadata recorded for a dashboard.
+
+        For a deleted one that is the state just before the deletion -
+        which is the name and icon it should carry when it comes back.
+        """
+        for change in self.list_changes(key, limit=limit):
+            text = self.read_meta_at(key, change.revision)
+            if text is not None:
+                return text
+        return None
+
     def list_versions(self) -> list[Version]:
         """Every named point, newest first."""
         repo = self._repo()

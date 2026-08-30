@@ -48,7 +48,27 @@ move back. A card you deleted is gone.
 
 ## Usage
 
-Everything is available as services under Developer Tools → Actions.
+### The panel
+
+After setup you get **Dashboard History** in the sidebar. It is there all
+the time, not only while you are editing a dashboard — which was the whole
+complaint this project started from.
+
+Pick a dashboard on the left, and you get its changes, newest first. Click
+a change to see what it made disappear, and put any of it back. A deleted
+dashboard is listed too, marked as such, with a button that brings it back.
+
+**You click a change, never a revision.** That is deliberate. Asked to undo
+a deletion, people reach for the line that says the card was deleted — which
+is one line too late, because what they want is the state just before it.
+The panel works that out for you, so the trap is not signposted, it is gone.
+
+Nothing is written until you have seen the diff and pressed Apply.
+
+### Services
+
+Everything the panel does is also available as services under Developer
+Tools → Actions.
 
 Dashboards are addressed by their **key**: that is the dashboard's
 `url_path`, and `_default` for the built-in default dashboard. Run

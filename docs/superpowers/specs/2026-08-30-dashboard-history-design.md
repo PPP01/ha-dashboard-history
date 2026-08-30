@@ -34,7 +34,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 
 ## Nicht-Ziele (YAGNI)
 
-- **Kein Panel und kein Eintrag im ⋮-Menü.** Beides sind eigene Vorhaben; siehe »Reihenfolge«.
+- ~~Kein Panel.~~ **Am 2026-08-30 vorgezogen** — siehe Entscheidung 9. **Kein Eintrag im ⋮-Menü**; das bleibt ein eigenes Vorhaben, siehe »Reihenfolge«.
 - ~~Kein Wiederanlegen gelöschter Dashboards.~~ **Am 2026-08-30 in den Umfang genommen**, siehe Entscheidung 8.
 - **Keine Einzelrücknahme von Bearbeitungen** in dieser Fassung. Das Datenmodell hält die Tür offen, gebaut wird sie später.
   - **Erkannt werden Bearbeitungen und Umsortierungen trotzdem, von Anfang an.** Das ist kein Widerspruch, sondern Voraussetzung: Hielte `analyze.py` eine bearbeitete Karte für »gelöscht und neu hinzugefügt«, böte die Oberfläche an, etwas wiederherzustellen, das gar nicht fehlt. Ein solcher Fehlalarm ist schlimmer als eine fehlende Funktion — er untergräbt das Vertrauen in genau die Meldung, derentwegen man das Werkzeug öffnet.
@@ -53,7 +53,9 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 | `restore.py` | Die Umkehrung anwenden: gelöschtes Objekt wieder einsetzen, oder einen ganzen Stand herstellen | **ja** |
 | `store.py` | Das eigene Repository: Stände ablegen, Verlauf lesen, Versionen als Markierungen | **Kern ja** |
 | `capture.py` | Auf Änderungen horchen, Stand holen, ablegen | nein |
-| `websocket_api.py` | Befehle, auf denen später das Panel aufsetzt | nein |
+| `operations.py` | Jeder Vorgang, genau einmal — Dienste und Panel sind dünne Häute darüber | nein |
+| `websocket_api.py` | Befehle, auf denen das Panel aufsetzt | nein |
+| `panel.py` + `panel.js` | Die Änderungsansicht in der Seitenleiste | nein |
 | `services.py` | Dieselben Fähigkeiten für die Entwicklerwerkzeuge | nein |
 
 Die drei oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Diese Trennung ist keine Stilfrage: Sie erlaubt, die Einordnungs-Regeln — das Herz des Projekts — in Sekunden gegen Dutzende Fälle zu testen, statt sie an einer Live-Anlage zu erproben.
@@ -108,6 +110,14 @@ Zurueckholen
 
 7. **Nichts wird ohne Vorschau geschrieben.** Jede Wiederherstellung zeigt zuerst den Diff. Derselbe Grundsatz wie beim bestehenden Restore-Werkzeug.
 
+9. **Das Panel fragt nach einer Änderung, nie nach einem Zustand.** *(Nachgetragen am 2026-08-30, aus der Beobachtung echter Bedienung.)*
+
+   Die Dienste erwarten unter `revision` den *Zustand, gegen den verglichen wird*. Ein Mensch denkt aber in Änderungen: Soll eine Löschung zurückgenommen werden, greift er zu der Zeile, in der die Löschung steht — und das ist eine zu spät, denn gewollt ist der Zustand davor. Beim Erproben ist genau das passiert.
+
+   Eine Warnung wäre die falsche Antwort, ein umbenanntes Feld auch. Die Oberfläche stellt die Frage schlicht nicht: Man klickt die Änderung an, und das Panel rechnet selbst aus, welcher Zustand gemeint ist. Die Stolperstelle wird nicht abgesichert, sondern entfernt.
+
+   Daraus folgt auch, dass das Panel **keine eigene Logik** trägt. Alle Vorgänge liegen in `operations.py`; Dienste und Panel sind zwei dünne Häute über derselben Schicht. Sonst stünde das Wesentliche ausgerechnet dort, wo Home Assistant sich am häufigsten bewegt.
+
 8. **Ein gelöschtes Dashboard wird wiederhergestellt, nicht nur betrauert.** *(Nachgetragen am 2026-08-30. Ursprünglich stand das Wiederanlegen außerhalb dieser Fassung.)*
 
    Das war falsch herum gedacht. Der schwerste Verlust, den dieses Werkzeug bezeugen kann, wäre dann der einzige gewesen, den es nicht rückgängig machen kann — während es für eine einzelne Karte alles bietet. Wer ein Dashboard löscht, verliert Hunderte Karten auf einmal.
@@ -153,9 +163,8 @@ Die drei Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Ins
 
 ## Reihenfolge der Vorhaben
 
-1. **Diese Fassung — die Integration.** Erfassen, Verlauf, Zurückholen, Versionen. Bedienbar über Dienste in den Entwicklerwerkzeugen. Für die eigene Anlage.
-2. **Das Panel.** Änderungsansicht in der Seitenleiste, offiziell unterstützter Erweiterungspunkt, immer erreichbar — auch außerhalb des Bearbeitungsmodus.
-3. **Der Eintrag im ⋮-Menü.** Eine Abkürzung ohne offiziellen Haken, gebaut wie `kiosk-mode` es tut. Sie **darf still ausfallen**: Findet sie ihren Platz nicht, protokolliert sie das und tut sonst nichts. Sie ist nie der einzige Zugang.
+1. **Diese Fassung — die Integration und das Panel.** Erfassen, Verlauf, Zurückholen, Versionen; bedienbar über Dienste *und* über die Änderungsansicht in der Seitenleiste. Das Panel war ursprünglich Stufe 2 und wurde am 2026-08-30 vorgezogen, nachdem sich die Dienste an der Anlage bewährt hatten. Es nutzt `panel_custom`, den offiziell unterstützten Erweiterungspunkt, und ist immer erreichbar — auch außerhalb des Bearbeitungsmodus.
+2. **Der Eintrag im ⋮-Menü.** Eine Abkürzung ohne offiziellen Haken, gebaut wie `kiosk-mode` es tut. Sie **darf still ausfallen**: Findet sie ihren Platz nicht, protokolliert sie das und tut sonst nichts. Sie ist nie der einzige Zugang.
 
 Erst wenn sich Stufe 1 in der eigenen Anlage bewährt hat, wird über die Veröffentlichung entschieden.
 

@@ -173,6 +173,33 @@ def test_list_dashboards_names_what_the_history_tracks(store):
     assert store.list_dashboards() == ["home"]
 
 
+def test_list_all_dashboards_remembers_deleted_ones(store):
+    # The deleted one is the point: it is exactly what somebody comes
+    # looking for, so the panel has to be able to offer it.
+    store.write_snapshot("stays", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "first")
+    store.mark_deleted("gone", "gone: dashboard deleted")
+    assert store.list_dashboards() == ["stays"]
+    assert store.list_all_dashboards() == ["gone", "stays"]
+
+
+def test_list_all_dashboards_ignores_metadata(store):
+    store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
+    assert store.list_all_dashboards() == ["home"]
+
+
+def test_last_known_meta_survives_the_deletion(store):
+    store.write_snapshot("gone", "a: 1\n", "first", meta="title: Gone\n")
+    store.mark_deleted("gone", "gone: dashboard deleted")
+    assert store.read_meta_at("gone", "HEAD") is None
+    assert store.last_known_meta("gone") == "title: Gone\n"
+
+
+def test_last_known_meta_is_none_when_none_was_recorded(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.last_known_meta("home") is None
+
+
 def test_list_dashboards_of_an_empty_repository_is_empty(store):
     assert store.list_dashboards() == []
 
