@@ -95,6 +95,56 @@ def test_a_version_resolves_to_the_commit_it_marks(store):
     assert store.resolve(tag.id.decode()) == first
 
 
+def test_a_deleted_dashboard_is_marked_and_stays_readable(store):
+    # Deleting a whole dashboard is the heaviest loss there is, and Home
+    # Assistant announces it with no event at all. Leaving no trace would
+    # make it the only change the history misses.
+    first = store.write_snapshot("gone", "a: 1\n", "first")
+    store.write_snapshot("stays", "b: 1\n", "other")
+    assert store.mark_deleted("gone", "gone: dashboard deleted") is not None
+    assert [c.message for c in store.list_changes("gone")] == [
+        "gone: dashboard deleted",
+        "first",
+    ]
+    # The state itself is not lost - that is what a history is for.
+    assert store.read_at("gone", first) == "a: 1\n"
+    assert store.read_at("gone", "HEAD") is None
+    assert store.read_at("stays", "HEAD") == "b: 1\n"
+
+
+def test_marking_an_unknown_dashboard_does_nothing(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.mark_deleted("never-existed", "x: dashboard deleted") is None
+
+
+def test_a_dashboard_is_marked_deleted_only_once(store):
+    store.write_snapshot("gone", "a: 1\n", "first")
+    store.mark_deleted("gone", "gone: dashboard deleted")
+    assert store.mark_deleted("gone", "gone: dashboard deleted") is None
+
+
+def test_a_recreated_dashboard_starts_a_fresh_chapter(store):
+    # If a *different* dashboard later takes the same url_path, comparing
+    # it against its stranger of a predecessor would produce an enormous
+    # and meaningless diff.
+    store.write_snapshot("reused", "a: 1\n", "first")
+    store.mark_deleted("reused", "reused: dashboard deleted")
+    assert store.write_snapshot("reused", "totally: different\n", "new") is not None
+    assert store.read_at("reused", "HEAD") == "totally: different\n"
+
+
+def test_list_dashboards_names_what_the_history_tracks(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("other", "b: 1\n", "first")
+    assert store.list_dashboards() == ["home", "other"]
+    store.mark_deleted("other", "other: dashboard deleted")
+    assert store.list_dashboards() == ["home"]
+
+
+def test_list_dashboards_of_an_empty_repository_is_empty(store):
+    assert store.list_dashboards() == []
+
+
 def test_version_marks_a_revision_without_changing_history(store):
     store.write_snapshot("home", "a: 1\n", "first")
     second = store.write_snapshot("home", "a: 2\n", "second")

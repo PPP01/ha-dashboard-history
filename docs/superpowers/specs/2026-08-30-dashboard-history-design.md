@@ -118,7 +118,8 @@ Zurueckholen
 | Erststart | Ein Commit mit dem Ist-Zustand aller Dashboards als Nullpunkt |
 | Repository fehlt oder ist beschädigt | Neu anlegen, protokollieren, weiterarbeiten |
 | Fehler beim Erfassen | Wird protokolliert und darf **niemals** den Start von Home Assistant aufhalten oder ein Speichern verhindern |
-| Dashboard gelöscht | Letzter Stand bleibt im Verlauf; das Wiederanlegen eines gelöschten Dashboards ist nicht Teil dieser Fassung |
+| Dashboard gelöscht | Beim nächsten Abgleich als Commit »dashboard deleted« festgehalten. Die Datei verlässt den Baum, wie eine gelöschte Datei es in git tut — jeder frühere Stand bleibt über seine Revision lesbar, und die Löschung erscheint im Verlauf **dieses** Dashboards statt nirgends. Home Assistant meldet eine Dashboard-Löschung mit keinem Ereignis, sie fällt deshalb erst beim Vergleich auf. Ein fehlender *Konfigurationsstand* zählt ausdrücklich **nicht** als Löschung — ein nie gespeichertes Dashboard hat auch keinen. Das Wiederanlegen bleibt außerhalb dieser Fassung; von Hand geht es: Dashboard mit demselben `url_path` neu anlegen, dann `restore_state` |
+| Ein anderes Dashboard bekommt später denselben `url_path` | Der Löschvermerk zieht die Trennlinie: Da HEAD die Datei nicht mehr führt, beginnt das neue Dashboard ein eigenes Kapitel, statt einen riesigen Diff gegen einen Fremden zu erzeugen |
 | Sehr große Dashboards | `energie_2` ist 268 KB als YAML. Gemessen: 20 Stände belegen 0,54 MB, also rund 27 KB je Stand — hundert Änderungen wären knapp 3 MB |
 
 ## Test-Plan

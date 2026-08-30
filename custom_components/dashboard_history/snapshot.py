@@ -85,6 +85,25 @@ async def async_get_all_configs(hass: HomeAssistant) -> dict[str, dict]:
     return result
 
 
+async def async_known_keys(hass: HomeAssistant) -> set[str] | None:
+    """The keys of every dashboard Home Assistant currently knows of.
+
+    Deliberately separate from async_get_all_configs. A dashboard that
+    has never been saved has no configuration but exists perfectly well,
+    and so does one whose configuration failed to load. Concluding
+    "deleted" from a missing configuration would invent an event that
+    never happened - the kind of false alarm this integration exists to
+    avoid.
+
+    Returns None when the question cannot be answered at all. That is not
+    the same as "none of them", and callers must not read it that way.
+    """
+    dashboards = _lovelace_dashboards(hass)
+    if dashboards is None:
+        return None
+    return {dashboard_key(url_path) for url_path in dashboards}
+
+
 async def async_get_config(hass: HomeAssistant, key: str) -> dict | None:
     """Return one dashboard configuration, or None if it does not exist."""
     return (await async_get_all_configs(hass)).get(key)

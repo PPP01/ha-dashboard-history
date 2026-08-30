@@ -222,6 +222,25 @@ async def async_get_all_configs(hass: HomeAssistant) -> dict[str, dict]:
     return result
 
 
+async def async_known_keys(hass: HomeAssistant) -> set[str] | None:
+    """The keys of every dashboard Home Assistant currently knows of.
+
+    Deliberately separate from async_get_all_configs. A dashboard that
+    has never been saved has no configuration but exists perfectly well,
+    and so does one whose configuration failed to load. Concluding
+    "deleted" from a missing configuration would invent an event that
+    never happened - the kind of false alarm this integration exists to
+    avoid.
+
+    Returns None when the question cannot be answered at all. That is not
+    the same as "none of them", and callers must not read it that way.
+    """
+    dashboards = _lovelace_dashboards(hass)
+    if dashboards is None:
+        return None
+    return {dashboard_key(url_path) for url_path in dashboards}
+
+
 async def async_get_config(hass: HomeAssistant, key: str) -> dict | None:
     """Return one dashboard configuration, or None if it does not exist."""
     return (await async_get_all_configs(hass)).get(key)
@@ -896,6 +915,34 @@ class HistoryStore:
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, target)
 
+    def mark_deleted(self, key: str, message: str) -> str | None:
+        """Record that a dashboard is gone. Returns the revision, or None.
+
+        The file leaves the tree, exactly as a deleted file does in git:
+        every earlier state stays readable by its revision, and the
+        deletion shows up in that dashboard's own history rather than
+        nowhere at all. Keeping the file instead would need an empty
+        commit, and an empty commit touches no path - it would never
+        appear in the history of the dashboard it is about.
+
+        It also draws a line. Should a *different* dashboard later take
+        the same url_path, it starts a fresh chapter instead of being
+        compared against a stranger.
+        """
+        with self._lock:
+            self._ensure()
+            if self.read_at(key, "HEAD") is None:
+                # Never recorded, or already marked deleted.
+                return None
+            porcelain.remove(str(self.path), [str(self.path / f"{key}.yaml")])
+            revision = porcelain.commit(
+                str(self.path),
+                message=message.encode("utf-8"),
+                author=_IDENTITY,
+                committer=_IDENTITY,
+            )
+            return _as_text(revision)
+
     def create_version(
         self, name: str, title: str, description: str, revision: str | None = None
     ) -> None:
@@ -1002,6 +1049,21 @@ class HistoryStore:
         except KeyError:
             return None
         return repo[blob_id].data.decode("utf-8")
+
+    def list_dashboards(self) -> list[str]:
+        """Every dashboard the history currently tracks."""
+        repo = self._repo()
+        if repo is None:
+            return []
+        head = self._resolve(repo, "HEAD")
+        if head is None:
+            return []
+        tree = repo[repo[head.encode()].tree]
+        return sorted(
+            entry.path.decode()[: -len(".yaml")]
+            for entry in tree.items()
+            if entry.path.endswith(b".yaml")
+        )
 
     def list_versions(self) -> list[Version]:
         """Every named point, newest first."""
@@ -1757,7 +1819,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 
 from .analyze import summarize
 from .const import EVENT_LOVELACE_UPDATED
-from .snapshot import async_get_all_configs, dashboard_key
+from .snapshot import async_get_all_configs, async_known_keys, dashboard_key
 from .store import HistoryStore
 from .yaml_io import dump, load
 
@@ -1807,6 +1869,11 @@ class HistoryCapture:
             configs = {k: v for k, v in configs.items() if k == key}
 
         revisions: list[str] = []
+        if key is None:
+            try:
+                revisions.extend(await self._async_record_deletions())
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not record deleted dashboards")
         for name, config in sorted(configs.items()):
             try:
                 revision = await self._hass.async_add_executor_job(
@@ -1816,6 +1883,37 @@ class HistoryCapture:
                 _LOGGER.exception("Could not record dashboard %s", name)
                 continue
             if revision is not None:
+                revisions.append(revision)
+        return revisions
+
+    async def _async_record_deletions(self) -> list[str]:
+        """Record dashboards the history knows but Home Assistant does not.
+
+        Losing a whole dashboard is the heaviest loss this integration can
+        witness, and Home Assistant announces it with no event at all - so
+        it is noticed here, by comparison, rather than not at all. Without
+        this it would be the only change that leaves no trace, and an
+        invisible gap is worse than no history, because people trust it.
+
+        A missing *configuration* is not enough to conclude a deletion: a
+        dashboard that has never been saved has none either. Only one that
+        Home Assistant no longer knows at all counts.
+        """
+        known = await async_known_keys(self._hass)
+        if known is None:
+            # The question could not be answered. Saying nothing is right;
+            # marking everything deleted would be catastrophic.
+            return []
+        tracked = await self._hass.async_add_executor_job(
+            self._store.list_dashboards
+        )
+        revisions: list[str] = []
+        for name in sorted(set(tracked) - known):
+            revision = await self._hass.async_add_executor_job(
+                self._store.mark_deleted, name, f"{name}: dashboard deleted"
+            )
+            if revision is not None:
+                _LOGGER.info("Dashboard %s is gone; recorded its deletion", name)
                 revisions.append(revision)
         return revisions
 
@@ -2377,7 +2475,40 @@ installiert über HACS von `main`):
   (mehrdeutige werden abgelehnt statt geraten), und die Dienste
   unterscheiden »unknown revision« von »did not exist at«.
 
+### Vierter Befund: gelöschte Dashboards, behoben
+
+Aus Patrics eigener Bedienung kam die Frage, was beim Löschen eines ganzen
+Dashboards geschieht. Die Antwort war: nichts. `async_capture` läuft über die
+**vorhandenen** Dashboards, ein verschwundenes ist schlicht nicht dabei.
+Ausgerechnet der schwerste Verlust war damit der einzige, den die Historie
+nicht festhielt — genau die unsichtbare Lücke, die die Spec verbietet.
+
+Festgehalten wird sie jetzt beim Abgleich, als Commit »dashboard deleted«.
+Die Datei verlässt den Baum, wie in git üblich: Der Verlauf des Dashboards
+zeigt die Löschung, und jeder frühere Stand bleibt über seine Revision
+lesbar. Ein leerer Commit wäre die naheliegende Alternative gewesen und
+funktioniert nicht — er berührt keinen Pfad und erschiene deshalb nie im
+Verlauf des Dashboards, um das es geht.
+
+Der schwierige Teil war die Erkennung. Ein fehlender *Konfigurationsstand*
+ist keine Löschung: Das Standard-Dashboard dieser Anlage hat keinen und
+existiert trotzdem. Gefragt wird deshalb über `async_known_keys`, welche
+Dashboards Home Assistant überhaupt kennt — und kann es die Frage nicht
+beantworten, wird **nichts** vermerkt statt alles.
+
 ### Offen
+
+- [ ] **Anforderung an Teil 2 aus der Bedienung.** Die Dienste erwarten unter
+  `revision` den *Zustand, gegen den verglichen wird*. Ein Mensch denkt aber
+  in *Änderungen* und greift zur Zeile, in der die Löschung steht — also eine
+  zu spät. Die Meldung »nothing is missing since that revision« fängt das ab,
+  aber die Oberfläche muss die Stolperstelle gar nicht erst nachbauen: Dort
+  klickt man auf die Änderung (»diese Löschung rückgängig«), nicht auf einen
+  Zustand.
+- [ ] **Wiederanlegen eines gelöschten Dashboards.** Bleibt laut Spec
+  außerhalb dieser Fassung und braucht einen Eintrag in der
+  Dashboard-Registry, nicht nur `async_save`. Von Hand geht es; im README
+  beschrieben.
 
 - [x] **Entscheidung 1 der Spec beurteilen.** Beantwortet: Der Speicherweg trägt, keine Wartezeit nötig. Spec und Plan sind entsprechend nachgezogen.
 - [ ] **Platzbedarf über echte Nutzung messen.** Nach einigen Wochen `du -sh config/dashboard_history/` gegen die Zahl der Commits halten und mit den 27 KB je Stand aus der Spec vergleichen.

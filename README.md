@@ -111,6 +111,25 @@ dashboard's internal id (`energie_2`) — the two are not the same string.
 | `versions` | List the named points |
 | `debug_snapshot` | What the integration currently sees |
 
+## If a whole dashboard is deleted
+
+The deletion is recorded the next time Home Assistant starts, as a commit
+saying `<dashboard>: dashboard deleted`. Home Assistant announces a deleted
+dashboard with no event of its own, so it is noticed by comparison rather
+than as it happens.
+
+**Nothing is lost.** Every earlier state stays readable at its revision:
+
+```yaml
+action: dashboard_history.history
+data:
+  dashboard: the-deleted-one
+```
+
+Putting a deleted dashboard *back* is not automated in this version. By hand
+it works: create a dashboard with the same `url_path` again, then use
+`restore_state` with a revision from before the deletion.
+
 ## Where the data lives
 
 In `config/dashboard_history/`, as a git repository this integration

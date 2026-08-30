@@ -17,7 +17,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 
 from .analyze import summarize
 from .const import EVENT_LOVELACE_UPDATED
-from .snapshot import async_get_all_configs, dashboard_key
+from .snapshot import async_get_all_configs, async_known_keys, dashboard_key
 from .store import HistoryStore
 from .yaml_io import dump, load
 
@@ -67,6 +67,11 @@ class HistoryCapture:
             configs = {k: v for k, v in configs.items() if k == key}
 
         revisions: list[str] = []
+        if key is None:
+            try:
+                revisions.extend(await self._async_record_deletions())
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not record deleted dashboards")
         for name, config in sorted(configs.items()):
             try:
                 revision = await self._hass.async_add_executor_job(
@@ -76,6 +81,37 @@ class HistoryCapture:
                 _LOGGER.exception("Could not record dashboard %s", name)
                 continue
             if revision is not None:
+                revisions.append(revision)
+        return revisions
+
+    async def _async_record_deletions(self) -> list[str]:
+        """Record dashboards the history knows but Home Assistant does not.
+
+        Losing a whole dashboard is the heaviest loss this integration can
+        witness, and Home Assistant announces it with no event at all - so
+        it is noticed here, by comparison, rather than not at all. Without
+        this it would be the only change that leaves no trace, and an
+        invisible gap is worse than no history, because people trust it.
+
+        A missing *configuration* is not enough to conclude a deletion: a
+        dashboard that has never been saved has none either. Only one that
+        Home Assistant no longer knows at all counts.
+        """
+        known = await async_known_keys(self._hass)
+        if known is None:
+            # The question could not be answered. Saying nothing is right;
+            # marking everything deleted would be catastrophic.
+            return []
+        tracked = await self._hass.async_add_executor_job(
+            self._store.list_dashboards
+        )
+        revisions: list[str] = []
+        for name in sorted(set(tracked) - known):
+            revision = await self._hass.async_add_executor_job(
+                self._store.mark_deleted, name, f"{name}: dashboard deleted"
+            )
+            if revision is not None:
+                _LOGGER.info("Dashboard %s is gone; recorded its deletion", name)
                 revisions.append(revision)
         return revisions
 

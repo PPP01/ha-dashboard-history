@@ -116,6 +116,34 @@ class HistoryStore:
         temp.write_text(text, encoding="utf-8")
         os.replace(temp, target)
 
+    def mark_deleted(self, key: str, message: str) -> str | None:
+        """Record that a dashboard is gone. Returns the revision, or None.
+
+        The file leaves the tree, exactly as a deleted file does in git:
+        every earlier state stays readable by its revision, and the
+        deletion shows up in that dashboard's own history rather than
+        nowhere at all. Keeping the file instead would need an empty
+        commit, and an empty commit touches no path - it would never
+        appear in the history of the dashboard it is about.
+
+        It also draws a line. Should a *different* dashboard later take
+        the same url_path, it starts a fresh chapter instead of being
+        compared against a stranger.
+        """
+        with self._lock:
+            self._ensure()
+            if self.read_at(key, "HEAD") is None:
+                # Never recorded, or already marked deleted.
+                return None
+            porcelain.remove(str(self.path), [str(self.path / f"{key}.yaml")])
+            revision = porcelain.commit(
+                str(self.path),
+                message=message.encode("utf-8"),
+                author=_IDENTITY,
+                committer=_IDENTITY,
+            )
+            return _as_text(revision)
+
     def create_version(
         self, name: str, title: str, description: str, revision: str | None = None
     ) -> None:
@@ -222,6 +250,21 @@ class HistoryStore:
         except KeyError:
             return None
         return repo[blob_id].data.decode("utf-8")
+
+    def list_dashboards(self) -> list[str]:
+        """Every dashboard the history currently tracks."""
+        repo = self._repo()
+        if repo is None:
+            return []
+        head = self._resolve(repo, "HEAD")
+        if head is None:
+            return []
+        tree = repo[repo[head.encode()].tree]
+        return sorted(
+            entry.path.decode()[: -len(".yaml")]
+            for entry in tree.items()
+            if entry.path.endswith(b".yaml")
+        )
 
     def list_versions(self) -> list[Version]:
         """Every named point, newest first."""
