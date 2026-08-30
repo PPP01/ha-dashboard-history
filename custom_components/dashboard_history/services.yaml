@@ -1,0 +1,5 @@
+debug_snapshot:
+  name: Debug snapshot
+  description: >-
+    Return the dashboard configurations as the integration currently sees
+    them. Useful to check that the integration can read them at all.
