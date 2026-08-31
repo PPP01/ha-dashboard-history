@@ -147,6 +147,35 @@ const STYLE = `
     white-space: pre;
     overflow-x: auto;
   }
+  .change .pen {
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: var(--secondary-text-color, #727272);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .change:hover .pen, .change .pen:focus { opacity: 1; }
+  .change .what .auto {
+    display: block;
+    margin-top: 2px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+    font-weight: 400;
+  }
+  dialog input.text {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 4px;
+    background: var(--card-background-color, #fff);
+    color: inherit;
+    font: inherit;
+    box-sizing: border-box;
+  }
   pre .add { color: var(--success-color, #0f9d58); }
   pre .del { color: var(--error-color, #db4437); }
   pre .at { color: var(--secondary-text-color, #727272); }
@@ -291,7 +320,7 @@ class DashboardHistoryPanel extends HTMLElement {
       this._render();
       return;
     }
-    const dialog = this.shadowRoot.querySelector("dialog");
+    const dialog = this.shadowRoot.querySelector("dialog.confirm");
     dialog.querySelector("h2").textContent = title;
     dialog.querySelector(".body").innerHTML = renderDiff(preview.preview);
     const note = preview.creates_dashboard
@@ -321,6 +350,36 @@ class DashboardHistoryPanel extends HTMLElement {
     } catch {
       /* the list is a convenience; a failure here changes nothing */
     }
+  }
+
+  /**
+   * One field, prefilled, Save or Cancel. Nothing more is wanted here -
+   * the same shape as Home Assistant's own "rename" on an integration.
+   */
+  async _describe(index) {
+    const change = this._changes[index];
+    const dialog = this.shadowRoot.querySelector("dialog.describe");
+    const field = dialog.querySelector("input.text");
+    field.value = change.description || "";
+    dialog.returnValue = "";
+    dialog.showModal();
+    field.focus();
+    field.select();
+    const answer = await new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
+        once: true,
+      });
+    });
+    if (answer !== "save") return;
+    const result = await this._guard(() =>
+      this._call("describe", { revision: change.revision, text: field.value }),
+    );
+    if (result?.error) {
+      this._error = result.error;
+      this._render();
+      return;
+    }
+    await this._select(this._selected);
   }
 
   _restoreItem(index, item) {
@@ -407,9 +466,13 @@ class DashboardHistoryPanel extends HTMLElement {
         (change, index) => `
         <div class="card">
           <div class="change" data-index="${index}">
-            <span class="what">${escape(change.message)}</span>
+            <span class="what">${escape(change.description || change.message)}
+              ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
+            </span>
             <span class="when">${escape(when(change.timestamp))}</span>
             <span class="rev">${escape(change.revision.slice(0, 7))}</span>
+            <button class="pen" data-describe="${index}"
+                    title="Describe this change">\u270e</button>
           </div>
           ${this._open === change.revision ? this._renderDetail(index) : ""}
         </div>`,
@@ -431,13 +494,28 @@ class DashboardHistoryPanel extends HTMLElement {
         <div class="side">${this._renderSide()}</div>
         <div class="main">${this._renderMain()}</div>
       </div>
-      <dialog>
+      <dialog class="confirm">
         <h2></h2>
         <div class="body"></div>
         <div class="actions">
           <span class="note muted" style="margin-right:auto"></span>
           <button class="act ghost" value="cancel">Cancel</button>
           <button class="act" value="apply">Apply</button>
+        </div>
+      </dialog>
+      <dialog class="describe">
+        <h2>Describe this change</h2>
+        <div class="body" style="padding:0 16px 8px">
+          <input class="text" type="text" maxlength="200"
+                 placeholder="Why did you change this?">
+          <p class="muted" style="font-size:13px">
+            This becomes the headline of the entry. The automatic message
+            stays below it. Leave it empty to remove the description.
+          </p>
+        </div>
+        <div class="actions">
+          <button class="act ghost" value="cancel">Cancel</button>
+          <button class="act" value="save">Save</button>
         </div>
       </dialog>`;
 
@@ -471,10 +549,30 @@ class DashboardHistoryPanel extends HTMLElement {
         ),
       ),
     );
-    const dialog = root.querySelector("dialog");
-    dialog.querySelectorAll(".actions button").forEach((element) =>
-      element.addEventListener("click", () => dialog.close(element.value)),
+    root.querySelectorAll("[data-describe]").forEach((element) =>
+      element.addEventListener("click", (event) => {
+        // Otherwise the click reaches .change underneath and expands the
+        // row at the same time.
+        event.stopPropagation();
+        this._describe(Number(element.dataset.describe));
+      }),
     );
+    root.querySelectorAll("dialog").forEach((element) =>
+      element
+        .querySelectorAll(".actions button")
+        .forEach((button) =>
+          button.addEventListener("click", () => element.close(button.value)),
+        ),
+    );
+    const field = root.querySelector("dialog.describe input.text");
+    if (field)
+      field.addEventListener("keydown", (event) => {
+        // A single field with a button should behave like a form.
+        if (event.key === "Enter") {
+          event.preventDefault();
+          root.querySelector("dialog.describe").close("save");
+        }
+      });
   }
 }
 
