@@ -16,8 +16,11 @@ backup, if at all. This integration keeps a history of its own.
 - Shows the history of each dashboard: when it changed and what changed.
 - **Puts back what disappeared** — a deleted card, a deleted view.
 - Restores a whole dashboard to an earlier state.
-- Lets you name a point in the history: a *version* with a title and a
-  description.
+- **Says in plain words what a change did**, and what restoring it would
+  do — cards and views by name, with the diff underneath for anyone who
+  wants it.
+- **Lets you describe a change in your own words.** One field. The text
+  becomes the headline of that entry.
 
 ## What it does not do
 
@@ -63,7 +66,40 @@ a deletion, people reach for the line that says the card was deleted — which
 is one line too late, because what they want is the state just before it.
 The panel works that out for you, so the trap is not signposted, it is gone.
 
-Nothing is written until you have seen the diff and pressed Apply.
+Nothing is written until you have confirmed it — and before you do, the
+panel says in plain words what will happen:
+
+```
+What applying this does
+
+  In the view Ground floor
+    heading: Aktuell will be deleted
+
+  ▸ Show the technical details
+```
+
+The diff is still there, one click away, and it is still the exact
+account. It is just no longer the first thing you have to read. The same
+summary appears when you expand a change, in the past tense: what that
+change did.
+
+And when a change cannot be described in terms of cards — a renamed
+dashboard, a changed icon — the summary says so and points at the diff.
+It never claims that nothing changed while a diff below it shows
+otherwise.
+
+### Describing a change
+
+Hover a change and a pencil appears. One field, prefilled, Enter saves —
+the same shape as Home Assistant's own "rename" on an integration.
+
+Your text becomes the headline of that entry; the automatic message moves
+underneath it in grey and stays there, because it is the part you can
+trust when your own note from last year no longer says enough. Emptying
+the field removes the description again.
+
+The commit is **not** rewritten. The description is a git note, so every
+revision you have written down anywhere stays valid.
 
 ### Services
 
@@ -124,12 +160,22 @@ dashboard's internal id (`energie_2`) — the two are not the same string.
 | Service | What it does |
 | --- | --- |
 | `history` | The recorded states of one dashboard |
+| `explain` | What one change did, in plain words |
+| `describe` | Give a change your own description |
 | `deleted_since` | What disappeared since a revision |
 | `restore_deleted` | Put one of them back (needs `confirm`) |
 | `restore_state` | Set a dashboard back to an earlier state (needs `confirm`) |
-| `create_version` | Name a point in the history |
-| `versions` | List the named points |
 | `debug_snapshot` | What the integration currently sees |
+
+`describe` is the only writing service without `confirm`. The rule
+protects dashboards from unintended change; a description changes no
+dashboard, and emptying the field undoes it.
+
+Two more exist for anyone who wants them, and they are not in the panel:
+`create_version` and `versions`. A version is an annotated git tag, which
+does one thing a description cannot — it gives a point in the history a
+*name you can use as a revision*. If you do not need that, describe the
+change instead; it is the same idea with less to remember.
 
 ## If a whole dashboard is deleted
 
@@ -219,6 +265,16 @@ without an installation:
 
 ```bash
 python3 -m pytest tests/ -v
+```
+
+Everything else — the capture, the services, the WebSocket API, the panel
+— needs a running Home Assistant, and every defect found in this project
+so far has been in exactly those parts. There is a disposable instance
+for that (see `docker/README.md`) and two things to run against it:
+
+```bash
+python3 tests/integration/run_checks.py     # the API, end to end
+python3 tests/integration/look_at_panel.py  # the panel, in a real browser
 ```
 
 ## License

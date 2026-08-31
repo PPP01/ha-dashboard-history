@@ -503,6 +503,187 @@ async def run_lifecycle(access: str) -> None:
                 )
 
 
+async def run_descriptions(access: str) -> None:
+    """A description of one's own: written, read back, replaced, removed.
+
+    The whole point is that the commit is untouched, so that is checked
+    rather than assumed: a rewritten commit would invalidate every
+    revision this tool hands out.
+    """
+    async with Socket(access) as socket:
+        key = "ground-floor"
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check("there is a change to describe", bool(changes), f"{len(changes)} changes")
+        if not changes:
+            return
+        revision = changes[0]["revision"]
+        text = "Vor dem Umbau der Heizungskarten — äöüß"
+
+        result = await socket.call(
+            "dashboard_history/describe", revision=revision, text=text
+        )
+        check("a description is accepted", result.get("applied") is True, str(result))
+
+        newest = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ][0]
+        check(
+            "it comes back with the history, umlauts intact",
+            newest["description"] == text,
+            newest["description"],
+        )
+        check(
+            "the revision is unchanged - the commit was not rewritten",
+            newest["revision"] == revision,
+            newest["revision"][:10],
+        )
+        check(
+            "the automatic message is still there underneath it",
+            newest["message"] == changes[0]["message"],
+            newest["message"],
+        )
+
+        await socket.call(
+            "dashboard_history/describe", revision=revision, text="Zweite Fassung"
+        )
+        replaced = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ][0]
+        check(
+            "a second description replaces the first",
+            replaced["description"] == "Zweite Fassung",
+            replaced["description"],
+        )
+
+        await socket.call("dashboard_history/describe", revision=revision, text="   ")
+        emptied = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ][0]
+        check(
+            "emptying it removes the description rather than blanking it",
+            emptied["description"] == "",
+            repr(emptied["description"]),
+        )
+
+        bad = await socket.call(
+            "dashboard_history/describe", revision="f" * 40, text="Nowhere"
+        )
+        check(
+            "an unknown revision is refused, and says so",
+            bad.get("applied") is False and "unknown revision" in bad.get("error", ""),
+            str(bad),
+        )
+
+
+async def run_explanation(access: str) -> None:
+    """The plain-language explanation, against real dashboards."""
+    async with Socket(access) as socket:
+        key = "ground-floor"
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "there is a change with a state before it",
+            len(changes) > 1,
+            f"{len(changes)} changes",
+        )
+        result = await socket.call(
+            "dashboard_history/explain", dashboard=key, revision=changes[0]["revision"]
+        )
+        check(
+            "explain answers in shape",
+            "groups" in result and "note" in result and "error" not in result,
+            str(sorted(result)),
+        )
+        named = [
+            entry["text"] for group in result["groups"] for entry in group["entries"]
+        ]
+        check(
+            "it either names something or admits it cannot - never both silent",
+            bool(named) or "see the details" in result["note"],
+            str(named[:3]) or result["note"],
+        )
+        for group in result["groups"]:
+            check(
+                f"the list for view {group['view']!r} is capped",
+                len(group["entries"]) <= 12,
+                f"{len(group['entries'])} entries, {group['more']} hidden",
+            )
+
+        # The change most in need of an explanation, and the one that used
+        # to answer "did not exist at": a deletion, where the dashboard's
+        # file has left the tree.
+        deleted = next(
+            (
+                dashboard
+                for dashboard in (
+                    await socket.call("dashboard_history/dashboards")
+                )["dashboards"]
+                if not dashboard["exists"]
+            ),
+            None,
+        )
+        if deleted:
+            gone = (
+                await socket.call(
+                    "dashboard_history/history", dashboard=deleted["key"]
+                )
+            )["changes"]
+            answer = await socket.call(
+                "dashboard_history/explain",
+                dashboard=deleted["key"],
+                revision=gone[0]["revision"],
+            )
+            words = [
+                entry["text"] for group in answer["groups"] for entry in group["entries"]
+            ]
+            check(
+                "a deletion is explained rather than reported as an error",
+                "error" not in answer and any("deleted" in word for word in words),
+                str(words[:2] or answer),
+            )
+
+
+async def run_preview_explains(access: str) -> None:
+    """What a person sees before pressing Apply."""
+    async with Socket(access) as socket:
+        key = "ground-floor"
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        before = changes[1]["revision"]
+        preview = await socket.call(
+            "dashboard_history/restore_state", dashboard=key, revision=before
+        )
+        check(
+            "nothing is written without confirm",
+            preview.get("applied") is False,
+            str(preview.get("applied")),
+        )
+        check(
+            "the preview carries words AND the diff, not one instead of the other",
+            "explanation" in preview and "preview" in preview,
+            str(sorted(preview)),
+        )
+        entries = [
+            entry["text"]
+            for group in preview.get("explanation", {}).get("groups", [])
+            for entry in group["entries"]
+        ]
+        check(
+            "and the words are in the future tense, since nothing has happened yet",
+            not entries
+            or all(
+                "will be" in text or "comes back" in text or "goes back" in text
+                or "moves back" in text
+                for text in entries
+            ),
+            str(entries[:3]),
+        )
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -523,6 +704,12 @@ if __name__ == "__main__":
     asyncio.run(run(access))
     print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")
     asyncio.run(run_lifecycle(access))
+    print("\n  -- Eigene Beschreibungen --")
+    asyncio.run(run_descriptions(access))
+    print("\n  -- Klartext statt Diff --")
+    asyncio.run(run_explanation(access))
+    print("\n  -- Die Vorschau vor dem Übernehmen --")
+    asyncio.run(run_preview_explains(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))

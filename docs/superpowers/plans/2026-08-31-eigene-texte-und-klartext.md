@@ -88,7 +88,7 @@ Der Kern. Reines pytest, ohne laufendes Home Assistant.
   def explain_effect(current: dict, target: dict) -> Explanation  # Zukunft
   ```
 
-- [ ] **Step 1: Die fehlschlagenden Tests schreiben**
+- [x] **Step 1: Die fehlschlagenden Tests schreiben**
 
 An `tests/test_analyze.py` anhängen:
 
@@ -304,12 +304,12 @@ _STORAGE = pathlib.Path(
 REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
 ```
 
-- [ ] **Step 2: Laufen lassen und das Scheitern bestätigen**
+- [x] **Step 2: Laufen lassen und das Scheitern bestätigen**
 
 Run: `python3 -m pytest tests/test_analyze.py -v -k "explain or real_"`
 Expected: FAIL — `AttributeError: module 'analyze' has no attribute 'explain_change'`
 
-- [ ] **Step 3: Die Umsetzung schreiben**
+- [x] **Step 3: Die Umsetzung schreiben**
 
 Hinter `Summary` in `custom_components/dashboard_history/analyze.py`:
 
@@ -498,14 +498,14 @@ def explain_effect(current: dict, target: dict) -> Explanation:
     return _explain(current, target, _FUTURE, reassure=True)
 ```
 
-- [ ] **Step 4: Laufen lassen und Grünwerden bestätigen**
+- [x] **Step 4: Laufen lassen und Grünwerden bestätigen**
 
 Run: `python3 -m pytest tests/test_analyze.py -v`
 Expected: PASS, alle bestehenden Tests eingeschlossen
 
 Dann der ganze Satz: `python3 -m pytest tests/ -v` — 106 vorherige plus 15 neue.
 
-- [ ] **Step 5: Committen**
+- [x] **Step 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/analyze.py tests/test_analyze.py
@@ -549,7 +549,7 @@ Eine eigene Aufgabe, weil sie den Wortlaut bestehender Commit-Botschaften änder
 - Consumes: `card_containers` aus Task 1 unverändert
 - Produces: `summarize` zählt Karten in Containern, die nur der neue Stand hat
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [x] **Step 1: Den fehlschlagenden Test schreiben**
 
 ```python
 def test_a_card_moved_into_a_new_section_is_not_only_a_deletion():
@@ -568,12 +568,12 @@ def test_a_card_moved_into_a_new_section_is_not_only_a_deletion():
     assert (counts.removed, counts.added) == (1, 1)
 ```
 
-- [ ] **Step 2: Laufen lassen und das Scheitern bestätigen**
+- [x] **Step 2: Laufen lassen und das Scheitern bestätigen**
 
 Run: `python3 -m pytest tests/test_analyze.py -v -k new_section`
 Expected: FAIL — `assert (1, 0) == (1, 1)`
 
-- [ ] **Step 3: Die Umsetzung schreiben**
+- [x] **Step 3: Die Umsetzung schreiben**
 
 In `summarize`, in der Schleife über die Views, hinter der bestehenden Container-Schleife:
 
@@ -597,12 +597,12 @@ In `summarize`, in der Schleife über die Views, hinter der bestehenden Containe
                 added += len(new_cards)
 ```
 
-- [ ] **Step 4: Laufen lassen und Grünwerden bestätigen**
+- [x] **Step 4: Laufen lassen und Grünwerden bestätigen**
 
 Run: `python3 -m pytest tests/ -v`
 Expected: PASS — kein bestehender Test darf kippen
 
-- [ ] **Step 5: Committen**
+- [x] **Step 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/analyze.py tests/test_analyze.py
@@ -650,7 +650,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
   def previous_change(self, key: str, revision: str) -> str | None
   ```
 
-- [ ] **Step 1: Die fehlschlagenden Tests schreiben**
+- [x] **Step 1: Die fehlschlagenden Tests schreiben**
 
 An `tests/test_store.py` anhängen:
 
@@ -760,12 +760,12 @@ def test_the_state_before_an_unknown_revision_is_unknown(store):
     assert store.previous_change("home", "f" * 40) is None
 ```
 
-- [ ] **Step 2: Laufen lassen und das Scheitern bestätigen**
+- [x] **Step 2: Laufen lassen und das Scheitern bestätigen**
 
 Run: `python3 -m pytest tests/test_store.py -v -k "description or previous"`
 Expected: FAIL — `AttributeError: 'HistoryStore' object has no attribute 'set_description'`
 
-- [ ] **Step 3: Die Umsetzung schreiben**
+- [x] **Step 3: Die Umsetzung schreiben**
 
 `Change` bekommt das Feld:
 
@@ -896,12 +896,12 @@ Und `list_changes` hängt die Beschreibungen an:
             return []
 ```
 
-- [ ] **Step 4: Laufen lassen und Grünwerden bestätigen**
+- [x] **Step 4: Laufen lassen und Grünwerden bestätigen**
 
 Run: `python3 -m pytest tests/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Committen**
+- [x] **Step 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/store.py tests/test_store.py
@@ -960,7 +960,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
   - `async_history` → jede Änderung zusätzlich mit `"description"`
   - `async_restore_deleted` / `async_restore_state` → zusätzlich `"explanation"` in derselben Form wie `async_explain`
 
-- [ ] **Step 1: Die Serialisierung und die zwei Vorgänge schreiben**
+- [x] **Step 1: Die Serialisierung und die zwei Vorgänge schreiben**
 
 In `operations.py`, hinter `_diff`:
 
@@ -1083,7 +1083,7 @@ Und der Import oben erweitert sich:
 from .analyze import explain_change, explain_effect, find_removed
 ```
 
-- [ ] **Step 2: Die WebSocket-Befehle ergänzen**
+- [x] **Step 2: Die WebSocket-Befehle ergänzen**
 
 In `websocket_api.py`, in `_COMMANDS`:
 
@@ -1102,7 +1102,7 @@ In `websocket_api.py`, in `_COMMANDS`:
     ),
 ```
 
-- [ ] **Step 3: Die Dienste ergänzen**
+- [x] **Step 3: Die Dienste ergänzen**
 
 In `services.py`, bei den Handlern:
 
@@ -1172,7 +1172,7 @@ explain:
         text:
 ```
 
-- [ ] **Step 4: Prüfen, dass Home Assistant die Integration noch lädt**
+- [x] **Step 4: Prüfen, dass Home Assistant die Integration noch lädt**
 
 ```bash
 python3 -m pytest tests/ -v
@@ -1182,7 +1182,7 @@ python3 tests/integration/run_checks.py
 
 Expected: pytest grün, alle bisherigen 23 Prüfungen grün. Beim ersten Lauf nach dem Neustart etwa zehn Sekunden Anlaufzeit einplanen — **niemals während des Neustarts anpollen.**
 
-- [ ] **Step 5: Committen**
+- [x] **Step 5: Committen**
 
 ```bash
 git add custom_components/dashboard_history/operations.py \
@@ -1223,7 +1223,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 - Consumes: WebSocket `dashboard_history/describe` und `description` in `history` (Task 4)
 - Produces: nichts für spätere Aufgaben
 
-- [ ] **Step 1: Den Dialog und den Stift bauen**
+- [x] **Step 1: Den Dialog und den Stift bauen**
 
 `STYLE` bekommt:
 
@@ -1368,7 +1368,7 @@ Enter im Feld soll speichern, weil ein Feld mit einem Knopf sonst nach Formular 
       });
 ```
 
-- [ ] **Step 2: Von Hand prüfen, an der Wegwerf-Instanz**
+- [x] **Step 2: Von Hand prüfen, an der Wegwerf-Instanz**
 
 ```bash
 docker compose -f docker/compose.yaml restart
@@ -1383,7 +1383,7 @@ Auf http://127.0.0.1:8124 anmelden, *Dashboard History* öffnen und der Reihe na
 5. Stift → die Zeile klappt **nicht** auf
 6. Browser-Konsole: keine Fehler
 
-- [ ] **Step 3: Committen**
+- [x] **Step 3: Committen**
 
 ```bash
 git add custom_components/dashboard_history/panel.js
@@ -1419,7 +1419,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 - Consumes: `explanation` aus `restore_deleted`/`restore_state` und der Befehl `explain` (Task 4)
 - Produces: nichts für spätere Aufgaben
 
-- [ ] **Step 1: Die Darstellung bauen**
+- [x] **Step 1: Die Darstellung bauen**
 
 `STYLE` bekommt:
 
@@ -1530,7 +1530,7 @@ Und `_renderDetail` stellt sie voran — vor der Liste des Vermissten, weil sie 
 
 und im Rückgabewert weiter unten `${plain}` vor `${list}`.
 
-- [ ] **Step 2: Von Hand prüfen, an der Wegwerf-Instanz**
+- [x] **Step 2: Von Hand prüfen, an der Wegwerf-Instanz**
 
 ```bash
 docker compose -f docker/compose.yaml restart
@@ -1543,7 +1543,7 @@ docker compose -f docker/compose.yaml restart
 5. »Bring it back« an einem gelöschten Dashboard → eine Zeile je Ansicht, nicht Hunderte
 6. Browser-Konsole: keine Fehler
 
-- [ ] **Step 3: Committen**
+- [x] **Step 3: Committen**
 
 ```bash
 git add custom_components/dashboard_history/panel.js
@@ -1585,7 +1585,7 @@ Die pytest-Tests erreichen `operations.py`, `websocket_api.py` und `services.py`
 - Consumes: alles aus Task 1 bis 6
 - Produces: nichts
 
-- [ ] **Step 1: Die Prüfungen schreiben**
+- [x] **Step 1: Die Prüfungen schreiben**
 
 Als neue Funktion in `tests/integration/run_checks.py`, aufgerufen wie die bestehenden Abschnitte:
 
@@ -1682,7 +1682,7 @@ def run_preview_explains(client, key):
     )
 ```
 
-- [ ] **Step 2: Laufen lassen**
+- [x] **Step 2: Laufen lassen**
 
 ```bash
 docker compose -f docker/compose.yaml up -d
@@ -1691,18 +1691,18 @@ python3 tests/integration/run_checks.py
 
 Expected: alle bisherigen 23 Prüfungen plus die neuen, alle grün. Bei einem Fehlschlag gilt die Regel dieses Projekts: **nicht die Prüfung anpassen, sondern die Ursache suchen** — jeder bisherige Fehlschlag hier war ein echter Fehler.
 
-- [ ] **Step 3: Die README nachziehen**
+- [x] **Step 3: Die README nachziehen**
 
 - Abschnitt »What it does«: den Punkt zu Versionen ersetzen durch »**Describe a change in your own words** — one field, and it becomes the headline of that entry.«
 - Neuer Abschnitt »Describing a change« nach »The panel«, der den Stift erklärt und einen Satz dazu, dass der Commit nicht umgeschrieben wird und Revisionen darum gültig bleiben.
 - Ein Satz im Abschnitt zum Panel, dass vor jedem Schreiben eine Klartext-Zusammenfassung steht und der Diff darunter aufklappbar ist.
 - Die Dienst-Tabelle bekommt `describe` und `explain`; `create_version`/`versions` wandern in eine Zeile darunter mit dem Hinweis, dass sie der fortgeschrittene Weg sind: ein Tag ist über seinen Namen als Revision adressierbar, eine Beschreibung nicht.
 
-- [ ] **Step 4: Die Befunde festhalten**
+- [x] **Step 4: Die Befunde festhalten**
 
 Unter »Nach der Umsetzung« in diesem Plan eintragen, was gemessen wurde und was nicht aufgegangen ist. Nichts beschönigen — die drei Fälle, in denen das Werkzeug etwas verschwieg, sind alle so gefunden worden.
 
-- [ ] **Step 5: Committen**
+- [x] **Step 5: Committen**
 
 ```bash
 git add tests/integration/run_checks.py README.md docs/superpowers/plans/
@@ -1730,4 +1730,46 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 ## Nach der Umsetzung
 
-*(Wird während der Umsetzung gefüllt: was gemessen wurde, was nicht aufging, was der Plan falsch angenommen hat. Die Codeauszüge oben sind ab Fertigstellung historisch — das Repository ist die Wahrheit.)*
+Umgesetzt am 2026-08-31. **Die Codeauszüge oben sind ab hier historisch — das Repository ist die Wahrheit.** Stand danach: 136 pytest-Tests, 39 Integrationsprüfungen, alle grün.
+
+### Was der Plan falsch hatte
+
+- **`async_explain` sollte über `_state_at` gehen.** Das war der ernsteste Fehler und wurde erst beim Schreiben des Codes sichtbar. `_state_at` meldet einen fehlenden Stand als *Fehler* — und genau das ist ein Löschungs-Commit: Die Datei hat den Baum verlassen. Die am dringendsten erklärungsbedürftige Änderung des ganzen Werkzeugs hätte »did not exist at« geliefert. Jetzt **ist** der fehlende Stand die Antwort; der Vergleich gegen nichts sagt »the whole view was deleted«. An echtem Home Assistant bestätigt.
+- **Der `-k`-Ausdruck in Task 1 Schritt 2 griff zu kurz.** Die Hälfte der Testnamen enthält weder »explain« noch »real_«, gemeldet wurden 5 von 15 Fehlschlägen. Wer nach Namen filtert, muss die Namen kennen — besser die ganze Datei laufen lassen.
+- **Ein `words is _PAST`** nahm Identität für Bedeutung. In der Selbstprüfung des Plans schon zu einem `reassure`-Parameter korrigiert.
+- **Der Realdaten-Test hätte keine einzige echte Karte benannt.** `explain_effect({}, config)` faltet jede Ansicht auf eine Zeile. Er vergleicht jetzt eine echte Konfiguration gegen sich selbst minus einer Karte je Ansicht — erst das führt den Wortlaut durch den Kartenpfad.
+
+### Was der Plan nicht wusste
+
+- **Der Bestätigungsdialog brauchte einen Namen.** `_confirm` griff per `querySelector("dialog")` auf *den ersten* Dialog. Ein zweiter hätte diese Auswahl still gekapert — kein Fehler, kein Protokolleintrag, nur der falsche Dialog. Beide heißen jetzt `dialog.confirm` und `dialog.describe`.
+- **`summarize` zählte einen neu angelegten Abschnitt nicht.** Der Test bestätigte `(1, 0)` statt `(1, 1)`: Wer eine Karte in einen neuen Abschnitt zieht, sah »1 removed« und kein Wort davon, dass sie noch da ist. Behoben mit eigenem Commit, weil ein Prüfer diese Verhaltensänderung ablehnen können soll.
+- **Notizen und die Historie berühren sich nicht** — gemessen und mit einem Test festgenagelt. `list_all_dashboards` läuft über jeden Commit; ein Notiz-Commit dort hätte ein Dashboard aus nichts erfunden.
+
+### Wie der Wortlaut an echten Daten klingt
+
+```
+heading: Aktuell was deleted
+map: person.somebody +4 was deleted
+vertical-stack > entities: Meter readings was deleted
+the whole view "Ground floor" comes back
+```
+
+Die Grenze der Benennung zeigt die dritte Zeile ehrlich: Steckt in einem Container eine Karte ohne jedes benennbare Feld, bleibt nur die Typkette — `vertical-stack > custom:mushroom-template-card`. Keine Schwäche der Formulierung; die Karte hat wirklich keinen Namen.
+
+### Und ein Werkzeug, das der Plan nicht vorsah
+
+`tests/integration/look_at_panel.py` ist das Erste in diesem Projekt, was das Panel überhaupt erreicht — pytest kann es strukturell nicht, es ist JavaScript in einem Shadow Root innerhalb von HAs Frontend. Es steuert ein **eigenes, isoliertes** Chrome über das DevTools-Protokoll.
+
+Dass es isoliert ist, war eine Lehre und keine Vorsicht: Der erste Versuch lief über den Browser-MCP, also über den Browser, in dem der Nutzer arbeitete. Der Tab wechselte zwischen zwei Aufrufen, und ein Zugangstoken landete im `localStorage` eines fremden Projekts (entfernt, geprüft). Wer einen Browser fernsteuert, den ein Mensch gerade benutzt, steuert nicht, was er glaubt.
+
+Das Skript fand an einem Nachmittag drei Fehler, von denen keiner im Panel lag — alle drei stehen in seinem Docstring:
+
+1. `document.querySelector("dashboard-history-panel")` findet nichts. HA verschachtelt das Panel mehrere Shadow Roots tief.
+2. Auf eine Zeilenzahl zu warten ist ein Wettlauf. Das vorher gezeigte Dashboard hatte schon Zeilen, der Klick traf das alte DOM.
+3. `Runtime.evaluate` mit `returnByValue` kann keinen DOM-Knoten serialisieren und antwortet mit einem leeren Objekt — in Python **falsy**. Auf Booleans warten, nie auf Knoten.
+
+### Ausdrücklich offen geblieben
+
+- **Ein umbenannter *Ansichts*titel** wird weiter nicht als Änderung benannt (`_views_by_key` schlüsselt auf `path`). Durch den Rückfall aus Entscheidung 11 nicht mehr irreführend: Die Erklärung sagt dann, dass sie es nicht in Karten ausdrücken kann, und verweist auf den Diff.
+- **Die Einstellung, ob der Diff offen oder zu startet.** Vorerst zu. Ihr Platz wäre ein Options-Flow.
+- **Kein Push.** Alles liegt lokal auf `main`.
