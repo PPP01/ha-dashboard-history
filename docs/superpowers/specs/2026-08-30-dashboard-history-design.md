@@ -49,6 +49,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 
 | Datei | Aufgabe | Home-Assistant-frei |
 |---|---|---|
+| `keys.py` | Welches Dashboard welches ist, und welches fehlt | **ja** |
 | `analyze.py` | Zwei Stände vergleichen und die Änderungen einordnen: Karte gelöscht, View gelöscht, bearbeitet, verschoben | **ja** |
 | `restore.py` | Die Umkehrung anwenden: gelöschtes Objekt wieder einsetzen, oder einen ganzen Stand herstellen | **ja** |
 | `store.py` | Das eigene Repository: Stände ablegen, Verlauf lesen, Versionen als Markierungen | **Kern ja** |
@@ -57,6 +58,24 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 | `websocket_api.py` | Befehle, auf denen das Panel aufsetzt | nein |
 | `panel.py` + `panel.js` | Die Änderungsansicht in der Seitenleiste | nein |
 | `services.py` | Dieselben Fähigkeiten für die Entwicklerwerkzeuge | nein |
+
+### Wo Entscheidungen liegen müssen
+
+*(Nachgetragen am 2026-08-30, nach vier Befunden aus dem Live-Betrieb.)*
+
+Alle vier Fehler, die die Live-Prüfung fand, lagen in `capture.py`,
+`services.py` und `snapshot.py` — den Modulen, die Home Assistant importieren
+und die deshalb **kein Test erreichen kann**. Die Suite war dabei grün, mit
+über neunzig Tests. Das ist keine Frage der Aufmerksamkeit, sondern der
+Struktur: Was nicht prüfbar ist, wird nicht geprüft.
+
+Daraus folgt eine Regel, die über die Trennung selbst hinausgeht: **Nicht nur
+die Kernlogik, sondern jede Entscheidung gehört in die Home-Assistant-freien
+Module.** Die HA-gebundenen Module dürfen holen, weitergeben und schreiben —
+entscheiden sollen sie nichts. Umgesetzt bei `analyze.change_message` (die
+Meldung, die einen Fehlalarm auslieferte) und in `keys.py` (welches Dashboard
+welches ist, und welches fehlt — beides hatte dort, wo es vorher lag, schon
+einmal einen Fehler).
 
 Die drei oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Diese Trennung ist keine Stilfrage: Sie erlaubt, die Einordnungs-Regeln — das Herz des Projekts — in Sekunden gegen Dutzende Fälle zu testen, statt sie an einer Live-Anlage zu erproben.
 

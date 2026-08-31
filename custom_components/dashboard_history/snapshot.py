@@ -21,6 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.storage import Store
 
 from .const import DEFAULT_DASHBOARD_KEY
+from .keys import storage_keys
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,11 +32,6 @@ LOVELACE_DATA_KEY = "lovelace"
 # against a running installation, and a wrong import would break setup.
 MODE_STORAGE = "storage"
 
-# Home Assistant's own storage keys. The default dashboard is stored under
-# a bare "lovelace"; every other dashboard under its *id*, which is not the
-# same string as its url_path (id "energie_2" vs url_path "energie-2").
-_STORAGE_KEY_DEFAULT = "lovelace"
-_STORAGE_KEY_TEMPLATE = "lovelace.{}"
 
 
 def dashboard_key(url_path: str | None) -> str:
@@ -120,16 +116,9 @@ async def _async_get_all_configs_from_storage(hass: HomeAssistant) -> dict[str, 
     store = Store(hass, 1, "lovelace_dashboards")
     registry = await store.async_load() or {}
 
-    # (our key, Home Assistant's storage key) - the two differ, and mixing
-    # them up would file the same dashboard under two different names.
-    wanted = [(DEFAULT_DASHBOARD_KEY, _STORAGE_KEY_DEFAULT)]
-    for item in registry.get("items", []):
-        url_path = item.get("url_path")
-        if url_path is None or "id" not in item:
-            continue
-        wanted.append((dashboard_key(url_path), _STORAGE_KEY_TEMPLATE.format(item["id"])))
-
-    for key, storage_key in wanted:
+    for key, storage_key in storage_keys(
+        registry.get("items"), DEFAULT_DASHBOARD_KEY
+    ):
         raw = await Store(hass, 1, storage_key).async_load()
         if isinstance(raw, dict) and isinstance(raw.get("config"), dict):
             result[key] = raw["config"]

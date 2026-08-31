@@ -18,6 +18,7 @@ from homeassistant.helpers.event import async_call_later
 
 from .analyze import change_message
 from .const import EVENT_LOVELACE_UPDATED, RECONCILE_DELAY
+from .keys import deletions_to_record
 
 try:  # The authoritative source; the literal below is only a fallback.
     from homeassistant.components.frontend import EVENT_PANELS_UPDATED
@@ -143,15 +144,11 @@ class HistoryCapture:
         Home Assistant no longer knows at all counts.
         """
         known = await async_known_keys(self._hass)
-        if known is None:
-            # The question could not be answered. Saying nothing is right;
-            # marking everything deleted would be catastrophic.
-            return []
         tracked = await self._hass.async_add_executor_job(
             self._store.list_dashboards
         )
         revisions: list[str] = []
-        for name in sorted(set(tracked) - known):
+        for name in deletions_to_record(tracked, known):
             revision = await self._hass.async_add_executor_job(
                 self._store.mark_deleted, name, f"{name}: dashboard deleted"
             )

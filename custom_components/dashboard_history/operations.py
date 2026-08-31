@@ -16,6 +16,7 @@ import logging
 from homeassistant.core import HomeAssistant
 
 from .analyze import find_removed
+from .keys import is_absent, is_live
 from .restore import reinsert
 from .snapshot import (
     async_create_dashboard,
@@ -76,7 +77,7 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
 
     dashboards = []
     for key in ever:
-        exists = key in tracked and (known is None or key in known)
+        exists = is_live(key, tracked, known)
         info = meta.get(key)
         if info is None:
             # Gone, so Home Assistant can say nothing about it. Its own last
@@ -181,7 +182,7 @@ async def async_restore_state(
     # heaviest loss this tool can witness; refusing exactly there while
     # offering everything for a single card made no sense.
     known = await async_known_keys(hass)
-    missing = known is not None and key not in known
+    missing = is_absent(key, known)
     current = {} if missing else (await async_get_config(hass, key) or {})
     diff = _diff(current, target, key)
     if not diff and not missing:
