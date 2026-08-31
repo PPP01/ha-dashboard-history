@@ -3,3 +3,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.egg-info/
+
+# Written by the Playwright MCP browser, and it captures the console of
+# whatever page that browser was on - which may be an unrelated project.
+.playwright-mcp/
