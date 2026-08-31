@@ -357,11 +357,18 @@ async def run_lifecycle(access: str) -> None:
     Everything happens on a dashboard of its own, so the copied ones stay
     untouched.
     """
-    # A fresh name per run. A restored dashboard cannot be deleted again
-    # until Home Assistant restarts - see the last check below - so reusing
-    # one name would make the second run collide with the first.
-    key = f"dh-probe-{int(time.time()) % 100000}"
-    title, icon = "DH Probe", "mdi:test-tube"
+    # A fresh name per run, because a run that fails half way leaves the
+    # dashboard behind and a reused name would then collide.
+    #
+    # The visible title carries that suffix too. It used to be a bare
+    # "DH Probe" for every run, and when three leftovers once piled up in
+    # the sidebar they were indistinguishable - the settings dialog shows
+    # the title, not the url_path. A test that litters should at least
+    # label its litter.
+    stamp = int(time.time()) % 100000
+    key = f"dh-probe-{stamp}"
+    title, icon = f"DH Probe {stamp}", "mdi:test-tube"
+    renamed_title = f"DH Probe {stamp} umbenannt"
     async with Socket(access) as socket:
         # Clear leftovers from earlier runs, as far as they can be cleared.
         for existing in (await socket.call("lovelace/dashboards/list")) or []:
@@ -410,7 +417,7 @@ async def run_lifecycle(access: str) -> None:
         await socket.call(
             "lovelace/dashboards/update",
             dashboard_id=made["id"],
-            title="DH Probe umbenannt",
+            title=renamed_title,
         )
         await asyncio.sleep(RECONCILE_WAIT)
         history = await socket.call("dashboard_history/history", dashboard=key)
@@ -433,7 +440,7 @@ async def run_lifecycle(access: str) -> None:
             "the panel offers it, under the name it last had",
             entry is not None
             and entry["exists"] is False
-            and entry["title"] == "DH Probe umbenannt",
+            and entry["title"] == renamed_title,
             f"{entry}",
         )
 
@@ -469,7 +476,7 @@ async def run_lifecycle(access: str) -> None:
         check(
             "it is back with its title and its icon",
             back is not None
-            and back.get("title") == "DH Probe umbenannt"
+            and back.get("title") == renamed_title
             and back.get("icon") == icon,
             f"{back}",
         )
@@ -491,7 +498,7 @@ async def run_lifecycle(access: str) -> None:
                 await socket.call(
                     "lovelace/dashboards/update",
                     dashboard_id=back["id"],
-                    title="DH Probe umbenannt II",
+                    title=f"{renamed_title} II",
                 )
                 renamed = True
                 detail = "renamed through Home Assistant's own settings"
@@ -534,7 +541,7 @@ async def run_lifecycle(access: str) -> None:
             touch = f"{key}-touch"
             touch_id = touch.replace("-", "_")
             await socket.call(
-                "lovelace/dashboards/create", url_path=touch, title="DH Touch"
+                "lovelace/dashboards/create", url_path=touch, title=f"DH Touch {stamp}"
             )
             await socket.call("lovelace/dashboards/delete", dashboard_id=touch_id)
             # Waiting for the touch entry to *leave* the file is the whole
