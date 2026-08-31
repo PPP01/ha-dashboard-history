@@ -2779,6 +2779,23 @@ die Konfiguration ist byte-identisch. Danach fielen drei Dinge auf.
   über beide Pfade, und die Meldung nennt die Umbenennung beim Namen:
   `renamed to "Neuer Titel"` statt `metadata recorded`.
 
+### Noch nicht geprüft (Stand 2026-08-31)
+
+Drei Dinge sind bis hierher **nie** an einem laufenden Home Assistant
+belegt worden. Alle drei betreffen Pfade, die Home Assistant mit keinem
+Ereignis ankündigt, und alle drei hingen bisher an einem Neustart der
+Anlage. Mit der Wegwerf-Instanz (`docker/README.md`) sind sie
+billig prüfbar:
+
+1. **Löschung im laufenden Betrieb.** Erzeugt sie binnen etwa 15 Sekunden
+   einen »dashboard deleted«-Commit, ohne Neustart? Das prüft den
+   `panels_updated`-Abgleich, der eigens dafür gebaut wurde.
+2. **Umbenennung.** Erscheint sie als `renamed to "…"`?
+3. **Wiederanlegen — der größte ungeprüfte Teil.** `async_create_dashboard`
+   hat drei Wege: eine erreichbare Live-Sammlung, sonst eine eigene
+   `DashboardsCollection` plus Nachbau dessen, was Home Assistants Listener
+   tut. Welcher greift, sagt seit kurzem eine INFO-Zeile im Protokoll.
+
 ### Offen
 
 - [ ] **Anforderung an Teil 2 aus der Bedienung.** Die Dienste erwarten unter
