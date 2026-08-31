@@ -6,7 +6,21 @@ that is not missing — and a false alarm destroys trust in exactly the
 message people open the tool for.
 """
 
+import json
+import os
+import pathlib
+
 import analyze
+
+# Point DASHBOARD_HISTORY_REAL_STORAGE at any Home Assistant .storage
+# directory to run the real-data checks against your own dashboards.
+_STORAGE = pathlib.Path(
+    os.environ.get(
+        "DASHBOARD_HISTORY_REAL_STORAGE",
+        "/path/to/home-assistant/.storage",
+    )
+)
+REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
 
 
 def _config(cards):
@@ -251,3 +265,194 @@ def test_views_without_a_path_are_handled():
     removed = analyze.find_removed(old, new)
     assert len(removed) == 1
     assert removed[0].view_path is None
+
+
+# -- the plain-language explanation ------------------------------------
+#
+# The wording lives in analyze.py rather than in the panel on purpose.
+# Three times in this project the code was righter than its own report:
+# the false alarm "changed outside Home Assistant", the misleading "does
+# not exist at", and the caveat that was silently dropped when a
+# dashboard was recreated. Wording that can go wrong belongs where
+# pytest can reach it.
+
+
+def test_a_deleted_card_is_explained_by_name():
+    result = analyze.explain_change(_config([A, B]), _config([A]))
+    assert [group.view for group in result.groups] == ["Home"]
+    assert [entry.text for entry in result.groups[0].entries] == [
+        "tile: light.b was deleted"
+    ]
+
+
+def test_the_same_deletion_reads_as_a_warning_in_future_tense():
+    result = analyze.explain_effect(_config([A, B]), _config([A]))
+    assert result.groups[0].entries[0].text == "tile: light.b will be deleted"
+    # Nothing to reassure about: something IS deleted here.
+    assert result.note == ""
+
+
+def test_a_restore_says_plainly_that_nothing_is_lost():
+    result = analyze.explain_effect(_config([A]), _config([A, B]))
+    assert result.groups[0].entries[0].text == "tile: light.b comes back"
+    assert result.note == "Nothing on this dashboard is deleted."
+
+
+def test_an_edited_card_is_one_event_not_two():
+    edited = dict(B, name="Kitchen light")
+    result = analyze.explain_change(_config([A, B]), _config([A, edited]))
+    assert [entry.kind for entry in result.groups[0].entries] == ["edited"]
+    assert result.groups[0].entries[0].text == "tile: Kitchen light was changed"
+
+
+def test_a_swap_is_explained_as_two_moves():
+    result = analyze.explain_change(_config([A, B]), _config([B, A]))
+    assert sorted(entry.kind for entry in result.groups[0].entries) == [
+        "moved",
+        "moved",
+    ]
+
+
+def test_a_deletion_alone_moves_nothing():
+    # The same rule _moved already follows: rank among the survivors, not
+    # raw position. Otherwise every card behind a deletion is noise.
+    result = analyze.explain_change(_config([A, B, C]), _config([A, C]))
+    assert [entry.kind for entry in result.groups[0].entries] == ["removed"]
+
+
+def test_a_whole_deleted_view_is_one_line_and_not_hundreds():
+    old = {"views": [{"path": "home", "title": "Home", "cards": [A, B, C]}]}
+    result = analyze.explain_change(old, {"views": []})
+    assert [entry.text for entry in result.groups[0].entries] == [
+        'the whole view "Home" was deleted'
+    ]
+
+
+def test_a_recreated_dashboard_is_one_line_per_view():
+    # The heaviest case: a dashboard restored from nothing. Listing every
+    # card would be hundreds of lines - on the installation this was built
+    # against, 661 of them.
+    target = {
+        "views": [
+            {"path": "home", "title": "Home", "cards": [A, B]},
+            {"path": "up", "title": "Upstairs", "cards": [C]},
+        ]
+    }
+    result = analyze.explain_effect({}, target)
+    assert [group.view for group in result.groups] == ["Home", "Upstairs"]
+    assert [len(group.entries) for group in result.groups] == [1, 1]
+    assert result.note == "Nothing on this dashboard is deleted."
+
+
+def test_a_long_list_is_capped_and_says_how_much_it_hides():
+    cards = [{"type": "tile", "entity": f"light.n{index}"} for index in range(20)]
+    result = analyze.explain_effect(_config([]), _config(cards))
+    assert len(result.groups[0].entries) == 12
+    assert result.groups[0].more == 8
+
+
+def test_an_unnameable_change_never_claims_that_nothing_changed():
+    # A renamed view: the cards match exactly, so there is nothing to
+    # name. The summary sits directly above a diff that plainly shows the
+    # difference - claiming "nothing changed" there would be refuted at a
+    # glance, which is worse than having no summary at all.
+    old = {"views": [{"path": "home", "title": "Home", "cards": [A]}]}
+    new = {"views": [{"path": "home", "title": "Warm", "cards": [A]}]}
+    result = analyze.explain_change(old, new)
+    assert result.groups == []
+    assert "see the details" in result.note
+
+
+def test_two_views_are_two_groups():
+    old = {
+        "views": [
+            {"path": "home", "title": "Home", "cards": [A, B]},
+            {"path": "up", "title": "Upstairs", "cards": [C]},
+        ]
+    }
+    new = {
+        "views": [
+            {"path": "home", "title": "Home", "cards": [A]},
+            {"path": "up", "title": "Upstairs", "cards": []},
+        ]
+    }
+    result = analyze.explain_change(old, new)
+    assert [group.view for group in result.groups] == ["Home", "Upstairs"]
+    assert [len(group.entries) for group in result.groups] == [1, 1]
+
+
+def test_a_view_without_a_title_is_named_by_its_path():
+    old = {"views": [{"path": "garage", "cards": [A, B]}]}
+    new = {"views": [{"path": "garage", "cards": [A]}]}
+    result = analyze.explain_change(old, new)
+    assert result.groups[0].view == "garage"
+
+
+def test_a_card_in_a_section_is_explained_too():
+    # The sections layout, which is what Home Assistant creates by default
+    # for a new dashboard now.
+    old = {
+        "views": [
+            {"path": "home", "title": "Home", "sections": [{"cards": [A, B]}]}
+        ]
+    }
+    new = {"views": [{"path": "home", "title": "Home", "sections": [{"cards": [A]}]}]}
+    result = analyze.explain_change(old, new)
+    assert [entry.text for entry in result.groups[0].entries] == [
+        "tile: light.b was deleted"
+    ]
+
+
+def _without_first_card(config):
+    """The same configuration with the first card of each view removed."""
+    import copy
+
+    shrunk = copy.deepcopy(config)
+    for view in shrunk.get("views") or []:
+        for _, cards in analyze.card_containers(view):
+            if cards:
+                del cards[0]
+                break
+    return shrunk
+
+
+def test_every_real_card_can_be_named():
+    # The formulations have to hang on real cards, not on the four
+    # invented ones above - none of which has a nested container, a
+    # missing title or an entity list. Comparing a real configuration
+    # against itself minus one card per view is what forces the wording
+    # through the card path; explain_effect({}, config) would not, because
+    # it folds each view into a single line.
+    if not REAL_DASHBOARDS:
+        return
+    named = 0
+    for path in REAL_DASHBOARDS:
+        config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
+        if not (config.get("views") or []):
+            continue
+        result = analyze.explain_change(config, _without_first_card(config))
+        for group in result.groups:
+            assert group.view.strip(), f"a view without a name in {path.name}"
+            for entry in group.entries:
+                assert entry.text.strip(), f"an empty sentence in {path.name}"
+                assert entry.kind in ("removed", "added", "edited", "moved")
+                assert entry.what in ("card", "view")
+                # The label is what makes this worth reading at all. An
+                # empty one would produce " was deleted" and tell nobody
+                # which card is gone.
+                assert entry.label.strip(), f"an unnamed card in {path.name}"
+                named += 1
+    assert named, "the real dashboards produced no explanation at all"
+
+
+def test_a_real_dashboard_restored_from_nothing_stays_readable():
+    # The heaviest case on real data: 661 cards on this installation, and
+    # the summary still has to fit on a screen.
+    if not REAL_DASHBOARDS:
+        return
+    for path in REAL_DASHBOARDS:
+        config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
+        result = analyze.explain_effect({}, config)
+        for group in result.groups:
+            assert len(group.entries) <= 12
+        assert result.note == "Nothing on this dashboard is deleted." or not result.groups

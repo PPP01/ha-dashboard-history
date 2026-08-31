@@ -42,6 +42,33 @@ class Summary:
     moved: int = 0
 
 
+@dataclass(frozen=True)
+class Entry:
+    """One nameable thing that changed."""
+
+    kind: str  # "removed", "added", "edited" or "moved"
+    what: str  # "card" or "view"
+    label: str
+    text: str  # the finished sentence, ready to show
+
+
+@dataclass(frozen=True)
+class ViewChanges:
+    """What changed in one view. `more` is what the cap left out."""
+
+    view: str
+    entries: list[Entry]
+    more: int = 0
+
+
+@dataclass(frozen=True)
+class Explanation:
+    """A diff in words. `note` carries what the groups cannot say."""
+
+    groups: list[ViewChanges]
+    note: str = ""
+
+
 def card_containers(view: dict) -> Iterator[tuple[tuple, list]]:
     """Yield every card list in a view, with the path that locates it.
 
@@ -306,6 +333,158 @@ def summarize(old: dict, new: dict) -> Summary:
             added += sum(len(cards) for _, cards in card_containers(new_view))
 
     return Summary(added=added, removed=removed, edited=edited, moved=moved)
+
+
+# Card labels already carry their type ("tile: light.b"), so they need no
+# quotes. A view label is a bare name and does.
+_PAST = {
+    ("card", "removed"): "{label} was deleted",
+    ("card", "added"): "{label} was added",
+    ("card", "edited"): "{label} was changed",
+    ("card", "moved"): "{label} was moved",
+    ("view", "removed"): 'the whole view "{label}" was deleted',
+    ("view", "added"): 'the whole view "{label}" was added',
+}
+
+_FUTURE = {
+    ("card", "removed"): "{label} will be deleted",
+    ("card", "added"): "{label} comes back",
+    ("card", "edited"): "{label} goes back to how it was",
+    ("card", "moved"): "{label} moves back to where it was",
+    ("view", "removed"): 'the whole view "{label}" will be deleted',
+    ("view", "added"): 'the whole view "{label}" comes back',
+}
+
+# A dashboard restored from nothing would otherwise list every card it
+# ever had - 661 of them on the installation this was built against.
+_ENTRY_LIMIT = 12
+
+_NOTHING_LOST = "Nothing on this dashboard is deleted."
+_NOT_IN_CARDS = (
+    "This change cannot be described in terms of cards - see the details below."
+)
+
+
+def _view_name(view: dict, key) -> str:
+    """What to call a view: its title, else its path, else its position."""
+    return str(view.get("title") or view.get("path") or key)
+
+
+def _entry(words: dict, kind: str, what: str, label: str) -> Entry:
+    return Entry(
+        kind=kind,
+        what=what,
+        label=label,
+        text=words[(what, kind)].format(label=label),
+    )
+
+
+def _capped(name: str, entries: list[Entry]) -> ViewChanges:
+    """Keep the list readable, and say how much it hides.
+
+    Silently truncating would be the one thing this project must not do:
+    a summary that omits without saying so is worse than a long one.
+    """
+    if len(entries) <= _ENTRY_LIMIT:
+        return ViewChanges(view=name, entries=entries)
+    return ViewChanges(
+        view=name,
+        entries=entries[:_ENTRY_LIMIT],
+        more=len(entries) - _ENTRY_LIMIT,
+    )
+
+
+def _card_entries(words: dict, old_view: dict, new_view: dict) -> list[Entry]:
+    """Every nameable card change between two states of one view."""
+    old_containers = dict(card_containers(old_view))
+    new_containers = dict(card_containers(new_view))
+    entries: list[Entry] = []
+
+    for location, old_cards in old_containers.items():
+        new_cards = new_containers.get(location, [])
+        removed, added, edited, moved = _match_cards(old_cards, new_cards)
+        entries += [
+            _entry(words, "removed", "card", _describe(old_cards[index]))
+            for index in removed
+        ]
+        entries += [
+            _entry(words, "added", "card", _describe(new_cards[index]))
+            for index in added
+        ]
+        entries += [
+            _entry(words, "edited", "card", _describe(new_cards[index]))
+            for _, index in edited
+        ]
+        entries += [
+            _entry(words, "moved", "card", _describe(old_cards[index]))
+            for index, _ in moved
+        ]
+
+    # A container that only the new state has - a section added to a view.
+    # Its cards are new, and reporting the cards they were moved out of as
+    # a bare deletion would be a half-truth.
+    for location, new_cards in new_containers.items():
+        if location not in old_containers:
+            entries += [
+                _entry(words, "added", "card", _describe(card)) for card in new_cards
+            ]
+    return entries
+
+
+def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
+    """The engine behind both tenses.
+
+    `reassure` says whether a "nothing is lost" line is wanted when
+    nothing is removed. It is passed rather than inferred from `words`:
+    identity of a wording table is not the question being asked.
+    """
+    new_views = dict(_views_by_key(new))
+    old_keys = {key for key, _ in _views_by_key(old)}
+    groups: list[ViewChanges] = []
+    removed_anything = False
+
+    for key, old_view in _views_by_key(old):
+        new_view = new_views.get(key)
+        name = _view_name(old_view, key)
+        if new_view is None:
+            # One line for the view, not one per card on it.
+            groups.append(ViewChanges(name, [_entry(words, "removed", "view", name)]))
+            removed_anything = True
+            continue
+        entries = _card_entries(words, old_view, new_view)
+        if entries:
+            groups.append(_capped(name, entries))
+            removed_anything = removed_anything or any(
+                entry.kind == "removed" for entry in entries
+            )
+
+    for key, new_view in _views_by_key(new):
+        if key not in old_keys:
+            name = _view_name(new_view, key)
+            groups.append(ViewChanges(name, [_entry(words, "added", "view", name)]))
+
+    if not groups:
+        # Something changed - the caller only asks when it did - but not
+        # anything this can name. Saying "nothing changed" above a diff
+        # that shows the difference would be refuted at a glance.
+        return Explanation(groups=[], note=_NOT_IN_CARDS)
+    if removed_anything or not reassure:
+        return Explanation(groups=groups)
+    return Explanation(groups=groups, note=_NOTHING_LOST)
+
+
+def explain_change(old: dict, new: dict) -> Explanation:
+    """What one recorded change did, in words. Past tense."""
+    return _explain(old, new, _PAST, reassure=False)
+
+
+def explain_effect(current: dict, target: dict) -> Explanation:
+    """What applying a restore would do, in words. Future tense.
+
+    The reassurance matters here and not in the past tense: before
+    pressing Apply, the question is not what changed but what is at risk.
+    """
+    return _explain(current, target, _FUTURE, reassure=True)
 
 
 def _meta_detail(old_meta: dict | None, new_meta: dict | None) -> str:
