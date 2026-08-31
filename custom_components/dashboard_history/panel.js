@@ -176,6 +176,25 @@ const STYLE = `
     font: inherit;
     box-sizing: border-box;
   }
+  .plain { margin: 0 0 12px; }
+  .plain h3 { margin: 0 0 8px; font-size: 15px; }
+  .plain .view {
+    margin: 0 0 10px;
+    padding-left: 12px;
+    border-left: 3px solid var(--divider-color, #e0e0e0);
+  }
+  .plain .view > strong { display: block; font-size: 13px; }
+  .plain ul { margin: 4px 0 0; padding-left: 18px; }
+  .plain li { margin: 2px 0; }
+  .plain li.removed { color: var(--error-color, #db4437); }
+  .plain li.added { color: var(--success-color, #0f9d58); }
+  .plain .note { margin: 8px 0 0; font-size: 13px; }
+  details.raw > summary {
+    padding: 8px 0;
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+    cursor: pointer;
+  }
   pre .add { color: var(--success-color, #0f9d58); }
   pre .del { color: var(--error-color, #db4437); }
   pre .at { color: var(--secondary-text-color, #727272); }
@@ -211,6 +230,35 @@ const renderDiff = (diff) => {
   return `<pre>${body}</pre>`;
 };
 
+/**
+ * The same difference in words. It sits above the diff, not instead of
+ * it: the diff is the exact account, and it stays.
+ */
+const renderPlain = (explanation, heading) => {
+  if (!explanation) return "";
+  const groups = (explanation.groups || [])
+    .map(
+      (group) => `
+      <div class="view">
+        <strong>In the view ${escape(group.view)}</strong>
+        <ul>
+          ${group.entries
+            .map(
+              (entry) =>
+                `<li class="${escape(entry.kind)}">${escape(entry.text)}</li>`,
+            )
+            .join("")}
+          ${group.more ? `<li class="muted">and ${escape(group.more)} more</li>` : ""}
+        </ul>
+      </div>`,
+    )
+    .join("");
+  const note = explanation.note
+    ? `<p class="note muted">${escape(explanation.note)}</p>`
+    : "";
+  return `<div class="plain"><h3>${escape(heading)}</h3>${groups}${note}</div>`;
+};
+
 const when = (timestamp) =>
   new Date(timestamp * 1000).toLocaleString(undefined, {
     dateStyle: "medium",
@@ -226,6 +274,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._selected = null;
     this._open = null; // revision of the expanded change
     this._items = [];
+    this._explanation = null;
     this._busy = false;
     this._error = null;
     this._loaded = false;
@@ -274,6 +323,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._selected = key;
     this._open = null;
     this._items = [];
+    this._explanation = null;
     const result = await this._guard(() =>
       this._call("history", { dashboard: key }),
     );
@@ -298,16 +348,25 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     this._open = change.revision;
     this._items = [];
+    this._explanation = null;
     const before = this._before(index);
-    if (before) {
-      const result = await this._guard(() =>
-        this._call("deleted_since", {
+    const answers = await this._guard(() =>
+      Promise.all([
+        before
+          ? this._call("deleted_since", {
+              dashboard: this._selected,
+              revision: before,
+            })
+          : Promise.resolve({ items: [] }),
+        this._call("explain", {
           dashboard: this._selected,
-          revision: before,
+          revision: change.revision,
         }),
-      );
-      this._items = result ? result.items || [] : [];
-    }
+      ]),
+    );
+    const [missing, explanation] = answers || [null, null];
+    this._items = missing ? missing.items || [] : [];
+    this._explanation = explanation;
     this._render();
   }
 
@@ -322,7 +381,12 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     const dialog = this.shadowRoot.querySelector("dialog.confirm");
     dialog.querySelector("h2").textContent = title;
-    dialog.querySelector(".body").innerHTML = renderDiff(preview.preview);
+    dialog.querySelector(".body").innerHTML =
+      renderPlain(preview.explanation, "What applying this does") +
+      `<details class="raw">
+         <summary>Show the technical details</summary>
+         ${renderDiff(preview.preview)}
+       </details>`;
     const note = preview.creates_dashboard
       ? "This recreates the dashboard, with its old title and icon."
       : "";
@@ -418,10 +482,11 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _renderDetail(index) {
+    const plain = renderPlain(this._explanation, "What this change did");
     const before = this._before(index);
     if (!before)
-      return `<div class="detail"><p class="muted">This is the first recorded
-        state, so there is nothing before it to compare against.</p></div>`;
+      return `<div class="detail">${plain}<p class="muted">This is the first
+        recorded state, so there is nothing before it to compare against.</p></div>`;
     const list = this._items.length
       ? this._items
           .map(
@@ -436,6 +501,7 @@ class DashboardHistoryPanel extends HTMLElement {
           .join("")
       : `<p class="muted">Nothing from before this change is missing today.</p>`;
     return `<div class="detail">
+      ${plain}
       ${list}
       <div style="margin-top:16px">
         <button class="act ghost" data-state="${escape(before)}">
