@@ -129,6 +129,8 @@ Zurueckholen
 
 7. **Nichts wird ohne Vorschau geschrieben.** Jede Wiederherstellung zeigt zuerst den Diff. Derselbe Grundsatz wie beim bestehenden Restore-Werkzeug.
 
+   **Die Regel gilt für Dashboards, nicht für Beschriftungen.** *(Grenze nachgetragen am 2026-08-31.)* Ihr Zweck ist, dass niemand sein Dashboard unversehens verändert findet. Eine Beschreibung nach Entscheidung 10 verändert kein Dashboard, ist sofort und vollständig zurücknehmbar und wird von der Person geschrieben, die sie gleich danach liest. Ein Bestätigungsdialog davor wäre Zeremonie ohne Schutzwirkung — und das Gegenteil dessen, wofür die Funktion gebaut wird. Sie verlangt deshalb **kein** `confirm`. Jeder Vorgang, der einen Dashboard-Stand schreibt, verlangt es weiterhin ohne Ausnahme.
+
 9. **Das Panel fragt nach einer Änderung, nie nach einem Zustand.** *(Nachgetragen am 2026-08-30, aus der Beobachtung echter Bedienung.)*
 
    Die Dienste erwarten unter `revision` den *Zustand, gegen den verglichen wird*. Ein Mensch denkt aber in Änderungen: Soll eine Löschung zurückgenommen werden, greift er zu der Zeile, in der die Löschung steht — und das ist eine zu spät, denn gewollt ist der Zustand davor. Beim Erproben ist genau das passiert.
@@ -147,6 +149,32 @@ Zurueckholen
 
    Damit ein Dashboard *vollständig* wiederkehrt, werden ab dieser Fassung auch Titel, Symbol und Sichtbarkeit erfasst, nicht nur die Kartenkonfiguration. Sie liegen unter `meta/<schlüssel>.yaml` im selben Commit. Ein Dashboard mit richtigen Karten, aber falschem Namen wäre nur eine halbe Wiederherstellung.
 
+10. **Ein eigener Text zu einer Änderung lebt als git note — und ersetzt die Versionen.** *(Nachgetragen am 2026-08-31, auf Wunsch des Nutzers.)*
+
+    Die automatische Meldung sagt, *was* geschehen ist. Warum es geschehen ist, weiß nur der Mensch: »vor dem Umbau der Heizungskarten« findet man in einem Jahr wieder, »2 removed, 1 edited« nicht.
+
+    Eine Commit-Botschaft nachträglich zu ändern ist dafür kein Weg. Ein Commit ist über seinen Inhalt adressiert; ihn umzuschreiben schreibt jeden Nachfolger um und macht damit genau die Revisionen ungültig, die Panel, Dienste und Antworten dieses Werkzeugs herumtragen. In einem Werkzeug, dessen Wert an der Zitierbarkeit von Revisionen hängt, wäre das die schlechteste denkbare Stelle für eine Umschreibung.
+
+    Der Text liegt deshalb auf `refs/notes/commits`, geschrieben mit `porcelain.notes_add`. Genau dafür gibt es git notes: veränderlicher Kommentar an unveränderlichem Objekt. **Geprüft an dulwich 1.2.14 (2026-08-31):** anlegen, überschreiben und entfernen tragen, ein Commit ohne Notiz liefert `None` statt eines Fehlers, UTF-8 kommt unverfälscht zurück, und die Notiz-Commits liegen nicht in der Historie — nach zwei Notiz-Operationen führte der Walker weiterhin genau zwei Commits. Kein bestehender Lesepfad ändert sein Verhalten.
+
+    Die beiden verworfenen Ablagen und der Grund: Eine Datei im Repository (`notes/<schlüssel>.yaml`) wäre für Hineinschauende sichtbarer, kostet aber je Notiz einen Commit **in** der Historie — Rauschen genau in der Liste, die aufgeräumt bleiben soll. Ein `Store` in `.storage` würde Beschriftung und Historie trennen: Eine eingespielte Sicherung hätte dann die eine ohne die andere.
+
+    **Damit entfallen die Versionen als Konzept der Oberfläche.** Ein benannter Punkt ist ab hier einfach eine Änderung, der jemand einen Text gegeben hat — ein Stift an der Zeile, ein Dialog mit einem Feld, wie HAs »Umbenennen« bei einer Erweiterung. Ein leeres Feld nimmt die Beschreibung zurück. `create_version`/`versions` bleiben als **Dienste** erhalten, weil ein Tag etwas kann, was eine Notiz nicht kann: `resolve()` nimmt seinen Namen als Revision an, ein Tag ist also adressierbar. Sie rutschen in der README nach hinten. Zwei Wege in der Oberfläche für dieselbe Sache wären ein Konzept zu viel.
+
+    Der eigene Text wird zur Überschrift der Zeile, die automatische Meldung zur grauen zweiten. Sie verschwindet nicht: Sie ist die Angabe, der man trauen kann, wenn die eigene Notiz von damals nicht mehr genug sagt.
+
+11. **Der Diff bekommt eine Erklärung darüber — und ihre Worte entstehen in `analyze.py`.** *(Nachgetragen am 2026-08-31, auf Wunsch des Nutzers.)*
+
+    Ein Unified-Diff über YAML ist für die meisten Menschen keine Antwort auf »was passiert mit meinem Dashboard«. Er bleibt, weil er die genaue Auskunft ist; er bekommt aber eine benannte, nach Ansicht gruppierte Zusammenfassung darüber. Namen, nicht Zahlen: »2 Karten« beruhigt niemanden, »Wohnzimmer Temperatur« schon. `_describe` und `_match_cards` können das bereits — die Erklärung ist keine neue Einordnung, sondern eine zweite Ausgabe der bestehenden.
+
+    Zwei Eingänge über einem Motor, weil derselbe Sachverhalt in zwei Zeitformen gebraucht wird: `explain_change(alt, neu)` für den Verlauf (»was ist damals passiert«) und `explain_effect(jetzt, ziel)` für den Bestätigungsdialog (»was wird passieren«). Gleiche Struktur, zwei Wortlisten.
+
+    Dass der **Wortlaut** dort entsteht und nicht im Panel, folgt aus dem Abschnitt »Wo Entscheidungen liegen müssen« — und aus der Erfahrung: Dreimal war in diesem Projekt der Code richtiger als sein eigener Bericht (der Fehlalarm »changed outside Home Assistant«, das irreführende »does not exist at«, das verschwiegene Rest beim Wiederanlegen). Wortlaut, der schiefgehen kann, gehört dorthin, wo `pytest` hinkommt.
+
+    **Findet die Erklärung nichts zu benennen, behauptet sie nicht »nichts geändert«.** Sie sagt, dass diese Änderung sich nicht in Karten ausdrücken lässt, und verweist auf den Diff. Sonst widerspräche die Zusammenfassung dem Diff unmittelbar darunter, der den Unterschied sichtbar zeigt — und eine Zusammenfassung, die man beim Hinsehen widerlegt, ist schlimmer als keine.
+
+    Der Diff steht in einem `<details>`, standardmäßig zu. Ob er offen oder zu startet, wird später einstellbar; der Platz dafür ist ein Options-Flow der Integration.
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
@@ -160,6 +188,10 @@ Zurueckholen
 | Fehler beim Erfassen | Wird protokolliert und darf **niemals** den Start von Home Assistant aufhalten oder ein Speichern verhindern |
 | Dashboard gelöscht | Beim nächsten Abgleich als Commit »dashboard deleted« festgehalten. Die Datei verlässt den Baum, wie eine gelöschte Datei es in git tut — jeder frühere Stand bleibt über seine Revision lesbar, und die Löschung erscheint im Verlauf **dieses** Dashboards statt nirgends. Home Assistant meldet eine Dashboard-Löschung mit keinem Ereignis, sie fällt deshalb erst beim Vergleich auf. Ein fehlender *Konfigurationsstand* zählt ausdrücklich **nicht** als Löschung — ein nie gespeichertes Dashboard hat auch keinen. **Das Wiederanlegen gehört zu dieser Fassung** — siehe Entscheidung 8 |
 | Ein anderes Dashboard bekommt später denselben `url_path` | Der Löschvermerk zieht die Trennlinie: Da HEAD die Datei nicht mehr führt, beginnt das neue Dashboard ein eigenes Kapitel, statt einen riesigen Diff gegen einen Fremden zu erzeugen |
+| Beschreibung auf einer unbekannten Revision | Wird abgewiesen mit der Angabe, dass die Revision unbekannt ist — nicht stillschweigend an einem falschen Commit abgelegt. Dieselbe Trennung wie bei `_state_at`: eine Aussage über die Eingabe, keine über das Dashboard |
+| Beschreibung auf leeren Text gesetzt | Die Notiz wird entfernt, nicht durch eine leere ersetzt. Sonst hätte eine Zeile eine unsichtbare Überschrift und die automatische Meldung wäre verdeckt |
+| Änderung, die sich nicht in Karten ausdrücken lässt (nur Titel, nur Symbol, außerhalb erfasst) | Die Erklärung sagt genau das und verweist auf den Diff. Sie behauptet **nie** »nichts geändert«, solange ein Diff darunter das Gegenteil zeigt |
+| Umbenannte **Ansicht** | Wird weiter nicht als solche benannt: `_views_by_key` schlüsselt auf `path`, die Karten stimmen also überein. Bekannte Lücke, durch den Rückfall der Zeile darüber nicht mehr irreführend |
 | Sehr große Dashboards | `energie_2` ist 268 KB als YAML. Gemessen: 20 Stände belegen 0,54 MB, also rund 27 KB je Stand — hundert Änderungen wären knapp 3 MB |
 
 ## Test-Plan
@@ -179,6 +211,11 @@ Herzstück sind die Einordnungs-Tests — von ihnen hängt alles ab.
 | Determinismus | zweimal ablegen ergibt denselben Inhalt, also keinen Commit |
 | Realdaten | zehn echte Dashboards durch den Round-Trip |
 | Speicheroperationen | Commit, Verlauf, alter Stand, Markierung gegen Wegwerf-Verzeichnisse |
+| Beschreibung anlegen, überschreiben, leeren | Notiz erscheint im Verlauf, ersetzt sich, verschwindet restlos — und der Commit bleibt derselbe |
+| Beschreibung auf unbekannter Revision | wird abgewiesen, statt irgendwo zu landen |
+| Erklärung einer Löschung, Hinzufügung, Bearbeitung, Umsortierung | benennt die Karte und die Ansicht, in beiden Zeitformen |
+| Erklärung ohne benennbare Änderung | verweist auf den Diff, behauptet nicht »nichts geändert« |
+| Erklärung an Realdaten | die Formulierungen hängen an 1526 echten Karten, nicht an erfundenen |
 
 Die drei Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Installation.
 
