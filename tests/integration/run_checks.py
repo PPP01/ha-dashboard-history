@@ -458,11 +458,10 @@ async def run_lifecycle(access: str) -> None:
             applied["applied"] is True and applied["created"] is True,
             applied.get("note", "no caveat reported"),
         )
-        # Being honest about a partial success is part of the job here.
         check(
-            "the remaining caveat is stated rather than glossed over",
-            "restart" in (applied.get("note") or ""),
-            applied.get("note") or "no note at all",
+            "no caveat is left to report",
+            not applied.get("note"),
+            applied.get("note") or "none - the dashboard is fully restored",
         )
         await asyncio.sleep(3)
         dashboards = await socket.call("lovelace/dashboards/list")
@@ -481,26 +480,137 @@ async def run_lifecycle(access: str) -> None:
                 len(config["views"][0]["cards"]) == 3,
                 f"{len(config['views'][0]['cards'])} cards",
             )
-            # The known limit of the fallback path, pinned down rather than
-            # left to be rediscovered: the entry reached the store through a
-            # collection of our own, and Home Assistant's own collection
-            # object - the one its settings dialog asks - has not heard of
-            # it. Everything else about the dashboard works.
+            # Home Assistant reads a dashboard list from one place and
+            # applies changes to another: `lovelace/dashboards/list` is
+            # overridden to report LovelaceData.dashboards, while update and
+            # delete go to its own DashboardsCollection. A restored
+            # dashboard that only reached the first looks perfectly healthy
+            # and cannot be renamed - which is what a person hits, and what
+            # these three checks are for.
+            try:
+                await socket.call(
+                    "lovelace/dashboards/update",
+                    dashboard_id=back["id"],
+                    title="DH Probe umbenannt II",
+                )
+                renamed = True
+                detail = "renamed through Home Assistant's own settings"
+            except RuntimeError as err:
+                renamed = False
+                detail = str(err)
+            check("a restored dashboard can be renamed", renamed, detail)
+
+            # And the harder half. Home Assistant's collection writes its
+            # whole in-memory state back to the store on any create or
+            # delete. An entry it does not know is therefore dropped from
+            # disk without a word, and the dashboard is gone at the next
+            # restart. Measured on 2026-08-31: exactly that had happened to
+            # two restored dashboards, still in the sidebar, no longer on
+            # disk.
+            on_disk = await _wait_for_store_entry(back["id"])
+            check(
+                "and it is on disk, not only in memory",
+                on_disk,
+                f"{back['id']} in lovelace_dashboards"
+                if on_disk
+                else f"{back['id']} MISSING from lovelace_dashboards - it would "
+                "vanish at the next restart",
+            )
+
+            # Durability on disk, which the two checks above cannot show on
+            # their own: the entry was just written, so of course it is
+            # there. This provokes a save by Home Assistant itself - a
+            # create and a delete through its own commands - and then looks
+            # again.
+            #
+            # Honest about what this does and does not catch: measured on
+            # 2026-08-31, the old fallback path passed here too. The
+            # suspicion that Home Assistant's own save dropped the entry was
+            # wrong. What was observed instead was a state where a restored
+            # dashboard was in memory and not on disk, whose mechanism was
+            # never established. This check guards the property that
+            # matters - the entry stays on disk across a foreign save - and
+            # claims nothing about the bug it did not find.
+            touch = f"{key}-touch"
+            touch_id = touch.replace("-", "_")
+            await socket.call(
+                "lovelace/dashboards/create", url_path=touch, title="DH Touch"
+            )
+            await socket.call("lovelace/dashboards/delete", dashboard_id=touch_id)
+            # Waiting for the touch entry to *leave* the file is the whole
+            # trick. Home Assistant saves a collection with a delay, so
+            # simply looking for the restored entry finds it immediately -
+            # before the destructive save has even happened. The touch entry
+            # disappearing is proof that the save has been written.
+            wrote = await _wait_for_store_absence(touch_id)
+            check(
+                "Home Assistant wrote the registry while we watched",
+                wrote,
+                "its own save landed"
+                if wrote
+                else "no save observed - the check below proves nothing",
+            )
+            survived = _store_has(back["id"])
+            check(
+                "and the restored dashboard survived that save",
+                survived,
+                "still on disk"
+                if survived
+                else f"{back['id']} was dropped from disk by Home Assistant's "
+                "own save - the dashboard would be gone at the next restart",
+            )
+
             try:
                 await socket.call(
                     "lovelace/dashboards/delete", dashboard_id=back["id"]
                 )
-                check(
-                    "Home Assistant's collection is in step after a restore",
-                    True,
-                    "deletable at once - the live-collection path must have run",
-                )
+                deleted = True
+                detail = "deleted at once, no restart needed"
             except RuntimeError as err:
-                check(
-                    "Home Assistant's collection is in step after a restore",
-                    "not_found" in str(err),
-                    "not deletable until a restart, exactly as the note says",
-                )
+                deleted = False
+                detail = str(err)
+            check("and it can be deleted again", deleted, detail)
+
+
+def _store_has(dashboard_id: str) -> bool:
+    """Whether the dashboard registry *on disk* holds this entry.
+
+    Reading the file is deliberate. The failure being guarded against is
+    invisible over the API: `lovelace/dashboards/list` is overridden to
+    answer from memory, so a dashboard can be listed, opened and used
+    while its registry entry is no longer on disk - and then be gone at
+    the next restart.
+    """
+    path = CONFIG / ".storage" / "lovelace_dashboards"
+    try:
+        items = json.loads(path.read_text(encoding="utf-8"))["data"]["items"]
+    except (OSError, KeyError, json.JSONDecodeError):
+        return False
+    return any(item.get("id") == dashboard_id for item in items)
+
+
+async def _wait_for_store_entry(dashboard_id: str, seconds: int = 20) -> bool:
+    """Wait until the registry on disk holds this entry."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if _store_has(dashboard_id):
+            return True
+        await asyncio.sleep(1)
+    return False
+
+
+async def _wait_for_store_absence(dashboard_id: str, seconds: int = 30) -> bool:
+    """Wait until the registry on disk no longer holds this entry.
+
+    Used as evidence that Home Assistant has actually written the file,
+    which its delayed save makes impossible to assume.
+    """
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if not _store_has(dashboard_id):
+            return True
+        await asyncio.sleep(1)
+    return False
 
 
 async def run_descriptions(access: str) -> None:

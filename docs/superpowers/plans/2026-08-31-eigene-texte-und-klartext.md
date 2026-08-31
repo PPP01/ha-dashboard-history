@@ -1768,6 +1768,21 @@ Das Skript fand an einem Nachmittag drei Fehler, von denen keiner im Panel lag �
 2. Auf eine Zeilenzahl zu warten ist ein Wettlauf. Das vorher gezeigte Dashboard hatte schon Zeilen, der Klick traf das alte DOM.
 3. `Runtime.evaluate` mit `returnByValue` kann keinen DOM-Knoten serialisieren und antwortet mit einem leeren Objekt — in Python **falsy**. Auf Booleans warten, nie auf Knoten.
 
+### Nachtrag vom 2026-08-31: der Fehler, den der Nutzer fand
+
+Nicht Teil dieses Plans, aber am selben Tag gemeldet und behoben. Der Nutzer sah **drei gleichnamige Dashboards** in der Seitenleiste, konnte keins umbenennen (»Unable to find dashboard_id dh_probe_74237«) und sie nicht auseinanderhalten. Es waren Reste meiner Integrationsprüfung, deren Aufräumen an genau der Einschränkung scheiterte, die ich als bekannt abgehakt hatte.
+
+**Die Ursache lag in einer Zweiteilung in Home Assistant selbst.** `DashboardsCollectionWebSocket` überschreibt `ws_list_item` und antwortet aus `LovelaceData.dashboards`, während `ws_update_item` und `ws_delete_item` an `self.storage_collection` gehen — auflisten und ändern lesen zwei verschiedene Quellen. Mein Rückfall füllte nur die erste. Deshalb sah das Dashboard gesund aus und war nicht verwaltbar.
+
+Behoben, indem es nur noch **einen** Weg gibt: HAs eigenes Sammlungsobjekt, erreichbar über die Befehlsregistrierung, weil `ws_list_item` unverpackt registriert wird. Ist es nicht erreichbar, wird abgelehnt statt halb geschrieben. `_async_make_live` und die zweite Sammlung sind entfernt — 32 Zeilen weniger und ein Fallstrick weniger.
+
+**Zwei Dinge über das Vorgehen, die ich falsch gemacht habe:**
+
+1. **Ich hatte den Rückfall als »bekannte Einschränkung« dokumentiert, statt ihn zu untersuchen.** Eine `note` in der Antwort fühlte sich wie Ehrlichkeit an. Sie war Ehrlichkeit über ein Symptom, dessen Ursache ich nie gesucht hatte — und die Ursache war in zwanzig Minuten Quelltextlesen zu finden. Ein privater Zugriff ist nicht dadurch in Ordnung, dass er ein Ergebnis liefert.
+2. **Ich habe dem Nutzer Datenverlust als Tatsache gemeldet, ohne ihn geprüft zu haben.** Aus einer Momentaufnahme (zwei Dashboards im Speicher, nicht auf der Platte) hatte ich den Mechanismus »HAs Sammlung überschreibt den Store« geschlossen. Der Test dazu **bestand mit dem alten Code** — die Erklärung war falsch. Der beobachtete Zustand bleibt eine Tatsache, sein Mechanismus ist ungeklärt; der neue Weg ist davon ohnehin unberührt, weil es nur noch eine Sammlung gibt. Die Prüfung ist geblieben, aber sie sagt jetzt im Kommentar, was sie *nicht* fängt.
+
+Drei Prüfungen in `run_checks.py` halten das fest, und alle drei sind gegen den alten Code als fehlschlagend nachgewiesen: umbenennen, auf der Platte stehen, wieder löschen.
+
 ### Ausdrücklich offen geblieben
 
 - **Ein umbenannter *Ansichts*titel** wird weiter nicht als Änderung benannt (`_views_by_key` schlüsselt auf `path`). Durch den Rückfall aus Entscheidung 11 nicht mehr irreführend: Die Erklärung sagt dann, dass sie es nicht in Karten ausdrücken kann, und verweist auf den Diff.

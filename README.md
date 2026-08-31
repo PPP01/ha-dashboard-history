@@ -207,26 +207,30 @@ data:
 Without `confirm` you get the preview and a `creates_dashboard: true` flag,
 and nothing is written.
 
-A dashboard is created through Home Assistant's dashboard registry, which
-is not a guaranteed extension point. So the two halves are graded
-differently: writing the registry entry and the configuration must work,
-and does. Everything beyond that is a bonus, and whatever falls short is
-named in the response rather than glossed over.
-
 Measured against Home Assistant 2026.8.3: the dashboard comes back
 immediately, with its old title and icon and a byte-identical
-configuration — **and one thing is left over.** Home Assistant's own
-dashboard *settings* do not know about it until the next restart, so
-renaming or deleting it from there reports it as missing. Viewing it,
-editing its cards and its history all work. The response says as much:
+configuration, and Home Assistant manages it as its own — you can rename
+it or delete it from the settings dialog straight away, with no restart.
+
+It is created through Home Assistant's own dashboard collection, which is
+not a guaranteed extension point. If a future version puts that object out
+of reach, the restore **refuses** rather than half-writing one:
 
 ```yaml
-applied: true
-created: true
-note: >-
-  the dashboard is back and usable; Home Assistant's dashboard settings
-  will not manage it until the next restart
+applied: false
+error: >-
+  Cannot recreate the dashboard the-deleted-one: Home Assistant's dashboard
+  collection could not be reached … Create a dashboard with the URL
+  the-deleted-one under Settings > Dashboards, then run this restore again
+  to put its cards back.
 ```
+
+That refusal replaced an earlier version that wrote the entry through a
+collection of its own and reported a partial success. It looked like it
+worked: the dashboard appeared, opened and could be edited. But Home
+Assistant lists dashboards from one place and changes them in another, so
+renaming it failed with "Unable to find dashboard_id". A half-restored
+dashboard that looks healthy is worse than an honest refusal.
 
 ## Renames and other dashboard settings
 

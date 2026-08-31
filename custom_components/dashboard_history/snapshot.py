@@ -27,6 +27,14 @@ _LOGGER = logging.getLogger(__name__)
 
 LOVELACE_DATA_KEY = "lovelace"
 
+# Where Home Assistant keeps its registered WebSocket commands, and the one
+# whose handler holds the dashboard collection. Both as literals: importing
+# websocket_api here to read one constant would add a dependency for a
+# string, and a wrong import breaks setup while a wrong string only makes
+# the lookup come up empty.
+WEBSOCKET_DOMAIN = "websocket_api"
+_DASHBOARD_LIST_COMMAND = "lovelace/dashboards/list"
+
 # The value LovelaceConfig.mode returns for a storage dashboard. Compared
 # as a literal on purpose: only ConfigNotFound's import path is verified
 # against a running installation, and a wrong import would break setup.
@@ -150,19 +158,46 @@ async def async_get_all_meta(hass: HomeAssistant) -> dict[str, dict]:
     return result
 
 
-def _dashboards_collection(hass: HomeAssistant):
-    """Home Assistant's live dashboard collection, if it can be reached.
+def _usable_collection(candidate):
+    """A dashboard collection only counts if it can create an item."""
+    return candidate if hasattr(candidate, "async_create_item") else None
 
-    Creating through the live collection is much the better path: Home
-    Assistant's own listener then registers the panel and builds the
-    dashboard object, and nothing here has to imitate it.
+
+def _dashboards_collection(hass: HomeAssistant):
+    """Home Assistant's *own* dashboard collection, or None.
+
+    Its own, emphatically. A second `DashboardsCollection` over the same
+    store is easy to build and looks like it works, and that was the shape
+    of the worst defect this project has had: Home Assistant reads a
+    dashboard list from one place and applies changes to another.
+    `lovelace/dashboards/list` is overridden to answer from
+    `LovelaceData.dashboards`, while update and delete go to the
+    collection. An entry that reached only the first looks perfectly
+    healthy and cannot be renamed - and worse, Home Assistant's collection
+    writes its whole in-memory state back to the store on the next create
+    or delete, dropping the entry from disk without a word.
+
+    So there is one acceptable object: the instance Home Assistant itself
+    holds. On 2026.8.3 it is not on `LovelaceData` - it is a local
+    variable in `lovelace.async_setup`. But the object that registers the
+    dashboard WebSocket commands keeps it, and the list handler is
+    registered as a plain bound method, because only an `admin_only`
+    collection wraps that one in a decorator. That makes it reachable
+    through the command registry.
+
+    Private, and therefore checked rather than assumed at every step:
+    every lookup below tolerates a shape that is no longer there.
     """
     data = hass.data.get(LOVELACE_DATA_KEY)
     for name in ("dashboards_collection", "dashboard_collection", "collection"):
-        candidate = getattr(data, name, None)
-        if candidate is not None and hasattr(candidate, "async_create_item"):
-            return candidate
-    return None
+        found = _usable_collection(getattr(data, name, None))
+        if found is not None:
+            return found
+
+    entry = (hass.data.get(WEBSOCKET_DOMAIN) or {}).get(_DASHBOARD_LIST_COMMAND)
+    handler = entry[0] if isinstance(entry, tuple) and entry else entry
+    return _usable_collection(getattr(getattr(handler, "__self__", None),
+                                      "storage_collection", None))
 
 
 async def async_create_dashboard(
@@ -170,24 +205,24 @@ async def async_create_dashboard(
 ) -> str | None:
     """Recreate a deleted dashboard. Returns a caveat, or None if there is none.
 
-    Two steps, graded differently on purpose. Writing the registry entry
-    **must** succeed - without it the dashboard does not exist and the
-    restore has failed, so a failure here is raised. Making it appear
-    without a restart is the bonus: it needs objects Home Assistant
-    promises nobody, so it is attempted and its shortfall is reported
-    rather than raised. A dashboard that comes back after a restart is a
-    restored dashboard.
+    Through Home Assistant's own collection, and through nothing else.
+    Its listener then registers the panel, builds the dashboard object and
+    saves the store, so the entry is in step everywhere at once - the
+    sidebar, the settings dialog, and the file on disk.
 
-    The return value is what is left to say about it. Measured on Home
-    Assistant 2026.8.3: the live collection is not reachable, so the
-    fallback runs, and then the dashboard is fully usable while Home
-    Assistant's own dashboard *settings* do not know it yet. Saying
-    nothing about that would be claiming more than happened.
+    There used to be a fallback here that wrote the entry through a
+    collection of its own and imitated the listener. It was reported as a
+    partial success with a note about restarting. That was wrong twice
+    over: renaming or deleting the dashboard failed with "Unable to find
+    dashboard_id", and Home Assistant's collection later dropped the entry
+    from disk on its next save, so the dashboard was gone at the following
+    restart. A half-restored dashboard that looks healthy is worse than an
+    honest refusal, so the refusal is what happens now.
+
+    Returns None - there is nothing left to say when this succeeds. The
+    return type is kept so callers need no change if a future version has
+    something to report again.
     """
-    from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
-        DashboardsCollection,
-    )
-
     item = {
         "url_path": key,
         "title": meta.get("title") or key,
@@ -198,69 +233,25 @@ async def async_create_dashboard(
         item["icon"] = meta["icon"]
 
     live = _dashboards_collection(hass)
-    if live is not None:
-        # Home Assistant's own listener now registers the panel and builds
-        # the dashboard object; nothing here has to imitate it, and nothing
-        # is left out of step.
-        _LOGGER.info("Recreating dashboard %s through the live collection", key)
-        await live.async_create_item(item)
-        return None
-
-    # No reachable collection: write the entry through one of our own, then
-    # imitate what Home Assistant's listener would have done. Logged at info
-    # on purpose - after a Home Assistant update, which path ran is the
-    # first question anybody will ask.
-    _LOGGER.info(
-        "Recreating dashboard %s through a collection of our own; "
-        "no live collection was reachable",
-        key,
-    )
-    collection = DashboardsCollection(hass)
-    await collection.async_load()
-    created = await collection.async_create_item(item)
-    if not await _async_make_live(hass, key, created or item):
-        return "restart Home Assistant to see the dashboard in the sidebar"
-    # Usable, but Home Assistant's own collection object still has no idea:
-    # the entry went into the store through a second collection, and only
-    # the one Home Assistant holds answers its dashboard settings. Verified
-    # on 2026.8.3 - the dashboard lists and opens, while renaming or
-    # deleting it from the settings dialog reports it as not found.
-    return (
-        "the dashboard is back and usable; Home Assistant's dashboard "
-        "settings will not manage it until the next restart"
-    )
-
-
-async def _async_make_live(hass: HomeAssistant, key: str, item: dict) -> bool:
-    """Best effort: make a recreated dashboard usable without a restart."""
-    try:
-        from homeassistant.components.frontend import (  # noqa: PLC0415
-            async_register_built_in_panel,
-        )
-        from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
-            LovelaceStorage,
+    if live is None:
+        # Not reachable means this Home Assistant has moved. Refusing is
+        # the right answer: the alternative writes something that looks
+        # like a dashboard and is not one. The message says what a person
+        # can do instead, because they can - creating the dashboard by hand
+        # and restoring again writes the configuration into it.
+        raise HomeAssistantError(
+            f"Cannot recreate the dashboard {key}: Home Assistant's dashboard "
+            "collection could not be reached, so the entry cannot be "
+            "registered in a way it would keep. Create a dashboard with the "
+            f"URL {key} under Settings > Dashboards, then run this restore "
+            "again to put its cards back."
         )
 
-        dashboards = _lovelace_dashboards(hass)
-        if dashboards is None:
-            return False
-        dashboards[item["url_path"]] = LovelaceStorage(hass, item)
-        kwargs: dict = {
-            "frontend_url_path": item["url_path"],
-            "require_admin": item.get("require_admin", False),
-            "config": {"mode": MODE_STORAGE},
-            "update": False,
-        }
-        if item.get("show_in_sidebar", True):
-            kwargs["sidebar_title"] = item.get("title") or key
-            kwargs["sidebar_icon"] = item.get("icon")
-        async_register_built_in_panel(hass, LOVELACE_DATA_KEY, **kwargs)
-    except Exception:  # noqa: BLE001 - the durable part already succeeded
-        _LOGGER.exception(
-            "Dashboard %s was restored but needs a restart to appear", key
-        )
-        return False
-    return True
+    # Logged at info on purpose: after a Home Assistant update, which path
+    # ran is the first question anybody will ask.
+    _LOGGER.info("Recreating dashboard %s through Home Assistant's collection", key)
+    await live.async_create_item(item)
+    return None
 
 
 async def async_save_config(hass: HomeAssistant, key: str, config: dict) -> None:

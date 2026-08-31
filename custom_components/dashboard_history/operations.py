@@ -14,6 +14,7 @@ import difflib
 import logging
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from .analyze import explain_change, explain_effect, find_removed
 from .keys import is_absent, is_live
@@ -239,7 +240,14 @@ async def async_restore_state(
             # still much better than falling back to the bare key.
             meta_text = await hass.async_add_executor_job(store.last_known_meta, key)
         meta = (load(meta_text) if meta_text else None) or {}
-        note = await async_create_dashboard(hass, key, meta)
+        try:
+            note = await async_create_dashboard(hass, key, meta)
+        except HomeAssistantError as err:
+            # Recreating needs Home Assistant's own dashboard collection,
+            # and it refuses rather than write something that only looks
+            # like a dashboard. That is an answer, not a crash: the message
+            # says what a person can do instead.
+            return {"applied": False, "error": str(err)}
         created = True
     await async_save_config(hass, key, target)
     result = {
