@@ -97,6 +97,46 @@ restore_state:
       selector:
         boolean:
 
+describe:
+  name: Describe a change
+  description: >-
+    Give one recorded change your own description. It becomes the
+    headline of that entry; the automatic message stays below it. An
+    empty text removes the description again. The commit itself is not
+    rewritten, so every revision stays valid.
+  fields:
+    revision:
+      required: true
+      description: A revision from the history service.
+      selector:
+        text:
+    text:
+      description: Your own words. Empty removes the description.
+      default: ""
+      example: Before rebuilding the heating cards
+      selector:
+        text:
+          multiline: true
+
+explain:
+  name: Explain a change
+  description: >-
+    What one recorded change did, in plain words rather than as a diff.
+    Cards and views by name, grouped by view.
+  fields:
+    dashboard:
+      required: true
+      example: dashboard-karte
+      selector:
+        text:
+    revision:
+      required: true
+      description: >-
+        The change itself, from the history service - not the state
+        before it.
+      selector:
+        text:
+
 create_version:
   name: Name a version
   description: >-

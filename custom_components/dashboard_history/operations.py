@@ -15,7 +15,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from .analyze import find_removed
+from .analyze import explain_change, explain_effect, find_removed
 from .keys import is_absent, is_live
 from .restore import reinsert
 from .snapshot import (
@@ -41,6 +41,29 @@ def _diff(old: dict, new: dict, name: str) -> str:
             tofile=f"restored/{name}",
         )
     )
+
+
+def _as_dict(explanation) -> dict:
+    """An Explanation as plain data, for a service result or the panel."""
+    return {
+        "groups": [
+            {
+                "view": group.view,
+                "entries": [
+                    {
+                        "kind": entry.kind,
+                        "what": entry.what,
+                        "label": entry.label,
+                        "text": entry.text,
+                    }
+                    for entry in group.entries
+                ],
+                "more": group.more,
+            }
+            for group in explanation.groups
+        ],
+        "note": explanation.note,
+    }
 
 
 async def _state_at(
@@ -102,7 +125,12 @@ async def async_history(
     changes = await hass.async_add_executor_job(store.list_changes, key, limit)
     return {
         "changes": [
-            {"revision": c.revision, "timestamp": c.timestamp, "message": c.message}
+            {
+                "revision": c.revision,
+                "timestamp": c.timestamp,
+                "message": c.message,
+                "description": c.description,
+            }
             for c in changes
         ]
     }
@@ -159,10 +187,16 @@ async def async_restore_deleted(
         # the caller is handed a bare traceback.
         return {"applied": False, "error": str(err)}
     diff = _diff(current, restored, key)
+    explanation = _as_dict(explain_effect(current, restored))
     if not confirm:
-        return {"applied": False, "preview": diff}
+        return {"applied": False, "preview": diff, "explanation": explanation}
     await async_save_config(hass, key, restored)
-    return {"applied": True, "preview": diff, "restored": items[position].label}
+    return {
+        "applied": True,
+        "preview": diff,
+        "explanation": explanation,
+        "restored": items[position].label,
+    }
 
 
 async def async_restore_state(
@@ -187,8 +221,14 @@ async def async_restore_state(
     diff = _diff(current, target, key)
     if not diff and not missing:
         return {"applied": False, "preview": "", "note": "already identical"}
+    explanation = _as_dict(explain_effect(current, target))
     if not confirm:
-        return {"applied": False, "preview": diff, "creates_dashboard": missing}
+        return {
+            "applied": False,
+            "preview": diff,
+            "explanation": explanation,
+            "creates_dashboard": missing,
+        }
 
     created = False
     note: str | None = None
@@ -202,7 +242,12 @@ async def async_restore_state(
         note = await async_create_dashboard(hass, key, meta)
         created = True
     await async_save_config(hass, key, target)
-    result = {"applied": True, "preview": diff, "created": created}
+    result = {
+        "applied": True,
+        "preview": diff,
+        "explanation": explanation,
+        "created": created,
+    }
     if note:
         result["note"] = note
     return result
@@ -242,3 +287,48 @@ async def async_versions(hass: HomeAssistant, store: HistoryStore) -> dict:
             for v in found
         ]
     }
+
+
+async def async_describe(
+    hass: HomeAssistant, store: HistoryStore, revision: str, text: str
+) -> dict:
+    """Attach a person's own words to a recorded change.
+
+    No `confirm`, unlike every other writing operation here. The rule in
+    the spec protects dashboards from unintended change; a description
+    changes no dashboard, is undone by emptying the field, and is read by
+    the same person who just wrote it. A dialog in front of it would be
+    ceremony without protection - and the opposite of what was asked for.
+    """
+    ok = await hass.async_add_executor_job(store.set_description, revision, text)
+    if not ok:
+        return {"applied": False, "error": f"unknown revision: {revision}"}
+    return {"applied": True, "description": text.strip()}
+
+
+async def async_explain(
+    hass: HomeAssistant, store: HistoryStore, key: str, revision: str
+) -> dict:
+    """What one recorded change did, in words.
+
+    `revision` is the change itself, not the state before it - the panel
+    must not have to work that out, because working it out wrongly is the
+    trap Entscheidung 9 removed rather than signposted.
+    """
+    full = await hass.async_add_executor_job(store.resolve, revision)
+    if full is None:
+        return {"groups": [], "note": "", "error": f"unknown revision: {revision}"}
+    before = await hass.async_add_executor_job(store.previous_change, key, full)
+    if before is None:
+        return {"groups": [], "note": "This is the first recorded state."}
+
+    # Deliberately not `_state_at`, which reports an absent state as an
+    # error. Here an absent state *is* the answer: at a deletion commit
+    # the dashboard's file has left the tree, and comparing against
+    # nothing is what says "the whole view was deleted". Reporting "did
+    # not exist at" for the one change people most want explained would
+    # be the same class of mistake this project has fixed three times.
+    old = await hass.async_add_executor_job(store.read_at, key, before)
+    new = await hass.async_add_executor_job(store.read_at, key, full)
+    # yaml_io.load(None) raises; load("") answers None. Measured.
+    return _as_dict(explain_change(load(old or "") or {}, load(new or "") or {}))

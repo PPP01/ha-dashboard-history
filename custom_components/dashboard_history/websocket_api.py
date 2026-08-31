@@ -98,6 +98,18 @@ _COMMANDS = (
         },
     ),
     _command(
+        f"{DOMAIN}/describe",
+        {**_REVISION, vol.Optional("text", default=""): str},
+        operations.async_describe,
+        lambda msg: {"revision": msg["revision"], "text": msg["text"]},
+    ),
+    _command(
+        f"{DOMAIN}/explain",
+        {**_DASHBOARD, **_REVISION},
+        operations.async_explain,
+        lambda msg: {"key": msg["dashboard"], "revision": msg["revision"]},
+    ),
+    _command(
         f"{DOMAIN}/versions", {}, operations.async_versions, lambda msg: {}
     ),
     _command(
