@@ -164,9 +164,23 @@ and nothing is written.
 A dashboard is created through Home Assistant's dashboard registry, which
 is not a guaranteed extension point. So the two halves are graded
 differently: writing the registry entry and the configuration must work,
-and does. Whether the dashboard also appears in the sidebar *without a
-restart* is a bonus — if that part fails, the response says so and a
-restart finishes the job. Either way the dashboard is back.
+and does. Everything beyond that is a bonus, and whatever falls short is
+named in the response rather than glossed over.
+
+Measured against Home Assistant 2026.8.3: the dashboard comes back
+immediately, with its old title and icon and a byte-identical
+configuration — **and one thing is left over.** Home Assistant's own
+dashboard *settings* do not know about it until the next restart, so
+renaming or deleting it from there reports it as missing. Viewing it,
+editing its cards and its history all work. The response says as much:
+
+```yaml
+applied: true
+created: true
+note: >-
+  the dashboard is back and usable; Home Assistant's dashboard settings
+  will not manage it until the next restart
+```
 
 ## Renames and other dashboard settings
 

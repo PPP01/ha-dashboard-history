@@ -165,15 +165,24 @@ def _dashboards_collection(hass: HomeAssistant):
     return None
 
 
-async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> bool:
-    """Recreate a deleted dashboard. Returns whether it is usable at once.
+async def async_create_dashboard(
+    hass: HomeAssistant, key: str, meta: dict
+) -> str | None:
+    """Recreate a deleted dashboard. Returns a caveat, or None if there is none.
 
     Two steps, graded differently on purpose. Writing the registry entry
     **must** succeed - without it the dashboard does not exist and the
     restore has failed, so a failure here is raised. Making it appear
     without a restart is the bonus: it needs objects Home Assistant
-    promises nobody, so it is attempted and its failure is only reported.
-    A dashboard that comes back after a restart is a restored dashboard.
+    promises nobody, so it is attempted and its shortfall is reported
+    rather than raised. A dashboard that comes back after a restart is a
+    restored dashboard.
+
+    The return value is what is left to say about it. Measured on Home
+    Assistant 2026.8.3: the live collection is not reachable, so the
+    fallback runs, and then the dashboard is fully usable while Home
+    Assistant's own dashboard *settings* do not know it yet. Saying
+    nothing about that would be claiming more than happened.
     """
     from homeassistant.components.lovelace.dashboard import (  # noqa: PLC0415
         DashboardsCollection,
@@ -191,10 +200,11 @@ async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> b
     live = _dashboards_collection(hass)
     if live is not None:
         # Home Assistant's own listener now registers the panel and builds
-        # the dashboard object; nothing here has to imitate it.
+        # the dashboard object; nothing here has to imitate it, and nothing
+        # is left out of step.
         _LOGGER.info("Recreating dashboard %s through the live collection", key)
         await live.async_create_item(item)
-        return True
+        return None
 
     # No reachable collection: write the entry through one of our own, then
     # imitate what Home Assistant's listener would have done. Logged at info
@@ -208,7 +218,17 @@ async def async_create_dashboard(hass: HomeAssistant, key: str, meta: dict) -> b
     collection = DashboardsCollection(hass)
     await collection.async_load()
     created = await collection.async_create_item(item)
-    return await _async_make_live(hass, key, created or item)
+    if not await _async_make_live(hass, key, created or item):
+        return "restart Home Assistant to see the dashboard in the sidebar"
+    # Usable, but Home Assistant's own collection object still has no idea:
+    # the entry went into the store through a second collection, and only
+    # the one Home Assistant holds answers its dashboard settings. Verified
+    # on 2026.8.3 - the dashboard lists and opens, while renaming or
+    # deleting it from the settings dialog reports it as not found.
+    return (
+        "the dashboard is back and usable; Home Assistant's dashboard "
+        "settings will not manage it until the next restart"
+    )
 
 
 async def _async_make_live(hass: HomeAssistant, key: str, item: dict) -> bool:

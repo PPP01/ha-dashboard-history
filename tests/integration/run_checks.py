@@ -42,6 +42,9 @@ CONFIG = pathlib.Path(
 TOKEN_FILE = CONFIG.parent / "token.txt"
 OWNER = {"name": "Testbench", "username": "testbench", "password": "testbench-only"}
 
+# Comfortably longer than RECONCILE_DELAY in const.py, which is 10 seconds.
+RECONCILE_WAIT = 15
+
 _passed: list[str] = []
 _failed: list[str] = []
 
@@ -341,11 +344,163 @@ async def run(access: str) -> None:
             applied.get("restored", ""),
         )
 
-    print()
-    print(f"{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
-    if _failed:
-        print("Fehlgeschlagen: " + ", ".join(_failed))
-        sys.exit(1)
+
+async def run_lifecycle(access: str) -> None:
+    """The three things Home Assistant announces with no event of its own.
+
+    Creating, renaming and deleting a dashboard all move a *panel*, and a
+    moved panel is announced - which is what the integration listens for.
+    None of this could be checked before: every attempt cost a restart of a
+    production installation running heating, solar and a gate, so it went
+    unchecked instead.
+
+    Everything happens on a dashboard of its own, so the copied ones stay
+    untouched.
+    """
+    # A fresh name per run. A restored dashboard cannot be deleted again
+    # until Home Assistant restarts - see the last check below - so reusing
+    # one name would make the second run collide with the first.
+    key = f"dh-probe-{int(time.time()) % 100000}"
+    title, icon = "DH Probe", "mdi:test-tube"
+    async with Socket(access) as socket:
+        # Clear leftovers from earlier runs, as far as they can be cleared.
+        for existing in (await socket.call("lovelace/dashboards/list")) or []:
+            if str(existing.get("url_path", "")).startswith("dh-probe"):
+                try:
+                    await socket.call(
+                        "lovelace/dashboards/delete", dashboard_id=existing["id"]
+                    )
+                except RuntimeError:
+                    pass  # A restored one. It goes on the next restart.
+
+        made = await socket.call(
+            "lovelace/dashboards/create",
+            url_path=key,
+            title=title,
+            icon=icon,
+            show_in_sidebar=True,
+            require_admin=False,
+        )
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config={
+                "views": [
+                    {
+                        "path": "probe",
+                        "title": "Probe",
+                        "cards": [
+                            {"type": "heading", "heading": "Erste"},
+                            {"type": "markdown", "content": "# Zweite\n\nText."},
+                            {"type": "tile", "entity": "sun.sun"},
+                        ],
+                    }
+                ]
+            },
+        )
+        await asyncio.sleep(4)
+        history = await socket.call("dashboard_history/history", dashboard=key)
+        check(
+            "a new dashboard is recorded",
+            bool(history["changes"]),
+            f"{len(history['changes'])} entries",
+        )
+
+        # 1. Renaming. There is no lovelace_updated for this.
+        await socket.call(
+            "lovelace/dashboards/update",
+            dashboard_id=made["id"],
+            title="DH Probe umbenannt",
+        )
+        await asyncio.sleep(RECONCILE_WAIT)
+        history = await socket.call("dashboard_history/history", dashboard=key)
+        newest = history["changes"][0]["message"]
+        check("a rename is recorded and named", "renamed to" in newest, f"{newest!r}")
+
+        # 2. Deleting the whole dashboard while Home Assistant runs.
+        await socket.call("lovelace/dashboards/delete", dashboard_id=made["id"])
+        await asyncio.sleep(RECONCILE_WAIT)
+        history = await socket.call("dashboard_history/history", dashboard=key)
+        newest = history["changes"][0]["message"]
+        check(
+            "a deletion is recorded without a restart",
+            "dashboard deleted" in newest,
+            f"{newest!r}",
+        )
+        listed = await socket.call("dashboard_history/dashboards")
+        entry = next((d for d in listed["dashboards"] if d["key"] == key), None)
+        check(
+            "the panel offers it, under the name it last had",
+            entry is not None
+            and entry["exists"] is False
+            and entry["title"] == "DH Probe umbenannt",
+            f"{entry}",
+        )
+
+        # 3. Bringing it back - the least-tested path in the project.
+        before_deletion = history["changes"][1]["revision"]
+        preview = await socket.call(
+            "dashboard_history/restore_state", dashboard=key, revision=before_deletion
+        )
+        check(
+            "restoring says in advance that it will recreate the dashboard",
+            preview.get("creates_dashboard") is True and preview["applied"] is False,
+            str({k: v for k, v in preview.items() if k != "preview"}),
+        )
+        applied = await socket.call(
+            "dashboard_history/restore_state",
+            dashboard=key,
+            revision=before_deletion,
+            confirm=True,
+        )
+        check(
+            "the dashboard is recreated",
+            applied["applied"] is True and applied["created"] is True,
+            applied.get("note", "no caveat reported"),
+        )
+        # Being honest about a partial success is part of the job here.
+        check(
+            "the remaining caveat is stated rather than glossed over",
+            "restart" in (applied.get("note") or ""),
+            applied.get("note") or "no note at all",
+        )
+        await asyncio.sleep(3)
+        dashboards = await socket.call("lovelace/dashboards/list")
+        back = next((d for d in dashboards if d.get("url_path") == key), None)
+        check(
+            "it is back with its title and its icon",
+            back is not None
+            and back.get("title") == "DH Probe umbenannt"
+            and back.get("icon") == icon,
+            f"{back}",
+        )
+        if back is not None:
+            config = await socket.call("lovelace/config", url_path=key)
+            check(
+                "and with its cards",
+                len(config["views"][0]["cards"]) == 3,
+                f"{len(config['views'][0]['cards'])} cards",
+            )
+            # The known limit of the fallback path, pinned down rather than
+            # left to be rediscovered: the entry reached the store through a
+            # collection of our own, and Home Assistant's own collection
+            # object - the one its settings dialog asks - has not heard of
+            # it. Everything else about the dashboard works.
+            try:
+                await socket.call(
+                    "lovelace/dashboards/delete", dashboard_id=back["id"]
+                )
+                check(
+                    "Home Assistant's collection is in step after a restore",
+                    True,
+                    "deletable at once - the live-collection path must have run",
+                )
+            except RuntimeError as err:
+                check(
+                    "Home Assistant's collection is in step after a restore",
+                    "not_found" in str(err),
+                    "not deletable until a restart, exactly as the note says",
+                )
 
 
 def _drop_first_card(config: dict) -> dict | None:
@@ -366,3 +521,9 @@ if __name__ == "__main__":
         raise SystemExit("Could not set the integration up")
     print(f"Prüfungen gegen {BASE}\n")
     asyncio.run(run(access))
+    print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")
+    asyncio.run(run_lifecycle(access))
+    print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
+    if _failed:
+        print("Fehlgeschlagen: " + ", ".join(_failed))
+        sys.exit(1)

@@ -191,7 +191,7 @@ async def async_restore_state(
         return {"applied": False, "preview": diff, "creates_dashboard": missing}
 
     created = False
-    live = True
+    note: str | None = None
     if missing:
         meta_text = await hass.async_add_executor_job(store.read_meta_at, key, full)
         if meta_text is None:
@@ -199,12 +199,12 @@ async def async_restore_state(
             # still much better than falling back to the bare key.
             meta_text = await hass.async_add_executor_job(store.last_known_meta, key)
         meta = (load(meta_text) if meta_text else None) or {}
-        live = await async_create_dashboard(hass, key, meta)
+        note = await async_create_dashboard(hass, key, meta)
         created = True
     await async_save_config(hass, key, target)
     result = {"applied": True, "preview": diff, "created": created}
-    if created and not live:
-        result["note"] = "restart Home Assistant to see it in the sidebar"
+    if note:
+        result["note"] = note
     return result
 
 

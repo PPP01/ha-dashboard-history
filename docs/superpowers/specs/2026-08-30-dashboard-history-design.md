@@ -143,6 +143,8 @@ Zurueckholen
 
    Der Preis ist bekannt und wird bewusst gezahlt: Ein Dashboard entsteht nur über die Dashboard-Sammlung von Home Assistant, und die ist kein zugesicherter Erweiterungspunkt. Deshalb gilt hier eine Trennung, die der Rest der Integration nicht braucht: **Das Dauerhafte muss gelingen, das Sofortige darf scheitern.** Registry-Eintrag und Konfiguration werden geschrieben; ob das Dashboard auch ohne Neustart in der Seitenleiste erscheint, ist Kür. Misslingt die Kür, wird das gemeldet, und ein Neustart genügt — der Verlust ist dann trotzdem behoben.
 
+   **Gemessen an HA 2026.8.3 (2026-08-31):** Die Live-Sammlung ist *nicht* erreichbar — `LovelaceData` gibt sie nicht heraus. Es läuft also der Rückfall, und der trägt: Das Dashboard kehrt mit Titel, Symbol und Sichtbarkeit zurück, ohne Neustart, die Konfiguration byte-identisch. Sein genauer Rest bleibt aber bestehen und wird **benannt statt beschönigt**: Der Registry-Eintrag erreicht den Speicher über eine zweite Sammlung, und die Sammlung, die Home Assistant selbst hält, weiß nichts davon. Das Dashboard ist damit vollständig benutzbar, aber über *Einstellungen → Dashboards* bis zum nächsten Neustart nicht verwaltbar. Genau das steht als `note` in der Antwort; ein Integrationstest hält es fest.
+
    Damit ein Dashboard *vollständig* wiederkehrt, werden ab dieser Fassung auch Titel, Symbol und Sichtbarkeit erfasst, nicht nur die Kartenkonfiguration. Sie liegen unter `meta/<schlüssel>.yaml` im selben Commit. Ein Dashboard mit richtigen Karten, aber falschem Namen wäre nur eine halbe Wiederherstellung.
 
 ## Fehler- und Randfälle
