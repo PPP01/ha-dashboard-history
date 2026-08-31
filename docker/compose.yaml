@@ -1,0 +1,34 @@
+# A throwaway Home Assistant for checking this integration against a real
+# installation. It exists because the modules that talk to Home Assistant
+# cannot be tested any other way - and every bug found in this project so
+# far has been in exactly those modules.
+#
+# The version is pinned to the one the production installation runs. A
+# check here is only worth something if it happens on the same version.
+#
+# The configuration directory lives OUTSIDE this repository: it holds the
+# access token and .storage. Never move it inside.
+name: dashboard-history-test
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.8.3
+    container_name: dashboard-history-test
+    restart: unless-stopped
+    ports:
+      # Localhost only. This is a test bench with a known password, not a
+      # service. Docker does the binding, which is why the instance needs no
+      # outbound network of its own: its one requirement, dulwich, is
+      # pre-installed into the instance's own deps directory. See
+      # docker/README.md - the machine this was built on has no outbound
+      # route on Docker's bridge network at all.
+      - "127.0.0.1:8124:8123"
+    volumes:
+      - ${HA_TEST_CONFIG:-../../ha-dashboard-history-test/config}:/config
+      # The integration straight from the working tree. On the production
+      # installation this is impossible - the mount is SSHFS, which refuses
+      # symlinks, and a symlink would be resolved on the Home Assistant side
+      # where this path does not exist. Hence HACS there, and this here.
+      - ../custom_components/dashboard_history:/config/custom_components/dashboard_history:ro
+    environment:
+      TZ: Europe/Berlin

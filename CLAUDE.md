@@ -43,6 +43,20 @@ Die eigene Home-Assistant-Installation liegt unter `/path/to/home-assistant/` (p
 
 Für Aktualisierungen braucht HACS echte Releases mit aufsteigender Versionsnummer. Ein Vorabversions-Suffix sortiert nach Semver **unterhalb** der Grundversion und wird nicht als Aktualisierung erkannt.
 
+### Zuerst lokal prüfen
+
+Vor jedem Live-Schritt gehört die Prüfung in die Wegwerf-Instanz:
+
+```bash
+docker compose -f docker/compose.yaml up -d
+python3 tests/integration/run_checks.py
+```
+
+Sie treibt ein echtes Home Assistant 2026.8.3 über HTTP und WebSocket und
+erreicht damit die Module, die `pytest` strukturell nicht erreicht — dort lag
+jeder bisher gefundene Fehler. Aufbau und die zwei Fallen dabei:
+`docker/README.md`. Konfiguration und Token liegen **außerhalb** des Repos.
+
 ⚠️ **Das ist eine echte Anlage.** Daran hängt Haustechnik. Vor Live-Schritten die Merker in `/path/to/home-assistant/.claude/lessons.md` lesen — insbesondere: **niemals während eines HA-Neustarts anpollen** (IP-Ban-System), und `custom_components/` ist dort nicht versioniert.
 
 Umgebung: HA 2026.8.3, Container-Python 3.14.6, Entwicklungsrechner Python 3.12.3.
