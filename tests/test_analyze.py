@@ -456,3 +456,19 @@ def test_a_real_dashboard_restored_from_nothing_stays_readable():
         for group in result.groups:
             assert len(group.entries) <= 12
         assert result.note == "Nothing on this dashboard is deleted." or not result.groups
+
+
+def test_a_card_moved_into_a_new_section_is_not_only_a_deletion():
+    # summarize walked the old state's containers and looked each up in
+    # the new one. A section added in the new state was therefore never
+    # visited, and its cards never counted: moving a card into a new
+    # section read as a bare deletion. Half a truth in the one line
+    # people scan when looking for something they lost.
+    old = {"views": [{"path": "home", "title": "Home", "cards": [A, B]}]}
+    new = {
+        "views": [
+            {"path": "home", "title": "Home", "cards": [A], "sections": [{"cards": [B]}]}
+        ]
+    }
+    counts = analyze.summarize(old, new)
+    assert (counts.removed, counts.added) == (1, 1)

@@ -318,7 +318,9 @@ def summarize(old: dict, new: dict) -> Summary:
             removed += sum(len(cards) for _, cards in card_containers(old_view))
             continue
         new_containers = dict(card_containers(new_view))
+        old_locations = set()
         for location, old_cards in card_containers(old_view):
+            old_locations.add(location)
             r, a, e, m = _match_cards(old_cards, new_containers.get(location, []))
             removed += len(r)
             added += len(a)
@@ -326,6 +328,12 @@ def summarize(old: dict, new: dict) -> Summary:
             # One entry per moved card already, so a swap contributes
             # two. Multiplying would count each of them twice.
             moved += len(m)
+        # A container only the new state has - a section added to a view.
+        # Walking the old state's containers alone never visited it, so
+        # moving a card into a new section read as a bare deletion.
+        for location, new_cards in new_containers.items():
+            if location not in old_locations:
+                added += len(new_cards)
 
     old_keys = {key for key, _ in _views_by_key(old)}
     for key, new_view in _views_by_key(new):
