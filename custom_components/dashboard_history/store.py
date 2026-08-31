@@ -33,6 +33,7 @@ class Change:
     revision: str
     timestamp: int
     message: str
+    description: str = ""  # what a person wrote about it, if anyone did
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,52 @@ class HistoryStore:
             objectish=revision.encode() if revision else b"HEAD",
         )
 
+    def set_description(self, revision: str, text: str) -> bool:
+        """Attach a person's own words to a recorded change.
+
+        Stored as a git note on `refs/notes/commits`, which leaves the
+        commit itself untouched. That is the point rather than a detail:
+        rewriting a commit message rewrites the commit, and with it every
+        descendant - invalidating exactly the revisions this tool hands
+        out in panel responses, service results and error messages.
+
+        An empty text removes the note instead of storing a blank one; a
+        blank one would leave a row with an invisible headline and the
+        automatic message hidden beneath it.
+
+        Returns False when the revision is unknown. dulwich raises
+        KeyError for an unknown object, so it has to be resolved first -
+        and refusing is right anyway, since a note filed against nothing
+        is a note nobody ever finds again.
+        """
+        with self._lock:
+            self._ensure()
+            repo = self._repo()
+            if repo is None:
+                return False
+            full = self._resolve(repo, revision)
+            if full is None:
+                return False
+            body = text.strip()
+            if body:
+                porcelain.notes_add(
+                    str(self.path),
+                    full.encode(),
+                    body.encode("utf-8"),
+                    author=_IDENTITY,
+                    committer=_IDENTITY,
+                )
+            else:
+                # Measured: a commit without a note returns None here
+                # rather than raising, so this needs no guard of its own.
+                porcelain.notes_remove(
+                    str(self.path),
+                    full.encode(),
+                    author=_IDENTITY,
+                    committer=_IDENTITY,
+                )
+            return True
+
     # -- reading -------------------------------------------------------
 
     def _repo(self) -> Repo | None:
@@ -202,6 +249,7 @@ class HistoryStore:
         repo = self._repo()
         if repo is None:
             return []
+        notes = self.descriptions()
         try:
             # Both paths: a rename touches only the metadata, and a change
             # that is recorded but never shown is the worst of both.
@@ -214,12 +262,45 @@ class HistoryStore:
                     revision=_as_text(entry.commit.id),
                     timestamp=entry.commit.commit_time,
                     message=entry.commit.message.decode("utf-8").strip(),
+                    description=notes.get(_as_text(entry.commit.id), ""),
                 )
                 for entry in walker
             ]
         except KeyError:
             # No HEAD yet: an empty repository has no history to walk.
             return []
+
+    def descriptions(self) -> dict[str, str]:
+        """Every description, by revision.
+
+        One pass over the notes rather than one lookup per change: the
+        panel asks for fifty changes at a time.
+        """
+        if not (self.path / ".git").exists():
+            return {}
+        # Measured: a repository that never held a note answers with an
+        # empty list rather than raising, so this needs no guard.
+        return {
+            _as_text(sha): text.decode("utf-8")
+            for sha, text in porcelain.notes_list(str(self.path))
+        }
+
+    def previous_change(self, key: str, revision: str) -> str | None:
+        """The state of one dashboard just before one of its changes.
+
+        Deliberately not the commit's parent. Another dashboard's commit
+        can sit in between, and its state is no state of this dashboard
+        at all - reading it would answer a question nobody asked.
+        """
+        full = self.resolve(revision)
+        if full is None:
+            return None
+        found = False
+        for change in self.list_changes(key, limit=1000):
+            if found:
+                return change.revision
+            found = change.revision == full
+        return None
 
     def resolve(self, revision: str) -> str | None:
         """Turn a revision into a full commit hash, or None if unknown.

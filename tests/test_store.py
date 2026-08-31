@@ -276,3 +276,120 @@ def test_parallel_writes_all_arrive(store):
     for thread in threads:
         thread.join()
     assert all(store.list_changes(f"d{i}") for i in range(8))
+
+
+# -- descriptions of one's own -----------------------------------------
+#
+# The automatic message says what happened. Why it happened is only in
+# somebody's head, and "before rebuilding the heating cards" is what you
+# find again in a year - "2 removed, 1 edited" is not.
+#
+# The text is a git note, so the commit itself is untouched. That is not
+# tidiness: a rewritten commit invalidates every revision this tool
+# hands out, in panel responses, service results and error messages.
+
+
+def test_a_description_appears_in_the_history(store):
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.set_description(revision, "Before the heating rebuild") is True
+    assert store.list_changes("home")[0].description == "Before the heating rebuild"
+
+
+def test_a_change_without_a_description_has_an_empty_one(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.list_changes("home")[0].description == ""
+
+
+def test_a_description_does_not_change_the_revision(store):
+    # The whole reason for using notes instead of rewriting the commit.
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(revision, "Something")
+    assert store.list_changes("home")[0].revision == revision
+
+
+def test_a_description_replaces_the_previous_one(store):
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(revision, "First wording")
+    store.set_description(revision, "Second wording")
+    assert store.list_changes("home")[0].description == "Second wording"
+
+
+def test_an_emptied_description_is_gone_not_blank(store):
+    # A blank note would leave the row with an invisible headline and the
+    # automatic message hidden underneath it.
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(revision, "Something")
+    store.set_description(revision, "   ")
+    assert store.list_changes("home")[0].description == ""
+    assert store.descriptions() == {}
+
+
+def test_emptying_a_description_that_was_never_there_is_harmless(store):
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.set_description(revision, "") is True
+
+
+def test_a_description_survives_umlauts(store):
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(revision, "Vor dem Umbau der Heizung — äöüß")
+    assert store.list_changes("home")[0].description == (
+        "Vor dem Umbau der Heizung — äöüß"
+    )
+
+
+def test_an_abbreviated_revision_can_be_described(store):
+    # What anyone copies out of the panel, which shows seven characters.
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.set_description(revision[:7], "Short form") is True
+    assert store.list_changes("home")[0].description == "Short form"
+
+
+def test_an_unknown_revision_is_refused(store):
+    # dulwich raises KeyError for an unknown object, so this must be
+    # resolved first. Refusing is right anyway: a note filed against
+    # nothing is a note nobody ever sees again.
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.set_description("f" * 40, "Nowhere") is False
+    assert store.descriptions() == {}
+
+
+def test_descriptions_are_per_revision(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    store.set_description(first, "The older one")
+    store.set_description(second, "The newer one")
+    assert [c.description for c in store.list_changes("home")] == [
+        "The newer one",
+        "The older one",
+    ]
+
+
+def test_the_state_before_a_change_is_the_previous_one_of_that_dashboard(store):
+    # Not the commit's parent: another dashboard's commit can sit in
+    # between, and its state is no state of this dashboard at all.
+    first = store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("other", "b: 1\n", "other first")
+    second = store.write_snapshot("home", "a: 2\n", "home second")
+    assert store.previous_change("home", second) == first
+
+
+def test_the_first_change_has_nothing_before_it(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.previous_change("home", first) is None
+
+
+def test_the_state_before_an_unknown_revision_is_unknown(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.previous_change("home", "f" * 40) is None
+
+
+def test_notes_stay_out_of_the_dashboard_history(store):
+    # descriptions live on refs/notes/commits, so the commits that carry
+    # them must not turn up as dashboards or as changes. Pinned rather
+    # than assumed: list_all_dashboards walks every commit there is, and
+    # a stray one there would invent a dashboard out of nothing.
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(revision, "A note of my own")
+    assert store.list_all_dashboards() == ["home"]
+    assert len(store.list_changes("home")) == 1
+    assert store.list_dashboards() == ["home"]
