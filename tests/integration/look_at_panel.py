@@ -414,6 +414,22 @@ async def main():
             print(f"    label: {label!r}")
             await page.shot("9-current-state.png")
 
+            print("\n-- Naming what each half of a row is about --")
+            # Measured on dh-testlauf: a row read "4 moved · same as now",
+            # which as one sentence is a contradiction. Both halves were
+            # true; nothing said the message was about the change and the
+            # chip about the state it left behind.
+            chips = await page.js(
+                "(() => { const p = " + PANEL + "; return {"
+                '  now: p.querySelector(".chip.now")?.innerText ?? null,'
+                '  nowTitle: p.querySelector(".chip.now")?.title ?? null,'
+                '  sameas: p.querySelector(".chip.sameas")?.innerText ?? null,'
+                '  sameasTitle: p.querySelector(".chip.sameas")?.title ?? null,'
+                " }; })()"
+            )
+            for name, value in chips.items():
+                print(f"    {name}: {value!r}")
+
             print("\n-- The sidebar: deleted dashboards folded away --")
             side = await page.js(
                 "(() => { const p = " + PANEL + "; return {"

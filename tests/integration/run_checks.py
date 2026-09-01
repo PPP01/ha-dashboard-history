@@ -235,11 +235,17 @@ async def run(access: str) -> None:
         "_panel_custom", {}
     ).get("module_url", "")
     want = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
-    check(
-        "the panel module URL carries a fingerprint of the file",
-        f"v={want}" in module_url,
-        module_url or "no module_url found",
-    )
+    fresh = f"v={want}" in module_url
+    if not module_url:
+        detail = "no module_url found"
+    elif fresh:
+        detail = module_url
+    else:
+        detail = (
+            f"{module_url} but the file hashes to {want} - panel.js changed "
+            "since Home Assistant registered it, so restart the container"
+        )
+    check("the panel module URL carries a fingerprint of the file", fresh, detail)
 
     panels = requests.get(f"{BASE}/api/config", headers=headers, timeout=30)
     check("Home Assistant answers /api/config", panels.status_code == 200)

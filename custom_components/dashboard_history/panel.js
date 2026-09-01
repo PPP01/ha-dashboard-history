@@ -660,7 +660,19 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _renderDetail(index) {
-    const plain = renderPlain(this._explanation, "What this change did");
+    // Where there is room, both subjects get a full sentence instead of a
+    // chip - the explanation says what the change did, this says where it
+    // left the dashboard. "again" carries the case the short form cannot:
+    // the dashboard may well have changed away and come back since.
+    // Not on the top row: the section heading and its chip already say it
+    // there, and "again" would be wrong for the state you are simply in.
+    const here =
+      index > 0 && this._changes[index]?.same_as_now
+        ? `<p class="why" style="margin-top:0">The dashboard holds exactly this
+             state again right now.</p>`
+        : "";
+    const plain =
+      here + renderPlain(this._explanation, "What this change did");
     const before = this._before(index);
     if (!before)
       return `<div class="detail">${plain}<p class="muted">This is the first
@@ -726,15 +738,27 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _renderRow(change, index) {
-    // Two different things, and telling them apart is the whole point of
-    // the chips. The top entry is *where you are*. A lower entry can hold
-    // byte-identical content without being where you are - moving a card up
-    // and down leaves a whole run of them, all worded alike.
+    // The word "state" in both chips is load-bearing, and it was missing.
+    //
+    // A row says two things about two different subjects: the message is
+    // about the *change*, the chip about the *state it left behind*. Read
+    // as one sentence, "4 moved · same as now" is a contradiction - four
+    // cards moved, and yet nothing differs? Both halves were true and the
+    // row still misled, because nothing named what each half was about.
+    //
+    // The other difference the chips carry: the top entry is where you
+    // are. A lower entry can hold byte-identical content without being
+    // where you are - move a card up and down and there is a whole run of
+    // them, all worded alike.
     const chip =
       index === 0 && change.same_as_now
-        ? '<span class="chip now">current state</span>'
+        ? `<span class="chip now"
+                 title="This is the state the dashboard holds right now."
+                 >current state</span>`
         : change.same_as_now
-          ? '<span class="chip sameas">same as now</span>'
+          ? `<span class="chip sameas"
+                   title="The change described here left the dashboard in exactly the state it holds right now."
+                   >same state as now</span>`
           : "";
     return `
         <div class="card">

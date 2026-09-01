@@ -144,6 +144,16 @@ Zurueckholen
    1. **Der aktuelle Stand wird markiert und abgesetzt** — eigener Abschnitt »Current state« über einem Trenner »History«, Kennzeichen `current state`. Und **nachgerechnet, nicht angenommen**: Bei einer Änderung an Home Assistant vorbei ist der neueste Eintrag *nicht* der aktuelle Stand, und dann wird nichts gekrönt. Weitere Einträge mit gleichem Inhalt tragen `same as now`; das erklärt, warum eine solche Liste so gleichförmig aussieht.
    2. **Der Knopf verschwindet, wo er nichts täte.** Sein Ziel ist der Stand *vor* der Änderung; ist das der aktuelle Stand, ist er sinnlos. Bei einem Hin-und-Her-Verlauf trifft das jede zweite Zeile. Vorher erschien er dort und lieferte einen Dialog mit »No difference.« über einem aktiven »Apply« — obwohl `operations.async_restore_state` längst `note: "already identical"` zurückgab und das Panel die Angabe wegwarf. Zum vierten Mal in diesem Projekt hatte der Code recht und sein Bericht nicht.
 
+   **Nachgeschärft am 2026-09-01, wieder auf eine Beobachtung des Nutzers.** Die Kennzeichen hießen erst `current state` und `same as now`. An einer echten Zeile las sich das so:
+
+   ```
+   dh-testlauf: 4 moved   [same as now]
+   ```
+
+   Als **ein** Satz gelesen ist das ein Widerspruch — vier Karten verschoben, und trotzdem unverändert? Nachgemessen war die Markierung korrekt: der Stand bei dieser Revision ist byte-identisch mit dem lebenden. Falsch war, dass eine Zeile **zwei Aussagen über zwei verschiedene Gegenstände** macht, ohne einen davon zu benennen: die Meldung spricht über die *Änderung*, das Kennzeichen über den *Stand danach*. Zwei einzeln wahre Aussagen ohne Bezugsrahmen sind zusammen eine falsche.
+
+   Das Wort »state« ist deshalb tragend: `same state as now`, dazu ein Tooltip mit dem ganzen Satz. Und beim Aufklappen, wo Platz ist, steht er ausgeschrieben — mit »again«, weil das Dashboard zwischenzeitlich durchaus weg und wieder zurück gewesen sein kann.
+
    Beim neuesten Eintrag heißt der Knopf »Undo this change« statt »back to before this change«. Dasselbe Ziel, verständlicher formuliert, weil beim Neuesten nichts danach kommt.
 
    **Ausdrücklich nicht geändert:** Das Ziel bleibt der Stand *vor* der Änderung. Der Nutzer hatte »Rückgängig zu diesem Stand« vorgeschlagen, also Ziel-Semantik. Das holte die Falle zurück, die diese Entscheidung entfernt: Wer die Zeile anklickt, in der der Verlust *steht*, landete dann in dem Stand, in dem die Karte schon weg ist. Das Netz ist inzwischen stärker (die Klartext-Erklärung nennt Löschungen in Rot), aber ein Netz bleibt ein Netz.
