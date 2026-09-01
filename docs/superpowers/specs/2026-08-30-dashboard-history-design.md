@@ -137,6 +137,17 @@ Zurueckholen
 
    Eine Warnung wäre die falsche Antwort, ein umbenanntes Feld auch. Die Oberfläche stellt die Frage schlicht nicht: Man klickt die Änderung an, und das Panel rechnet selbst aus, welcher Zustand gemeint ist. Die Stolperstelle wird nicht abgesichert, sondern entfernt.
 
+   **Ergänzt am 2026-09-01, nach einer Beobachtung des Nutzers.** Die Regel trägt weiter, aber sie beantwortet eine Frage nicht: *Wo bin ich?* Beim Erproben lag ein Verlauf vor, in dem eine Karte mehrfach hoch und runter geschoben worden war — sieben Einträge, alle mit der Meldung »2 moved«, **jeder zweite inhaltlich identisch mit dem lebenden Dashboard**. Der Nutzer hielt Platz 2 für den aktuellen Stand, und das war nicht falsch: Er *ist* inhaltlich der aktuelle, nur nicht der neueste.
+
+   Zwei Folgen daraus, beide ohne die Semantik anzutasten:
+
+   1. **Der aktuelle Stand wird markiert und abgesetzt** — eigener Abschnitt »Current state« über einem Trenner »History«, Kennzeichen `current state`. Und **nachgerechnet, nicht angenommen**: Bei einer Änderung an Home Assistant vorbei ist der neueste Eintrag *nicht* der aktuelle Stand, und dann wird nichts gekrönt. Weitere Einträge mit gleichem Inhalt tragen `same as now`; das erklärt, warum eine solche Liste so gleichförmig aussieht.
+   2. **Der Knopf verschwindet, wo er nichts täte.** Sein Ziel ist der Stand *vor* der Änderung; ist das der aktuelle Stand, ist er sinnlos. Bei einem Hin-und-Her-Verlauf trifft das jede zweite Zeile. Vorher erschien er dort und lieferte einen Dialog mit »No difference.« über einem aktiven »Apply« — obwohl `operations.async_restore_state` längst `note: "already identical"` zurückgab und das Panel die Angabe wegwarf. Zum vierten Mal in diesem Projekt hatte der Code recht und sein Bericht nicht.
+
+   Beim neuesten Eintrag heißt der Knopf »Undo this change« statt »back to before this change«. Dasselbe Ziel, verständlicher formuliert, weil beim Neuesten nichts danach kommt.
+
+   **Ausdrücklich nicht geändert:** Das Ziel bleibt der Stand *vor* der Änderung. Der Nutzer hatte »Rückgängig zu diesem Stand« vorgeschlagen, also Ziel-Semantik. Das holte die Falle zurück, die diese Entscheidung entfernt: Wer die Zeile anklickt, in der der Verlust *steht*, landete dann in dem Stand, in dem die Karte schon weg ist. Das Netz ist inzwischen stärker (die Klartext-Erklärung nennt Löschungen in Rot), aber ein Netz bleibt ein Netz.
+
    Daraus folgt auch, dass das Panel **keine eigene Logik** trägt. Alle Vorgänge liegen in `operations.py`; Dienste und Panel sind zwei dünne Häute über derselben Schicht. Sonst stünde das Wesentliche ausgerechnet dort, wo Home Assistant sich am häufigsten bewegt.
 
 8. **Ein gelöschtes Dashboard wird wiederhergestellt, nicht nur betrauert.** *(Nachgetragen am 2026-08-30. Ursprünglich stand das Wiederanlegen außerhalb dieser Fassung.)*
@@ -197,6 +208,7 @@ Zurueckholen
 | Dashboard gelöscht | Beim nächsten Abgleich als Commit »dashboard deleted« festgehalten. Die Datei verlässt den Baum, wie eine gelöschte Datei es in git tut — jeder frühere Stand bleibt über seine Revision lesbar, und die Löschung erscheint im Verlauf **dieses** Dashboards statt nirgends. Home Assistant meldet eine Dashboard-Löschung mit keinem Ereignis, sie fällt deshalb erst beim Vergleich auf. Ein fehlender *Konfigurationsstand* zählt ausdrücklich **nicht** als Löschung — ein nie gespeichertes Dashboard hat auch keinen. **Das Wiederanlegen gehört zu dieser Fassung** — siehe Entscheidung 8 |
 | Ein anderes Dashboard bekommt später denselben `url_path` | Der Löschvermerk zieht die Trennlinie: Da HEAD die Datei nicht mehr führt, beginnt das neue Dashboard ein eigenes Kapitel, statt einen riesigen Diff gegen einen Fremden zu erzeugen |
 | Wiederanlegen, wenn HAs Sammlung unerreichbar ist | Wird **abgelehnt** mit einer Meldung, die den Weg von Hand nennt. Nicht halb geschrieben: Auflisten und Ändern lesen in HA zwei verschiedene Quellen, und wer nur die erste füllt, erzeugt ein Dashboard, das gesund aussieht und nicht verwaltbar ist |
+| Verlauf, der zwischen zwei Ständen hin und her geht | Mehrere Einträge sind inhaltlich identisch und heißen gleich. Der aktuelle Stand wird markiert (`current state`, nachgerechnet gegen den lebenden Stand), inhaltsgleiche Einträge tragen `same as now`, und der Zurück-Knopf verschwindet dort, wo sein Ziel der aktuelle Stand ist |
 | Beschreibung auf einer unbekannten Revision | Wird abgewiesen mit der Angabe, dass die Revision unbekannt ist — nicht stillschweigend an einem falschen Commit abgelegt. Dieselbe Trennung wie bei `_state_at`: eine Aussage über die Eingabe, keine über das Dashboard |
 | Beschreibung auf leeren Text gesetzt | Die Notiz wird entfernt, nicht durch eine leere ersetzt. Sonst hätte eine Zeile eine unsichtbare Überschrift und die automatische Meldung wäre verdeckt |
 | Änderung, die sich nicht in Karten ausdrücken lässt (nur Titel, nur Symbol, außerhalb erfasst) | Die Erklärung sagt genau das und verweist auf den Diff. Sie behauptet **nie** »nichts geändert«, solange ein Diff darunter das Gegenteil zeigt |

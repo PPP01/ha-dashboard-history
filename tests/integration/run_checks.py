@@ -357,18 +357,20 @@ async def run_lifecycle(access: str) -> None:
     Everything happens on a dashboard of its own, so the copied ones stay
     untouched.
     """
-    # A fresh name per run, because a run that fails half way leaves the
-    # dashboard behind and a reused name would then collide.
+    # One key for every run, not one per run.
     #
-    # The visible title carries that suffix too. It used to be a bare
-    # "DH Probe" for every run, and when three leftovers once piled up in
-    # the sidebar they were indistinguishable - the settings dialog shows
-    # the title, not the url_path. A test that litters should at least
-    # label its litter.
-    stamp = int(time.time()) % 100000
-    key = f"dh-probe-{stamp}"
-    title, icon = f"DH Probe {stamp}", "mdi:test-tube"
-    renamed_title = f"DH Probe {stamp} umbenannt"
+    # It used to carry a timestamp, because a restored dashboard could not
+    # be deleted again and a reused name would have collided with the
+    # leftover. That reason is gone: restoring now goes through Home
+    # Assistant's own collection, so the cleanup below actually works.
+    #
+    # The timestamp had a cost that only showed up in the panel. A deleted
+    # dashboard keeps its history forever - that is the point of the tool -
+    # so every run added another dead "DH Probe" to the dashboard list, and
+    # after a dozen runs that list was mostly litter.
+    key = "dh-probe-check"
+    title, icon = "DH Probe", "mdi:test-tube"
+    renamed_title = "DH Probe umbenannt"
     async with Socket(access) as socket:
         # Clear leftovers from earlier runs, as far as they can be cleared.
         for existing in (await socket.call("lovelace/dashboards/list")) or []:
@@ -541,7 +543,7 @@ async def run_lifecycle(access: str) -> None:
             touch = f"{key}-touch"
             touch_id = touch.replace("-", "_")
             await socket.call(
-                "lovelace/dashboards/create", url_path=touch, title=f"DH Touch {stamp}"
+                "lovelace/dashboards/create", url_path=touch, title="DH Touch"
             )
             await socket.call("lovelace/dashboards/delete", dashboard_id=touch_id)
             # Waiting for the touch entry to *leave* the file is the whole
@@ -618,6 +620,87 @@ async def _wait_for_store_absence(dashboard_id: str, seconds: int = 30) -> bool:
             return True
         await asyncio.sleep(1)
     return False
+
+
+async def run_current_marker(access: str) -> None:
+    """Which recorded entry is the state in front of you.
+
+    A history that went back and forth holds several entries with identical
+    content and identical wording. Without a mark the panel is a wall of
+    "2 moved" - which is what a person hit, and what sent them clicking a
+    button whose preview then said "No difference."
+    """
+    async with Socket(access) as socket:
+        key = "ground-floor"
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "every entry says whether it is the state in front of you",
+            all("same_as_now" in change for change in changes),
+            f"{len(changes)} entries",
+        )
+        check(
+            "and the newest one is",
+            changes[0]["same_as_now"] is True,
+            f"{changes[0]['revision'][:8]} {changes[0]['message']!r}",
+        )
+
+        # Undo the newest change. What must NOT happen is the mark staying
+        # on an entry that is no longer the current state.
+        before_newest = changes[1]["revision"]
+        applied = await socket.call(
+            "dashboard_history/restore_state",
+            dashboard=key,
+            revision=before_newest,
+            confirm=True,
+        )
+        check("the newest change can be undone", applied["applied"] is True, str(applied.get("note")))
+        await asyncio.sleep(RECONCILE_WAIT)
+
+        after = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "undoing appends a new entry rather than removing one",
+            len(after) == len(changes) + 1
+            and after[0]["revision"] != changes[0]["revision"],
+            f"{len(changes)} -> {len(after)} entries",
+        )
+        check(
+            "the mark moved to it",
+            after[0]["same_as_now"] is True,
+            f"{after[0]['revision'][:8]} {after[0]['message']!r}",
+        )
+        check(
+            "and left the entry that is no longer current",
+            after[1]["same_as_now"] is False,
+            f"{after[1]['revision'][:8]} was newest before",
+        )
+        # The entry whose content the undo brought back holds it again, and
+        # says so. That run of look-alike entries is exactly what the chip
+        # explains.
+        older = next(
+            (c for c in after[1:] if c["revision"] == before_newest), None
+        )
+        check(
+            "the state we went back to is marked as identical, not as current",
+            older is not None and older["same_as_now"] is True,
+            f"{before_newest[:8]} same_as_now="
+            f"{older['same_as_now'] if older else 'not found'}",
+        )
+
+        # And the button that used to be offered pointlessly: its target is
+        # now the current state, so the preview says there is nothing to do.
+        pointless = await socket.call(
+            "dashboard_history/restore_state", dashboard=key, revision=after[0]["revision"]
+        )
+        check(
+            "restoring to the current state reports nothing to do",
+            pointless.get("note") == "already identical"
+            and not pointless.get("preview"),
+            str(pointless),
+        )
 
 
 async def run_descriptions(access: str) -> None:
@@ -821,6 +904,8 @@ if __name__ == "__main__":
     asyncio.run(run(access))
     print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")
     asyncio.run(run_lifecycle(access))
+    print("\n  -- Wo bin ich? Der aktuelle Stand --")
+    asyncio.run(run_current_marker(access))
     print("\n  -- Eigene Beschreibungen --")
     asyncio.run(run_descriptions(access))
     print("\n  -- Klartext statt Diff --")

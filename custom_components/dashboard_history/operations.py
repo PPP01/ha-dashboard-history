@@ -122,8 +122,31 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
 async def async_history(
     hass: HomeAssistant, store: HistoryStore, key: str, limit: int = 50
 ) -> dict:
-    """The recorded states of one dashboard, newest first."""
+    """The recorded states of one dashboard, newest first.
+
+    Each entry says whether it holds exactly what the dashboard holds now
+    (`same_as_now`). That is worked out rather than assumed, and the
+    difference matters: normally the newest entry *is* the current state,
+    but after a change made at Home Assistant's back - a restored backup, a
+    hand-edited storage file - it is not, and will not be until the next
+    start. A panel that simply crowned the top entry would be wrong exactly
+    when being right matters.
+
+    It also answers the question a repetitive history raises. Moving a card
+    up and down leaves several entries with byte-identical content and, since
+    the messages are generated, identical wording: seven reading "2 moved",
+    every second one the state in front of you.
+    """
     changes = await hass.async_add_executor_job(store.list_changes, key, limit)
+    live = await async_get_config(hass, key)
+    same: set[str] = set()
+    if live is not None and changes:
+        same = await hass.async_add_executor_job(
+            store.matching_revisions,
+            key,
+            [c.revision for c in changes],
+            dump(live),
+        )
     return {
         "changes": [
             {
@@ -131,6 +154,7 @@ async def async_history(
                 "timestamp": c.timestamp,
                 "message": c.message,
                 "description": c.description,
+                "same_as_now": c.revision in same,
             }
             for c in changes
         ]

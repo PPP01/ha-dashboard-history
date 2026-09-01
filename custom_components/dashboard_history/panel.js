@@ -176,6 +176,53 @@ const STYLE = `
     font: inherit;
     box-sizing: border-box;
   }
+  .chip {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    vertical-align: 1px;
+    white-space: nowrap;
+  }
+  .chip.now { background: var(--primary-color, #03a9f4); color: #fff; }
+  .chip.sameas {
+    background: var(--secondary-background-color, #eee);
+    color: var(--secondary-text-color, #727272);
+  }
+  .current .card { box-shadow: 0 0 0 2px var(--primary-color, #03a9f4); }
+  .heading {
+    margin: 0 0 8px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 20px 0 12px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .divider::before, .divider::after {
+    content: "";
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--divider-color, #e0e0e0);
+  }
+  .why {
+    display: block;
+    margin-top: 16px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+  }
   .plain { margin: 0 0 12px; }
   .plain h3 { margin: 0 0 8px; font-size: 15px; }
   .plain .view {
@@ -381,12 +428,23 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     const dialog = this.shadowRoot.querySelector("dialog.confirm");
     dialog.querySelector("h2").textContent = title;
-    dialog.querySelector(".body").innerHTML =
-      renderPlain(preview.explanation, "What applying this does") +
-      `<details class="raw">
-         <summary>Show the technical details</summary>
-         ${renderDiff(preview.preview)}
-       </details>`;
+    // The integration answers "already identical" when the target state is
+    // what the dashboard holds already. Showing an empty diff as "No
+    // difference." next to a live Apply button was the panel throwing that
+    // answer away and offering a change that changes nothing.
+    const nothingToDo = !preview.preview && preview.note;
+    dialog.querySelector(".body").innerHTML = nothingToDo
+      ? `<p>This state is what the dashboard holds right now, so there is
+           nothing to apply.</p>`
+      : renderPlain(preview.explanation, "What applying this does") +
+        `<details class="raw">
+           <summary>Show the technical details</summary>
+           ${renderDiff(preview.preview)}
+         </details>`;
+    const applyButton = dialog.querySelector('.actions button[value="apply"]');
+    applyButton.hidden = Boolean(nothingToDo);
+    dialog.querySelector('.actions button[value="cancel"]').textContent =
+      nothingToDo ? "Close" : "Cancel";
     const note = preview.creates_dashboard
       ? "This recreates the dashboard, with its old title and icon."
       : "";
@@ -481,6 +539,29 @@ class DashboardHistoryPanel extends HTMLElement {
       .join("");
   }
 
+  /**
+   * The button that sets the whole dashboard back, or the reason there is
+   * none. Its target is the state *before* this change - see the note at
+   * the top of this file - so it is pointless exactly when that state is
+   * what the dashboard holds already. On a history that went back and
+   * forth that is every second row, and offering it there produced a
+   * dialog reading "No difference." above a live Apply button.
+   */
+  _renderSetBack(index) {
+    const before = this._before(index);
+    if (!before) return "";
+    if (this._changes[index + 1]?.same_as_now)
+      return `<span class="why">The state before this change is what the
+        dashboard holds now — nothing to set back.</span>`;
+    const label =
+      index === 0
+        ? "Undo this change"
+        : "Set the dashboard back to before this change";
+    return `<div style="margin-top:16px">
+        <button class="act ghost" data-state="${escape(before)}">${label}</button>
+      </div>`;
+  }
+
   _renderDetail(index) {
     const plain = renderPlain(this._explanation, "What this change did");
     const before = this._before(index);
@@ -503,11 +584,7 @@ class DashboardHistoryPanel extends HTMLElement {
     return `<div class="detail">
       ${plain}
       ${list}
-      <div style="margin-top:16px">
-        <button class="act ghost" data-state="${escape(before)}">
-          Set the whole dashboard back to before this change
-        </button>
-      </div>
+      ${this._renderSetBack(index)}
     </div>`;
   }
 
@@ -527,12 +604,40 @@ class DashboardHistoryPanel extends HTMLElement {
         : "";
     if (!this._changes.length)
       return `${banner}<p class="empty muted">No changes recorded for this dashboard.</p>`;
-    const rows = this._changes
-      .map(
-        (change, index) => `
+
+    // The newest entry is set apart when it is provably the state in front
+    // of you. Provably: after a change made at Home Assistant's back it is
+    // not, and then nothing is crowned rather than the wrong thing.
+    const topIsCurrent = Boolean(this._changes[0].same_as_now);
+    const rows = this._changes.map((change, index) => this._renderRow(change, index));
+    if (!topIsCurrent) return banner + rows.join("");
+    return (
+      banner +
+      `<div class="current">
+         <p class="heading">Current state</p>
+         ${rows[0]}
+       </div>` +
+      (rows.length > 1
+        ? `<div class="divider">History</div>${rows.slice(1).join("")}`
+        : "")
+    );
+  }
+
+  _renderRow(change, index) {
+    // Two different things, and telling them apart is the whole point of
+    // the chips. The top entry is *where you are*. A lower entry can hold
+    // byte-identical content without being where you are - moving a card up
+    // and down leaves a whole run of them, all worded alike.
+    const chip =
+      index === 0 && change.same_as_now
+        ? '<span class="chip now">current state</span>'
+        : change.same_as_now
+          ? '<span class="chip sameas">same as now</span>'
+          : "";
+    return `
         <div class="card">
           <div class="change" data-index="${index}">
-            <span class="what">${escape(change.description || change.message)}
+            <span class="what">${escape(change.description || change.message)}${chip}
               ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
             </span>
             <span class="when">${escape(when(change.timestamp))}</span>
@@ -541,10 +646,7 @@ class DashboardHistoryPanel extends HTMLElement {
                     title="Describe this change">\u270e</button>
           </div>
           ${this._open === change.revision ? this._renderDetail(index) : ""}
-        </div>`,
-      )
-      .join("");
-    return banner + rows;
+        </div>`;
   }
 
   _render() {

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -357,9 +358,16 @@ class HistoryStore:
 
     def _read(self, path: str, revision: str) -> str | None:
         repo = self._repo()
-        if repo is None:
-            return None
-        resolved = self._resolve(repo, revision)
+        return None if repo is None else self._read_from(repo, path, revision)
+
+    @classmethod
+    def _read_from(cls, repo: Repo, path: str, revision: str) -> str | None:
+        """Same, for callers that already hold a repository.
+
+        Opening one costs a file handle and a pack index; comparing fifty
+        revisions is a normal thing for the panel to ask.
+        """
+        resolved = cls._resolve(repo, revision)
         if resolved is None:
             return None
         try:
@@ -368,6 +376,32 @@ class HistoryStore:
         except KeyError:
             return None
         return repo[blob_id].data.decode("utf-8")
+
+    def matching_revisions(
+        self, key: str, revisions: Iterable[str], text: str
+    ) -> set[str]:
+        """Which of these revisions hold exactly this text for this dashboard.
+
+        Answers the question the panel needs to orient itself: *which of
+        these entries is the dashboard I am looking at right now?* A history
+        that went back and forth holds several states with byte-identical
+        content, and because the messages are generated they read alike
+        too - seven entries saying "2 moved", every second one identical to
+        the live dashboard. Marking them is the difference between a list
+        and a wall.
+
+        One repository for the whole comparison. An unknown revision simply
+        does not match; it is not an error to ask about one.
+        """
+        repo = self._repo()
+        if repo is None:
+            return set()
+        path = f"{key}.yaml"
+        return {
+            revision
+            for revision in revisions
+            if self._read_from(repo, path, revision) == text
+        }
 
     def list_dashboards(self) -> list[str]:
         """Every dashboard the history currently tracks."""

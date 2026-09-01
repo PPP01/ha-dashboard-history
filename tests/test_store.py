@@ -393,3 +393,60 @@ def test_notes_stay_out_of_the_dashboard_history(store):
     assert store.list_all_dashboards() == ["home"]
     assert len(store.list_changes("home")) == 1
     assert store.list_dashboards() == ["home"]
+
+
+# -- which recorded states are the one in front of you -----------------
+#
+# A history that goes back and forth - a card moved up, then down, then up
+# again - holds several states with byte-identical content and, because the
+# messages are generated, identical wording too. Measured on the test
+# installation: seven entries reading "2 moved", every second one identical
+# to the live dashboard. Without marking, that list cannot be navigated.
+
+
+def test_the_revision_holding_the_live_text_is_found(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    assert store.matching_revisions("home", [second, first], "a: 2\n") == {second}
+
+
+def test_every_revision_with_the_same_content_is_found(store):
+    # The back-and-forth case, which is the reason this exists.
+    up = store.write_snapshot("home", "a: 1\n", "up")
+    down = store.write_snapshot("home", "a: 2\n", "down")
+    up_again = store.write_snapshot("home", "a: 1\n", "up again")
+    assert store.matching_revisions("home", [up_again, down, up], "a: 1\n") == {
+        up,
+        up_again,
+    }
+
+
+def test_nothing_matches_a_text_that_was_never_recorded(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.matching_revisions("home", [first], "a: 99\n") == set()
+
+
+def test_an_unknown_revision_simply_does_not_match(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    assert store.matching_revisions("home", ["f" * 40, first], "a: 1\n") == {first}
+
+
+def test_matching_reads_only_this_dashboard_s_file(store):
+    home = store.write_snapshot("home", "a: 1\n", "home")
+    other = store.write_snapshot("other", "b: 2\n", "other")
+    # "b: 2" belongs to the other dashboard and was never home's content,
+    # at any revision.
+    assert store.matching_revisions("home", [other, home], "b: 2\n") == set()
+    # And home's own content matches at *both* revisions - including the one
+    # whose commit touched another dashboard, because home.yaml still held
+    # that text there. That is what "the state at this revision" means, and
+    # the caller only ever passes revisions from one dashboard's own history.
+    assert store.matching_revisions("home", [other, home], "a: 1\n") == {
+        home,
+        other,
+    }
+
+
+def test_matching_against_an_empty_repository_is_empty(tmp_path):
+    fresh = HistoryStore(tmp_path / "nothing")
+    assert fresh.matching_revisions("home", ["abc"], "a: 1\n") == set()

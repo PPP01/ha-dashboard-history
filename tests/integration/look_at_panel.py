@@ -20,7 +20,9 @@ in the panel:
   * Waiting on a row count is a race. The dashboard shown before the
     switch already had rows, so the click landed on the old DOM.
   * `Runtime.evaluate` with returnByValue cannot serialise a DOM node and
-    answers with an empty object - falsy in Python. Wait on booleans.
+    answers with an empty object - falsy in Python. Wait on booleans. The
+    same serialisation drops `undefined` values, and the key disappears
+    with them: end an optional chain with `?? null` or read a KeyError.
 
 Its own Chrome, its own profile directory, its own port. Driving the
 browser somebody is working in is how a stray localStorage key ends up in
@@ -361,6 +363,47 @@ async def main():
                 f'{PANEL}.querySelector("dialog.confirm").close("cancel")'
             )
             await asyncio.sleep(0.5)
+
+            print("\n-- Where am I: the current state --")
+            shape = await page.js(
+                "(() => { const p = " + PANEL + "; return {"
+                '  heading: p.querySelector(".current .heading")?.innerText,'
+                '  chipNow: p.querySelector(".current .chip.now")?.innerText,'
+                '  divider: p.querySelector(".divider")?.innerText,'
+                '  sameAsNow: p.querySelectorAll(".chip.sameas").length,'
+                '  rowsInCurrent: p.querySelectorAll(".current .card").length,'
+                " }; })()"
+            )
+            for name, value in shape.items():
+                print(f"    {name}: {value!r}")
+
+            print("\n-- The button, where it would do nothing --")
+            # Row 1's target is row 2. On a history that went back and forth
+            # that is the current state, and the button used to be offered
+            # anyway - with a preview reading "No difference."
+            await page.js(f'{PANEL}.querySelectorAll(".change")[1].click()')
+            await page.settle(f'!!{PANEL}.querySelectorAll(".detail")[0]')
+            state = await page.js(
+                "(() => { const d = " + PANEL + '.querySelector(".detail"); return {'
+                # `?? null` on purpose: an undefined value is dropped from
+                # the object by returnByValue, and the key vanishes with it.
+                '  button: d.querySelector("[data-state]")?.innerText.trim() ?? null,'
+                '  reason: d.querySelector(".why")?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
+                " }; })()"
+            )
+            print(f"    button: {state['button']!r}")
+            print(f"    reason: {state['reason']!r}")
+            await page.shot("8-no-pointless-button.png")
+
+            print("\n-- The button on the current state --")
+            await page.js(f'{PANEL}.querySelectorAll(".change")[0].click()')
+            await page.settle(f'!!{PANEL}.querySelector(".current .detail")')
+            label = await page.js(
+                f'{PANEL}.querySelector(".current .detail [data-state]")'
+                "?.innerText.trim() ?? null"
+            )
+            print(f"    label: {label!r}")
+            await page.shot("9-current-state.png")
 
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:

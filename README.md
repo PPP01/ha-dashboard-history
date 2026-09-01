@@ -61,6 +61,16 @@ Pick a dashboard on the left, and you get its changes, newest first. Click
 a change to see what it made disappear, and put any of it back. A deleted
 dashboard is listed too, marked as such, with a button that brings it back.
 
+**The state you have now is set apart at the top**, marked `current state`,
+with the history below it. That mark is worked out, not assumed: if the
+dashboard was changed behind Home Assistant's back, the newest entry is
+*not* what you have, and then nothing is marked. Entries further down that
+hold the same content say `same as now` — which is what makes a history
+that went back and forth readable at all.
+
+Where setting the dashboard back would change nothing, the button is not
+offered; it says why instead.
+
 **You click a change, never a revision.** That is deliberate. Asked to undo
 a deletion, people reach for the line that says the card was deleted — which
 is one line too late, because what they want is the state just before it.
