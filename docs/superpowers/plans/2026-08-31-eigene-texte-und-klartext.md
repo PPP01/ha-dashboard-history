@@ -1783,6 +1783,16 @@ Behoben, indem es nur noch **einen** Weg gibt: HAs eigenes Sammlungsobjekt, erre
 
 Drei Prüfungen in `run_checks.py` halten das fest, und alle drei sind gegen den alten Code als fehlschlagend nachgewiesen: umbenennen, auf der Platte stehen, wieder löschen.
 
+### Nachtrag vom 2026-09-01: ein Fix, der einen zweiten Fehler scharf machte
+
+Mein Aufräumen in `run_checks.py` löschte Reste über einen **Präfix-Vergleich** — `startswith("dh-probe")`. Damit traf es auch das Dashboard `dh-probe`, in dem der Nutzer gearbeitet hat. Am 2026-09-01 um 16:34:52 hat es das getan, protokolliert als »Dashboard dh-probe is gone«.
+
+Der Vergleich war seit Tagen falsch und fiel nicht auf, **weil das Löschen ohnehin fehlschlug**: `not_found`, siehe den Nachtrag darüber. Die Schleife war destruktiv gemeint und wirkungslos in der Ausführung. Der Fix am Anlegen machte sie wirksam.
+
+**Die Lehre:** Wer einen Fehler behebt, muss prüfen, was sich auf dessen Wirkungslosigkeit verlassen hat. Ich habe nur geprüft, dass das Löschen jetzt *funktioniert* — nicht, wer es alles auslöst. Ein Test, der löscht, muss sein Ziel exakt benennen; ein Präfix ist keine Benennung.
+
+Behoben durch exakten Vergleich auf den eigenen Schlüssel. Das Dashboard ist mit dem Werkzeug selbst wiederhergestellt worden — `restore_state` auf den Stand vor der Löschung, mit Titel, Symbol und drei Karten, ohne Rest.
+
 ### Ausdrücklich offen geblieben
 
 - **Ein umbenannter *Ansichts*titel** wird weiter nicht als Änderung benannt (`_views_by_key` schlüsselt auf `path`). Durch den Rückfall aus Entscheidung 11 nicht mehr irreführend: Die Erklärung sagt dann, dass sie es nicht in Karten ausdrücken kann, und verweist auf den Diff.

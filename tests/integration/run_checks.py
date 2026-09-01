@@ -372,15 +372,23 @@ async def run_lifecycle(access: str) -> None:
     title, icon = "DH Probe", "mdi:test-tube"
     renamed_title = "DH Probe umbenannt"
     async with Socket(access) as socket:
-        # Clear leftovers from earlier runs, as far as they can be cleared.
+        # Clear a leftover from an earlier run - this key and nothing else.
+        #
+        # It used to match on the prefix "dh-probe", and on 2026-09-01 that
+        # swept up a dashboard somebody was working in, because "dh-probe"
+        # starts with "dh-probe". It had been wrong for days without
+        # showing: deleting a restored dashboard failed with not_found back
+        # then, so the loop was destructive in intent and harmless in
+        # effect. Fixing that failure made it bite. A test that deletes
+        # things must name them exactly.
         for existing in (await socket.call("lovelace/dashboards/list")) or []:
-            if str(existing.get("url_path", "")).startswith("dh-probe"):
+            if existing.get("url_path") == key:
                 try:
                     await socket.call(
                         "lovelace/dashboards/delete", dashboard_id=existing["id"]
                     )
                 except RuntimeError:
-                    pass  # A restored one. It goes on the next restart.
+                    pass  # Not there in a shape we can delete; the run goes on.
 
         made = await socket.call(
             "lovelace/dashboards/create",
