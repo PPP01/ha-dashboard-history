@@ -194,6 +194,23 @@ Zurueckholen
 
     Der Diff steht in einem `<details>`, standardmäßig zu. Ob er offen oder zu startet, wird später einstellbar; der Platz dafür ist ein Options-Flow der Integration.
 
+12. **Ein gelöschtes Dashboard kann endgültig vergessen werden — und nur ein gelöschtes.** *(Nachgetragen am 2026-09-01, auf Wunsch des Nutzers.)*
+
+    Die Kehrseite von Entscheidung 8: Eine gelöschte Historie bleibt für immer auffindbar, und das ist richtig — aber nach genug Jahren ist die Liste überwiegend Grabsteine. Zwei Antworten darauf, und die erste ist die wichtigere.
+
+    **Erstens werden gelöschte Dashboards eingeklappt**, nicht versteckt: lebende oben, darunter ein zusammengeklappter Abschnitt »Deleted (N)«. Reine Darstellung, nichts wird angetastet. Das Panel öffnet ab hier auf einem *lebenden* Dashboard; vorher wählte es das erste gelöschte, was bei einem Dutzend davon einen beliebigen Grabstein trifft.
+
+    **Zweitens gibt es ein echtes Löschen.** Das ist die einzige unumkehrbare Operation dieser Integration, in einem Werkzeug gegen das Verschwinden von Dingen — deshalb dreifach eingezäunt: nur an einem Dashboard, das Home Assistant nicht mehr hat (`is_absent` antwortet `False`, wenn HA nicht befragbar ist, verweigert also im Zweifel); nur mit `confirm`; und mit einer Vorschau, die *zählt*, statt einen Diff zu zeigen — der Diff einer Löschung wäre die ganze Historie.
+
+    **Der Preis ist benannt, nicht versteckt:** git kann nur wirklich löschen, indem es die Historie neu schreibt. Damit ändern sich alle Revisionen ab dem ersten betroffenen Commit. Daran hängen zwei Dinge, die sonst lautlos verschwinden würden:
+
+    - **Beschreibungen** sind git notes, adressiert über den Commit-Hash. Sie werden vor der Umschreibung gelesen und auf die neuen Commits zurückgeschrieben. Eine Beschreibung auf einem Commit, der wegfällt, geht mit ihm — sie beschrieb einen Stand, den es nicht mehr gibt, und eine Beschreibung am falschen Stand ist schlechter als keine.
+    - **Benannte Versionen** sind Tags. Sie werden mit ihrer ursprünglichen Botschaft und Zeit neu gebaut. Ein Tag auf einem wegfallenden Commit wandert auf den nächsten überlebenden Vorfahren, weil eine Version einen *Zeitpunkt der ganzen Historie* markiert und nicht ein Dashboard.
+
+    Ein Commit, der nichts außer diesem Dashboard berührte, verschwindet ganz statt zu einem leeren Commit zu werden; seine Kinder werden umgehängt. Ein leerer Commit wäre ein anklickbarer Stand, der nichts sagt.
+
+    **Und »unwiederbringlich« wird wörtlich genommen.** Refs umzuschreiben macht die alten Objekte nur unerreichbar — `resolve()` findet sie weiter, der Inhalt bleibt lesbar. Es läuft deshalb `dulwich.gc.garbage_collect(prune=True, grace_period=0)`. Die Schonfrist ist bewusst Null: Die üblichen vierzehn Tage schützen Objekte, die ein anderer Schreiber gerade baut, und der einzige andere Schreiber ist dieselbe Klasse unter derselben Sperre. Ein Test prüft, dass der Text danach in keinem Blob des Objektspeichers mehr steht.
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
@@ -209,6 +226,9 @@ Zurueckholen
 | Ein anderes Dashboard bekommt später denselben `url_path` | Der Löschvermerk zieht die Trennlinie: Da HEAD die Datei nicht mehr führt, beginnt das neue Dashboard ein eigenes Kapitel, statt einen riesigen Diff gegen einen Fremden zu erzeugen |
 | Wiederanlegen, wenn HAs Sammlung unerreichbar ist | Wird **abgelehnt** mit einer Meldung, die den Weg von Hand nennt. Nicht halb geschrieben: Auflisten und Ändern lesen in HA zwei verschiedene Quellen, und wer nur die erste füllt, erzeugt ein Dashboard, das gesund aussieht und nicht verwaltbar ist |
 | Verlauf, der zwischen zwei Ständen hin und her geht | Mehrere Einträge sind inhaltlich identisch und heißen gleich. Der aktuelle Stand wird markiert (`current state`, nachgerechnet gegen den lebenden Stand), inhaltsgleiche Einträge tragen `same as now`, und der Zurück-Knopf verschwindet dort, wo sein Ziel der aktuelle Stand ist |
+| Endgültiges Löschen an einem lebenden Dashboard | Wird abgewiesen. Nur ein Dashboard, das Home Assistant nicht mehr hat, kann vergessen werden — und wenn HA nicht befragbar ist, wird ebenfalls abgewiesen |
+| Endgültiges Löschen ohne `confirm` | Antwortet mit der Zahl der Stände, dem Zeitraum und wie viele davon eine eigene Beschreibung tragen. Kein Diff: der einer Löschung wäre die ganze Historie |
+| Beschreibungen und Versionen nach einem endgültigen Löschen | Werden auf die neuen Commits übertragen. Was auf einem wegfallenden Commit lag, geht mit ihm (Beschreibung) bzw. wandert auf den nächsten überlebenden Vorfahren (Tag) |
 | Beschreibung auf einer unbekannten Revision | Wird abgewiesen mit der Angabe, dass die Revision unbekannt ist — nicht stillschweigend an einem falschen Commit abgelegt. Dieselbe Trennung wie bei `_state_at`: eine Aussage über die Eingabe, keine über das Dashboard |
 | Beschreibung auf leeren Text gesetzt | Die Notiz wird entfernt, nicht durch eine leere ersetzt. Sonst hätte eine Zeile eine unsichtbare Überschrift und die automatische Meldung wäre verdeckt |
 | Änderung, die sich nicht in Karten ausdrücken lässt (nur Titel, nur Symbol, außerhalb erfasst) | Die Erklärung sagt genau das und verweist auf den Diff. Sie behauptet **nie** »nichts geändert«, solange ein Diff darunter das Gegenteil zeigt |

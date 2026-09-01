@@ -450,3 +450,146 @@ def test_matching_reads_only_this_dashboard_s_file(store):
 def test_matching_against_an_empty_repository_is_empty(tmp_path):
     fresh = HistoryStore(tmp_path / "nothing")
     assert fresh.matching_revisions("home", ["abc"], "a: 1\n") == set()
+
+
+# -- forgetting a dashboard for good -----------------------------------
+#
+# The one irreversible operation in this project, in a tool built to stop
+# things disappearing. It exists because a deleted dashboard stays in the
+# list forever, and after enough years that list is mostly gravestones.
+#
+# git can only really remove something by rewriting history, so every
+# revision from the first affected commit onwards changes. Two things hang
+# off revisions and would vanish silently: the descriptions people write
+# (git notes are keyed by commit sha) and named versions (tags). Carrying
+# those across is most of what these tests are about.
+
+
+def _versions(store):
+    return {v.name: v.title for v in store.list_versions()}
+
+
+def test_forgetting_removes_the_dashboard_from_the_history(store):
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.mark_deleted("gone", "gone: dashboard deleted")
+    assert "gone" in store.list_all_dashboards()
+
+    assert store.forget("gone") > 0
+    assert "gone" not in store.list_all_dashboards()
+    assert store.list_changes("gone") == []
+
+
+def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
+    store.write_snapshot("home", "a: 1\n", "home first")
+    doomed = store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.forget("gone")
+    # Not merely delisted: the text is not in the repository any more.
+    assert store.read_at("gone", "HEAD") is None
+    assert store.resolve(doomed) is None
+
+
+def test_forgetting_leaves_another_dashboard_whole(store):
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    store.write_snapshot("gone", "b: 2\n", "gone second")
+    store.write_snapshot("home", "a: 3\n", "home third")
+
+    store.forget("gone")
+    changes = store.list_changes("home")
+    assert [c.message for c in changes] == ["home third", "home second", "home first"]
+    assert store.read_at("home", changes[0].revision) == "a: 3\n"
+    assert store.read_at("home", changes[1].revision) == "a: 2\n"
+    assert store.read_at("home", changes[2].revision) == "a: 1\n"
+
+
+def test_forgetting_removes_the_metadata_too(store):
+    store.write_snapshot("home", "a: 1\n", "home", meta="title: Home\n")
+    store.write_snapshot("gone", "b: 1\n", "gone", meta="title: Gone\n")
+    store.forget("gone")
+    assert store.read_meta_at("gone", "HEAD") is None
+    assert store.read_meta_at("home", "HEAD") == "title: Home\n"
+
+
+def test_a_description_survives_the_rewrite(store):
+    first = store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    second = store.write_snapshot("home", "a: 2\n", "home second")
+    store.set_description(first, "Before the heating rebuild")
+    store.set_description(second, "Sonne oben")
+
+    store.forget("gone")
+    # The revisions changed - that is unavoidable - so the descriptions are
+    # checked against the messages they belong to, not against shas.
+    assert {c.message: c.description for c in store.list_changes("home")} == {
+        "home second": "Sonne oben",
+        "home first": "Before the heating rebuild",
+    }
+
+
+def test_a_description_on_a_forgotten_change_goes_with_it(store):
+    store.write_snapshot("home", "a: 1\n", "home first")
+    doomed = store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.set_description(doomed, "About the one being forgotten")
+    store.forget("gone")
+    # Not moved onto a surviving commit: it described a state that is gone,
+    # and a description on the wrong state is worse than none.
+    assert "About the one being forgotten" not in store.descriptions().values()
+
+
+def test_a_named_version_survives_the_rewrite(store):
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    store.create_version("v1", "First release", "what it is about")
+
+    store.forget("gone")
+    assert _versions(store) == {"v1": "First release"}
+    # And it still points at a commit that exists.
+    version = store.list_versions()[0]
+    assert store.resolve(version.revision) == version.revision
+
+
+def test_forgetting_an_unknown_dashboard_changes_nothing(store):
+    store.write_snapshot("home", "a: 1\n", "home first")
+    before = [c.revision for c in store.list_changes("home")]
+    assert store.forget("never-existed") == 0
+    assert [c.revision for c in store.list_changes("home")] == before
+
+
+def test_forgetting_the_only_dashboard_empties_the_history(store):
+    store.write_snapshot("only", "a: 1\n", "only first")
+    store.write_snapshot("only", "a: 2\n", "only second")
+    assert store.forget("only") == 2
+    assert store.list_all_dashboards() == []
+    assert store.list_changes("only") == []
+    # And the repository is still usable afterwards.
+    assert store.write_snapshot("fresh", "c: 1\n", "fresh") is not None
+
+
+def test_forgetting_is_refused_for_nothing_and_survives_an_empty_repo(tmp_path):
+    fresh = HistoryStore(tmp_path / "nothing")
+    assert fresh.forget("home") == 0
+
+
+def test_the_forgotten_text_is_gone_from_the_object_store(store):
+    # The literal reading of "for good". Rewriting refs alone leaves every
+    # blob on disk, unreachable but readable by anyone who knows a sha -
+    # and `resolve` knows how to find them. This is the check that the
+    # promise is kept and not merely made.
+    store.write_snapshot("home", "a: 1\n", "home")
+    store.write_snapshot("gone", "confidential: yes\n", "gone")
+    store.forget("gone")
+
+    repo = Repo(str(store.path))
+    try:
+        blobs = [
+            repo[sha].data
+            for sha in repo.object_store
+            if repo[sha].type_name == b"blob"
+        ]
+    finally:
+        repo.close()
+    assert blobs, "the surviving dashboard should still have its blob"
+    assert not any(b"confidential" in blob for blob in blobs)

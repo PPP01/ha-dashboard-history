@@ -137,6 +137,29 @@ explain:
       selector:
         text:
 
+forget:
+  name: Forget a deleted dashboard
+  description: >-
+    Remove a deleted dashboard's history for good. This cannot be undone.
+    Only works on a dashboard Home Assistant no longer has. Without
+    confirm, you get a count of what would be lost and nothing is
+    changed. Note that this rewrites the stored history, so every
+    revision changes - written-down revisions will no longer resolve.
+  fields:
+    dashboard:
+      required: true
+      description: >-
+        The key of a deleted dashboard. Run the history service on it
+        first if you want to see what is there.
+      example: dashboard-erika
+      selector:
+        text:
+    confirm:
+      description: Without this, nothing is removed.
+      default: false
+      selector:
+        boolean:
+
 create_version:
   name: Name a version
   description: >-

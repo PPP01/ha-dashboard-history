@@ -405,6 +405,48 @@ async def main():
             print(f"    label: {label!r}")
             await page.shot("9-current-state.png")
 
+            print("\n-- The sidebar: deleted dashboards folded away --")
+            side = await page.js(
+                "(() => { const p = " + PANEL + "; return {"
+                '  live: p.querySelectorAll(".side > .dash").length,'
+                '  fold: p.querySelector("details.dead summary")?.innerText ?? null,'
+                '  foldedAway: p.querySelectorAll("details.dead .dash").length,'
+                '  openByDefault: p.querySelector("details.dead")?.open ?? null,'
+                " }; })()"
+            )
+            for name, value in side.items():
+                print(f"    {name}: {value!r}")
+            await page.shot("10-sidebar-folded.png")
+
+            print("\n-- The forget dialog on a deleted dashboard --")
+            await page.js(
+                "(() => { const f = " + PANEL + '.querySelector("details.dead");'
+                " if (f) f.open = true; })()"
+            )
+            await asyncio.sleep(0.4)
+            picked = await page.js(
+                "(() => { const b = " + PANEL
+                + '.querySelector("details.dead .dash");'
+                " if (!b) return null; b.click(); return b.dataset.key; })()"
+            )
+            print(f"    picked: {picked!r}")
+            await page.settle(f'!!{PANEL}.querySelector("[data-forget]")')
+            await page.js(f'{PANEL}.querySelector("[data-forget]").click()')
+            await page.settle(f'{PANEL}.querySelector("dialog.forget").open')
+            body = await page.js(
+                f'{PANEL}.querySelector("dialog.forget .body").innerText'
+                ".replace(/\\s+/g, " + '" ")'
+            )
+            print(f"    dialog says: {body[:220]}")
+            await page.shot("11-forget-dialog.png")
+            # Cancel. Nothing in an inspection script may delete history.
+            await page.js(f'{PANEL}.querySelector("dialog.forget").close("cancel")')
+            await asyncio.sleep(0.4)
+            gone = await page.js(
+                f'!!{PANEL}.querySelector("dialog.forget").open'
+            )
+            print(f"    dialog still open after Cancel: {gone}")
+
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:
         chrome.terminate()

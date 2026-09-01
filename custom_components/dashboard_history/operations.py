@@ -364,3 +364,58 @@ async def async_explain(
     new = await hass.async_add_executor_job(store.read_at, key, full)
     # yaml_io.load(None) raises; load("") answers None. Measured.
     return _as_dict(explain_change(load(old or "") or {}, load(new or "") or {}))
+
+
+async def async_forget(
+    hass: HomeAssistant, store: HistoryStore, key: str, confirm: bool = False
+) -> dict:
+    """Remove a deleted dashboard's history for good.
+
+    The one irreversible operation this integration offers, so it is
+    fenced on three sides.
+
+    * **Only a deleted dashboard.** Forgetting a live one would throw away
+      the history of something somebody is using. `is_absent` answers
+      False when Home Assistant cannot be asked at all, which refuses
+      rather than guesses - the right way round for this operation.
+    * **`confirm` is required**, and without it the answer is a count of
+      what would be lost, not a diff. A diff of a deletion would be the
+      whole history.
+    * **The rewrite is named, not hidden.** Every revision from the first
+      affected commit onwards changes, and the response says so, because
+      anyone who wrote a revision down somewhere is about to find it
+      stale.
+    """
+    tracked = set(await hass.async_add_executor_job(store.list_all_dashboards))
+    if key not in tracked:
+        return {"applied": False, "error": f"no history for dashboard: {key}"}
+
+    known = await async_known_keys(hass)
+    if not is_absent(key, known):
+        return {
+            "applied": False,
+            "error": (
+                f"{key} is not a deleted dashboard. Only a dashboard Home "
+                "Assistant no longer has can be forgotten - delete it first "
+                "if that is what you want."
+            ),
+        }
+
+    changes = await hass.async_add_executor_job(store.list_changes, key, 1000)
+    facts = {
+        "states": len(changes),
+        "described": sum(1 for c in changes if c.description),
+        "first": changes[-1].timestamp if changes else None,
+        "last": changes[0].timestamp if changes else None,
+        "revisions_change": True,
+    }
+    if not confirm:
+        return {"applied": False, **facts}
+
+    removed = await hass.async_add_executor_job(store.forget, key)
+    _LOGGER.warning(
+        "Forgot the history of dashboard %s for good: %s commits removed",
+        key,
+        removed,
+    )
+    return {"applied": True, "removed": removed, **facts}

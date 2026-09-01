@@ -175,6 +175,7 @@ dashboard's internal id (`energie_2`) — the two are not the same string.
 | `deleted_since` | What disappeared since a revision |
 | `restore_deleted` | Put one of them back (needs `confirm`) |
 | `restore_state` | Set a dashboard back to an earlier state (needs `confirm`) |
+| `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
 | `debug_snapshot` | What the integration currently sees |
 
 `describe` is the only writing service without `confirm`. The rule
@@ -241,6 +242,38 @@ worked: the dashboard appeared, opened and could be edited. But Home
 Assistant lists dashboards from one place and changes them in another, so
 renaming it failed with "Unable to find dashboard_id". A half-restored
 dashboard that looks healthy is worse than an honest refusal.
+
+## Tidying up: forgetting a deleted dashboard
+
+A deleted dashboard stays in the list forever, which is the point — it is
+the one you come here for. But delete one every few months and the list
+fills up with them, so they are **folded away** under a `Deleted (N)`
+section rather than mixed in with the live ones.
+
+When you are sure you will never want one back, you can **forget** it:
+
+```yaml
+action: dashboard_history.forget
+data:
+  dashboard: the-one-i-am-done-with
+  confirm: true
+```
+
+Without `confirm` you get a count of what would be lost — how many
+recorded states, over what period, and how many carry a description you
+wrote — and nothing is changed. In the panel it is the *Forget for good*
+button on a deleted dashboard.
+
+This is the only thing here that cannot be undone, and the only thing
+that refuses to touch a live dashboard: if Home Assistant still has it,
+the answer is no.
+
+**One side effect, stated because you will notice it.** Git can only
+really remove something by rewriting history, so every revision from the
+first affected commit onwards changes. A revision you wrote down
+somewhere will no longer resolve. Your descriptions and named versions
+are carried across onto the new commits — that part is not left to
+chance.
 
 ## Renames and other dashboard settings
 

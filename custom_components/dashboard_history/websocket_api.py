@@ -110,6 +110,12 @@ _COMMANDS = (
         lambda msg: {"key": msg["dashboard"], "revision": msg["revision"]},
     ),
     _command(
+        f"{DOMAIN}/forget",
+        {**_DASHBOARD, vol.Optional("confirm", default=False): bool},
+        operations.async_forget,
+        lambda msg: {"key": msg["dashboard"], "confirm": msg["confirm"]},
+    ),
+    _command(
         f"{DOMAIN}/versions", {}, operations.async_versions, lambda msg: {}
     ),
     _command(

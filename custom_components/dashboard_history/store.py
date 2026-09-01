@@ -238,6 +238,205 @@ class HistoryStore:
                 )
             return True
 
+    def forget(self, key: str) -> int:
+        """Remove a dashboard's history for good. Returns commits removed.
+
+        The only irreversible operation here, in a tool built to stop
+        things disappearing. It exists because a deleted dashboard stays
+        in the list forever: delete one every few months and the list is
+        mostly gravestones.
+
+        git can only really remove something by rewriting history, so
+        every revision from the first affected commit onwards changes.
+        That is not a detail to gloss over - two things hang off revisions
+        and would vanish silently:
+
+        * **Descriptions** are git notes, keyed by commit sha. They are
+          read before the rewrite and written back onto the new commits.
+          A description on a commit that disappears goes with it: it
+          described a state that no longer exists, and a description on
+          the wrong state is worse than none.
+        * **Named versions** are tags pointing at a commit. They are
+          rebuilt with their original message and time. A tag on a
+          disappearing commit moves to the nearest surviving ancestor,
+          because a version marks a moment in the whole history rather
+          than one dashboard, and the nearest ancestor is that moment.
+
+        A commit that touched nothing but this dashboard disappears
+        entirely rather than becoming an empty commit; its children are
+        re-parented. An empty commit in this history would be a state
+        somebody could click that says nothing.
+        """
+        with self._lock:
+            repo = self._repo()
+            if repo is None:
+                return 0
+            if self._resolve(repo, "HEAD") is None:
+                return 0
+            if key not in set(self.list_all_dashboards()):
+                return 0
+            return self._forget(repo, key)
+
+    def _forget(self, repo: Repo, key: str) -> int:
+        from dulwich.objects import Commit, Tag, Tree  # noqa: PLC0415
+
+        notes = self.descriptions()
+        versions = self._raw_tags(repo)
+
+        # Oldest first: a commit can only be rewritten once its parents are.
+        order = [entry.commit for entry in repo.get_walker()][::-1]
+        target = f"{key}.yaml".encode()
+        # `nearest` maps every old commit to the surviving commit that
+        # stands in its place - itself if kept, its ancestor if dropped.
+        # `kept` holds only the ones that survived as themselves.
+        nearest: dict[bytes, bytes | None] = {}
+        kept: dict[bytes, bytes] = {}
+        removed = 0
+
+        for commit in order:
+            tree_id = self._tree_without(repo, commit.tree, target, Tree)
+            parents = [
+                nearest[parent]
+                for parent in commit.parents
+                if nearest.get(parent) is not None
+            ]
+            empty = not repo[tree_id].items()
+            if (parents and repo[parents[0]].tree == tree_id) or (
+                not parents and empty
+            ):
+                # Nothing left in it that this dashboard did not own.
+                nearest[commit.id] = parents[0] if parents else None
+                removed += 1
+                continue
+            fresh = Commit()
+            fresh.tree = tree_id
+            fresh.parents = parents
+            fresh.author = commit.author
+            fresh.committer = commit.committer
+            fresh.author_time = commit.author_time
+            fresh.author_timezone = commit.author_timezone
+            fresh.commit_time = commit.commit_time
+            fresh.commit_timezone = commit.commit_timezone
+            fresh.message = commit.message
+            fresh.encoding = commit.encoding
+            repo.object_store.add_object(fresh)
+            nearest[commit.id] = fresh.id
+            kept[commit.id] = fresh.id
+
+        self._point_head(repo, nearest.get(order[-1].id) if order else None)
+        self._rewrite_notes(repo, notes, kept)
+        self._rewrite_tags(repo, versions, nearest, Tag)
+
+        # Rewriting refs only makes the old objects unreachable; the blobs
+        # and commits stay on disk, and `resolve` still finds them. Without
+        # this, "forgotten for good" would be a claim the repository
+        # contradicts. The grace period is zero on purpose - the usual
+        # fourteen days protect objects another writer may be building, and
+        # the only other writer here is this class, holding the lock this
+        # method runs under.
+        from dulwich.gc import garbage_collect  # noqa: PLC0415
+
+        garbage_collect(repo, prune=True, grace_period=0)
+        return removed
+
+    @staticmethod
+    def _tree_without(repo: Repo, tree_id: bytes, target: bytes, tree_class) -> bytes:
+        """The same tree without one dashboard's two files.
+
+        Written for this layout rather than as a general filter: the
+        repository is exactly two levels deep - `<key>.yaml` at the top and
+        `meta/<key>.yaml` below - and a general recursion would be more
+        code with more ways to be subtly wrong.
+        """
+        tree = repo[tree_id]
+        rebuilt = tree_class()
+        changed = False
+        for entry in tree.items():
+            if entry.path == target:
+                changed = True
+                continue
+            if entry.path == b"meta":
+                inner = repo[entry.sha]
+                if any(item.path == target for item in inner.items()):
+                    changed = True
+                    kept_meta = tree_class()
+                    for item in inner.items():
+                        if item.path != target:
+                            kept_meta.add(item.path, item.mode, item.sha)
+                    if not kept_meta.items():
+                        continue  # an empty meta/ directory has no meaning
+                    repo.object_store.add_object(kept_meta)
+                    rebuilt.add(b"meta", entry.mode, kept_meta.id)
+                    continue
+            rebuilt.add(entry.path, entry.mode, entry.sha)
+        if not changed:
+            return tree_id
+        repo.object_store.add_object(rebuilt)
+        return rebuilt.id
+
+    @staticmethod
+    def _point_head(repo: Repo, head: bytes | None) -> None:
+        """Move the branch to the rewritten tip, or remove it entirely."""
+        try:
+            branch = repo.refs.follow(b"HEAD")[0][-1]
+        except (KeyError, IndexError):
+            branch = b"refs/heads/master"
+        if head is None:
+            # Everything was forgotten. An empty repository is a valid
+            # state here: list_changes already answers [] without a HEAD.
+            if branch in repo.refs:
+                del repo.refs[branch]
+            return
+        repo.refs[branch] = head
+
+    @staticmethod
+    def _raw_tags(repo: Repo) -> list:
+        """Every annotated tag object, before the rewrite invalidates it."""
+        found = []
+        for ref in repo.refs.as_dict(b"refs/tags"):
+            tag = repo[repo.refs[b"refs/tags/" + ref]]
+            if hasattr(tag, "object"):
+                found.append((ref, tag))
+        return found
+
+    def _rewrite_notes(
+        self, repo: Repo, notes: dict[str, str], kept: dict[bytes, bytes]
+    ) -> None:
+        """Put the descriptions back on the commits that survived."""
+        if b"refs/notes/commits" in repo.refs:
+            del repo.refs[b"refs/notes/commits"]
+        for old, text in notes.items():
+            new = kept.get(old.encode())
+            if new is None:
+                continue  # its commit is gone; the description goes too
+            porcelain.notes_add(
+                str(self.path),
+                new,
+                text.encode("utf-8"),
+                author=_IDENTITY,
+                committer=_IDENTITY,
+            )
+
+    @staticmethod
+    def _rewrite_tags(
+        repo: Repo, versions: list, nearest: dict[bytes, bytes | None], tag_class
+    ) -> None:
+        """Rebuild the named versions against the rewritten commits."""
+        for ref, old in versions:
+            del repo.refs[b"refs/tags/" + ref]
+            moved = nearest.get(old.object[1])
+            if moved is None:
+                continue  # nothing left for it to mark
+            fresh = tag_class()
+            fresh.object = (old.object[0], moved)
+            fresh.name = old.name
+            fresh.message = old.message
+            fresh.tagger = old.tagger
+            fresh.tag_time = old.tag_time
+            fresh.tag_timezone = old.tag_timezone
+            repo.object_store.add_object(fresh)
+            repo.refs[b"refs/tags/" + ref] = fresh.id
+
     # -- reading -------------------------------------------------------
 
     def _repo(self) -> Repo | None:

@@ -74,6 +74,16 @@ const STYLE = `
     font-size: 11px;
     vertical-align: 1px;
   }
+  details.dead > summary {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--divider-color, #e0e0e0);
+    color: var(--secondary-text-color, #727272);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
   .card {
     margin-bottom: 12px;
     border-radius: 8px;
@@ -125,6 +135,14 @@ const STYLE = `
   }
   .banner .grow { flex: 1 1 auto; }
   .banner button.act { background: #fff; color: var(--error-color, #db4437); }
+  .banner button.act.ghost {
+    background: none;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, .7);
+  }
+  button.act.danger { background: var(--error-color, #db4437); color: #fff; }
+  dialog .loss { margin: 12px 0; padding-left: 18px; }
+  dialog .loss li { margin: 4px 0; }
   dialog {
     width: min(900px, 92vw);
     padding: 0;
@@ -322,6 +340,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = null; // revision of the expanded change
     this._items = [];
     this._explanation = null;
+    this._deadOpen = false;
     this._busy = false;
     this._error = null;
     this._loaded = false;
@@ -362,7 +381,11 @@ class DashboardHistoryPanel extends HTMLElement {
     const result = await this._guard(() => this._call("dashboards"));
     if (!result) return;
     this._dashboards = result.dashboards || [];
-    const first = this._dashboards.find((d) => !d.exists) || this._dashboards[0];
+    // A live one. This used to open on a deleted dashboard, on the
+    // reasoning that a loss is what people come here for - but with a
+    // dozen deleted ones it picks an arbitrary gravestone, and they are
+    // behind a fold now anyway.
+    const first = this._dashboards.find((d) => d.exists) || this._dashboards[0];
     if (first) await this._select(first.key);
   }
 
@@ -504,6 +527,60 @@ class DashboardHistoryPanel extends HTMLElement {
     await this._select(this._selected);
   }
 
+  /**
+   * The one thing here that cannot be undone, so it is asked twice: once
+   * by the button, once by a dialog that counts what is about to be lost.
+   * No diff - a diff of this would be the whole history.
+   */
+  async _forget() {
+    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    const facts = await this._guard(() =>
+      this._call("forget", { dashboard: this._selected }),
+    );
+    if (!facts) return;
+    if (facts.error) {
+      this._error = facts.error;
+      this._render();
+      return;
+    }
+    const dialog = this.shadowRoot.querySelector("dialog.forget");
+    const span =
+      facts.first && facts.last
+        ? `, from ${escape(when(facts.first))} to ${escape(when(facts.last))}`
+        : "";
+    dialog.querySelector(".body").innerHTML = `
+      <p>This throws away the recorded history of
+         <strong>${escape(dashboard?.title || this._selected)}</strong>.</p>
+      <ul class="loss">
+        <li>${escape(facts.states)} recorded state${facts.states === 1 ? "" : "s"}${span}</li>
+        ${
+          facts.described
+            ? `<li>${escape(facts.described)} of them carry a description you wrote</li>`
+            : ""
+        }
+      </ul>
+      <p>The dashboard itself is already gone; this removes the record of
+         what was on it. <strong>It cannot be undone.</strong></p>
+      <p class="muted" style="font-size:13px">One side effect worth knowing:
+         the stored history is rewritten, so every revision changes. A
+         revision you noted down somewhere will no longer resolve.</p>`;
+    dialog.returnValue = "";
+    dialog.showModal();
+    const answer = await new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
+        once: true,
+      });
+    });
+    if (answer !== "forget") return;
+    const done = await this._guard(() =>
+      this._call("forget", { dashboard: this._selected, confirm: true }),
+    );
+    if (done?.error) this._error = done.error;
+    this._selected = null;
+    this._changes = [];
+    await this._loadDashboards();
+  }
+
   _restoreItem(index, item) {
     const before = this._before(index);
     this._confirm(`Put back: ${item.label}`, (confirm) => [
@@ -524,19 +601,39 @@ class DashboardHistoryPanel extends HTMLElement {
     ]);
   }
 
-  _renderSide() {
-    if (!this._dashboards.length)
-      return '<p class="empty muted">Nothing recorded yet.</p>';
-    return this._dashboards
-      .map(
-        (d) => `
+  _renderDashboard(d) {
+    return `
         <button class="dash" data-key="${escape(d.key)}"
                 aria-current="${d.key === this._selected}">
           <span>${escape(d.title)}${d.exists ? "" : '<span class="gone">deleted</span>'}</span>
           <span class="key">${escape(d.key)}</span>
-        </button>`,
-      )
-      .join("");
+        </button>`;
+  }
+
+  /**
+   * Live dashboards, then the deleted ones behind a fold.
+   *
+   * A deleted dashboard has to stay findable - it is the one somebody
+   * opens this tool for - but it stays findable forever, and that is the
+   * problem. Delete a dashboard every few months and the list is mostly
+   * gravestones. So they are counted and folded away, not hidden: one
+   * click, and the fold stays open while you work.
+   */
+  _renderSide() {
+    if (!this._dashboards.length)
+      return '<p class="empty muted">Nothing recorded yet.</p>';
+    const live = this._dashboards.filter((d) => d.exists);
+    const dead = this._dashboards.filter((d) => !d.exists);
+    const rows = live.map((d) => this._renderDashboard(d)).join("");
+    if (!dead.length) return rows;
+    const openDead = this._deadOpen || dead.some((d) => d.key === this._selected);
+    return (
+      rows +
+      `<details class="dead" ${openDead ? "open" : ""}>
+         <summary>Deleted (${dead.length})</summary>
+         ${dead.map((d) => this._renderDashboard(d)).join("")}
+       </details>`
+    );
   }
 
   /**
@@ -593,13 +690,18 @@ class DashboardHistoryPanel extends HTMLElement {
       return '<p class="empty muted">Pick a dashboard on the left.</p>';
     const dashboard = this._dashboards.find((d) => d.key === this._selected);
     const banner =
-      dashboard && !dashboard.exists && this._changes.length > 1
+      dashboard && !dashboard.exists
         ? `<div class="banner">
              <span class="grow">This dashboard was deleted. Its history is
                still here, and so is everything that was on it.</span>
-             <button class="act" data-state="${escape(this._changes[1].revision)}">
-               Bring it back
-             </button>
+             ${
+               this._changes.length > 1
+                 ? `<button class="act" data-state="${escape(this._changes[1].revision)}">
+                      Bring it back
+                    </button>`
+                 : ""
+             }
+             <button class="act ghost" data-forget="1">Forget for good</button>
            </div>`
         : "";
     if (!this._changes.length)
@@ -671,6 +773,14 @@ class DashboardHistoryPanel extends HTMLElement {
           <button class="act" value="apply">Apply</button>
         </div>
       </dialog>
+      <dialog class="forget">
+        <h2>Forget this dashboard for good</h2>
+        <div class="body"></div>
+        <div class="actions">
+          <button class="act ghost" value="cancel">Cancel</button>
+          <button class="act danger" value="forget">Delete for good</button>
+        </div>
+      </dialog>
       <dialog class="describe">
         <h2>Describe this change</h2>
         <div class="body" style="padding:0 16px 8px">
@@ -688,6 +798,11 @@ class DashboardHistoryPanel extends HTMLElement {
       </dialog>`;
 
     const root = this.shadowRoot;
+    const fold = root.querySelector("details.dead");
+    if (fold)
+      fold.addEventListener("toggle", () => {
+        this._deadOpen = fold.open;
+      });
     root.querySelectorAll(".dash").forEach((element) =>
       element.addEventListener("click", () =>
         this._select(element.dataset.key),
@@ -716,6 +831,9 @@ class DashboardHistoryPanel extends HTMLElement {
           "Set the dashboard back to this state",
         ),
       ),
+    );
+    root.querySelectorAll("[data-forget]").forEach((element) =>
+      element.addEventListener("click", () => this._forget()),
     );
     root.querySelectorAll("[data-describe]").forEach((element) =>
       element.addEventListener("click", (event) => {

@@ -669,11 +669,16 @@ async def run_current_marker(access: str) -> None:
         after = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
+        # Counting is the wrong measure: `history` answers at most 50
+        # entries, and this history passed that a while ago - a new entry at
+        # the top pushes one off the bottom, so the count cannot grow. What
+        # "appends" actually means is that the previous newest is still
+        # there, one place down.
         check(
-            "undoing appends a new entry rather than removing one",
-            len(after) == len(changes) + 1
-            and after[0]["revision"] != changes[0]["revision"],
-            f"{len(changes)} -> {len(after)} entries",
+            "undoing appends a new entry rather than replacing one",
+            after[0]["revision"] != changes[0]["revision"]
+            and after[1]["revision"] == changes[0]["revision"],
+            f"{changes[0]['revision'][:8]} moved from position 0 to 1",
         )
         check(
             "the mark moved to it",
@@ -708,6 +713,145 @@ async def run_current_marker(access: str) -> None:
             pointless.get("note") == "already identical"
             and not pointless.get("preview"),
             str(pointless),
+        )
+
+
+async def run_forget(access: str) -> None:
+    """Forgetting a deleted dashboard for good.
+
+    The only irreversible operation here, and the only one that rewrites
+    the stored history. Which is why the interesting check is not that the
+    dashboard is gone - that is easy - but that a description on a
+    *different* dashboard survived. Descriptions are git notes keyed by
+    commit sha, and a rewrite changes every sha; carrying them across is
+    the part that can go silently wrong.
+    """
+    key = "dh-forget-check"
+    async with Socket(access) as socket:
+        # A live dashboard must be refused, whatever else happens.
+        refused = await socket.call(
+            "dashboard_history/forget", dashboard="ground-floor"
+        )
+        check(
+            "forgetting a live dashboard is refused",
+            refused.get("applied") is False
+            and "not a deleted dashboard" in refused.get("error", ""),
+            str(refused.get("error"))[:80],
+        )
+        unknown = await socket.call("dashboard_history/forget", dashboard="nope-nope")
+        check(
+            "forgetting something with no history is refused",
+            unknown.get("applied") is False and "no history" in unknown.get("error", ""),
+            str(unknown.get("error")),
+        )
+
+        # A sacrificial dashboard of its own, so nothing else is touched.
+        for existing in (await socket.call("lovelace/dashboards/list")) or []:
+            if existing.get("url_path") == key:
+                try:
+                    await socket.call(
+                        "lovelace/dashboards/delete", dashboard_id=existing["id"]
+                    )
+                except RuntimeError:
+                    pass
+        await socket.call(
+            "lovelace/dashboards/create", url_path=key, title="DH Forget", icon="mdi:delete"
+        )
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config={"views": [{"path": "p", "title": "P", "cards": [{"type": "map"}]}]},
+        )
+        await asyncio.sleep(4)
+        made = await socket.call(
+            "lovelace/dashboards/list"
+        )
+        await socket.call(
+            "lovelace/dashboards/delete",
+            dashboard_id=next(d["id"] for d in made if d["url_path"] == key),
+        )
+        await asyncio.sleep(RECONCILE_WAIT)
+
+        listed = (await socket.call("dashboard_history/dashboards"))["dashboards"]
+        check(
+            "the sacrificial dashboard is recorded as deleted",
+            any(d["key"] == key and not d["exists"] for d in listed),
+            key,
+        )
+
+        # A description on another dashboard, which the rewrite must carry.
+        other = "ground-floor"
+        changes = (await socket.call("dashboard_history/history", dashboard=other))[
+            "changes"
+        ]
+        keepsake = "Diese Beschreibung muss die Umschreibung überleben"
+        await socket.call(
+            "dashboard_history/describe",
+            revision=changes[0]["revision"],
+            text=keepsake,
+        )
+        before_count = len(changes)
+
+        facts = await socket.call("dashboard_history/forget", dashboard=key)
+        check(
+            "without confirm it counts what would be lost and writes nothing",
+            facts.get("applied") is False and facts.get("states", 0) > 0,
+            f"{facts.get('states')} states, revisions_change="
+            f"{facts.get('revisions_change')}",
+        )
+        still_there = (await socket.call("dashboard_history/dashboards"))["dashboards"]
+        check(
+            "and the dashboard is still listed",
+            any(d["key"] == key for d in still_there),
+            key,
+        )
+
+        done = await socket.call(
+            "dashboard_history/forget", dashboard=key, confirm=True
+        )
+        check(
+            "with confirm the history is removed",
+            done.get("applied") is True and done.get("removed", 0) > 0,
+            f"{done.get('removed')} commits removed",
+        )
+        after = (await socket.call("dashboard_history/dashboards"))["dashboards"]
+        check(
+            "and it is gone from the list for good",
+            not any(d["key"] == key for d in after),
+            f"{len(listed)} -> {len(after)} dashboards",
+        )
+        check(
+            "no history left to read",
+            (await socket.call("dashboard_history/history", dashboard=key))["changes"]
+            == [],
+            "empty",
+        )
+
+        # The part that can go wrong silently.
+        survivor = (await socket.call("dashboard_history/history", dashboard=other))[
+            "changes"
+        ]
+        check(
+            "the other dashboard kept every one of its states",
+            len(survivor) == before_count,
+            f"{before_count} -> {len(survivor)}",
+        )
+        check(
+            "and the description written on it survived the rewrite",
+            survivor[0]["description"] == keepsake,
+            survivor[0]["description"] or "GONE",
+        )
+        check(
+            "its revisions still resolve, new ones though they are",
+            (
+                await socket.call(
+                    "dashboard_history/explain",
+                    dashboard=other,
+                    revision=survivor[0]["revision"],
+                )
+            ).get("error")
+            is None,
+            survivor[0]["revision"][:10],
         )
 
 
@@ -912,6 +1056,8 @@ if __name__ == "__main__":
     asyncio.run(run(access))
     print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")
     asyncio.run(run_lifecycle(access))
+    print("\n  -- Endgueltiges Loeschen --")
+    asyncio.run(run_forget(access))
     print("\n  -- Wo bin ich? Der aktuelle Stand --")
     asyncio.run(run_current_marker(access))
     print("\n  -- Eigene Beschreibungen --")

@@ -66,6 +66,11 @@ async def async_register(hass: HomeAssistant) -> None:
             hass, store, call.data["dashboard"], call.data["revision"]
         )
 
+    async def forget(call: ServiceCall) -> dict:
+        return await operations.async_forget(
+            hass, store, call.data["dashboard"], bool(call.data.get("confirm"))
+        )
+
     async def create_version(call: ServiceCall) -> dict:
         return await operations.async_create_version(
             hass,
@@ -97,6 +102,9 @@ async def async_register(hass: HomeAssistant) -> None:
             vol.Optional("text", default=""): cv.string,
         })),
         ("explain", explain, DASHBOARD.extend({vol.Required("revision"): cv.string})),
+        ("forget", forget, DASHBOARD.extend({
+            vol.Optional("confirm", default=False): bool,
+        })),
         ("create_version", create_version, vol.Schema({
             vol.Required("name"): cv.string,
             vol.Required("title"): cv.string,
