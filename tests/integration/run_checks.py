@@ -854,6 +854,13 @@ async def run_forget(access: str) -> None:
             survivor[0]["revision"][:10],
         )
 
+        # Take the keepsake back off. It served its purpose, and a check
+        # that leaves a description behind leaves one more every run - four
+        # had piled up before this was noticed.
+        await socket.call(
+            "dashboard_history/describe", revision=survivor[0]["revision"], text=""
+        )
+
 
 async def run_descriptions(access: str) -> None:
     """A description of one's own: written, read back, replaced, removed.
