@@ -20,6 +20,7 @@ configuration, outside this repository.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import pathlib
@@ -222,6 +223,22 @@ async def run(access: str) -> None:
         "panel.js is served",
         module.status_code == 200 and len(module.content) == source.stat().st_size,
         f"HTTP {module.status_code}, {len(module.content)} bytes",
+    )
+
+    # And it is served under a URL that changes when the file does. This
+    # used to be a hand-maintained constant, so a changed panel kept being
+    # served from the browser cache under the same URL - which is how a
+    # finished feature reached somebody as "the button is not there".
+    async with Socket(access) as socket:
+        panels = await socket.call("get_panels")
+    module_url = (panels.get("dashboard-history") or {}).get("config", {}).get(
+        "_panel_custom", {}
+    ).get("module_url", "")
+    want = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+    check(
+        "the panel module URL carries a fingerprint of the file",
+        f"v={want}" in module_url,
+        module_url or "no module_url found",
     )
 
     panels = requests.get(f"{BASE}/api/config", headers=headers, timeout=30)
@@ -714,6 +731,42 @@ async def run_current_marker(access: str) -> None:
             and not pointless.get("preview"),
             str(pointless),
         )
+
+        # Put the dashboard back the way it was found.
+        #
+        # This section undoes a change to prove the mark follows, and it
+        # used to leave it undone. That is one card fewer on a real
+        # dashboard per run of this suite, until no card list had two left
+        # and the very first check of the suite failed for want of a card to
+        # drop. The history growing by these entries is fine - that is what
+        # a history is - but the dashboard itself has to end where it
+        # started.
+        await socket.call(
+            "dashboard_history/restore_state",
+            dashboard=key,
+            revision=changes[0]["revision"],
+            confirm=True,
+        )
+        await asyncio.sleep(RECONCILE_WAIT)
+        restored = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "and this section leaves the dashboard as it found it",
+            restored[0]["same_as_now"] is True
+            and _same_content(restored, changes[0]["revision"], restored[0]["revision"]),
+            f"back to the content of {changes[0]['revision'][:8]}",
+        )
+
+
+def _same_content(changes: list, one: str, other: str) -> bool:
+    """Whether two entries hold the same dashboard content.
+
+    Read off `same_as_now`, which the integration works out against the
+    live dashboard: if both entries are marked, both hold what is there.
+    """
+    marked = {c["revision"] for c in changes if c["same_as_now"]}
+    return one in marked and other in marked
 
 
 async def run_forget(access: str) -> None:

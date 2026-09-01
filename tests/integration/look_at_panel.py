@@ -219,6 +219,15 @@ async def main():
                 " return t.hassUrl; })()"
             )
 
+            # From here on, and not before. The login navigation above is an
+            # artificial flow - an unauthenticated hit on /lovelace, then a
+            # token injected mid-redirect - and Home Assistant's own
+            # frontend intermittently rejects a promise during it. Reported
+            # as a console error it looked like the panel's, three times
+            # over. Collecting from the panel onwards means anything printed
+            # below is the panel's own.
+            page.console.clear()
+
             print("\n-- The history --")
             await page.send("Page.navigate", {"url": f"{BASE}/dashboard-history"})
             ok = await page.settle(f'{PANEL}?.querySelectorAll(".change").length')

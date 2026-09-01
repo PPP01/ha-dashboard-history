@@ -11,6 +11,7 @@ still do everything, and the recording carries on regardless.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 
@@ -29,11 +30,40 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _MODULE_URL = f"/{DOMAIN}/panel.js"
+_SOURCE = Path(__file__).parent / "panel.js"
+
+
+def _fingerprint() -> str:
+    """A short digest of panel.js, for the cache-busting query."""
+    return hashlib.sha256(_SOURCE.read_bytes()).hexdigest()[:12]
+
+
+async def _async_module_url(hass: HomeAssistant) -> str:
+    """The module URL, with a version that changes when the file does.
+
+    This used to be a hand-maintained constant, and that is a cache bug
+    with a delay built into it: the browser keyed the module on
+    `panel.js?v=0.1.0`, so a released update served the old panel to
+    everyone until somebody remembered to bump the number. Home Assistant
+    sets no Cache-Control on a static path, only ETag and Last-Modified,
+    which makes the failure intermittent rather than obvious - the worst
+    kind.
+
+    A digest of the file changes exactly when the file does, and not
+    otherwise, so caching keeps working across restarts.
+    """
+    try:
+        return f"{_MODULE_URL}?v={await hass.async_add_executor_job(_fingerprint)}"
+    except OSError:
+        # Unreadable file: the static path will fail too, and the panel is
+        # best effort. Fall back rather than take the setup down with it.
+        _LOGGER.warning("Could not fingerprint panel.js; falling back to the version")
+        return f"{_MODULE_URL}?v={PANEL_VERSION}"
 
 
 async def _async_serve_module(hass: HomeAssistant) -> None:
     """Make panel.js reachable, on whichever API this Home Assistant has."""
-    source = str(Path(__file__).parent / "panel.js")
+    source = str(_SOURCE)
     register_many = getattr(hass.http, "async_register_static_paths", None)
     if register_many is not None:
         from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
@@ -54,7 +84,7 @@ async def async_register(hass: HomeAssistant) -> bool:
             hass,
             frontend_url_path=PANEL_URL_PATH,
             webcomponent_name=PANEL_COMPONENT,
-            module_url=f"{_MODULE_URL}?v={PANEL_VERSION}",
+            module_url=await _async_module_url(hass),
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
             require_admin=True,
