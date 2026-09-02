@@ -71,10 +71,21 @@ that went back and forth readable at all.
 Where setting the dashboard back would change nothing, the button is not
 offered; it says why instead.
 
-**You click a change, never a revision.** That is deliberate. Asked to undo
-a deletion, people reach for the line that says the card was deleted — which
-is one line too late, because what they want is the state just before it.
-The panel works that out for you, so the trap is not signposted, it is gone.
+**You click a change, never a revision.** Asked to undo a deletion, people
+reach for the line that says the card was deleted — which is one line too
+late, because what they want is the state just before it. For putting a
+single card back, the panel works that out for you, so the trap is not
+signposted, it is gone.
+
+For setting the *whole* dashboard back, a row offers **both** of the states
+it sits between:
+
+- *Back to the state before this change* — for undoing something.
+- *Back to the state after this change* — for a state you recognise and
+  want again.
+
+Either one disappears when its target is what the dashboard holds already,
+so a button never offers a change that changes nothing.
 
 Nothing is written until you have confirmed it — and before you do, the
 panel says in plain words what will happen:

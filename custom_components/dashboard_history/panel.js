@@ -235,6 +235,12 @@ const STYLE = `
     height: 1px;
     background: var(--divider-color, #e0e0e0);
   }
+  .backto {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
   .why {
     display: block;
     margin-top: 16px;
@@ -637,26 +643,61 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The button that sets the whole dashboard back, or the reason there is
-   * none. Its target is the state *before* this change - see the note at
-   * the top of this file - so it is pointless exactly when that state is
-   * what the dashboard holds already. On a history that went back and
-   * forth that is every second row, and offering it there produced a
-   * dialog reading "No difference." above a live Apply button.
+   * The two states a row can send you to, and the reason when one is not
+   * on offer.
+   *
+   * A row is a change, so it sits between two states, and people arrive
+   * wanting either. Someone hunting a loss wants the state *before* the
+   * change that caused it. Someone who recognises a state they liked
+   * wants the one *after* the change that produced it. This used to offer
+   * only the first, on the reasoning that people think in changes - and
+   * they do, right up until they are choosing a destination.
+   *
+   * Both labels name the *state*, and the pair reads "before"/"after"
+   * rather than one label being the other minus a word. An omission is
+   * what gets read past; a contrast is not.
+   *
+   * Either button disappears when its target is what the dashboard holds
+   * already. On a history that went back and forth that is every second
+   * row, and offering it there produced a dialog reading "No difference."
+   * above a live Apply button.
    */
   _renderSetBack(index) {
     const before = this._before(index);
-    if (!before) return "";
-    if (this._changes[index + 1]?.same_as_now)
-      return `<span class="why">The state before this change is what the
-        dashboard holds now — nothing to set back.</span>`;
-    const label =
-      index === 0
-        ? "Undo this change"
-        : "Set the dashboard back to before this change";
-    return `<div style="margin-top:16px">
-        <button class="act ghost" data-state="${escape(before)}">${label}</button>
-      </div>`;
+    const buttons = [];
+    if (before && !this._changes[index + 1]?.same_as_now)
+      buttons.push({
+        revision: before,
+        // At the newest change there is nothing after it to sweep away, so
+        // the shorter, plainer word is the honest one there.
+        label:
+          index === 0
+            ? "Undo this change"
+            : "Back to the state before this change",
+      });
+    if (!this._changes[index]?.same_as_now)
+      buttons.push({
+        revision: this._changes[index].revision,
+        label: "Back to the state after this change",
+      });
+
+    // Only the "before" case needs saying. When the state *after* is the
+    // current one, the row already carries a sentence saying so.
+    const why =
+      before && this._changes[index + 1]?.same_as_now
+        ? `<span class="why">The state before this change is what the
+            dashboard holds now — nothing to set back.</span>`
+        : "";
+    if (!buttons.length) return why;
+    return `<div class="backto">
+        ${buttons
+          .map(
+            (b) =>
+              `<button class="act ghost" data-state="${escape(b.revision)}"
+                >${b.label}</button>`,
+          )
+          .join("")}
+      </div>${why}`;
   }
 
   _renderDetail(index) {
@@ -850,10 +891,10 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     root.querySelectorAll("[data-state]").forEach((element) =>
       element.addEventListener("click", () =>
-        this._restoreState(
-          element.dataset.state,
-          "Set the dashboard back to this state",
-        ),
+        // The dialog is titled with the button that opened it. With two
+        // of them on a row, a generic heading would leave you guessing
+        // which one you pressed.
+        this._restoreState(element.dataset.state, element.textContent.trim()),
       ),
     );
     root.querySelectorAll("[data-forget]").forEach((element) =>

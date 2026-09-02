@@ -131,7 +131,7 @@ Zurueckholen
 
    **Die Regel gilt für Dashboards, nicht für Beschriftungen.** *(Grenze nachgetragen am 2026-08-31.)* Ihr Zweck ist, dass niemand sein Dashboard unversehens verändert findet. Eine Beschreibung nach Entscheidung 10 verändert kein Dashboard, ist sofort und vollständig zurücknehmbar und wird von der Person geschrieben, die sie gleich danach liest. Ein Bestätigungsdialog davor wäre Zeremonie ohne Schutzwirkung — und das Gegenteil dessen, wofür die Funktion gebaut wird. Sie verlangt deshalb **kein** `confirm`. Jeder Vorgang, der einen Dashboard-Stand schreibt, verlangt es weiterhin ohne Ausnahme.
 
-9. **Das Panel fragt nach einer Änderung, nie nach einem Zustand.** *(Nachgetragen am 2026-08-30, aus der Beobachtung echter Bedienung.)*
+9. **Das Panel fragt nach einer Änderung — und beim Ganz-Zurück nach beiden Zuständen.** *(Der zweite Halbsatz am 2026-09-01 nachgetragen; vorher stand hier »nie nach einem Zustand«.)* *(Nachgetragen am 2026-08-30, aus der Beobachtung echter Bedienung.)*
 
    Die Dienste erwarten unter `revision` den *Zustand, gegen den verglichen wird*. Ein Mensch denkt aber in Änderungen: Soll eine Löschung zurückgenommen werden, greift er zu der Zeile, in der die Löschung steht — und das ist eine zu spät, denn gewollt ist der Zustand davor. Beim Erproben ist genau das passiert.
 
@@ -156,7 +156,16 @@ Zurueckholen
 
    Beim neuesten Eintrag heißt der Knopf »Undo this change« statt »back to before this change«. Dasselbe Ziel, verständlicher formuliert, weil beim Neuesten nichts danach kommt.
 
-   **Ausdrücklich nicht geändert:** Das Ziel bleibt der Stand *vor* der Änderung. Der Nutzer hatte »Rückgängig zu diesem Stand« vorgeschlagen, also Ziel-Semantik. Das holte die Falle zurück, die diese Entscheidung entfernt: Wer die Zeile anklickt, in der der Verlust *steht*, landete dann in dem Stand, in dem die Karte schon weg ist. Das Netz ist inzwischen stärker (die Klartext-Erklärung nennt Löschungen in Rot), aber ein Netz bleibt ein Netz.
+   **Am 2026-09-01 zurückgenommen: das Ganz-Zurück bietet beide Stände an.** Zwei Tage vorher war ein Vorschlag des Nutzers abgelehnt worden, das Ziel auf »diesen Stand« zu *verschieben* — mit dem Argument, das hole die Falle zurück. Der Vorschlag kam wieder, diesmal als **zweiter Knopf daneben** statt als Ersatz, und damit fällt das Argument:
+
+   - Die Falle bestand darin, *stillschweigend* das falsche Ziel zu bekommen. Bei zwei benannten Knöpfen wählt man. Das ist keine Stolperstelle mehr, sondern eine Frage.
+   - Eine Zeile ist eine Änderung und liegt damit **zwischen zwei Ständen**. Wer einen Verlust sucht, will den Stand *davor*; wer einen Stand wiedererkennt, den er mochte, will den *danach*. Beide Absichten sind echt, und welche vorliegt, kann die Oberfläche nicht wissen.
+   - Die scheinbare Redundanz ist der Gewinn: Zeile i »davor« und Zeile i+1 »danach« führen zum **selben** Ziel. Wer in Änderungen denkt und wer in Zuständen denkt, landen beide richtig.
+   - Und das Netz ist heute ein anderes als bei Entscheidung 9: Der Dialog nennt Folgen im Klartext und in Rot, nicht mehr nur als YAML-Diff.
+
+   Die Aufschriften heißen **»Back to the state before this change«** und **»Back to the state after this change«** — beide benennen den Gegenstand (*state*), und das Paar ist ein Gegensatz statt einer Auslassung. »before this change« gegen »this change« unterschied sich um ein Wort, und Auslassungen liest man weg. Jeder der beiden verschwindet, wenn sein Ziel der aktuelle Stand ist.
+
+   **Was bleibt:** Die *Einzelrücknahme* (»Put back: X«) rechnet weiter mit dem Stand vor der Änderung und fragt nie nach einem Zustand. Dort ist die Absicht eindeutig — man sucht, was fehlt.
 
    Daraus folgt auch, dass das Panel **keine eigene Logik** trägt. Alle Vorgänge liegen in `operations.py`; Dienste und Panel sind zwei dünne Häute über derselben Schicht. Sonst stünde das Wesentliche ausgerechnet dort, wo Home Assistant sich am häufigsten bewegt.
 

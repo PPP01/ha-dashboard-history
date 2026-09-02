@@ -414,6 +414,57 @@ async def main():
             print(f"    label: {label!r}")
             await page.shot("9-current-state.png")
 
+            print("\n-- Both destinations on one row, each aimed right --")
+            # A row sits between two states and offers both. Which button
+            # carries which revision is the whole correctness of it: aimed
+            # one row off, it overwrites the dashboard with a state nobody
+            # asked for.
+            #
+            # Both only appear where neither target is the current state, so
+            # the row is picked from the data rather than assumed - on a
+            # history that went back and forth most rows show one button.
+            picked = await page.js(
+                "(() => { const el = document.querySelector('dashboard-history-panel')"
+                " || (() => { const walk = (root) => {"
+                " const hit = root.querySelector('dashboard-history-panel');"
+                " if (hit) return hit;"
+                " for (const n of root.querySelectorAll('*')) if (n.shadowRoot) {"
+                " const f = walk(n.shadowRoot); if (f) return f; } return null; };"
+                " return walk(document); })();"
+                " const c = el._changes;"
+                " for (let i = 0; i < c.length - 1; i++)"
+                "   if (!c[i].same_as_now && !c[i + 1].same_as_now)"
+                "     return {index: i, self: c[i].revision.slice(0, 7),"
+                "             before: c[i + 1].revision.slice(0, 7)};"
+                " return null; })()"
+            )
+            if not picked:
+                print("    no row on this dashboard offers both - nothing to check")
+            else:
+                print(f"    row {picked['index']}: after={picked['self']} "
+                      f"before={picked['before']}")
+                await page.js(
+                    f'{PANEL}.querySelectorAll(".change")[{picked["index"]}].click()'
+                )
+                await page.settle(f'!!{PANEL}.querySelector(".detail .backto")')
+                aim = await page.js(
+                    "(() => { const b = [..." + PANEL
+                    + '.querySelectorAll(".detail .backto button")];'
+                    " return b.map(x => [x.innerText.trim(),"
+                    "                     x.dataset.state.slice(0, 7)]); })()"
+                )
+                for label, target in aim:
+                    where = (
+                        "the state BEFORE this change"
+                        if target == picked["before"]
+                        else "the state AFTER this change"
+                        if target == picked["self"]
+                        else "SOMEWHERE ELSE - WRONG"
+                    )
+                    print(f"    {label!r} -> {target} = {where}")
+                print(f"    buttons on that row: {len(aim)}")
+                await page.shot("12-two-destinations.png")
+
             print("\n-- Naming what each half of a row is about --")
             # Measured on dh-testlauf: a row read "4 moved · same as now",
             # which as one sentence is a contradiction. Both halves were
