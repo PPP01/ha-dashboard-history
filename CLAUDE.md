@@ -28,7 +28,7 @@ Diese stehen so in der Spec und sind nicht verhandelbar:
 - **Nichts blockiert den Start von Home Assistant.** Fehler beim Erfassen werden protokolliert und verschluckt. Eine kaputte Historie ist ärgerlich, ein kaputter HA-Start nicht.
 - **`yaml_io.py`, `analyze.py`, `restore.py` und `versions.py` bleiben Home-Assistant-frei.** Kein `import homeassistant` darin — sie sind das Herz und müssen in reinem pytest prüfbar bleiben.
 - **Blockierende Arbeit gehört in einen Executor** (`hass.async_add_executor_job`). Ein Commit dauert rund 30 ms.
-- **Nichts wird ohne Vorschau geschrieben.** Jeder verändernde Dienst verlangt `confirm: true` und liefert sonst nur den Diff.
+- **Nichts wird ohne Vorschau geschrieben.** Jeder Dienst, der einen *Dashboard-Stand* schreibt, verlangt `confirm: true` und liefert sonst nur den Diff. Ausgenommen sind `describe` und `create_version`: Das eine schreibt eine Notiz, das andere einen Tag — kein Dashboard ändert sich, und ein Bestätigungsdialog davor wäre Zeremonie ohne Schutzwirkung (Entscheidung 7 der Spec, Grenze vom 2026-08-31).
 - **Zurückgeholt wird nur Verschwundenes, nicht Bearbeitetes.** Der Grund steht in Entscheidung 4 der Spec: Lovelace-Karten haben keine Kennung (nachgezählt: 661 Karten, 0 mit `id`). Additive Rücknahme ist eindeutig, ersetzende nicht.
 
 ## Tests

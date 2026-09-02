@@ -330,15 +330,19 @@ async def async_create_version(
     No `confirm`, for the same reason `describe` has none: this writes a
     tag, not a dashboard. Nothing anybody can see changes, and removing
     the tag would undo it.
+
+    A version marks a state somebody can come back to, so it is refused
+    where there is no state: at a deletion commit the dashboard's file has
+    left the tree, and `restore_state` on it can only answer "did not
+    exist at". That commit is the topmost row of every deleted dashboard
+    and the one the fallback below lands on - which made the case the
+    design record calls the most worthwhile one, a version on a dashboard
+    that is gone, the only one that could not be returned to. Refused here
+    rather than in the panel, so the service is fenced by the same line.
     """
     if level not in versioning.LEVELS:
         return {"created": None, "error": f"unknown level: {level}"}
-    if revision:
-        resolved = await hass.async_add_executor_job(store.resolve, revision)
-        if resolved is None:
-            return {"created": None, "error": f"unknown revision: {revision}"}
-        revision = resolved
-    else:
+    if not revision:
         # Emphatically not HEAD, which is what the store would fall back
         # to. One repository holds every dashboard, so HEAD is whichever
         # dashboard was saved last. Measured: marking `heizung` without a
@@ -350,6 +354,14 @@ async def async_create_version(
         if not newest:
             return {"created": None, "error": f"no recorded state for {key}"}
         revision = newest[0].revision
+    # Both ways in end here, so the fence holds for the button and for the
+    # service alike. The same separation `_state_at` makes: an unknown
+    # revision is a statement about the input, an absent state one about
+    # the dashboard's own history.
+    full, _, error = await _state_at(hass, store, key, revision)
+    if error is not None:
+        return {"created": None, "error": error}
+    revision = full
     found = await hass.async_add_executor_job(store.list_versions, key)
     name = versioning.candidates(key, [v.name for v in found])[level]
     try:
@@ -357,8 +369,10 @@ async def async_create_version(
             store.create_version, name, title, description, revision
         )
     except ValueError as err:
-        # A name git cannot hold beside the others. It is an answer, not a
-        # crash: the message says what is in the way.
+        # A name the store refuses: one git cannot hold beside the others,
+        # or one git cannot accept at all - `store.py` turns dulwich's
+        # RefFormatError into this same ValueError, so both arrive here.
+        # It is an answer, not a crash: the message says what is in the way.
         return {"created": None, "error": str(err)}
     return {"created": name}
 
@@ -415,7 +429,7 @@ async def async_explain(
 
     `revision` is the change itself, not the state before it - the panel
     must not have to work that out, because working it out wrongly is the
-    trap Entscheidung 9 removed rather than signposted.
+    trap decision 9 of the design record removed rather than signposted.
     """
     full = await hass.async_add_executor_job(store.resolve, revision)
     if full is None:

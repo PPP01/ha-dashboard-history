@@ -351,6 +351,14 @@ class DashboardHistoryPanel extends HTMLElement {
       this._render();
       return;
     }
+    // Remembered before the reload, or the history folds up the moment it
+    // is made. Once a version sits on the top row, section 0 is a version
+    // section rather than the "Current state" one, and _verOpen - which
+    // decides whether a <details class="ver"> renders open - has never
+    // heard of a name created a line ago. The whole visible history would
+    // shrink to a single collapsed line, right after the one click the
+    // design record advertises.
+    if (result?.created) this._verOpen.add(result.created);
     await this._select(this._selected);
   }
 

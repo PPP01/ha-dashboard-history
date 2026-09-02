@@ -306,12 +306,29 @@ async def main():
             # dashboard's file has left the tree. Reporting that as "did
             # not exist at" would fail the one change most in need of an
             # explanation.
-            await page.js(f'{PANEL}.querySelector(".change").click()')
-            await page.settle(f'!!{PANEL}.querySelector(".detail .plain")')
-            plain = await page.js(
-                f'{PANEL}.querySelector(".detail .plain").innerText'
-            )
-            print("    " + plain.strip().replace("\n", "\n    "))
+            # Click only if the row is not expanded already - a click on an
+            # open row collapses it, and the section then read the words off
+            # a `.detail` that was no longer there and threw. Everything
+            # below this line, the whole version half of the panel
+            # included, sat behind that throw and never ran once.
+            opened = False
+            for _ in range(3):
+                await page.js(
+                    f'(() => {{ if (!{PANEL}.querySelector(".detail"))'
+                    f' {PANEL}.querySelector(".change").click(); }})()'
+                )
+                opened = await page.settle(
+                    f'!!{PANEL}.querySelector(".detail .plain")', 10
+                )
+                if opened:
+                    break
+            if opened:
+                plain = await page.js(
+                    f'{PANEL}.querySelector(".detail .plain").innerText'
+                )
+                print("    " + plain.strip().replace("\n", "\n    "))
+            else:  # pragma: no cover - kept as a diagnostic
+                print("    NO plain words - the row would not stay expanded")
             await page.shot("5-expanded-deletion.png")
 
             print("\n-- Plain words on a live dashboard --")

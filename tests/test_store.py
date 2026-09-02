@@ -4,7 +4,8 @@ import threading
 
 import pytest
 from dulwich.repo import Repo
-from store import HistoryStore
+from store import HistoryStore, _as_text
+from versions import candidates
 
 
 @pytest.fixture
@@ -576,6 +577,53 @@ def test_a_named_version_survives_the_rewrite(store):
     assert store.resolve(version.revision) == version.revision
 
 
+def test_a_version_of_the_forgotten_dashboard_goes_with_it(store):
+    # Decision 13 of the design record made a version belong to ONE
+    # dashboard. Moving it to the nearest surviving ancestor was right
+    # while it marked a moment of the whole history; measured afterwards,
+    # `gone/v1.0.0` survived a forget and pointed at `home`'s commit -
+    # `read_at` answered None for it, and the numbering for a future
+    # `gone` counted up from a version nobody could reach.
+    home = store.write_snapshot("home", "a: 1\n", "home first")
+    doomed = store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.create_version("gone/v1.0.0", "The one being forgotten", "", doomed)
+    store.create_version("home/v1.0.0", "The one that stays", "", home)
+
+    store.forget("gone")
+    assert _versions(store) == {"home/v1.0.0": "The one that stays"}
+    assert store.list_versions("gone") == []
+    # And nothing left behind points at a stranger's commit: every
+    # surviving version marks a state of the dashboard it names.
+    for version in store.list_versions():
+        key, _, _ = version.name.partition("/")
+        assert store.read_at(key, version.revision) is not None
+
+
+def test_a_lightweight_tag_is_rewritten_rather_than_left_stale(store):
+    # The ref that defeated `forget` entirely. It has no tag object, so
+    # the old collection skipped it and left it pointing into the history
+    # that was supposed to be gone.
+    store.write_snapshot("home", "a: 1\n", "home first")
+    doomed = store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    _lightweight_tag(store, "by-hand", doomed)
+
+    store.forget("gone")
+    repo = Repo(str(store.path))
+    try:
+        left = list(repo.refs.as_dict(b"refs/tags").values())
+        alive = {entry.commit.id for entry in repo.get_walker()}
+    finally:
+        repo.close()
+    # Every surviving tag stands on the rewritten history. `resolve` is no
+    # test of that: it finds an unreachable commit just as happily, which
+    # is precisely why such a ref kept the forgotten objects from being
+    # pruned.
+    assert left
+    for sha in left:
+        assert sha in alive, f"{_as_text(sha)} is not in the rewritten history"
+
+
 def test_forgetting_an_unknown_dashboard_changes_nothing(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     before = [c.revision for c in store.list_changes("home")]
@@ -598,24 +646,48 @@ def test_forgetting_is_refused_for_nothing_and_survives_an_empty_repo(tmp_path):
     assert fresh.forget("home") == 0
 
 
+def _lightweight_tag(store, name: str, revision: str) -> None:
+    """A tag made by hand: a ref straight to the commit, no tag object.
+
+    Exactly what somebody gets from `git tag <name>` in the repository the
+    README invites them to look inside, and decision 13 of the design
+    record says such a tag stays visible.
+    """
+    repo = Repo(str(store.path))
+    try:
+        repo.refs[f"refs/tags/{name}".encode()] = revision.encode()
+    finally:
+        repo.close()
+
+
+def _blobs(store) -> list[bytes]:
+    repo = Repo(str(store.path))
+    try:
+        return [
+            repo[sha].data for sha in repo.object_store if repo[sha].type_name == b"blob"
+        ]
+    finally:
+        repo.close()
+
+
 def test_the_forgotten_text_is_gone_from_the_object_store(store):
     # The literal reading of "for good". Rewriting refs alone leaves every
     # blob on disk, unreachable but readable by anyone who knows a sha -
     # and `resolve` knows how to find them. This is the check that the
     # promise is kept and not merely made.
+    #
+    # With a lightweight tag in the way, because that is what defeated it:
+    # `_raw_tags` collected only annotated tags, so a hand-made one was
+    # neither deleted nor rewritten, went on pointing at a pre-rewrite
+    # commit, and kept the whole old history reachable - garbage_collect
+    # prunes nothing a ref can still reach. Measured before the fix:
+    # `forget` reported success and the text below was still readable.
     store.write_snapshot("home", "a: 1\n", "home")
-    store.write_snapshot("gone", "confidential: yes\n", "gone")
+    doomed = store.write_snapshot("gone", "confidential: yes\n", "gone")
+    _lightweight_tag(store, "made-by-hand", doomed)
     store.forget("gone")
 
-    repo = Repo(str(store.path))
-    try:
-        blobs = [
-            repo[sha].data
-            for sha in repo.object_store
-            if repo[sha].type_name == b"blob"
-        ]
-    finally:
-        repo.close()
+    blobs = _blobs(store)
     assert blobs, "the surviving dashboard should still have its blob"
     assert not any(b"confidential" in blob for blob in blobs)
 
@@ -653,3 +725,58 @@ def test_a_namespace_blocks_the_flat_tag_above_it(store):
     store.create_version("home/v1.0.0", "First", "", first)
     with pytest.raises(ValueError, match="home/v1.0.0"):
         store.create_version("home", "Loose", "", first)
+
+
+def test_a_lightweight_tag_in_a_namespace_is_reported(store):
+    # `list_versions` used to skip it, so `candidates` never saw it and
+    # offered its number again - and `_refuse_colliding_name`, which reads
+    # the raw refs, then refused in the middle of the dialog. Decision 13
+    # of the design record promises such a tag is shown, not hidden.
+    first = store.write_snapshot("heizung", "a: 1\n", "first")
+    _lightweight_tag(store, "heizung/v1.0.0", first)
+
+    listed = store.list_versions("heizung")
+    assert [v.name for v in listed] == ["heizung/v1.0.0"]
+    # No message on a lightweight tag, so nothing to show as title or text.
+    assert (listed[0].title, listed[0].description) == ("", "")
+    assert listed[0].revision == first
+
+    # And therefore no refusal mid-dialog: what the buttons offer is free.
+    offered = candidates("heizung", [v.name for v in listed])
+    assert offered["current"] == "heizung/v1.0.0"
+    store.create_version(offered["patch"], "Next", "", first)
+    assert offered["patch"] in _versions(store)
+
+
+def test_a_name_git_cannot_accept_is_refused_as_an_answer(store):
+    # dulwich raises RefFormatError, which inherits straight from
+    # Exception: `operations.py` catches ValueError, the WebSocket wrapper
+    # swallows what escapes and `services.py` does not. A name git cannot
+    # accept is the same class of answer as a name that collides, so it
+    # leaves this module as the same kind of exception.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    with pytest.raises(ValueError, match="git cannot use that as a version name"):
+        store.create_version("home/v1 0.0", "Spaces", "", first)
+    with pytest.raises(ValueError, match="git cannot use that as a version name"):
+        store.create_version("home/v1.0.0^", "Caret", "", first)
+    # Nothing half-made left behind.
+    assert store.list_versions() == []
+
+
+def test_a_deletion_commit_holds_no_state_to_return_to(store):
+    # The fact under the refusal in `operations.async_create_version`: at
+    # the commit that records a deletion the dashboard's file has left the
+    # tree, so there is no state there anybody could come back to - and
+    # that commit is the newest entry in a deleted dashboard's history,
+    # which is exactly where a version without a revision would land.
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.mark_deleted("gone", "gone: dashboard deleted")
+    newest = store.list_changes("gone")[0]
+
+    # A known revision - the separation `_state_at` makes matters here:
+    # this is a statement about the dashboard, not about the input.
+    assert store.resolve(newest.revision) == newest.revision
+    assert store.read_at("gone", newest.revision) is None
+    # The state before it is still there, and that one can be marked.
+    before = store.previous_change("gone", newest.revision)
+    assert store.read_at("gone", before) == "b: 1\n"

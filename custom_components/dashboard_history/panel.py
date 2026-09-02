@@ -50,6 +50,13 @@ def _fingerprint() -> str:
     digest. Renaming or moving a part therefore changes the fingerprint
     even when its contents do not, and `panel/style.js` cannot collide
     with a future `panel/sub/style.js`.
+
+    One latent trap, named rather than guarded against: `Path` compares
+    case-insensitively on Windows, so a future part with a capital letter
+    in its name could sort differently there than on Linux and so digest
+    differently - `run_checks.py` on a Windows desktop against Home
+    Assistant on Linux. Every name here is lowercase today, which is why
+    this is a sentence and not a change of behaviour.
     """
     digest = hashlib.sha256()
     for path in [_SOURCE, *sorted(_PARTS.rglob("*.js"))]:

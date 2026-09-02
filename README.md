@@ -143,6 +143,12 @@ selection is not something a version could express.
 Making one writes no commit and changes nothing about the dashboard, so
 it needs no confirmation.
 
+A version on a dashboard that no longer exists is worth having — "Back to
+this version" brings the whole dashboard back. Mark one of its own states
+though: the change that recorded the *deletion* holds no state at all, so
+marking that one is refused rather than made into a version nobody could
+return to.
+
 In the panel, the history is cut into collapsible sections at the
 versions, with the changes not yet in a version sitting above them. Each
 section head shows the version's number, its title, how many changes it
@@ -321,9 +327,12 @@ the answer is no.
 **One side effect, stated because you will notice it.** Git can only
 really remove something by rewriting history, so every revision from the
 first affected commit onwards changes. A revision you wrote down
-somewhere will no longer resolve. Your descriptions and named versions
-are carried across onto the new commits — that part is not left to
-chance.
+somewhere will no longer resolve. The descriptions and versions of the
+dashboards that stay are carried across onto the new commits — that part
+is not left to chance. **The forgotten dashboard's own versions go with
+it** — every tag under its own name — because a version belongs to one
+dashboard: keeping one would leave it hanging on some other dashboard's
+commit, naming a state that no longer exists.
 
 ## Renames and other dashboard settings
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dulwich import porcelain
+from dulwich.errors import RefFormatError
 from dulwich.repo import Repo
 
 _LOGGER = logging.getLogger(__name__)
@@ -184,14 +185,24 @@ class HistoryStore:
     ) -> None:
         self._refuse_colliding_name(name)
         body = f"{title}\n\n{description}".encode("utf-8")
-        porcelain.tag_create(
-            str(self.path),
-            name.encode("utf-8"),
-            message=body,
-            author=_IDENTITY,
-            annotated=True,
-            objectish=revision.encode() if revision else b"HEAD",
-        )
+        try:
+            porcelain.tag_create(
+                str(self.path),
+                name.encode("utf-8"),
+                message=body,
+                author=_IDENTITY,
+                annotated=True,
+                objectish=revision.encode() if revision else b"HEAD",
+            )
+        except RefFormatError as err:
+            # A name git itself cannot accept - a space in it, `..`, or one
+            # of `~^:?*[`. That is the same class of answer as a name that
+            # collides with an existing one, so it leaves here as the same
+            # kind of exception. Converted *here* on purpose: dulwich's
+            # types belong to this module, and RefFormatError inherits
+            # straight from Exception - a caller catching ValueError would
+            # let it escape as a bare traceback.
+            raise ValueError(f"git cannot use that as a version name: {name}") from err
 
     def _refuse_colliding_name(self, name: str) -> None:
         """Refuse a version name git could not hold beside the others.
@@ -283,11 +294,15 @@ class HistoryStore:
           A description on a commit that disappears goes with it: it
           described a state that no longer exists, and a description on
           the wrong state is worse than none.
-        * **Named versions** are tags pointing at a commit. They are
-          rebuilt with their original message and time. A tag on a
-          disappearing commit moves to the nearest surviving ancestor,
-          because a version marks a moment in the whole history rather
-          than one dashboard, and the nearest ancestor is that moment.
+        * **Named versions** are tags pointing at a commit. This
+          dashboard's own - every tag under `<key>/`, which is where
+          decision 13 of the design record puts them - are deleted with
+          it: a version belongs to one dashboard, and carrying it onto a
+          surviving ancestor would leave it hanging on a stranger's
+          commit, unreadable and still counted when the next version of a
+          dashboard by that name is numbered. Any other tag is rebuilt
+          with its original message and time, and moves to the nearest
+          surviving ancestor if its own commit disappears.
 
         A commit that touched nothing but this dashboard disappears
         entirely rather than becoming an empty commit; its children are
@@ -352,7 +367,7 @@ class HistoryStore:
 
         self._point_head(repo, nearest.get(order[-1].id) if order else None)
         self._rewrite_notes(repo, notes, kept)
-        self._rewrite_tags(repo, versions, nearest, Tag)
+        self._rewrite_tags(repo, versions, nearest, Tag, key)
 
         # Rewriting refs only makes the old objects unreachable; the blobs
         # and commits stay on disk, and `resolve` still finds them. Without
@@ -418,12 +433,28 @@ class HistoryStore:
 
     @staticmethod
     def _raw_tags(repo: Repo) -> list:
-        """Every annotated tag object, before the rewrite invalidates it."""
+        """Every ref under `refs/tags`, before the rewrite invalidates it.
+
+        Both shapes, as `(ref, tag object or None, the sha it marks)`. An
+        annotated tag - the only kind this class makes - is a tag object
+        that points at the commit; a lightweight one is the ref pointing
+        straight at the commit, with no object of its own.
+
+        Collecting only the annotated ones was a hole in "forgotten for
+        good": a lightweight tag was neither deleted nor rewritten, so it
+        went on pointing at a pre-rewrite commit and kept the whole old
+        history reachable - `garbage_collect` prunes nothing that a ref
+        can still reach. Measured: with one present, `forget` reported
+        success while the forgotten text stayed readable from the object
+        store. Decision 13 of the design record blesses hand-made tags
+        explicitly, which makes them likely rather than exotic.
+        """
         found = []
         for ref in repo.refs.as_dict(b"refs/tags"):
             tag = repo[repo.refs[b"refs/tags/" + ref]]
-            if hasattr(tag, "object"):
-                found.append((ref, tag))
+            annotated = hasattr(tag, "object")
+            found.append((ref, tag if annotated else None,
+                          tag.object[1] if annotated else tag.id))
         return found
 
     def _rewrite_notes(
@@ -446,14 +477,41 @@ class HistoryStore:
 
     @staticmethod
     def _rewrite_tags(
-        repo: Repo, versions: list, nearest: dict[bytes, bytes | None], tag_class
+        repo: Repo,
+        versions: list,
+        nearest: dict[bytes, bytes | None],
+        tag_class,
+        key: str,
     ) -> None:
-        """Rebuild the named versions against the rewritten commits."""
-        for ref, old in versions:
+        """Rebuild the named versions against the rewritten commits.
+
+        The dashboard's own versions go with it. Since decision 13 of the
+        design record a version belongs to one dashboard and is named
+        `<key>/v<major>.<minor>.<patch>`, so every tag under `<key>/` is
+        forgotten here rather than moved. Moving it was right while a
+        version marked a moment of the whole history; measured after
+        decision 13 it left `gone/v1.0.0` sitting on another dashboard's
+        commit, `read_at` answering None for it, and the numbering for a
+        future `gone` counting up from a version nobody can reach.
+
+        Every other tag keeps the old behaviour: rebuilt with its original
+        message and time, moved to the nearest surviving ancestor when its
+        own commit disappears. A lightweight tag has no object to rebuild
+        - the ref *is* the tag - so it is re-pointed instead. Inventing a
+        tag object for it would hand somebody back a different kind of tag
+        than the one they made.
+        """
+        namespace = f"{key}/".encode()
+        for ref, old, target in versions:
             del repo.refs[b"refs/tags/" + ref]
-            moved = nearest.get(old.object[1])
+            if ref.startswith(namespace):
+                continue  # this dashboard's own version; forgotten with it
+            moved = nearest.get(target)
             if moved is None:
                 continue  # nothing left for it to mark
+            if old is None:
+                repo.refs[b"refs/tags/" + ref] = moved
+                continue
             fresh = tag_class()
             fresh.object = (old.object[0], moved)
             fresh.name = old.name
@@ -550,8 +608,9 @@ class HistoryStore:
         # `repo[b"v1.0.0"]` raises KeyError even when refs/tags/v1.0.0 is
         # right there, because Repo.__getitem__ does no ref-name
         # expansion. Measured on dulwich 1.2.14 (2026-09-02) - and the
-        # belief that it did was what Entscheidung 10 rested on when it
-        # kept the version services. A tag is only addressable from here.
+        # belief that it did was what decision 10 of the design record
+        # rested on when it kept the version services. A tag is only
+        # addressable from here.
         for candidate in (name, b"refs/tags/" + name, b"refs/heads/" + name):
             try:
                 sha = repo[candidate].id
@@ -703,18 +762,27 @@ class HistoryStore:
             if prefix is not None and not name.startswith(prefix):
                 continue
             tag = repo[repo.refs[b"refs/tags/" + ref]]
-            if not hasattr(tag, "object"):
-                # A lightweight tag, made by hand. Not ours; skip it rather
-                # than crash on the missing fields.
-                continue
-            message = (tag.message or b"").decode("utf-8")
-            title, _, description = message.partition("\n\n")
+            if hasattr(tag, "object"):
+                message = (tag.message or b"").decode("utf-8")
+                title, _, description = message.partition("\n\n")
+                marked, made = tag.object[1], tag.tag_time
+            else:
+                # A lightweight tag, made by hand: the ref points straight
+                # at the commit and carries no message, so it has no title
+                # and no description. Reported all the same, as decision 13
+                # of the design record promises - skipping it made
+                # `candidates` offer a number that already existed, and the
+                # refusal then landed in the middle of the dialog. Ordered
+                # by the time of the commit it marks, the only time it has;
+                # anything but a commit sorts last rather than crashing.
+                title, description = "", ""
+                marked, made = tag.id, getattr(tag, "commit_time", 0)
             found.append(
                 (
-                    tag.tag_time,
+                    made,
                     Version(
                         name=name,
-                        revision=_as_text(tag.object[1]),
+                        revision=_as_text(marked),
                         title=title.strip(),
                         description=description.strip(),
                     ),

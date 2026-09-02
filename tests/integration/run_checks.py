@@ -1193,11 +1193,20 @@ async def run_versions(access: str) -> None:
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
-        check("there is a state to mark", bool(changes), f"{len(changes)} changes")
-        if not changes:
+        check(
+            "there are two states, so one can be marked that is not the newest",
+            len(changes) > 1,
+            f"{len(changes)} changes",
+        )
+        if len(changes) < 2:
             return
         before = len(changes)
-        revision = changes[0]["revision"]
+        # The second-newest, deliberately. The newest is also this
+        # dashboard's HEAD state, so a version placed there proves nothing:
+        # an implementation that ignored the revision entirely and tagged
+        # the newest state would pass every check below. The trap this
+        # section exists to guard is exactly that fallback.
+        revision = changes[1]["revision"]
 
         # Socket.call raises on a WebSocket error, and an unregistered
         # command is one. Guarded so a missing or misregistered command
@@ -1260,8 +1269,8 @@ async def run_versions(access: str) -> None:
         )
         check(
             "the marked change names its version",
-            created in [v["name"] for v in after[0].get("versions", [])],
-            str(after[0].get("versions")),
+            created in [v["name"] for v in after[1].get("versions", [])],
+            str(after[1].get("versions")),
         )
 
         # The whole point of the namespace: the name is a revision.
@@ -1314,6 +1323,13 @@ async def run_versions(access: str) -> None:
             history = (await socket.call("dashboard_history/history", dashboard=key))[
                 "changes"
             ]
+            # Weaker than it reads, and knowingly so: TARGET is very likely
+            # the dashboard saved last, so the repository's HEAD and this
+            # dashboard's own newest state are the same commit and the two
+            # sides of the comparison cannot disagree. Making it bite needs
+            # a fixture this section does not have - a *second* dashboard
+            # saved after TARGET's last save, so that HEAD is a stranger's
+            # commit while the version is asked for TARGET.
             check(
                 "and it lands on this dashboard's own newest state, not on HEAD",
                 bool(mark) and mark["revision"] == history[0]["revision"],
