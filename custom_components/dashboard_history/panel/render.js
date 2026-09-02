@@ -63,6 +63,18 @@ export const renderPlain = (explanation, heading) => {
   return `<div class="plain"><h3>${escape(heading)}</h3>${groups}${note}</div>`;
 };
 
+/**
+ * Names in a sentence: "v1.0.0", or "v1.0.0 and v1.1.0", or "v1.0.0,
+ * v1.1.0 and v2.0.0". The plural is not hypothetical - two versions may
+ * sit on one state, and two different states may both hold what the
+ * dashboard holds now - and a bare comma list reads like a stutter in
+ * the middle of a sentence.
+ */
+export const joinNames = (names) =>
+  names.length < 2
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
 export const when = (timestamp) =>
   new Date(timestamp * 1000).toLocaleString(undefined, {
     dateStyle: "medium",

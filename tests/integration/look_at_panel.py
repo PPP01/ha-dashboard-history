@@ -154,6 +154,11 @@ PANEL = (
     " const panel = walk(document); return panel && panel.shadowRoot; })()"
 )
 
+# The same walk, stopping one step earlier. Sections that render a state
+# rather than read one need the element: it renders from `_changes`, and
+# handing it that array drives the real rendering path.
+ELEMENT = PANEL.replace(" return panel && panel.shadowRoot; })()", " return panel; })()")
+
 
 async def main():
     SHOTS.mkdir(parents=True, exist_ok=True)
@@ -381,9 +386,12 @@ async def main():
                 "  diffCollapsed: details ? !details.open : null,"
                 '  diffPresent: !!d.querySelector("details.raw pre"),'
                 '  plainText: d.querySelector(".plain").innerText.slice(0, 300),'
+                '  keeps: d.querySelector(".keeps")'
+                '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 " }; })()"
             )
             print(f"    heading: {shape['heading']!r}")
+            print(f"    keeps: {shape['keeps']!r}")
             print(f"    diff present: {shape['diffPresent']}, collapsed: {shape['diffCollapsed']}")
             print("    " + shape["plainText"].strip().replace("\n", "\n    "))
             await page.shot("7-confirm-dialog.png")
@@ -689,6 +697,88 @@ async def main():
                     f'{PANEL}.querySelector("dialog.confirm .actions button[value=cancel]")'
                     "?.click()"
                 )
+
+            print("\n-- Joining the two halves of 'where am I' --")
+            # Built rather than waited for. The state this answers takes
+            # two writes to reach - make a version, then set the dashboard
+            # back to it - and an inspection script writes nothing. The
+            # element renders from `_changes` alone, so handing it that
+            # shape drives the real _sections / _renderTopSection /
+            # _renderVersionHead path without touching the instance.
+            #
+            # Entry 0 is where the dashboard is and carries no version.
+            # Entry 1 carries v1.0.0 and holds the same content. Entry 2
+            # is neither: it is the negative control, and without it this
+            # section could not tell a working join from a sentence
+            # printed on every history.
+            await page.js(
+                "(() => { const p = " + ELEMENT + ";"
+                " const now = Math.floor(Date.now() / 1000);"
+                " p._changes = ["
+                "  {revision: 'aaaaaaa1111', timestamp: now,"
+                "   message: '1 removed, 1 added', description: null,"
+                "   same_as_now: true, versions: []},"
+                "  {revision: 'bbbbbbb2222', timestamp: now - 100,"
+                "   message: '3 added', description: null, same_as_now: true,"
+                "   versions: [{name: 'demo/v1.0.0', title: 'First version',"
+                "               description: ''}]},"
+                "  {revision: 'ccccccc3333', timestamp: now - 200,"
+                "   message: '1 added', description: null,"
+                "   same_as_now: false, versions: []},"
+                " ];"
+                " p._open = null; p._verOpen = new Set(['demo/v1.0.0']);"
+                " p._render(); return p._changes.length; })()"
+            )
+            joined = await page.js(
+                "(() => { const p = " + PANEL + "; return {"
+                '  currentSays: p.querySelector(".current .why")'
+                '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
+                '  versionHead: [...p.querySelectorAll("details.ver summary .count")]'
+                "    .map(x => x.innerText.trim()),"
+                '  backButton: !!p.querySelector("details.ver summary [data-state]"),'
+                " }; })()"
+            )
+            for name, value in joined.items():
+                print(f"    {name}: {value!r}")
+            await page.shot("17-current-names-its-version.png")
+
+            print("\n-- The create dialog, before a second name is given --")
+            # Three entries, three answers. Anything that printed the same
+            # line for all three would be caught here.
+            for index, what in ((0, "holds what v1.0.0 holds"),
+                                (1, "carries v1.0.0 itself"),
+                                (2, "neither")):
+                # Started, not awaited. page.js evaluates with
+                # awaitPromise, and _createVersion's promise settles only
+                # when the dialog closes - handing it straight to page.js
+                # makes the run wait for a dialog nobody will ever close.
+                # The IIFE returns at once and leaves the dialog to the
+                # settle() below.
+                await page.js(
+                    "(() => { " + ELEMENT + f"._createVersion({index});"
+                    " return true; })()"
+                )
+                opened = await page.settle(
+                    f'{PANEL}.querySelector("dialog.version")?.open'
+                )
+                if not opened:  # pragma: no cover - kept as a diagnostic
+                    print(f"    entry {index} ({what}): dialog never opened")
+                    continue
+                said = await page.js(
+                    "(() => { const c = " + PANEL
+                    + '.querySelector("dialog.version [data-carries]");'
+                    " return c.hidden ? null"
+                    '   : c.innerText.replace(/\\s+/g, " ").trim(); })()'
+                )
+                print(f"    entry {index} ({what}):\n      {said!r}")
+                # Cancelled every time. Nothing above ever clicks Create,
+                # so no version is written to the instance.
+                await page.js(
+                    f'{PANEL}.querySelector("dialog.version .actions'
+                    ' button[value=cancel]")?.click()'
+                )
+                await asyncio.sleep(0.3)
+            await page.shot("18-create-dialog-warns.png")
 
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:

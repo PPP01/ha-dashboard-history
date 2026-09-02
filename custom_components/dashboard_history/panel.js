@@ -38,13 +38,14 @@ let escape;
 let renderDiff;
 let renderPlain;
 let when;
+let joinNames;
 
 const partsReady = Promise.all([
   import(`./panel/style.js${PARTS}`),
   import(`./panel/render.js${PARTS}`),
 ]).then(([style, render]) => {
   STYLE = style.STYLE;
-  ({ escape, renderDiff, renderPlain, when } = render);
+  ({ escape, renderDiff, renderPlain, when, joinNames } = render);
 });
 
 class DashboardHistoryPanel extends HTMLElement {
@@ -211,6 +212,19 @@ class DashboardHistoryPanel extends HTMLElement {
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : renderPlain(preview.explanation, "What applying this does") +
+        // The question this answers came from a person who had to read
+        // the source to find it out: does setting a state back throw the
+        // present one away? It does not, and nothing here said so.
+        // Nothing in this integration rewrites history except `forget`;
+        // a restore writes the live dashboard, and the recorder appends
+        // an entry for what was there. Left out when the dashboard is
+        // being recreated: there is no present state to keep, and the
+        // note beside the buttons already says what happens instead.
+        (preview.creates_dashboard
+          ? ""
+          : `<p class="keeps">What the dashboard holds now is not lost: it
+               stays in the history as its own entry, so you can set it
+               back the same way.</p>`) +
         `<details class="raw">
            <summary>Show the technical details</summary>
            ${renderDiff(preview.preview)}
@@ -300,6 +314,33 @@ class DashboardHistoryPanel extends HTMLElement {
     dialog.querySelector("[data-scope]").textContent = candidates.current
       ? `Everything from ${candidates.current} up to and including this change.`
       : "Everything up to and including this change.";
+    // Said before the choice, not after it. Two routes get you here: the
+    // state carries a version already, or - the one that prompted this -
+    // it holds exactly what a version holds because going back to that
+    // version wrote a fresh entry. Neither is refused. Two versions on
+    // one state is allowed, and after a revert a second name can be
+    // precisely what somebody wants; the point is that it is a decision
+    // rather than a surprise.
+    //
+    // The content case is only offered for the state the dashboard is
+    // in. `same_as_now` compares each entry against the live
+    // configuration, so it can answer "is this entry what a version
+    // holds" only where "this entry" is the current one. Claiming it
+    // anywhere else would need a comparison the panel does not have.
+    const carried = (change.versions || []).map((v) => v.name.split("/").pop());
+    const alike = (change.same_as_now ? this._versionsMatchingNow() : []).filter(
+      (name) => !carried.includes(name),
+    );
+    const already = carried.length
+      ? `This state already carries ${joinNames(carried)}.`
+      : alike.length
+        ? `This state is identical in content to ${joinNames(alike)}.`
+        : "";
+    const carries = dialog.querySelector("[data-carries]");
+    carries.textContent = already
+      ? `${already} A new version here would be a second name for the same content.`
+      : "";
+    carries.hidden = !already;
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
     buttons.forEach((button) => {
@@ -574,6 +615,27 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * The versions whose content is what the dashboard holds right now.
+   *
+   * Never "the version you are on". Going back to a version writes a
+   * fresh entry, so the state you are in is a later one that happens to
+   * hold the same thing - a different entry with the same content. The
+   * sentence this feeds says "identical in content to", and the
+   * distinction is the whole reason it is worth saying: a reader who
+   * concludes they are *on* v1.0.0 draws wrong conclusions from it.
+   *
+   * `same_as_now` is computed against the live configuration for every
+   * entry, so an entry carrying a version and matching now is exactly
+   * what is wanted here. Newest-first ordering means these entries are
+   * always below the current one.
+   */
+  _versionsMatchingNow() {
+    return this._changes
+      .filter((change) => change.same_as_now && (change.versions || []).length)
+      .flatMap((change) => change.versions.map((v) => v.name.split("/").pop()));
+  }
+
+  /**
    * The history, cut into sections at the versions.
    *
    * A version marks a state, so it marks the *newest* change it contains
@@ -614,9 +676,16 @@ class DashboardHistoryPanel extends HTMLElement {
     const extra = also
       .map((v) => `<span class="also">also ${escape(v.name)} — ${escape(v.title)}</span>`)
       .join("");
-    const here = this._changes[section.rows[0]]?.same_as_now;
+    // Two different truths, and one wording for both was an overclaim.
+    // A version sitting on the newest entry *is* where the dashboard is.
+    // A version further down whose content matches only holds the same
+    // thing: going back to it wrote a newer entry, and that entry, not
+    // this version, is where you are. Saying "current state" there
+    // invites the reading Decision 9 exists to prevent.
+    const top = section.rows[0];
+    const here = this._changes[top]?.same_as_now;
     const back = here
-      ? '<span class="count">current state</span>'
+      ? `<span class="count">${top === 0 ? "current state" : "same content as now"}</span>`
       : `<button class="act ghost" data-state="${escape(first.name)}"
                  >Back to this version</button>`;
     return `
@@ -682,8 +751,22 @@ class DashboardHistoryPanel extends HTMLElement {
     const rows = section.rows.map((index) =>
       this._renderRow(this._changes[index], index),
     );
+    // The panel knew this and kept it to itself: the head of the
+    // version's own section reads "same content as now", the row up here
+    // reads "current state", and nothing joined the two. Somebody had to
+    // read the source to find out which version they were looking at.
+    const matching = this._versionsMatchingNow();
+    const sameVer = matching.length
+      ? `<span class="why">What the dashboard holds right now is identical
+           in content to ${escape(joinNames(matching))}.</span>`
+      : "";
+    // Placed by what it describes. Below, the crowned row *is* the
+    // current state and the sentence belongs under it. Here nothing is
+    // crowned - the dashboard changed at Home Assistant's back, and no
+    // row stands for the present state - so the sentence is the only
+    // thing on the page that speaks for it, and leads.
     if (!this._changes[0].same_as_now)
-      return `<div class="divider">${escape(label)}</div>${rows.join("")}`;
+      return `${sameVer}<div class="divider">${escape(label)}</div>${rows.join("")}`;
     // The crowned row sits above the divider, not under it - so when it
     // is the only row, the divider has nothing left to head and the
     // label would disappear with it. It moves into the heading instead:
@@ -697,6 +780,7 @@ class DashboardHistoryPanel extends HTMLElement {
     return `<div class="current">
               <p class="heading">${escape(heading)}</p>
               ${rows[0]}
+              ${sameVer}
             </div>${rest}`;
   }
 
@@ -787,6 +871,7 @@ class DashboardHistoryPanel extends HTMLElement {
         <h2>Create a version</h2>
         <div class="body" style="padding:0 16px 8px">
           <p class="muted" style="font-size:13px" data-scope></p>
+          <p class="carries" data-carries hidden></p>
           <div class="levels">
             <button type="button" data-level="patch" aria-pressed="true">
               <strong></strong><span>Patch</span>

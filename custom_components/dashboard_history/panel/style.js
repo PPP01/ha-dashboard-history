@@ -235,6 +235,18 @@ export const STYLE = `
     color: var(--secondary-text-color, #727272);
     font-size: 13px;
   }
+  /* The same voice as .why, in a dialog body rather than a row. */
+  .keeps {
+    margin: 0 0 12px;
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+  }
+  /* Deliberately not muted: it sits under the muted scope line, and a
+     second grey sentence there reads as more small print to skip. */
+  .carries {
+    margin: 0 0 8px;
+    font-size: 13px;
+  }
   .plain { margin: 0 0 12px; }
   .plain h3 { margin: 0 0 8px; font-size: 15px; }
   .plain .view {
