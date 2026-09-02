@@ -122,6 +122,39 @@ the field removes the description again.
 The commit is **not** rewritten. The description is a git note, so every
 revision you have written down anywhere stays valid.
 
+### Versions
+
+A version is a name for a state your dashboard has already reached — an
+annotated git tag such as `my-dashboard/v1.2.0`. It belongs to one
+dashboard, so every dashboard counts its own: two different dashboards
+can each have their own `v1.0.0` without conflict.
+
+Expand any change and choose "Version up to here". A dialog offers three
+buttons — patch, minor, major — each already carrying the number it would
+get, patch preselected, plus a title and an optional description. You
+never type the number yourself: it always counts up from the highest that
+dashboard already has, so it can never collide with one you made before.
+
+There are no checkboxes for which changes to include. Each commit already
+holds the dashboard's complete state, so the state after change 3
+contains change 2 whether you wanted it there or not — a gap in a
+selection is not something a version could express.
+
+Making one writes no commit and changes nothing about the dashboard, so
+it needs no confirmation.
+
+In the panel, the history is cut into collapsible sections at the
+versions, with the changes not yet in a version sitting above them. Each
+section head shows the version's number, its title, how many changes it
+holds, and a "Back to this version" button — not offered when that
+version is what the dashboard already holds.
+
+"Back to this version" goes through the same preview as everything else:
+plain words, the diff, and an explicit Apply. Going back destroys
+nothing — the tag still points at its commit, so from an older version
+you can go forward to a newer one with the same button, and working on
+after going back is fine too.
+
 ### Services
 
 Everything the panel does is also available as services under Developer
@@ -193,11 +226,15 @@ dashboard's internal id (`energie_2`) — the two are not the same string.
 protects dashboards from unintended change; a description changes no
 dashboard, and emptying the field undoes it.
 
-Two more exist for anyone who wants them, and they are not in the panel:
-`create_version` and `versions`. A version is an annotated git tag, which
-does one thing a description cannot — it gives a point in the history a
-*name you can use as a revision*. If you do not need that, describe the
-change instead; it is the same idea with less to remember.
+Three more exist for anyone who wants them: `versions`, `next_versions`
+and `create_version`. A version is an annotated git tag named after the
+dashboard it belongs to — `my-dashboard/v1.2.0` — and it does one thing a
+description cannot: it gives a recorded state a *name you can use as a
+revision*. `restore_state` takes that name, which is what makes going
+back to a version, and forward again, the same button.
+
+They are in the panel as well, so reach for the services only if you want
+to script them.
 
 ## If a whole dashboard is deleted
 
@@ -328,9 +365,9 @@ find your way around the code; this README and the comments carry that.
 If you want the reasoning behind a particular decision and do not read
 German, open an issue and ask — answering in English is easy.
 
-The three modules that carry the logic — `yaml_io.py`, `analyze.py` and
-`restore.py` — import nothing from Home Assistant, so the test suite runs
-without an installation:
+The four modules that carry the logic — `yaml_io.py`, `analyze.py`,
+`restore.py` and `versions.py` — import nothing from Home Assistant, so
+the test suite runs without an installation:
 
 ```bash
 python3 -m pytest tests/ -v

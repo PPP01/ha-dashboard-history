@@ -26,7 +26,7 @@ Diese stehen so in der Spec und sind nicht verhandelbar:
 - **Kein Systemaufruf von `git`.** Ausschließlich `dulwich`. Ob ein `git`-Programm existiert, unterscheidet sich zwischen HA OS, Container, Core und Supervised. Gemessen sind es ohnehin nur 15 ms Unterschied je Speichervorgang — bei doppelter Verhaltensfläche.
 - **Keine Home-Assistant-Interna abfangen oder ersetzen.** Kein Monkey-Patching von WebSocket-Befehlen oder Diensten. Das träfe bei einer Veröffentlichung alle Nutzer gleichzeitig.
 - **Nichts blockiert den Start von Home Assistant.** Fehler beim Erfassen werden protokolliert und verschluckt. Eine kaputte Historie ist ärgerlich, ein kaputter HA-Start nicht.
-- **`yaml_io.py`, `analyze.py` und `restore.py` bleiben Home-Assistant-frei.** Kein `import homeassistant` darin — sie sind das Herz und müssen in reinem pytest prüfbar bleiben.
+- **`yaml_io.py`, `analyze.py`, `restore.py` und `versions.py` bleiben Home-Assistant-frei.** Kein `import homeassistant` darin — sie sind das Herz und müssen in reinem pytest prüfbar bleiben.
 - **Blockierende Arbeit gehört in einen Executor** (`hass.async_add_executor_job`). Ein Commit dauert rund 30 ms.
 - **Nichts wird ohne Vorschau geschrieben.** Jeder verändernde Dienst verlangt `confirm: true` und liefert sonst nur den Diff.
 - **Zurückgeholt wird nur Verschwundenes, nicht Bearbeitetes.** Der Grund steht in Entscheidung 4 der Spec: Lovelace-Karten haben keine Kennung (nachgezählt: 661 Karten, 0 mit `id`). Additive Rücknahme ist eindeutig, ersetzende nicht.
@@ -37,7 +37,7 @@ Diese stehen so in der Spec und sind nicht verhandelbar:
 python3 -m pytest tests/ -v
 ```
 
-Die drei Home-Assistant-freien Module laufen ohne laufende Installation. `tests/conftest.py` legt das Paketverzeichnis auf `sys.path`, damit `import analyze` flach funktioniert, ohne die HA-importierende `__init__.py` auszuführen.
+Die vier Home-Assistant-freien Module laufen ohne laufende Installation. `tests/conftest.py` legt das Paketverzeichnis auf `sys.path`, damit `import analyze` flach funktioniert, ohne die HA-importierende `__init__.py` auszuführen.
 
 Einige Fälle prüfen gegen **echte** Dashboards — das ist der Unterschied zwischen vier erfundenen Karten und einigen hundert gewachsenen. Wo die liegen, steht nicht im Repository: Entweder in `DASHBOARD_HISTORY_REAL_STORAGE` oder in der nicht versionierten Datei `tests/.real-storage`, die `conftest.py` liest. Ohne beides überspringen diese Fälle sich **sichtbar** (`140 passed, 3 skipped`) statt still durchzulaufen.
 
