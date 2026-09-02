@@ -40,7 +40,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
   - **Erkannt werden Bearbeitungen und Umsortierungen trotzdem, von Anfang an.** Das ist kein Widerspruch, sondern Voraussetzung: Hielte `analyze.py` eine bearbeitete Karte für »gelöscht und neu hinzugefügt«, böte die Oberfläche an, etwas wiederherzustellen, das gar nicht fehlt. Ein solcher Fehlalarm ist schlimmer als eine fehlende Funktion — er untergräbt das Vertrauen in genau die Meldung, derentwegen man das Werkzeug öffnet.
 - **Kein »von wem«.** Home Assistant feuert `lovelace_updated` ohne Kontext, der Benutzer ist an dieser Stelle nicht mehr bekannt. Der einzige saubere Weg ist ein Beitrag an HA Core; bis dahin bleibt das Merkmal weg. Ein Abfangen des WebSocket-Befehls wird **ausgeschlossen** — es ist ein Vertrag ohne Zusicherung und träfe bei einer Veröffentlichung alle Nutzer gleichzeitig.
 - **Keine Schlagwörter an Versionen.** Titel und Beschreibung genügen zunächst.
-- **Keine Aufbewahrungsgrenzen.** Erst messen, wie viel Platz git tatsächlich braucht, dann entscheiden.
+- **Keine Aufbewahrungsgrenzen** in dieser Fassung. Der Grundsatz »erst messen, dann entscheiden« bleibt und ist am 2026-09-02 zur Reihenfolge geworden: Vorhaben B baut die Messung ein, Vorhaben C entscheidet danach über das Aufräumen. Siehe »Reihenfolge der Vorhaben«.
 - **Kein Ersatz für Backups.** Die Integration sichert Dashboards, nicht die Installation.
 
 ## Architektur
@@ -52,6 +52,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 | `keys.py` | Welches Dashboard welches ist, und welches fehlt | **ja** |
 | `analyze.py` | Zwei Stände vergleichen und die Änderungen einordnen: Karte gelöscht, View gelöscht, bearbeitet, verschoben | **ja** |
 | `restore.py` | Die Umkehrung anwenden: gelöschtes Objekt wieder einsetzen, oder einen ganzen Stand herstellen | **ja** |
+| `versions.py` | Versionsnummern: einlesen, ordnen, hochzählen, Namen bilden — siehe Entscheidung 13 | **ja** |
 | `store.py` | Das eigene Repository: Stände ablegen, Verlauf lesen, Versionen als Markierungen | **Kern ja** |
 | `capture.py` | Auf Änderungen horchen, Stand holen, ablegen | nein |
 | `operations.py` | Jeder Vorgang, genau einmal — Dienste und Panel sind dünne Häute darüber | nein |
@@ -77,12 +78,12 @@ Meldung, die einen Fehlalarm auslieferte) und in `keys.py` (welches Dashboard
 welches ist, und welches fehlt — beides hatte dort, wo es vorher lag, schon
 einmal einen Fehler).
 
-Die drei oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Diese Trennung ist keine Stilfrage: Sie erlaubt, die Einordnungs-Regeln — das Herz des Projekts — in Sekunden gegen Dutzende Fälle zu testen, statt sie an einer Live-Anlage zu erproben.
+Die vier oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Diese Trennung ist keine Stilfrage: Sie erlaubt, die Einordnungs-Regeln — das Herz des Projekts — in Sekunden gegen Dutzende Fälle zu testen, statt sie an einer Live-Anlage zu erproben.
 
 ### Datenmodell
 
 - **Ein Änderungssatz ist ein Commit.** Jedes Speichern erzeugt genau einen, der die betroffene Dashboard-Datei berührt. Zeitpunkt und Dashboard stehen maschinenlesbar in der Commit-Botschaft.
-- **Eine Version ist eine Markierung** (annotierte git-Markierung) mit Titel und Beschreibung. Sie **fasst nichts zusammen und löscht nichts** — sie markiert einen Punkt im Verlauf. Genau deshalb bleiben die Einzeländerungen darunter erhalten und einzeln rücknehmbar; in der Ansicht werden sie lediglich eingeklappt.
+- **Eine Version ist eine Markierung** (annotierte git-Markierung) mit Titel und Beschreibung. Sie **fasst nichts zusammen und löscht nichts** — sie markiert einen Punkt im Verlauf. Genau deshalb bleiben die Einzeländerungen darunter erhalten und einzeln rücknehmbar; in der Ansicht werden sie lediglich eingeklappt. **Sie gehört einem Dashboard** und heißt `<schlüssel>/v<major>.<minor>.<patch>` — siehe Entscheidung 13.
 - **Eine Datei je Dashboard.** Der Verlauf eines Dashboards ist der Verlauf seiner Datei.
 - **Gespeichert wird YAML**, nicht JSON: lesbar, wenn jemand ins Repository schaut, und mit deterministischer Ausgabe. Round-Trip-Treue ist harte Bedingung — was hineingeht, muss unverändert wieder herauskommen.
 - **Das Repository gehört allein der Integration** und liegt im Konfigurationsverzeichnis. Es ist ein vollwertiges git-Repository; wer will, kann hineinschauen oder es extern weiterversionieren. Die Integration hängt davon nicht ab.
@@ -199,6 +200,8 @@ Zurueckholen
 
     **Damit entfallen die Versionen als Konzept der Oberfläche.** Ein benannter Punkt ist ab hier einfach eine Änderung, der jemand einen Text gegeben hat — ein Stift an der Zeile, ein Dialog mit einem Feld, wie HAs »Umbenennen« bei einer Erweiterung. Ein leeres Feld nimmt die Beschreibung zurück. `create_version`/`versions` bleiben als **Dienste** erhalten, weil ein Tag etwas kann, was eine Notiz nicht kann: `resolve()` nimmt seinen Namen als Revision an, ein Tag ist also adressierbar. Sie rutschen in der README nach hinten. Zwei Wege in der Oberfläche für dieselbe Sache wären ein Konzept zu viel.
 
+    **Am 2026-09-02 zurückgenommen — und die Begründung dieses Absatzes war zur Hälfte falsch.** Versionen kehren in die Oberfläche zurück, siehe Entscheidung 13. Der Satz »`resolve()` nimmt seinen Namen als Revision an« stimmte nie: Nachgemessen wirft `repo[b"v1.0.0"]` einen `KeyError`, und kein Test hat es bemerkt. Der Rest des Absatzes gilt weiter — ein Tag *kann* etwas, was eine Notiz nicht kann; es war nur nicht wahr, dass er es hier schon tat. Und das Argument »zwei Wege für dieselbe Sache« fällt, weil eine Version ab Entscheidung 13 nicht mehr einen Punkt benennt, sondern einen Stand herstellt. Das ist eine andere Sache.
+
     Der eigene Text wird zur Überschrift der Zeile, die automatische Meldung zur grauen zweiten. Sie verschwindet nicht: Sie ist die Angabe, der man trauen kann, wenn die eigene Notiz von damals nicht mehr genug sagt.
 
 11. **Der Diff bekommt eine Erklärung darüber — und ihre Worte entstehen in `analyze.py`.** *(Nachgetragen am 2026-08-31, auf Wunsch des Nutzers.)*
@@ -230,6 +233,28 @@ Zurueckholen
 
     **Und »unwiederbringlich« wird wörtlich genommen.** Refs umzuschreiben macht die alten Objekte nur unerreichbar — `resolve()` findet sie weiter, der Inhalt bleibt lesbar. Es läuft deshalb `dulwich.gc.garbage_collect(prune=True, grace_period=0)`. Die Schonfrist ist bewusst Null: Die üblichen vierzehn Tage schützen Objekte, die ein anderer Schreiber gerade baut, und der einzige andere Schreiber ist dieselbe Klasse unter derselben Sperre. Ein Test prüft, dass der Text danach in keinem Blob des Objektspeichers mehr steht.
 
+13. **Versionen kehren in die Oberfläche zurück — je Dashboard, mit Versionsnummern.** *(Nachgetragen am 2026-09-02, auf Wunsch des Nutzers.)*
+
+    Entscheidung 10 hatte sie aus der Oberfläche genommen, weil sie damals dasselbe konnten wie eine Beschreibung: einen Punkt benennen. Zwei Wege für dieselbe Sache waren ein Konzept zu viel, und das Argument war richtig. Es trägt hier nicht mehr, weil eine Version ab dieser Entscheidung etwas kann, was eine Notiz nie konnte: **einen Stand herstellen.** Nicht »dieser Punkt hieß so«, sondern »bring mich dorthin zurück, und dann wieder her«. Das ist eine andere Sache, kein zweiter Weg zur selben.
+
+    **Zuerst eine Berichtigung, denn Entscheidung 10 stützte sich auf eine Behauptung über den Code, die nicht stimmt.** Dort steht, Tags blieben als Dienste erhalten, weil `resolve()` ihren Namen als Revision annehme. Am 2026-09-02 nachgemessen an dulwich 1.2.14: **das tut es nicht, und nie getan.** `repo[b"v1.0.0"]` wirft `KeyError`; nur der volle Pfad `refs/tags/v1.0.0` trägt, weil dulwich die Kurzform-Auflösung, die `git` gewohnheitsmäßig leistet, in `Repo.__getitem__` nicht nachbildet. Kein Test hat es bemerkt, weil der vorhandene die *Objekt-ID* des Tags auflöst und nie seinen Namen. Die README behauptete dasselbe. `_resolve` probiert deshalb ab hier die übliche Suchreihenfolge `name`, `refs/tags/name`, `refs/heads/name`. Damit ist die Adressierbarkeit erstmals wahr — und sie ist die Grundlage von allem Weiteren, denn sie macht das Zurückwechseln zu vorhandenem Code.
+
+    **Der Namensraum ist der Dashboard-Schlüssel:** `<schlüssel>/v<major>.<minor>.<patch>`. Damit darf jedes Dashboard sein eigenes `v1.0.0` haben. Gemessen am selben Tag: Schrägstriche in Tag-Namen tragen, ebenso der Unterstrich in `_default/v1.0.0` und sogar Umlaute; Leerzeichen weist dulwich mit `RefFormatError` ab. Eine Falle wurde dabei gefunden und wird abgefangen: Ein **flacher** Tag `heizung` neben `heizung/v1.0.0` ist in git unmöglich — der Versuch scheitert mit `IsADirectoryError` und lässt eine `.lock`-Datei zurück. Das Anlegen prüft das vorher und lehnt ab, statt es zu erleiden.
+
+    **Die Nummer wird gewählt, nicht getippt.** Drei Knöpfe, jeder mit der fertigen Nummer darauf — Patch, Minor, Major —, **Patch vorausgewählt**. Ohne bestehende Version stehen dort `0.0.1`, `0.1.0` und `1.0.0`. Gezählt wird immer von der **höchsten vorhandenen** Version dieses Dashboards, auch nach einem Rücksprung: So bleiben die Nummern monoton und können nie kollidieren. Der Mensch tippt nur Titel und Beschreibung. Der Grund für die Knöpfe statt eines Namensfeldes: Ein Tag-Name ist ein technisches Artefakt mit Ref-Regeln, und diese Regeln in einen Dialog durchzureichen hieße, die Ablage in die Oberfläche zu tragen. Die Wahl zwischen Patch, Minor und Major trägt dagegen eine Aussage — war das eine Korrektur oder ein Umbau?
+
+    **Es gibt keine Ankreuzfelder, sondern einen Schnittpunkt.** Der Wunsch war, Änderungen seit der letzten Version auszuwählen und zu bündeln. Das geht nicht, und zwar nicht aus Aufwandsgründen: Jeder Commit hält den **vollständigen** Stand, der Stand nach Änderung 3 enthält die Wirkung von Änderung 2 also zwangsläufig. »3 ja, 2 nein« hieße, eine einzelne Änderung aus einem fertigen Stand herauszurechnen — eine ersetzende Rücknahme, die Entscheidung 4 mit nachgezählter Begründung ausschließt (661 Karten, 0 mit `id`). Der Stand einer Version ist deshalb immer der nach der neuesten einbezogenen Änderung. Statt Kreuzchen, die etwas versprechen, was die Ablage nicht einlösen kann, trägt jede Zeile den Knopf **»Version bis hierher«**. Der an der obersten Zeile ist das gewünschte »alles seit der letzten Version zusammenfassen« — ein Klick, an der Stelle, an der das Auge ohnehin landet.
+
+    **Dargestellt wird im Verlauf, nicht daneben.** Oben die Änderungen seit der letzten Version, darunter jede Version als zuklappbarer Abschnitt mit ihren Änderungen darin und einem Knopf »Zurück zu v1.2.0«. Damit wird eingelöst, was das Datenmodell seit dem ersten Tag verspricht — »in der Ansicht werden sie lediglich eingeklappt« —, und es bleibt bei einem Ort. Eine zweite Ansicht wäre der Rückfall in genau das, wovor Entscheidung 10 warnt.
+
+    **Das Zurückwechseln ist kein neuer Vorgang.** Es ist `restore_state` mit dem Versionsnamen als Revision, samt Vorschau, Klartext-Erklärung und `confirm` — die harte Regel gilt unverändert. Und es ist beliebig oft in beide Richtungen möglich: Ein Tag zeigt auf einen Commit, und dieser Commit verschwindet nicht, nur weil der Verlauf woanders weitergeht. Ein Rücksprung löscht keine Version und macht keine unerreichbar.
+
+    **Die Rechnerei liegt in `versions.py`, Home-Assistant-frei.** Einlesen, ordnen, hochzählen, Namen bilden. Sortiert wird numerisch, nicht lexikografisch — `v1.10.0` steht über `v1.9.0`. Ein Tag, der dem Muster nicht folgt, wird beim Zählen übergangen, aber weiterhin angezeigt. Damit wächst die Riege der prüfbaren Module von drei auf vier, und zwar nach derselben Regel wie bei Entscheidung 11: Was schiefgehen kann und einen Wortlaut oder eine Zahl erzeugt, gehört dorthin, wo `pytest` hinkommt — nicht ins Panel.
+
+    **Der Dienst `create_version` ändert seine Signatur** — `dashboard` und `level` (`patch`/`minor`/`major`, Vorgabe `patch`) statt eines freien `name`. Dazu kommt ein lesender `next_versions`, der die drei Kandidaten liefert, `versions` bekommt einen Dashboard-Filter, und `history` nennt je Änderung die Version, die auf ihr sitzt. Das ist ein Bruch an einer in der README dokumentierten Schnittstelle; er wird bewusst genommen, weil das Projekt noch nie veröffentlicht wurde und ein zweiter, gleichbedeutender Weg genau das wäre, wovor Entscheidung 10 warnt. Die Nummernbildung darf dabei **nicht** im Panel liegen — sonst stünde die eine Rechnung, die falsch sein kann, ausgerechnet dort, wo `pytest` nicht hinkommt.
+
+    **`panel.js` wird dabei geteilt.** Sie steht bei 939 Zeilen, und Abschnitte plus Anlege-Dialog tragen sie über 1200. Die Spec verlangt vom Panel Logik-Freiheit, nicht Kürze; aber eine Datei, die niemand mehr überblickt, ist der Ort, an dem Logik unbemerkt einzieht.
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
@@ -252,7 +277,14 @@ Zurueckholen
 | Beschreibung auf leeren Text gesetzt | Die Notiz wird entfernt, nicht durch eine leere ersetzt. Sonst hätte eine Zeile eine unsichtbare Überschrift und die automatische Meldung wäre verdeckt |
 | Änderung, die sich nicht in Karten ausdrücken lässt (nur Titel, nur Symbol, außerhalb erfasst) | Die Erklärung sagt genau das und verweist auf den Diff. Sie behauptet **nie** »nichts geändert«, solange ein Diff darunter das Gegenteil zeigt |
 | Umbenannte **Ansicht** | Wird weiter nicht als solche benannt: `_views_by_key` schlüsselt auf `path`, die Karten stimmen also überein. Bekannte Lücke, durch den Rückfall der Zeile darüber nicht mehr irreführend |
-| Sehr große Dashboards | `energie_2` ist 268 KB als YAML. Gemessen: 20 Stände belegen 0,54 MB, also rund 27 KB je Stand — hundert Änderungen wären knapp 3 MB |
+| Sehr große Dashboards | `energie_2` ist 268 KB als YAML. Gemessen: 20 Stände belegen 0,54 MB, also rund 27 KB je Stand — hundert Änderungen wären knapp 3 MB. **Am 2026-09-02 an 100 Ständen desselben Dashboards bestätigt: 2833 KiB, also 28 KiB je Stand. Das Wachstum ist linear** |
+| Versionsname trifft auf einen flachen Tag gleichen Namens | Wird abgelehnt. git kann `heizung` und `heizung/v1.0.0` nicht nebeneinander führen; der Versuch scheitert mit `IsADirectoryError` und hinterlässt eine `.lock`-Datei. Geprüft wird vorher, nicht erlitten |
+| Version auf einem Dashboard, das es nicht mehr gibt | Wird angelegt und bleibt bestehen. Das Zurückwechseln legt das Dashboard über den Weg aus Entscheidung 8 wieder an — eine Version auf einem gelöschten Dashboard ist genau der Fall, für den sich das lohnt |
+| Version anlegen ohne Angabe einer Revision | Sie landet auf dem neuesten Stand **dieses Dashboards**, ausdrücklich nicht auf `HEAD`. Ein Repository hält alle Dashboards, `HEAD` ist also das zuletzt gespeicherte — gemessen am 2026-09-02: `heizung` ohne Revision zu markieren, kurz nachdem `solar` gespeichert wurde, hängt den Tag an solars Commit, und die Version erscheint in heizungs Verlauf danach nie wieder, weil `list_changes` nur dessen eigene Pfade läuft. Hat das Dashboard keinen einzigen Stand, wird abgelehnt |
+| Version, deren Commit nicht im Verlauf dieses Dashboards liegt | Kann nur von Hand entstehen (Dienst mit fremder Revision). Der Dienst `versions` führt sie weiterhin auf; im Verlauf bekommt sie **keinen** Abschnitt, weil es keine Änderung gibt, über der sie stünde. Lieber unsichtbar an einer Stelle als Änderungen unter einem falschen Kopf |
+| Tag, der dem Muster `vX.Y.Z` nicht folgt | Wird beim Hochzählen übergangen und trotzdem angezeigt. Ein von Hand gesetzter Tag darf die Nummernfolge nicht verschieben, aber auch nicht unsichtbar sein |
+| Zurückwechseln auf eine Version, die dem aktuellen Stand entspricht | Der Knopf verschwindet, wie beim Ganz-Zurück in Entscheidung 9. Ein Knopf, der nichts tut, ist eine Frage ohne Antwort |
+| Zwei Versionen auf demselben Commit | Erlaubt. Sie zeigen auf denselben Stand; der Verlauf zeigt beide Köpfe untereinander mit demselben Inhalt darunter |
 
 ## Test-Plan
 
@@ -276,8 +308,14 @@ Herzstück sind die Einordnungs-Tests — von ihnen hängt alles ab.
 | Erklärung einer Löschung, Hinzufügung, Bearbeitung, Umsortierung | benennt die Karte und die Ansicht, in beiden Zeitformen |
 | Erklärung ohne benennbare Änderung | verweist auf den Diff, behauptet nicht »nichts geändert« |
 | Erklärung an Realdaten | die Formulierungen hängen an 1526 echten Karten, nicht an erfundenen |
+| Versionsnummern ordnen | `v1.10.0` steht über `v1.9.0`, nicht darunter — numerisch, nicht lexikografisch |
+| Die drei Kandidaten | aus `1.2.3` werden `1.2.4`, `1.3.0`, `2.0.0`; ohne Vorgänger `0.0.1`, `0.1.0`, `1.0.0` |
+| Unbrauchbare Tag-Namen | werden beim Hochzählen übergangen und verschieben die Folge nicht |
+| `resolve()` über einen Versions**namen** | `heizung/v1.0.0` löst auf den Commit auf — der Test, dessen Fehlen die Falschaussage in Entscheidung 10 durchgelassen hat |
+| Version anlegen und zurückwechseln | Tag entsteht, `read_at` über den Namen liefert den Stand, ein Rücksprung macht keine Version unerreichbar |
+| Abschnitte im Verlauf | jede Änderung landet unter genau einer Version, die neuesten über der obersten |
 
-Die drei Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Installation.
+Die Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Installation.
 
 ## Reihenfolge der Vorhaben
 
@@ -286,10 +324,41 @@ Die drei Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Ins
 
 Erst wenn sich Stufe 1 in der eigenen Anlage bewährt hat, wird über die Veröffentlichung entschieden.
 
+### Nachgetragen am 2026-09-02: A, B, C
+
+Aus einem Gespräch über Versionen wurden vier Vorhaben. In eine Spec gepresst ergäbe das ein Bauwerk, bei dem am Ende niemand mehr weiß, welcher Teil welches Problem löst. Sie werden deshalb einzeln entworfen, geplant und gebaut — **in dieser Reihenfolge, weil sie vom Messen zum Löschen führt und nicht umgekehrt.**
+
+- **A — Versionen.** Entscheidung 13. Diese Spec, ein eigener Plan.
+- **B — Beobachten.** Ein Options-Flow und die **erste Entity-Plattform** dieser Integration: Repository-Größe, Zahl der erfassten Stände, Zahl der Dashboards und — der wichtigste — der Zeitpunkt der neuesten Erfassung. Bleibt der stehen, hat das Erfassen stillschweigend aufgehört; dieses Projekt hat dreimal erlebt, dass der Code richtiger war als sein eigener Bericht, und ein Wachhund dagegen ist mehr wert als eine Größenanzeige. Eigene Spec.
+- **C — Aufräumen.** Zuerst das **verlustfreie** Verdichten, danach — und nur, falls die Messwerte aus B es rechtfertigen — eine Aufbewahrungsregel. Eigene Spec.
+
+**Warum diese Reihenfolge und nicht die bequeme:** B könnte nach ein paar Wochen zeigen, dass C's Löschteil nie gebraucht wird. Eine unwiderrufliche Operation zu entwerfen, bevor irgendjemand Messwerte hat, wäre in diesem Projekt der falsche Weg herum.
+
+**Was für C bereits gemessen ist** (2026-09-02, dulwich 1.2.14, am echten `energie-2.yaml` mit 262 KiB):
+
+| Befund | Wert |
+|---|---|
+| Repository der Anlage | 42 Commits, 122 lose Objekte, **kein einziger Pack** |
+| Kosten je Stand | 28 KiB, linear |
+| 100 Stände lose | 2833 KiB — davon rund ein Drittel reiner Blockverschnitt |
+| `porcelain.repack()` | fasst nur lose Objekte zusammen, **ohne Deltas** (Quelltext gelesen) |
+| `object_store.repack()` — der von `garbage_collect` und damit von `forget()` benutzte Weg | konsolidiert alles in einen Pack, ebenfalls **ohne Deltas**: `pack_objects_to_data` setzt `deltify=None` auf `False` |
+| Gewinn des schlichten Zusammenfassens | 24 % Plattenplatz, hunderte Dateien werden zwei |
+| Gewinn mit Deltas | **95 %** — 120 Objekte schrumpfen von 1109 KiB auf 52 KiB |
+| Kosten mit Deltas | 30 Objekte 0,7 s · 60 Objekte 9,2 s · 120 Objekte 77 s. Grob kubisch |
+| `delta_window_size` | **wirkungslos.** Fenster 1 löst dieselben 435 `create_delta`-Aufrufe aus wie Fenster 10; alle fünf Messungen ergaben 52 KiB und ~73 s |
+| Wo die Zeit steckt | 9,785 von 9,798 s in 435 `create_delta`-Aufrufen à 22 ms. Die Rust-Erweiterung ist vorhanden und wird benutzt |
+| `git repack -ad` zum Vergleich | 100 Commits auf 185 KiB in 0,1 s |
+| Unschädlichkeit des Packens | nachgemessen: abgekürzte Hashes (`iter_prefix`), `resolve`, `read_at` und `list_changes` überstehen es unverändert. **Keine Revision wird ungültig** |
+
+**Empfehlung für C, aus diesen Zahlen:** das schlichte Zusammenfassen bauen, das Delta-Packen nicht. Nicht wegen der Laufzeit allein, sondern wegen einer Falle: Delta-gepackte Objekte werden von jedem späteren `repack()` wieder auseinandergezogen, weil dessen Pfad `deltify=False` benutzt. Eine Optimierung, die sich selbst unbemerkt zurücknimmt, ist in diesem Projekt disqualifiziert. Der Vorbehalt bleibt bestehen, falls dulwich den Fensterregler repariert.
+
+**Und was in C ausdrücklich nicht passiert:** Änderungen unter einer Version zu **verschmelzen**. Das war der ursprüngliche Vorschlag und ist verworfen — nicht nur, weil es die Einzelrücknahme, die Beschreibungen aus Entscheidung 10 und jede herumgereichte Revision kostete, sondern weil es sich nicht einmal rechnet: Zehn verschmolzene Stände à 28 KiB wären 280 KiB, der vollständige, richtig gepackte Verlauf derselben hundert Änderungen 185 KiB. **Verdichten schlägt Verschmelzen, wirtschaftlich und nicht nur moralisch.** Die Rolle der Versionen beim Aufräumen ist daher die umgekehrte: Sie sind die **Schutzmarke** — was einen Tag oder eine eigene Beschreibung trägt, wird nie angetastet.
+
 ## Offene Punkte
 
 - ~~**Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert.~~ **Erledigt am 2026-08-30.** An einer laufenden Anlage bestätigt: `debug_snapshot` meldet alle zehn Dashboards, die Warnung »Lovelace data not available in the expected shape« erscheint **nicht**, der Rückfall bleibt ungenutzt. Ein neu angelegtes Dashboard war sechs Sekunden später als Commit da — ohne jede Wartezeit. **Entscheidung 1 trägt.**
-- **Platzbedarf über sehr lange Zeiträume.** Für zwanzig Stände gemessen (27 KB je Stand); ob das über tausend Stände linear bleibt oder git dann besser packt, ist offen. Erst relevant, wenn eine Aufbewahrungsgrenze zur Debatte steht.
+- ~~**Platzbedarf über sehr lange Zeiträume.**~~ **Am 2026-09-02 gemessen, mit einer unerwarteten Antwort.** Über hundert Stände bleibt es linear (28 KiB je Stand) — die Vermutung, git packe dann von selbst besser, ist **falsch**: dulwich packt überhaupt nie. Das Repository der Anlage führte nach zwei Tagen 122 lose Objekte und keinen einzigen Pack, denn `porcelain.commit` schreibt lose Objekte und dulwich kennt keine selbsttätige Bereinigung. Sämtliche Zahlen stehen unter »Reihenfolge der Vorhaben«; gehandelt wird in Vorhaben C.
 - ~~**Einordnung umsortierter Karten**~~ **An echten Daten entschieden am 2026-08-30.** Zwei Befunde:
 
   1. *Verschiebungen werden relativ gemessen, nicht absolut.* Ein Vergleich roher Positionen erklärte jede Karte hinter einer Löschung zur Verschiebung — auf großen Views zwanzig Meldungen Rauschen um die eine, auf die es ankommt. Gezählt wird jetzt der Rang unter den Überlebenden: Eine Löschung allein erzeugt **keine** Verschiebung, ein Tausch weiterhin zwei.
