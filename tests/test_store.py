@@ -780,3 +780,88 @@ def test_a_deletion_commit_holds_no_state_to_return_to(store):
     # The state before it is still there, and that one can be marked.
     before = store.previous_change("gone", newest.revision)
     assert store.read_at("gone", before) == "b: 1\n"
+
+
+def _tree_and_blob(store, key: str, revision: str) -> tuple[str, str]:
+    """The tree and blob ids behind one recorded state.
+
+    Both are ordinary git objects sitting in the same object store as the
+    commits, so both answer to a full id and to an abbreviated prefix.
+    """
+    repo = Repo(str(store.path))
+    try:
+        tree = repo[revision.encode()].tree
+        _, blob = repo[tree].lookup_path(repo.get_object, f"{key}.yaml".encode())
+        return _as_text(tree), _as_text(blob)
+    finally:
+        repo.close()
+
+
+def test_an_object_that_is_not_a_commit_resolves_to_nothing(store):
+    # A blob and a tree used to resolve to themselves, and every caller
+    # then treated the answer as a commit: `read_at` reaches for `.tree`
+    # and raised AttributeError - a generic failure through the WebSocket,
+    # a bare traceback through `services.py`. Worse, `create_version`
+    # accepted one and made a tag that can never be returned to, and
+    # versions cannot be deleted. None already means "unknown revision" to
+    # every caller, so that is what these are now.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    tree, blob = _tree_and_blob(store, "home", first)
+
+    assert store.resolve(blob) is None
+    assert store.resolve(tree) is None
+    # The abbreviated form is the one a person is likely to paste.
+    assert store.resolve(blob[:8]) is None
+    assert store.resolve(tree[:8]) is None
+    # And nothing downstream crashes on one.
+    assert store.read_at("home", blob) is None
+    assert store.read_at("home", tree) is None
+    assert store.previous_change("home", blob) is None
+
+    with pytest.raises(ValueError, match="unknown revision"):
+        store.create_version("home/v1.0.0", "On a blob", "", blob)
+    with pytest.raises(ValueError, match="unknown revision"):
+        store.create_version("home/v1.0.1", "On a tree", "", tree)
+    # Nothing half-made left behind: a version that cannot be returned to
+    # would sit in the list forever.
+    assert store.list_versions() == []
+
+
+def test_a_lightweight_tag_on_a_blob_is_not_a_state_to_return_to(store):
+    # The second route to the same fault, and one nobody has to type: a
+    # tag made by hand in the repository the README invites people to look
+    # inside. `list_versions` reports it, as decision 13 of the design
+    # record promises, so its revision travels straight into `read_at`.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    _, blob = _tree_and_blob(store, "home", first)
+    _lightweight_tag(store, "home/v1.0.0", blob)
+
+    listed = store.list_versions("home")
+    assert [v.name for v in listed] == ["home/v1.0.0"]
+    # No crash, and no pretence that there is a state there.
+    assert store.read_at("home", listed[0].revision) is None
+    assert store.resolve("home/v1.0.0") is None
+    assert store.read_at("home", "home/v1.0.0") is None
+
+
+def test_a_tag_blocks_every_namespace_it_stands_in(store):
+    # A dashboard key may hold a slash - Home Assistant accepts
+    # `url_path="dh-slash/check"` - and then the blocking parent of
+    # `dh-slash/check/v1.0.0` is `dh-slash/check`, not `dh-slash`. Looking
+    # only at the first segment let the real collision through, and it
+    # then surfaced raw: measured on dulwich 1.2.14 it is a
+    # NotADirectoryError here, the deeper cousin of the IsADirectoryError
+    # this refusal was written against.
+    first = store.write_snapshot("dh-slash/check", "a: 1\n", "first")
+    store.create_version("dh-slash/check", "Loose", "", first)
+    with pytest.raises(ValueError, match="dh-slash/check"):
+        store.create_version("dh-slash/check/v1.0.0", "Blocked", "", first)
+
+
+def test_a_tag_in_the_first_segment_still_blocks(store):
+    # The other end of the same name: `dh-slash` is a proper prefix too,
+    # so it blocks just as it always did for a key without a slash.
+    first = store.write_snapshot("dh-slash/check", "a: 1\n", "first")
+    store.create_version("dh-slash", "Loose", "", first)
+    with pytest.raises(ValueError, match="dh-slash"):
+        store.create_version("dh-slash/check/v1.0.0", "Blocked", "", first)

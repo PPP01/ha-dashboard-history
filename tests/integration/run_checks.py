@@ -1200,7 +1200,9 @@ async def run_versions(access: str) -> None:
         )
         if len(changes) < 2:
             return
-        before = len(changes)
+        # The newest recorded revision, not the number of entries. See the
+        # check further down that uses it.
+        newest_before = changes[0]["revision"]
         # The second-newest, deliberately. The newest is also this
         # dashboard's HEAD state, so a version placed there proves nothing:
         # an implementation that ignored the revision entirely and tagged
@@ -1262,10 +1264,16 @@ async def run_versions(access: str) -> None:
         after = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
+        # Counting the entries could not show this. `history` answers with
+        # a default limit of 50, and this bench adds states to TARGET on
+        # every run - once a dashboard has reached fifty, both sides are
+        # 50 and the check passes no matter what marking did. A limit
+        # cannot hide the newest revision, though: a commit written here
+        # would put a different one at the top of the list.
         check(
-            "marking wrote no commit - the history is the same length",
-            len(after) == before,
-            f"{before} -> {len(after)}",
+            "marking wrote no commit - the newest recorded state is unchanged",
+            after[0]["revision"] == newest_before,
+            f"{newest_before[:10]} -> {after[0]['revision'][:10]}",
         )
         check(
             "the marked change names its version",

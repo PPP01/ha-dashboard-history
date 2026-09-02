@@ -184,6 +184,7 @@ class HistoryStore:
         self, name: str, title: str, description: str, revision: str | None
     ) -> None:
         self._refuse_colliding_name(name)
+        marked = self._marked_commit(revision)
         body = f"{title}\n\n{description}".encode("utf-8")
         try:
             porcelain.tag_create(
@@ -192,7 +193,7 @@ class HistoryStore:
                 message=body,
                 author=_IDENTITY,
                 annotated=True,
-                objectish=revision.encode() if revision else b"HEAD",
+                objectish=marked,
             )
         except RefFormatError as err:
             # A name git itself cannot accept - a space in it, `..`, or one
@@ -203,6 +204,22 @@ class HistoryStore:
             # straight from Exception - a caller catching ValueError would
             # let it escape as a bare traceback.
             raise ValueError(f"git cannot use that as a version name: {name}") from err
+
+    def _marked_commit(self, revision: str | None) -> bytes:
+        """The commit a version is about to be pinned to.
+
+        Resolved here rather than left to `tag_create`, which takes any
+        object at all: a blob id makes a tag that reads back as a version
+        and can never be returned to - and a version, unlike a
+        description, has nothing that deletes it again. Refused as a
+        ValueError, the same kind of answer a colliding name gives, so the
+        one place that already catches those needs no second branch.
+        """
+        repo = self._repo()
+        found = None if repo is None else self._resolve(repo, revision or "HEAD")
+        if found is None:
+            raise ValueError(f"unknown revision: {revision or 'HEAD'}")
+        return found.encode()
 
     def _refuse_colliding_name(self, name: str) -> None:
         """Refuse a version name git could not hold beside the others.
@@ -219,11 +236,22 @@ class HistoryStore:
         existing = {ref.decode() for ref in repo.refs.as_dict(b"refs/tags")}
         if name in existing:
             raise ValueError(f"version already exists: {name}")
-        parent, _, _ = name.partition("/")
-        if parent != name and parent in existing:
-            raise ValueError(
-                f"cannot create {name}: a version named {parent} is in the way"
-            )
+        # Every proper prefix that ends at a `/`, not just the first one.
+        # A dashboard key may hold a slash - Home Assistant accepts
+        # `url_path="dh-slash/check"`, and decision 13 of the design
+        # record names a version `<key>/v<major>.<minor>.<patch>` - so the
+        # parent that matters for `dh-slash/check/v1.0.0` is
+        # `dh-slash/check`, which looking at the first segment alone never
+        # sees. The collision it missed then arrived as the raw
+        # NotADirectoryError plus the stray `.lock` file this refusal
+        # exists to prevent.
+        parts = name.split("/")
+        for depth in range(1, len(parts)):
+            parent = "/".join(parts[:depth])
+            if parent in existing:
+                raise ValueError(
+                    f"cannot create {name}: a version named {parent} is in the way"
+                )
         below = sorted(one for one in existing if one.startswith(f"{name}/"))
         if below:
             raise ValueError(
@@ -632,7 +660,24 @@ class HistoryStore:
         obj = repo[sha]
         while obj.type_name == b"tag":
             # An annotated tag points at the commit; that is what is wanted.
-            obj = repo[obj.object[1]]
+            try:
+                obj = repo[obj.object[1]]
+            except KeyError:
+                return None
+        if obj.type_name != b"commit":
+            # A blob or a tree is an object like any other: it answers to
+            # its full id and to an abbreviated prefix, and a tag can be
+            # made to point at one. Handed on as if it were a commit it
+            # breaks in a different way at every caller - `read_at`
+            # reaches for `.tree` and raises AttributeError, which arrives
+            # as a generic failure through the WebSocket and as a bare
+            # traceback through `services.py`, and `create_version`
+            # accepts it and leaves a tag nobody can ever return to, which
+            # nothing can delete again. `None` already means "unknown
+            # revision" to every caller here, and every one of them
+            # handles it; saying it once, at the only place that knows
+            # what the object really is, is the whole fix.
+            return None
         return _as_text(obj.id)
 
     def read_at(self, key: str, revision: str) -> str | None:
