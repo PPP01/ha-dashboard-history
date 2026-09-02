@@ -315,17 +315,21 @@ async def main():
             await page.shot("5-expanded-deletion.png")
 
             print("\n-- Plain words on a live dashboard --")
-            await page.js(
-                f'(() => {{ for (const b of {PANEL}.querySelectorAll(".dash"))'
-                ' if (b.dataset.key === "ground-floor") { b.click(); return true; }'
-                " return false; })()"
+            # The first dashboard that still exists, whichever it is. Naming
+            # one would put a name out of somebody's installation into a
+            # public repository, and nobody else could run this.
+            live = await page.js(
+                f'(() => {{ const all = [...{PANEL}.querySelectorAll(".dash")];'
+                ' const b = all.find((x) => !x.closest("details.dead"));'
+                " if (!b) return null; b.click(); return b.dataset.key; })()"
             )
+            print(f"    switched to: {live!r}")
             # Wait for the switch to have actually happened. Waiting on a
             # row count is a race: the dashboard before this one already
             # had rows, so the click landed on the old DOM.
             switched = await page.settle(
                 f'{PANEL}.querySelector(".change .what").innerText'
-                '.indexOf("ground-floor") === 0'
+                f".indexOf({json.dumps(live)}) === 0"
             )
             print(f"    switch completed: {switched}")
             await page.js(f'{PANEL}.querySelector(".change").click()')

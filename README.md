@@ -94,7 +94,7 @@ panel says in plain words what will happen:
 What applying this does
 
   In the view Ground floor
-    heading: Aktuell will be deleted
+    heading: Right now will be deleted
 
   ▸ Show the technical details
 ```

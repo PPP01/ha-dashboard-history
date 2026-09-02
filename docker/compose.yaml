@@ -25,10 +25,11 @@ services:
       - "127.0.0.1:8124:8123"
     volumes:
       - ${HA_TEST_CONFIG:-../../ha-dashboard-history-test/config}:/config
-      # The integration straight from the working tree. On the production
-      # installation this is impossible - the mount is SSHFS, which refuses
-      # symlinks, and a symlink would be resolved on the Home Assistant side
-      # where this path does not exist. Hence HACS there, and this here.
+      # The integration straight from the working tree. On a real
+      # installation reached over a network mount this is impossible -
+      # SSHFS and its kin refuse symlinks, and a symlink would be resolved
+      # on the Home Assistant side, where this path does not exist. Hence
+      # HACS there, and this here.
       - ../custom_components/dashboard_history:/config/custom_components/dashboard_history:ro
     environment:
       TZ: Europe/Berlin

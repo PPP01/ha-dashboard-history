@@ -10,17 +10,17 @@ import json
 import os
 import pathlib
 
+import pytest
+
 import analyze
 
-# Point DASHBOARD_HISTORY_REAL_STORAGE at any Home Assistant .storage
+# Set DASHBOARD_HISTORY_REAL_STORAGE to a Home Assistant .storage
 # directory to run the real-data checks against your own dashboards.
-_STORAGE = pathlib.Path(
-    os.environ.get(
-        "DASHBOARD_HISTORY_REAL_STORAGE",
-        "/path/to/home-assistant/.storage",
-    )
-)
-REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
+# No default path: a personal one in a public repository says something
+# about a machine and nothing about this project. conftest.py also reads
+# tests/.real-storage, which git ignores.
+_STORAGE = os.environ.get("DASHBOARD_HISTORY_REAL_STORAGE", "")
+REAL_DASHBOARDS = sorted(pathlib.Path(_STORAGE).glob("lovelace.*")) if _STORAGE else []
 
 
 def _config(cards):
@@ -424,7 +424,7 @@ def test_every_real_card_can_be_named():
     # through the card path; explain_effect({}, config) would not, because
     # it folds each view into a single line.
     if not REAL_DASHBOARDS:
-        return
+        pytest.skip("set DASHBOARD_HISTORY_REAL_STORAGE to run this")
     named = 0
     for path in REAL_DASHBOARDS:
         config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
@@ -449,7 +449,7 @@ def test_a_real_dashboard_restored_from_nothing_stays_readable():
     # The heaviest case on real data: 661 cards on this installation, and
     # the summary still has to fit on a screen.
     if not REAL_DASHBOARDS:
-        return
+        pytest.skip("set DASHBOARD_HISTORY_REAL_STORAGE to run this")
     for path in REAL_DASHBOARDS:
         config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
         result = analyze.explain_effect({}, config)

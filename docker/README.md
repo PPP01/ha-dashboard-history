@@ -26,9 +26,9 @@ token beside the instance's configuration.
 | Configuration, `.storage`, token | `../ha-dashboard-history-test/` | **Outside this repository.** This repo is public and the token is a bearer credential |
 | The integration | Bind-mounted from the working tree | Edit, restart the container, test. Ten seconds |
 
-The bind mount is the point. On the production installation it is
-impossible: the mount there is SSHFS, which refuses to create symlinks, and
-a symlink would be resolved on the Home Assistant side where this
+The bind mount is the point. On a real installation reached over a network
+mount it is impossible: SSHFS and its kin refuse to create symlinks, and a
+symlink would be resolved on the Home Assistant side, where this
 repository's path does not exist. Hence HACS there — and this here.
 
 ## The trap this hit, and its actual cause

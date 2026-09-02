@@ -7,3 +7,7 @@ __pycache__/
 # Written by the Playwright MCP browser, and it captures the console of
 # whatever page that browser was on - which may be an unrelated project.
 .playwright-mcp/
+
+# Where a real .storage lives is a detail of one machine, and this
+# repository is public. conftest.py reads it if it is there.
+tests/.real-storage

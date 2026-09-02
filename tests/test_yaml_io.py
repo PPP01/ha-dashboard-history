@@ -7,17 +7,14 @@ import pathlib
 import pytest
 import yaml_io
 
-# Real dashboards from the installation this was built against. Optional:
-# without them the synthetic cases still run. Point
-# DASHBOARD_HISTORY_REAL_STORAGE at any Home Assistant .storage directory
-# to run these against your own dashboards.
-_STORAGE = pathlib.Path(
-    os.environ.get(
-        "DASHBOARD_HISTORY_REAL_STORAGE",
-        "/path/to/home-assistant/.storage",
-    )
-)
-REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
+# Real dashboards, if any are pointed at: set
+# DASHBOARD_HISTORY_REAL_STORAGE to a Home Assistant .storage directory
+# to run these against your own. Without it the synthetic cases still run.
+# No default path: a personal one in a public repository says something
+# about a machine and nothing about this project. conftest.py also reads
+# tests/.real-storage, which git ignores.
+_STORAGE = os.environ.get("DASHBOARD_HISTORY_REAL_STORAGE", "")
+REAL_DASHBOARDS = sorted(pathlib.Path(_STORAGE).glob("lovelace.*")) if _STORAGE else []
 
 
 def _body(text):

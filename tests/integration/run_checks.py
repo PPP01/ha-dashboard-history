@@ -41,6 +41,15 @@ CONFIG = pathlib.Path(
     )
 )
 TOKEN_FILE = CONFIG.parent / "token.txt"
+
+# Which dashboard the checks work against. A name out of one installation
+# does not belong in a public repository, and hard-coding one makes these
+# checks unrunnable for anybody else besides. Beside the instance like the
+# token, or from the environment; failing both, it is chosen (pick_target).
+TARGET_FILE = CONFIG.parent / "check-dashboard.txt"
+TARGET = os.environ.get("DASHBOARD_HISTORY_CHECK_DASHBOARD", "") or (
+    TARGET_FILE.read_text(encoding="utf-8").strip() if TARGET_FILE.exists() else ""
+)
 OWNER = {"name": "Testbench", "username": "testbench", "password": "testbench-only"}
 
 # Comfortably longer than RECONCILE_DELAY in const.py, which is 10 seconds.
@@ -230,6 +239,26 @@ def ensure_integration(access: str) -> bool:
     return done.json().get("type") == "create_entry"
 
 
+async def pick_target(access: str) -> str:
+    """Which dashboard the checks work on, when nobody has named one.
+
+    The live dashboard with the most recorded states: these checks need
+    history to read and an existing dashboard to write back to. Chosen
+    rather than named, so that somebody else can run them at all.
+    """
+    async with Socket(access) as socket:
+        listing = await socket.call("dashboard_history/dashboards")
+        best, most = "", -1
+        for entry in listing.get("dashboards") or []:
+            if not entry.get("exists"):
+                continue
+            answer = await socket.call(
+                "dashboard_history/history", dashboard=entry["key"]
+            )
+            if len(answer["changes"]) > most:
+                best, most = entry["key"], len(answer["changes"])
+    return best
+
 # -- the checks ---------------------------------------------------------
 
 
@@ -295,7 +324,7 @@ async def run(access: str) -> None:
             f"{len(keys)} dashboards",
         )
 
-        target = "ground-floor"
+        target = TARGET
         history = await socket.call("dashboard_history/history", dashboard=target)
         first = history["changes"][0]["message"] if history["changes"] else "-"
         check(
@@ -687,7 +716,7 @@ async def run_current_marker(access: str) -> None:
     button whose preview then said "No difference."
     """
     async with Socket(access) as socket:
-        key = "ground-floor"
+        key = TARGET
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
@@ -814,7 +843,7 @@ async def run_forget(access: str) -> None:
     async with Socket(access) as socket:
         # A live dashboard must be refused, whatever else happens.
         refused = await socket.call(
-            "dashboard_history/forget", dashboard="ground-floor"
+            "dashboard_history/forget", dashboard=TARGET
         )
         check(
             "forgetting a live dashboard is refused",
@@ -864,7 +893,7 @@ async def run_forget(access: str) -> None:
         )
 
         # A description on another dashboard, which the rewrite must carry.
-        other = "ground-floor"
+        other = TARGET
         changes = (await socket.call("dashboard_history/history", dashboard=other))[
             "changes"
         ]
@@ -954,7 +983,7 @@ async def run_descriptions(access: str) -> None:
     revision this tool hands out.
     """
     async with Socket(access) as socket:
-        key = "ground-floor"
+        key = TARGET
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
@@ -1023,7 +1052,7 @@ async def run_descriptions(access: str) -> None:
 async def run_explanation(access: str) -> None:
     """The plain-language explanation, against real dashboards."""
     async with Socket(access) as socket:
-        key = "ground-floor"
+        key = TARGET
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
@@ -1092,7 +1121,7 @@ async def run_explanation(access: str) -> None:
 async def run_preview_explains(access: str) -> None:
     """What a person sees before pressing Apply."""
     async with Socket(access) as socket:
-        key = "ground-floor"
+        key = TARGET
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
@@ -1145,6 +1174,11 @@ if __name__ == "__main__":
         raise SystemExit("Could not set the integration up")
     if not wait_for_integration(access):
         raise SystemExit("The integration never finished setting up")
+    if not TARGET:
+        TARGET = asyncio.run(pick_target(access))
+        if not TARGET:
+            raise SystemExit("No live dashboard with a history to check against")
+    print(f"Dashboard für die Prüfungen: {TARGET}")
     print(f"Prüfungen gegen {BASE}\n")
     asyncio.run(run(access))
     print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")

@@ -381,7 +381,7 @@ In `__init__.py` innerhalb von `async_setup_entry` ergänzen:
     )
 ```
 
-- [ ] **Schritt 5: In Home Assistant einrichten und den Zugriffsweg nachweisen**  ← **bestanden am 2026-08-30 an der eigenen Anlage**
+- [ ] **Schritt 5: In Home Assistant einrichten und den Zugriffsweg nachweisen**  ← **bestanden am 2026-08-30 an einer laufenden Anlage**
 
 Die Integration nach `/config/custom_components/dashboard_history/` kopieren oder verlinken, Home Assistant neu starten, unter *Einstellungen → Geräte & Dienste → Integration hinzufügen* »Dashboard History« hinzufügen.
 
@@ -474,13 +474,8 @@ import yaml_io
 # without them the synthetic cases still run. Point
 # DASHBOARD_HISTORY_REAL_STORAGE at any Home Assistant .storage directory
 # to run these against your own dashboards.
-_STORAGE = pathlib.Path(
-    os.environ.get(
-        "DASHBOARD_HISTORY_REAL_STORAGE",
-        "/path/to/home-assistant/.storage",
-    )
-)
-REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
+_STORAGE = os.environ.get("DASHBOARD_HISTORY_REAL_STORAGE", "")
+REAL_DASHBOARDS = sorted(pathlib.Path(_STORAGE).glob("lovelace.*")) if _STORAGE else []
 
 
 def _body(text):
@@ -2087,7 +2082,7 @@ In `__init__.py` `async_setup_entry` erweitern, sodass Speicher und Erfassung an
         _LOGGER.exception("Dashboard History could not start recording")
 ```
 
-- [ ] **Schritt 3: Live prüfen**  ← **bestanden am 2026-08-30 an der eigenen Anlage**
+- [ ] **Schritt 3: Live prüfen**  ← **bestanden am 2026-08-30 an einer laufenden Anlage**
 
 Home Assistant neu starten. Dann:
 
@@ -2534,7 +2529,7 @@ restore_deleted:
       selector: {boolean: }
 ```
 
-- [ ] **Schritt 4: Live prüfen**  ← **bestanden am 2026-08-30 an der eigenen Anlage**
+- [ ] **Schritt 4: Live prüfen**  ← **bestanden am 2026-08-30 an einer laufenden Anlage**
 
 Nach einem Neustart in den Entwicklerwerkzeugen der Reihe nach:
 
@@ -2693,7 +2688,7 @@ MSG
 Alle acht Tasks sind umgesetzt. Die Testsuite läuft grün: **50 synthetische
 Tests** plus einer je echtem Dashboard, auf dieser Anlage zusammen 61.
 
-**Die drei Live-Schritte sind bestanden** (2026-08-30, an der eigenen Anlage,
+**Die drei Live-Schritte sind bestanden** (2026-08-30, an einer laufenden Anlage,
 installiert über HACS von `main`):
 
 | Prüfung | Ergebnis |
@@ -2777,14 +2772,14 @@ die Konfiguration ist byte-identisch. Danach fielen drei Dinge auf.
   allein auf die Konfigurationsdatei. Sie wäre also erfasst und trotzdem
   unsichtbar gewesen — die schlechteste Kombination. Der Verlauf läuft jetzt
   über beide Pfade, und die Meldung nennt die Umbenennung beim Namen:
-  `renamed to "Neuer Titel"` statt `metadata recorded`.
+  `renamed to "<der neue Titel>"` statt `metadata recorded`.
 
 ### Noch nicht geprüft (Stand 2026-08-31)
 
 Drei Dinge sind bis hierher **nie** an einem laufenden Home Assistant
 belegt worden. Alle drei betreffen Pfade, die Home Assistant mit keinem
 Ereignis ankündigt, und alle drei hingen bisher an einem Neustart der
-Anlage. Mit der Wegwerf-Instanz (`docker/README.md`) sind sie
+eigenen Anlage. Mit der Wegwerf-Instanz (`docker/README.md`) sind sie
 billig prüfbar:
 
 1. **Löschung im laufenden Betrieb.** Erzeugt sie binnen etwa 15 Sekunden

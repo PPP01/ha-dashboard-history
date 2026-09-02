@@ -288,7 +288,7 @@ Erst wenn sich Stufe 1 in der eigenen Anlage bewährt hat, wird über die Veröf
 
 ## Offene Punkte
 
-- ~~**Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert.~~ **Erledigt am 2026-08-30.** An der eigenen Anlage bestätigt: `debug_snapshot` meldet alle zehn Dashboards, die Warnung »Lovelace data not available in the expected shape« erscheint **nicht**, der Rückfall bleibt ungenutzt. Ein neu angelegtes Dashboard war sechs Sekunden später als Commit da — ohne jede Wartezeit. **Entscheidung 1 trägt.**
+- ~~**Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert.~~ **Erledigt am 2026-08-30.** An einer laufenden Anlage bestätigt: `debug_snapshot` meldet alle zehn Dashboards, die Warnung »Lovelace data not available in the expected shape« erscheint **nicht**, der Rückfall bleibt ungenutzt. Ein neu angelegtes Dashboard war sechs Sekunden später als Commit da — ohne jede Wartezeit. **Entscheidung 1 trägt.**
 - **Platzbedarf über sehr lange Zeiträume.** Für zwanzig Stände gemessen (27 KB je Stand); ob das über tausend Stände linear bleibt oder git dann besser packt, ist offen. Erst relevant, wenn eine Aufbewahrungsgrenze zur Debatte steht.
 - ~~**Einordnung umsortierter Karten**~~ **An echten Daten entschieden am 2026-08-30.** Zwei Befunde:
 

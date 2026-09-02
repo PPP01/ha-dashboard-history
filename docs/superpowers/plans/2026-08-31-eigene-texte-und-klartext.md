@@ -295,13 +295,8 @@ import analyze
 
 # Point DASHBOARD_HISTORY_REAL_STORAGE at any Home Assistant .storage
 # directory to run the real-data checks against your own dashboards.
-_STORAGE = pathlib.Path(
-    os.environ.get(
-        "DASHBOARD_HISTORY_REAL_STORAGE",
-        "/path/to/home-assistant/.storage",
-    )
-)
-REAL_DASHBOARDS = sorted(_STORAGE.glob("lovelace.*")) if _STORAGE.is_dir() else []
+_STORAGE = os.environ.get("DASHBOARD_HISTORY_REAL_STORAGE", "")
+REAL_DASHBOARDS = sorted(pathlib.Path(_STORAGE).glob("lovelace.*")) if _STORAGE else []
 ```
 
 - [x] **Step 2: Laufen lassen und das Scheitern bestätigen**
@@ -1747,14 +1742,17 @@ Umgesetzt am 2026-08-31. **Die Codeauszüge oben sind ab hier historisch — das
 
 ### Wie der Wortlaut an echten Daten klingt
 
+Die Form, an echten Karten gemessen; die Namen sind ersetzt, weil dieses
+Repository öffentlich ist. Was sie zeigen, ist die *Gestalt* der Sätze:
+
 ```
-heading: Aktuell was deleted
+heading: Right now was deleted
 map: person.somebody +4 was deleted
 vertical-stack > entities: Meter readings was deleted
 the whole view "Ground floor" comes back
 ```
 
-Die Grenze der Benennung zeigt die dritte Zeile ehrlich: Steckt in einem Container eine Karte ohne jedes benennbare Feld, bleibt nur die Typkette — `vertical-stack > custom:mushroom-template-card`. Keine Schwäche der Formulierung; die Karte hat wirklich keinen Namen.
+Die Grenze der Benennung zeigt die dritte Zeile ehrlich: Steckt in einem Container eine Karte ohne jedes benennbare Feld, bleibt nur die Typkette — `vertical-stack > custom:mushroom-template-card`. Keine Schwäche der Formulierung; die Karte hat wirklich keinen Namen. Und die zweite Zeile zeigt die zweite Grenze: Eine Karte, die vier weitere Entitäten führt, wird über ihre erste benannt und zählt den Rest — mehr geht nicht, ohne die Zeile unlesbar zu machen.
 
 ### Und ein Werkzeug, das der Plan nicht vorsah
 
@@ -1850,7 +1848,7 @@ zitiert, muss prüfen, ob sie die vorliegende Frage überhaupt beantwortet.
 
 ### Veröffentlichung 0.2.0 (2026-09-02)
 
-Bis hierher lag alles lokal. Die Anlage lief weiter auf `0.1.0` —
+Bis hierher lag alles lokal. Die eigene Anlage lief weiter auf `0.1.0` —
 also ohne Beschreibungen, ohne Klartext, ohne echtes Vergessen **und ohne die
 Reparatur des Wiederanlegens**, die dort am meisten zählt: Die alte Fassung
 kann bei einem `restore_state` ein Dashboard erzeugen, das sich auflisten,
