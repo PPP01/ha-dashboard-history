@@ -220,21 +220,23 @@ dashboard's internal id (`energie_2`) — the two are not the same string.
 | `restore_deleted` | Put one of them back (needs `confirm`) |
 | `restore_state` | Set a dashboard back to an earlier state (needs `confirm`) |
 | `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
+| `versions` | The named versions, all of them or one dashboard's |
+| `next_versions` | What the next patch, minor and major would be called |
+| `create_version` | Name a recorded state as a version |
 | `debug_snapshot` | What the integration currently sees |
 
-`describe` is the only writing service without `confirm`. The rule
-protects dashboards from unintended change; a description changes no
-dashboard, and emptying the field undoes it.
+`describe` and `create_version` are the only writing services without
+`confirm`. Neither can put a dashboard into a state you would need
+`restore_state` to escape: one writes a note, the other a tag, and
+neither touches the dashboard itself. A wrong description is undone by
+an ordinary edit — clearing the field; a version, once made, was never a
+change to the dashboard in the first place.
 
-Three more exist for anyone who wants them: `versions`, `next_versions`
-and `create_version`. A version is an annotated git tag named after the
-dashboard it belongs to — `my-dashboard/v1.2.0` — and it does one thing a
-description cannot: it gives a recorded state a *name you can use as a
-revision*. `restore_state` takes that name, which is what makes going
-back to a version, and forward again, the same button.
-
-They are in the panel as well, so reach for the services only if you want
-to script them.
+The version services are in the panel as well, so reach for them only if
+you want to script them. One detail matters for scripting: `restore_state`
+accepts a version's name as its `revision`, exactly as it accepts a git
+revision — that is what lets a script go to a version the same way the
+panel does.
 
 ## If a whole dashboard is deleted
 
