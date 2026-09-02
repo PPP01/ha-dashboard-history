@@ -552,6 +552,85 @@ async def main():
             )
             print(f"    element still registered: {registered}")
 
+            print("\n-- Versionen als Abschnitte --")
+            # The dashboard picked out of "DELETED" above carries no
+            # versions - back to a live one, the same way "-- Plain words
+            # on a live dashboard --" does: the first one that still
+            # exists, whichever it is. Naming one would put a name out of
+            # somebody's installation into a public repository.
+            live = await page.js(
+                f'(() => {{ const all = [...{PANEL}.querySelectorAll(".dash")];'
+                ' const b = all.find((x) => !x.closest("details.dead"));'
+                " if (!b) return null; b.click(); return b.dataset.key; })()"
+            )
+            if live:
+                await page.settle(
+                    f'{PANEL}.querySelector(".change .what")?.innerText'
+                    f".indexOf({json.dumps(live)}) === 0"
+                )
+            sections = await page.js(
+                "(() => { const p = " + PANEL
+                + '; return [...p.querySelectorAll("details.ver")].map(d => ({'
+                "  name: d.querySelector('summary .name')?.innerText ?? null,"
+                "  title: d.querySelector('summary .grow')?.innerText ?? null,"
+                "  count: d.querySelector('summary .count')?.innerText ?? null,"
+                "  hasBack: !!d.querySelector('summary [data-state]'),"
+                " })); })()"
+            )
+            print(f"    details.ver found: {len(sections)}")
+            for s in sections:
+                print(
+                    f"    {s['name']!r}  {s['title']!r}  {s['count']!r}"
+                    f"  back button: {s['hasBack']}"
+                )
+            await page.shot("13-version-sections.png")
+
+            print("\n-- Der Knopf an der Zeile --")
+            await page.js(f'{PANEL}.querySelector(".change").click()')
+            # Wait for the row's own explain/deleted_since fetch to settle,
+            # not just for the button to appear - it renders on the first,
+            # synchronous pass already, before that fetch resolves. Firing
+            # the next guarded action while it is still in flight races two
+            # re-renders against each other.
+            await page.settle(f'!{PANEL}.querySelector(".bar .muted")')
+            has_button = await page.js(
+                f'!!{PANEL}.querySelector(".detail .mkver button")'
+            )
+            label = await page.js(
+                f'{PANEL}.querySelector(".detail .mkver button")'
+                "?.innerText.trim() ?? null"
+            )
+            print(f"    '.detail .mkver button' present: {has_button}")
+            print(f"    label: {label!r}")
+            await page.shot("14-version-button.png")
+
+            print("\n-- Die drei Nummern --")
+            if not has_button:
+                print("    no 'Version up to here' button - nothing to click")
+            else:
+                await page.js(f'{PANEL}.querySelector(".detail .mkver button").click()')
+                opened = await page.settle(f'{PANEL}.querySelector("dialog.version")?.open')
+                print(f"    dialog opened: {opened}")
+                if opened:
+                    levels = await page.js(
+                        "(() => { const d = " + PANEL
+                        + '.querySelector("dialog.version");'
+                        ' return [...d.querySelectorAll(".levels button")].map(b => ['
+                        '   b.querySelector("strong")?.innerText ?? null,'
+                        "   b.getAttribute('aria-pressed'),"
+                        " ]); })()"
+                    )
+                    for number, pressed in levels:
+                        print(f"    {number!r}  aria-pressed={pressed}")
+                await page.shot("15-version-dialog.png")
+                # Cancel through the dialog's own button, not dialog.close():
+                # this exercises the same generic ".actions button" wiring a
+                # person clicking it would, and leaves nothing open behind.
+                await page.js(
+                    f'{PANEL}.querySelector("dialog.version .actions button[value=cancel]")'
+                    "?.click()"
+                )
+
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:
         chrome.terminate()

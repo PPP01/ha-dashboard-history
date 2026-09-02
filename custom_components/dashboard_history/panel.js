@@ -241,6 +241,10 @@ const STYLE = `
     gap: 8px;
     margin-top: 16px;
   }
+  .mkver {
+    display: flex;
+    margin-top: 8px;
+  }
   .why {
     display: block;
     margin-top: 16px;
@@ -854,7 +858,7 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!before)
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
-        <div class="backto">
+        <div class="mkver">
           <button class="act ghost" data-version="${index}">Version up to here</button>
         </div></div>`;
     const list = this._items.length
@@ -874,7 +878,7 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${list}
       ${this._renderSetBack(index)}
-      <div class="backto">
+      <div class="mkver">
         <button class="act ghost" data-version="${index}">Version up to here</button>
       </div>
     </div>`;
