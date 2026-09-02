@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .analyze import explain_change, explain_effect, find_removed
+from . import versions as versioning
 from .keys import is_absent, is_live
 from .restore import reinsert
 from .snapshot import (
@@ -136,8 +137,24 @@ async def async_history(
     up and down leaves several entries with byte-identical content and, since
     the messages are generated, identical wording: seven reading "2 moved",
     every second one the state in front of you.
+
+    Each entry also names the versions that sit on it, if any. The panel
+    builds its sections from that, so it never has to join two calls
+    together - a join in the panel is logic in the panel.
     """
     changes = await hass.async_add_executor_job(store.list_changes, key, limit)
+    # Which versions sit on which state. Gathered here rather than in the
+    # panel: the panel would need a second call and a join, and a join is
+    # logic. Two versions on one commit is allowed, so this is a list.
+    marks: dict[str, list[dict]] = {}
+    for version in await hass.async_add_executor_job(store.list_versions, key):
+        marks.setdefault(version.revision, []).append(
+            {
+                "name": version.name,
+                "title": version.title,
+                "description": version.description,
+            }
+        )
     live = await async_get_config(hass, key)
     same: set[str] = set()
     if live is not None and changes:
@@ -155,6 +172,7 @@ async def async_history(
                 "message": c.message,
                 "description": c.description,
                 "same_as_now": c.revision in same,
+                "versions": marks.get(c.revision, []),
             }
             for c in changes
         ]
@@ -285,29 +303,81 @@ async def async_restore_state(
     return result
 
 
+async def async_next_versions(
+    hass: HomeAssistant, store: HistoryStore, key: str
+) -> dict:
+    """The three names the three buttons carry, and the current one.
+
+    A read, so it needs no `confirm`. The panel must not work these out
+    itself: the numbering is the one calculation here that can be quietly
+    wrong, and it belongs where pytest reaches it.
+    """
+    found = await hass.async_add_executor_job(store.list_versions, key)
+    return {"candidates": versioning.candidates(key, [v.name for v in found])}
+
+
 async def async_create_version(
     hass: HomeAssistant,
     store: HistoryStore,
-    name: str,
-    title: str,
+    key: str,
+    level: str = "patch",
+    title: str = "",
     description: str = "",
     revision: str | None = None,
 ) -> dict:
-    """Mark a point in the history with a name, title and description."""
+    """Mark a recorded state of one dashboard as a version.
+
+    No `confirm`, for the same reason `describe` has none: this writes a
+    tag, not a dashboard. Nothing anybody can see changes, and removing
+    the tag would undo it.
+    """
+    if level not in versioning.LEVELS:
+        return {"created": None, "error": f"unknown level: {level}"}
     if revision:
         resolved = await hass.async_add_executor_job(store.resolve, revision)
         if resolved is None:
             return {"created": None, "error": f"unknown revision: {revision}"}
         revision = resolved
-    await hass.async_add_executor_job(
-        store.create_version, name, title, description, revision
-    )
+    else:
+        # Emphatically not HEAD, which is what the store would fall back
+        # to. One repository holds every dashboard, so HEAD is whichever
+        # dashboard was saved last. Measured: marking `heizung` without a
+        # revision just after `solar` was saved tags solar's commit - and
+        # the version then never shows up in heizung's history at all,
+        # because list_changes walks only the paths that dashboard
+        # touched. Wrong, invisible, and impossible to notice later.
+        newest = await hass.async_add_executor_job(store.list_changes, key, 1)
+        if not newest:
+            return {"created": None, "error": f"no recorded state for {key}"}
+        revision = newest[0].revision
+    found = await hass.async_add_executor_job(store.list_versions, key)
+    name = versioning.candidates(key, [v.name for v in found])[level]
+    try:
+        await hass.async_add_executor_job(
+            store.create_version, name, title, description, revision
+        )
+    except ValueError as err:
+        # A name git cannot hold beside the others. It is an answer, not a
+        # crash: the message says what is in the way.
+        return {"created": None, "error": str(err)}
     return {"created": name}
 
 
-async def async_versions(hass: HomeAssistant, store: HistoryStore) -> dict:
-    """Every named point in the history."""
-    found = await hass.async_add_executor_job(store.list_versions)
+async def async_versions(
+    hass: HomeAssistant, store: HistoryStore, key: str | None = None
+) -> dict:
+    """Every named point, newest first. One dashboard's, or all of them."""
+    found = await hass.async_add_executor_job(store.list_versions, key)
+    if key is not None:
+        # By number, not by the time the tag was made. Those differ as
+        # soon as somebody goes back and marks an older state: the newer
+        # tag then carries the lower number, and ordering by time would
+        # put it on top of one that contains it.
+        found = sorted(
+            found,
+            key=lambda v: versioning.parse(key, v.name) or (-1, -1, -1),
+            reverse=True,
+        )
     return {
         "versions": [
             {

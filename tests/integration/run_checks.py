@@ -1156,6 +1156,136 @@ async def run_preview_explains(access: str) -> None:
         )
 
 
+async def run_versions(access: str) -> None:
+    """Versions of one dashboard: counting up, marking, going back.
+
+    The interesting part is that nothing here writes a commit. A version
+    marks a state that is already recorded, so the history must be
+    exactly as long afterwards as it was before.
+    """
+    async with Socket(access) as socket:
+        key = TARGET
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check("there is a state to mark", bool(changes), f"{len(changes)} changes")
+        if not changes:
+            return
+        before = len(changes)
+        revision = changes[0]["revision"]
+
+        offered = await socket.call("dashboard_history/next_versions", dashboard=key)
+        candidates = offered.get("candidates", {})
+        check(
+            "three candidates are offered, patch among them",
+            set(candidates) == {"patch", "minor", "major", "current"},
+            str(candidates),
+        )
+
+        made = await socket.call(
+            "dashboard_history/create_version",
+            dashboard=key,
+            level="patch",
+            title="Prüflauf äöüß",
+            description="Von run_checks angelegt.",
+            revision=revision,
+        )
+        created = made.get("created")
+        check(
+            "the patch candidate is what gets created",
+            created == candidates.get("patch"),
+            f"{created} vs {candidates.get('patch')}",
+        )
+        if not created:
+            return
+
+        listed = (await socket.call("dashboard_history/versions", dashboard=key))[
+            "versions"
+        ]
+        mine = [v for v in listed if v["name"] == created]
+        check("it comes back in the list", len(mine) == 1, str(listed))
+        check(
+            "with its title, umlauts intact",
+            bool(mine) and mine[0]["title"] == "Prüflauf äöüß",
+            str(mine[:1]),
+        )
+        check(
+            "pointing at the state it was made from",
+            bool(mine) and mine[0]["revision"] == revision,
+            str(mine[:1]),
+        )
+
+        after = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "marking wrote no commit - the history is the same length",
+            len(after) == before,
+            f"{before} -> {len(after)}",
+        )
+        check(
+            "the marked change names its version",
+            created in [v["name"] for v in after[0].get("versions", [])],
+            str(after[0].get("versions")),
+        )
+
+        # The whole point of the namespace: the name is a revision.
+        preview = await socket.call(
+            "dashboard_history/restore_state", dashboard=key, revision=created
+        )
+        check(
+            "a version name works as a revision",
+            "unknown revision" not in preview.get("error", ""),
+            str(preview.get("error", "no error"))[:120],
+        )
+
+        again = await socket.call("dashboard_history/next_versions", dashboard=key)
+        check(
+            "the next patch counts up from the one just made",
+            again.get("candidates", {}).get("current") == created,
+            str(again.get("candidates")),
+        )
+
+        bad = await socket.call(
+            "dashboard_history/create_version",
+            dashboard=key,
+            level="enormous",
+            title="Nowhere",
+        )
+        check(
+            "an unknown level is refused, and says so",
+            bad.get("created") is None and "unknown level" in bad.get("error", ""),
+            str(bad),
+        )
+
+        # Without a revision the store would fall back to HEAD, and HEAD
+        # is whichever dashboard was saved last - one repository holds
+        # them all. Measured before this plan was written: it tags a
+        # stranger's commit, and the version is then invisible in this
+        # dashboard's history for good.
+        loose = await socket.call(
+            "dashboard_history/create_version",
+            dashboard=key,
+            level="minor",
+            title="Ohne Revision",
+        )
+        placed = loose.get("created")
+        check("a version without a revision is still created", bool(placed), str(loose))
+        if placed:
+            newest = (await socket.call("dashboard_history/versions", dashboard=key))[
+                "versions"
+            ]
+            mark = next((v for v in newest if v["name"] == placed), None)
+            history = (await socket.call("dashboard_history/history", dashboard=key))[
+                "changes"
+            ]
+            check(
+                "and it lands on this dashboard's own newest state, not on HEAD",
+                bool(mark) and mark["revision"] == history[0]["revision"],
+                f"{mark and mark['revision'][:10]} vs {history[0]['revision'][:10]}",
+            )
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -1193,6 +1323,8 @@ if __name__ == "__main__":
     asyncio.run(run_explanation(access))
     print("\n  -- Die Vorschau vor dem Übernehmen --")
     asyncio.run(run_preview_explains(access))
+    print("\n  -- Versionen je Dashboard --")
+    asyncio.run(run_versions(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))
