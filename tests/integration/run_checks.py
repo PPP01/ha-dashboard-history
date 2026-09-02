@@ -919,16 +919,25 @@ async def run_forget(access: str) -> None:
 
         # A description on another dashboard, which the rewrite must carry.
         other = TARGET
-        changes = (await socket.call("dashboard_history/history", dashboard=other))[
-            "changes"
-        ]
+        # Asked for without a cap on purpose. The default limit of 50 is
+        # what left the check at the end of this section unable to fail;
+        # the comment there says why.
+        changes = (
+            await socket.call(
+                "dashboard_history/history", dashboard=other, limit=100_000
+            )
+        )["changes"]
         keepsake = "Diese Beschreibung muss die Umschreibung überleben"
         await socket.call(
             "dashboard_history/describe",
             revision=changes[0]["revision"],
             text=keepsake,
         )
-        before_count = len(changes)
+        # What each recorded state IS, not how many there are. `forget`
+        # rewrites every revision, so revisions cannot be compared across
+        # it - but it copies each commit's message and time over verbatim,
+        # so those two identify a state on both sides of the rewrite.
+        before_states = [(c["timestamp"], c["message"]) for c in changes]
 
         facts = await socket.call("dashboard_history/forget", dashboard=key)
         check(
@@ -966,13 +975,32 @@ async def run_forget(access: str) -> None:
         )
 
         # The part that can go wrong silently.
-        survivor = (await socket.call("dashboard_history/history", dashboard=other))[
-            "changes"
-        ]
+        survivor = (
+            await socket.call(
+                "dashboard_history/history", dashboard=other, limit=100_000
+            )
+        )["changes"]
+        # Counting the entries could not show this, for the same reason it
+        # could not in `run_versions`: `history` answers with a default
+        # limit of 50, this bench adds states to TARGET on every run, and
+        # once it has reached fifty both sides read 50 whatever the rewrite
+        # did to the history underneath. Both lists are asked for without a
+        # cap now, and compared entry by entry: a state dropped anywhere in
+        # the history changes the sequence, and no limit can swallow that.
+        kept = [(c["timestamp"], c["message"]) for c in survivor]
+        gap = next(
+            (
+                i
+                for i, state in enumerate(before_states)
+                if i >= len(kept) or kept[i] != state
+            ),
+            None,
+        )
         check(
-            "the other dashboard kept every one of its states",
-            len(survivor) == before_count,
-            f"{before_count} -> {len(survivor)}",
+            "the other dashboard's states all came through the rewrite",
+            kept == before_states,
+            f"{len(before_states)} -> {len(kept)}"
+            + ("" if gap is None else f", first difference at entry {gap}"),
         )
         check(
             "and the description written on it survived the rewrite",
