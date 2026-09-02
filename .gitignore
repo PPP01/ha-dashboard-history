@@ -11,3 +11,10 @@ __pycache__/
 # Where a real .storage lives is a detail of one machine, and this
 # repository is public. conftest.py reads it if it is there.
 tests/.real-storage
+
+# Codex leaves nothing in the working tree here, only a git ref under
+# refs/codex/ - and .gitignore cannot reach refs, only untracked paths.
+# These entries are the guard for the day it does write something.
+.codex/
+codex-*.json
+*.codex.md
