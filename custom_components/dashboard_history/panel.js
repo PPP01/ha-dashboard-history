@@ -269,6 +269,59 @@ const STYLE = `
   pre .add { color: var(--success-color, #0f9d58); }
   pre .del { color: var(--error-color, #db4437); }
   pre .at { color: var(--secondary-text-color, #727272); }
+  details.ver { margin-bottom: 12px; }
+  details.ver > summary {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--card-background-color, #fff);
+    box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
+    cursor: pointer;
+  }
+  details.ver > summary .name {
+    font-family: monospace;
+    font-weight: 500;
+    color: var(--primary-color, #03a9f4);
+  }
+  details.ver > summary .grow { flex: 1 1 auto; }
+  details.ver > summary .count {
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+  }
+  details.ver > .inner { padding: 12px 0 0 16px; }
+  details.ver .also {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--secondary-text-color, #727272);
+  }
+  .levels { display: flex; gap: 8px; margin: 12px 0; }
+  .levels button {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px;
+    border: 1px solid var(--divider-color, #e0e0e0);
+    border-radius: 4px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .levels button[aria-pressed="true"] {
+    border-color: var(--primary-color, #03a9f4);
+    box-shadow: inset 0 0 0 1px var(--primary-color, #03a9f4);
+  }
+  .levels button strong { font-family: monospace; font-size: 15px; }
+  .levels button span {
+    color: var(--secondary-text-color, #727272);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+  }
 `;
 
 const escape = (value) =>
@@ -347,6 +400,13 @@ class DashboardHistoryPanel extends HTMLElement {
     this._items = [];
     this._explanation = null;
     this._deadOpen = false;
+    // Which version sections are expanded, keyed by the name of the
+    // section's first version. Native <details> state alone does not
+    // survive a re-render - _render() replaces the whole shadow DOM, so
+    // without this a "Back to this version" click would collapse the
+    // very section it was clicked from, the moment _guard's preview
+    // fetch triggers the first re-render.
+    this._verOpen = new Set();
     this._busy = false;
     this._error = null;
     this._loaded = false;
@@ -524,6 +584,82 @@ class DashboardHistoryPanel extends HTMLElement {
     if (answer !== "save") return;
     const result = await this._guard(() =>
       this._call("describe", { revision: change.revision, text: field.value }),
+    );
+    if (result?.error) {
+      this._error = result.error;
+      this._render();
+      return;
+    }
+    await this._select(this._selected);
+  }
+
+  /**
+   * Three buttons carrying the finished numbers, patch preselected.
+   *
+   * The number is never typed. A tag name has ref rules - no spaces, no
+   * `..`, no `~^:?*[` - and passing those rules through to a dialog would
+   * be carrying the storage into the interface. Choosing between patch,
+   * minor and major carries a statement instead: was this a correction or
+   * a rebuild?
+   */
+  async _createVersion(index) {
+    const change = this._changes[index];
+    // Fetched before the dialog is touched: _guard re-renders, and a
+    // re-render replaces the dialog element along with everything else.
+    const offered = await this._guard(() =>
+      this._call("next_versions", { dashboard: this._selected }),
+    );
+    if (!offered) return;
+    const candidates = offered.candidates || {};
+    const dialog = this.shadowRoot.querySelector("dialog.version");
+    dialog.querySelector("[data-scope]").textContent = candidates.current
+      ? `Everything from ${candidates.current} up to and including this change.`
+      : "Everything up to and including this change.";
+    let level = "patch";
+    const buttons = [...dialog.querySelectorAll(".levels button")];
+    buttons.forEach((button) => {
+      const which = button.dataset.level;
+      button.querySelector("strong").textContent = (
+        candidates[which] || ""
+      ).split("/").pop();
+      button.setAttribute("aria-pressed", String(which === level));
+    });
+    // One listener on the group rather than three on the buttons. Not
+    // because they would pile up - _guard re-renders before this line, so
+    // the dialog is a fresh element every time - but because relying on
+    // that is relying on a re-render two calls away. This holds either way.
+    dialog.querySelector(".levels").addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-level]");
+      if (!button) return;
+      level = button.dataset.level;
+      buttons.forEach((other) =>
+        other.setAttribute(
+          "aria-pressed",
+          String(other.dataset.level === level),
+        ),
+      );
+    });
+    const title = dialog.querySelector("input.title");
+    const description = dialog.querySelector("input.desc");
+    title.value = "";
+    description.value = "";
+    dialog.returnValue = "";
+    dialog.showModal();
+    title.focus();
+    const answer = await new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
+        once: true,
+      });
+    });
+    if (answer !== "create") return;
+    const result = await this._guard(() =>
+      this._call("create_version", {
+        dashboard: this._selected,
+        level,
+        title: title.value.trim() || candidates[level].split("/").pop(),
+        description: description.value.trim(),
+        revision: change.revision,
+      }),
     );
     if (result?.error) {
       this._error = result.error;
@@ -717,7 +853,10 @@ class DashboardHistoryPanel extends HTMLElement {
     const before = this._before(index);
     if (!before)
       return `<div class="detail">${plain}<p class="muted">This is the first
-        recorded state, so there is nothing before it to compare against.</p></div>`;
+        recorded state, so there is nothing before it to compare against.</p>
+        <div class="backto">
+          <button class="act ghost" data-version="${index}">Version up to here</button>
+        </div></div>`;
     const list = this._items.length
       ? this._items
           .map(
@@ -735,7 +874,65 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${list}
       ${this._renderSetBack(index)}
+      <div class="backto">
+        <button class="act ghost" data-version="${index}">Version up to here</button>
+      </div>
     </div>`;
+  }
+
+  /**
+   * The history, cut into sections at the versions.
+   *
+   * A version marks a state, so it marks the *newest* change it contains
+   * - the section it heads runs from that change downwards to the next
+   * version below. Everything above the topmost version is not in a
+   * version yet, and that is the section people work in.
+   */
+  _sections() {
+    const out = [];
+    let head = null;
+    let rows = [];
+    this._changes.forEach((change, index) => {
+      const marks = change.versions || [];
+      if (marks.length) {
+        if (rows.length || head) out.push({ versions: head, rows });
+        head = marks;
+        rows = [index];
+      } else {
+        rows.push(index);
+      }
+    });
+    if (rows.length || head) out.push({ versions: head, rows });
+    return out;
+  }
+
+  /**
+   * A section head. Two versions can sit on the same state; both are
+   * named rather than one of them being silently dropped.
+   *
+   * The button disappears when its target is what the dashboard holds
+   * already - the same rule the row buttons follow, and for the same
+   * reason: offering it there opens a dialog reading "No difference."
+   * above a live Apply button.
+   */
+  _renderVersionHead(section) {
+    const [first, ...also] = section.versions;
+    const count = section.rows.length;
+    const extra = also
+      .map((v) => `<span class="also">also ${escape(v.name)} — ${escape(v.title)}</span>`)
+      .join("");
+    const here = this._changes[section.rows[0]]?.same_as_now;
+    const back = here
+      ? '<span class="count">current state</span>'
+      : `<button class="act ghost" data-state="${escape(first.name)}"
+                 >Back to this version</button>`;
+    return `
+      <summary>
+        <span class="name">${escape(first.name.split("/").pop())}</span>
+        <span class="grow">${escape(first.title || first.name)}${extra}</span>
+        <span class="count">${count} change${count === 1 ? "" : "s"}</span>
+        ${back}
+      </summary>`;
   }
 
   _renderMain() {
@@ -760,22 +957,54 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!this._changes.length)
       return `${banner}<p class="empty muted">No changes recorded for this dashboard.</p>`;
 
-    // The newest entry is set apart when it is provably the state in front
-    // of you. Provably: after a change made at Home Assistant's back it is
-    // not, and then nothing is crowned rather than the wrong thing.
-    const topIsCurrent = Boolean(this._changes[0].same_as_now);
-    const rows = this._changes.map((change, index) => this._renderRow(change, index));
-    if (!topIsCurrent) return banner + rows.join("");
-    return (
-      banner +
-      `<div class="current">
-         <p class="heading">Current state</p>
-         ${rows[0]}
-       </div>` +
-      (rows.length > 1
-        ? `<div class="divider">History</div>${rows.slice(1).join("")}`
-        : "")
+    // Only the first section can be version-less: every later one starts
+    // at the change a version sits on. So the unbundled case is handled
+    // once, outside the loop, rather than guarded for on every section.
+    const sections = this._sections();
+    const newest = sections.find((s) => s.versions);
+    const label = newest
+      ? `Since ${newest.versions[0].name.split("/").pop()}`
+      : "Not in a version yet";
+    const parts = sections.map((section) => {
+      if (!section.versions) return this._renderTopSection(section, label);
+      const rows = section.rows
+        .map((index) => this._renderRow(this._changes[index], index))
+        .join("");
+      const key = section.versions[0].name;
+      return `<details class="ver" data-key="${escape(key)}"
+                ${this._verOpen.has(key) ? "open" : ""}>
+                ${this._renderVersionHead(section)}
+                <div class="inner">${rows}</div>
+              </details>`;
+    });
+    return banner + parts.join("");
+  }
+
+  /**
+   * The newest entry is set apart when it is provably the state in front
+   * of you. Provably: after a change made at Home Assistant's back it is
+   * not, and then nothing is crowned rather than the wrong thing.
+   */
+  _renderTopSection(section, label) {
+    const rows = section.rows.map((index) =>
+      this._renderRow(this._changes[index], index),
     );
+    if (!this._changes[0].same_as_now)
+      return `<div class="divider">${escape(label)}</div>${rows.join("")}`;
+    // The crowned row sits above the divider, not under it - so when it
+    // is the only row, the divider has nothing left to head and the
+    // label would disappear with it. It moves into the heading instead:
+    // "which version am I building on" is exactly what somebody looking
+    // at a change that is not in one yet wants to know.
+    const more = rows.length > 1;
+    const rest = more
+      ? `<div class="divider">${escape(label)}</div>${rows.slice(1).join("")}`
+      : "";
+    const heading = more ? "Current state" : `Current state · ${label}`;
+    return `<div class="current">
+              <p class="heading">${escape(heading)}</p>
+              ${rows[0]}
+            </div>${rest}`;
   }
 
   _renderRow(change, index) {
@@ -860,6 +1089,32 @@ class DashboardHistoryPanel extends HTMLElement {
           <button class="act ghost" value="cancel">Cancel</button>
           <button class="act" value="save">Save</button>
         </div>
+      </dialog>
+      <dialog class="version">
+        <h2>Create a version</h2>
+        <div class="body" style="padding:0 16px 8px">
+          <p class="muted" style="font-size:13px" data-scope></p>
+          <div class="levels">
+            <button type="button" data-level="patch" aria-pressed="true">
+              <strong></strong><span>Patch</span>
+            </button>
+            <button type="button" data-level="minor" aria-pressed="false">
+              <strong></strong><span>Minor</span>
+            </button>
+            <button type="button" data-level="major" aria-pressed="false">
+              <strong></strong><span>Major</span>
+            </button>
+          </div>
+          <input class="text title" type="text" maxlength="200"
+                 placeholder="What is this version?">
+          <input class="text desc" type="text" maxlength="500"
+                 style="margin-top:8px"
+                 placeholder="Anything more worth remembering (optional)">
+        </div>
+        <div class="actions">
+          <button class="act ghost" value="cancel">Cancel</button>
+          <button class="act" value="create">Create</button>
+        </div>
       </dialog>`;
 
     const root = this.shadowRoot;
@@ -868,6 +1123,16 @@ class DashboardHistoryPanel extends HTMLElement {
       fold.addEventListener("toggle", () => {
         this._deadOpen = fold.open;
       });
+    // Mirrors the fold above: without this, "Back to this version"
+    // would appear to collapse its own section, because _guard's
+    // preview fetch re-renders before the confirm dialog even opens.
+    root.querySelectorAll("details.ver").forEach((element) => {
+      const key = element.dataset.key;
+      element.addEventListener("toggle", () => {
+        if (element.open) this._verOpen.add(key);
+        else this._verOpen.delete(key);
+      });
+    });
     root.querySelectorAll(".dash").forEach((element) =>
       element.addEventListener("click", () =>
         this._select(element.dataset.key),
@@ -890,12 +1155,15 @@ class DashboardHistoryPanel extends HTMLElement {
       }),
     );
     root.querySelectorAll("[data-state]").forEach((element) =>
-      element.addEventListener("click", () =>
+      element.addEventListener("click", (event) => {
+        // Inside a <summary> a click would toggle the section as well.
+        event.preventDefault();
+        event.stopPropagation();
         // The dialog is titled with the button that opened it. With two
         // of them on a row, a generic heading would leave you guessing
         // which one you pressed.
-        this._restoreState(element.dataset.state, element.textContent.trim()),
-      ),
+        this._restoreState(element.dataset.state, element.textContent.trim());
+      }),
     );
     root.querySelectorAll("[data-forget]").forEach((element) =>
       element.addEventListener("click", () => this._forget()),
@@ -906,6 +1174,13 @@ class DashboardHistoryPanel extends HTMLElement {
         // row at the same time.
         event.stopPropagation();
         this._describe(Number(element.dataset.describe));
+      }),
+    );
+    root.querySelectorAll("[data-version]").forEach((element) =>
+      element.addEventListener("click", (event) => {
+        // Otherwise the click reaches the row underneath and collapses it.
+        event.stopPropagation();
+        this._createVersion(Number(element.dataset.version));
       }),
     );
     root.querySelectorAll("dialog").forEach((element) =>
