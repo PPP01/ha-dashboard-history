@@ -288,7 +288,14 @@ async def run(access: str) -> None:
     module_url = (panels.get("dashboard-history") or {}).get("config", {}).get(
         "_panel_custom", {}
     ).get("module_url", "")
-    want = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+    # Mirrors panel.py's _fingerprint: every file the panel is built from,
+    # name and content, entry point first and the parts sorted after it.
+    # Digesting panel.js alone would let a changed part keep its cached URL.
+    digest = hashlib.sha256()
+    for path in [source, *sorted((source.parent / "panel").glob("*.js"))]:
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes())
+    want = digest.hexdigest()[:12]
     fresh = f"v={want}" in module_url
     if not module_url:
         detail = "no module_url found"
@@ -296,7 +303,7 @@ async def run(access: str) -> None:
         detail = module_url
     else:
         detail = (
-            f"{module_url} but the file hashes to {want} - panel.js changed "
+            f"{module_url} but the files hash to {want} - the panel changed "
             "since Home Assistant registered it, so restart the container"
         )
     check("the panel module URL carries a fingerprint of the file", fresh, detail)

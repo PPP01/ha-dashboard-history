@@ -30,12 +30,28 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _MODULE_URL = f"/{DOMAIN}/panel.js"
+_PARTS_URL = f"/{DOMAIN}/panel"
 _SOURCE = Path(__file__).parent / "panel.js"
+_PARTS = Path(__file__).parent / "panel"
 
 
 def _fingerprint() -> str:
-    """A short digest of panel.js, for the cache-busting query."""
-    return hashlib.sha256(_SOURCE.read_bytes()).hexdigest()[:12]
+    """A short digest of every file the panel is built from.
+
+    Every file, not only the entry point. The parts are fetched with the
+    entry point's own query string, so digesting `panel.js` alone would
+    serve a stale part whenever only a part changed - the same
+    intermittent cache failure the hand-maintained version number caused,
+    one level down and considerably harder to spot.
+
+    The file name goes into the digest as well, so that renaming a part
+    changes the fingerprint even when its contents do not.
+    """
+    digest = hashlib.sha256()
+    for path in [_SOURCE, *sorted(_PARTS.glob("*.js"))]:
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 async def _async_module_url(hass: HomeAssistant) -> str:
@@ -62,16 +78,19 @@ async def _async_module_url(hass: HomeAssistant) -> str:
 
 
 async def _async_serve_module(hass: HomeAssistant) -> None:
-    """Make panel.js reachable, on whichever API this Home Assistant has."""
-    source = str(_SOURCE)
+    """Make panel.js and its parts reachable, on whichever API this has."""
+    paths = [(_MODULE_URL, str(_SOURCE)), (_PARTS_URL, str(_PARTS))]
     register_many = getattr(hass.http, "async_register_static_paths", None)
     if register_many is not None:
         from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
 
-        await register_many([StaticPathConfig(_MODULE_URL, source, False)])
+        await register_many(
+            [StaticPathConfig(url, source, False) for url, source in paths]
+        )
         return
     # Older releases only had the singular, synchronous form.
-    hass.http.register_static_path(_MODULE_URL, source, False)
+    for url, source in paths:
+        hass.http.register_static_path(url, source, False)
 
 
 async def async_register(hass: HomeAssistant) -> bool:
