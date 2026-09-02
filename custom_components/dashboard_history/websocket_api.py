@@ -116,19 +116,34 @@ _COMMANDS = (
         lambda msg: {"key": msg["dashboard"], "confirm": msg["confirm"]},
     ),
     _command(
-        f"{DOMAIN}/versions", {}, operations.async_versions, lambda msg: {}
+        f"{DOMAIN}/versions",
+        {vol.Optional("dashboard"): vol.Any(str, None)},
+        operations.async_versions,
+        lambda msg: {"key": msg.get("dashboard")},
+    ),
+    _command(
+        f"{DOMAIN}/next_versions",
+        {**_DASHBOARD},
+        operations.async_next_versions,
+        lambda msg: {"key": msg["dashboard"]},
     ),
     _command(
         f"{DOMAIN}/create_version",
         {
-            vol.Required("name"): str,
+            **_DASHBOARD,
+            # Free text, not vol.In - see the note under services.py. A
+            # schema that refuses first means operations never gets to
+            # answer, and the sentence it would have answered with is the
+            # one the panel shows a person.
+            vol.Optional("level", default="patch"): str,
             vol.Required("title"): str,
             vol.Optional("description", default=""): str,
             vol.Optional("revision"): vol.Any(str, None),
         },
         operations.async_create_version,
         lambda msg: {
-            "name": msg["name"],
+            "key": msg["dashboard"],
+            "level": msg["level"],
             "title": msg["title"],
             "description": msg["description"],
             "revision": msg.get("revision"),

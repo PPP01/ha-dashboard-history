@@ -71,18 +71,26 @@ async def async_register(hass: HomeAssistant) -> None:
             hass, store, call.data["dashboard"], bool(call.data.get("confirm"))
         )
 
+    async def next_versions(call: ServiceCall) -> dict:
+        return await operations.async_next_versions(
+            hass, store, call.data["dashboard"]
+        )
+
     async def create_version(call: ServiceCall) -> dict:
         return await operations.async_create_version(
             hass,
             store,
-            call.data["name"],
+            call.data["dashboard"],
+            call.data.get("level", "patch"),
             call.data["title"],
             call.data.get("description", ""),
             call.data.get("revision"),
         )
 
     async def versions(call: ServiceCall) -> dict:
-        return await operations.async_versions(hass, store)
+        return await operations.async_versions(
+            hass, store, call.data.get("dashboard")
+        )
 
     registrations = [
         ("history", history, DASHBOARD.extend({vol.Optional("limit", default=50): int})),
@@ -105,13 +113,14 @@ async def async_register(hass: HomeAssistant) -> None:
         ("forget", forget, DASHBOARD.extend({
             vol.Optional("confirm", default=False): bool,
         })),
-        ("create_version", create_version, vol.Schema({
-            vol.Required("name"): cv.string,
+        ("next_versions", next_versions, DASHBOARD),
+        ("create_version", create_version, DASHBOARD.extend({
+            vol.Optional("level", default="patch"): cv.string,
             vol.Required("title"): cv.string,
             vol.Optional("description", default=""): cv.string,
             vol.Optional("revision"): cv.string,
         })),
-        ("versions", versions, vol.Schema({})),
+        ("versions", versions, vol.Schema({vol.Optional("dashboard"): cv.string})),
     ]
     for name, handler, schema in registrations:
         hass.services.async_register(

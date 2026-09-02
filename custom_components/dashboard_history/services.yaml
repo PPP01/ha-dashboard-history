@@ -160,18 +160,43 @@ forget:
       selector:
         boolean:
 
-create_version:
-  name: Name a version
+next_versions:
+  name: Next version numbers
   description: >-
-    Mark a point in the history with a name, a title and a description.
-    It groups the changes below it; it never squashes them.
+    What the next patch, minor and major version of a dashboard would be
+    called. Reads only; it creates nothing.
   fields:
-    name:
+    dashboard:
       required: true
-      description: Short identifier, used as the tag name.
-      example: kitchen-rework
+      description: The dashboard, by its url_path.
+      example: my-dashboard
       selector:
         text:
+
+create_version:
+  name: Create a version
+  description: >-
+    Mark a recorded state of one dashboard as a version. It groups the
+    changes below it; it never squashes them. Nothing on the dashboard
+    changes, so this needs no confirmation.
+  fields:
+    dashboard:
+      required: true
+      description: The dashboard, by its url_path.
+      example: my-dashboard
+      selector:
+        text:
+    level:
+      description: >-
+        How far to count up. The number itself is worked out from the
+        highest version this dashboard already has.
+      default: patch
+      selector:
+        select:
+          options:
+            - patch
+            - minor
+            - major
     title:
       required: true
       example: Kitchen rework
@@ -185,10 +210,18 @@ create_version:
           multiline: true
     revision:
       description: >-
-        Which revision to mark. Defaults to the most recent one.
+        Which recorded state to mark. Defaults to the most recent one.
       selector:
         text:
 
 versions:
   name: Versions
-  description: The named points in the history, newest first.
+  description: >-
+    The named points in the history. Give a dashboard to see only its
+    own, ordered by version number.
+  fields:
+    dashboard:
+      description: The dashboard, by its url_path. Leave empty for all.
+      example: my-dashboard
+      selector:
+        text:
