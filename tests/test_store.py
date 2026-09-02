@@ -618,3 +618,38 @@ def test_the_forgotten_text_is_gone_from_the_object_store(store):
         repo.close()
     assert blobs, "the surviving dashboard should still have its blob"
     assert not any(b"confidential" in blob for blob in blobs)
+
+
+def test_versions_can_be_asked_for_one_dashboard(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("solar", "b: 1\n", "solar first")
+    store.create_version("home/v1.0.0", "Home", "", first)
+    store.create_version("solar/v1.0.0", "Solar", "", second)
+    assert [v.name for v in store.list_versions("home")] == ["home/v1.0.0"]
+    assert [v.name for v in store.list_versions("solar")] == ["solar/v1.0.0"]
+    assert len(store.list_versions()) == 2
+
+
+def test_the_same_version_twice_is_refused(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "Home", "", first)
+    with pytest.raises(ValueError, match="already exists"):
+        store.create_version("home/v1.0.0", "Again", "", first)
+
+
+def test_a_flat_tag_blocks_the_namespace_below_it(store):
+    # git cannot hold a tag `home` and a tag `home/v1.0.0` at once - the
+    # ref file and the ref directory are the same path. Measured: dulwich
+    # raises IsADirectoryError and leaves a stray .lock behind, so this is
+    # refused up front rather than suffered.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home", "Loose", "", first)
+    with pytest.raises(ValueError, match="home"):
+        store.create_version("home/v1.0.0", "Blocked", "", first)
+
+
+def test_a_namespace_blocks_the_flat_tag_above_it(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    with pytest.raises(ValueError, match="home/v1.0.0"):
+        store.create_version("home", "Loose", "", first)

@@ -182,6 +182,7 @@ class HistoryStore:
     def _create_version(
         self, name: str, title: str, description: str, revision: str | None
     ) -> None:
+        self._refuse_colliding_name(name)
         body = f"{title}\n\n{description}".encode("utf-8")
         porcelain.tag_create(
             str(self.path),
@@ -191,6 +192,32 @@ class HistoryStore:
             annotated=True,
             objectish=revision.encode() if revision else b"HEAD",
         )
+
+    def _refuse_colliding_name(self, name: str) -> None:
+        """Refuse a version name git could not hold beside the others.
+
+        A ref is a file, and a ref namespace is a directory of the same
+        path - so `home` and `home/v1.0.0` cannot both exist. Measured on
+        dulwich 1.2.14: the attempt raises IsADirectoryError *and* leaves
+        a `.lock` file behind, which is a worse thing to hand a person
+        than a sentence saying what is in the way.
+        """
+        repo = self._repo()
+        if repo is None:
+            return
+        existing = {ref.decode() for ref in repo.refs.as_dict(b"refs/tags")}
+        if name in existing:
+            raise ValueError(f"version already exists: {name}")
+        parent, _, _ = name.partition("/")
+        if parent != name and parent in existing:
+            raise ValueError(
+                f"cannot create {name}: a version named {parent} is in the way"
+            )
+        below = sorted(one for one in existing if one.startswith(f"{name}/"))
+        if below:
+            raise ValueError(
+                f"cannot create {name}: {below[0]} is in the way"
+            )
 
     def set_description(self, revision: str, text: str) -> bool:
         """Attach a person's own words to a recorded change.
@@ -658,13 +685,23 @@ class HistoryStore:
                 return text
         return None
 
-    def list_versions(self) -> list[Version]:
-        """Every named point, newest first."""
+    def list_versions(self, key: str | None = None) -> list[Version]:
+        """Every named point, newest first. One dashboard's, or all of them.
+
+        Ordered by the time the tag was made, which is the only order this
+        class can know. A caller that wants them by version *number* sorts
+        them itself - the numbering lives in `versions.py`, and this
+        module stays free of it.
+        """
         repo = self._repo()
         if repo is None:
             return []
+        prefix = None if key is None else f"{key}/"
         found: list[tuple[int, Version]] = []
         for ref in repo.refs.as_dict(b"refs/tags"):
+            name = ref.decode()
+            if prefix is not None and not name.startswith(prefix):
+                continue
             tag = repo[repo.refs[b"refs/tags/" + ref]]
             if not hasattr(tag, "object"):
                 # A lightweight tag, made by hand. Not ours; skip it rather
@@ -676,7 +713,7 @@ class HistoryStore:
                 (
                     tag.tag_time,
                     Version(
-                        name=ref.decode(),
+                        name=name,
                         revision=_as_text(tag.object[1]),
                         title=title.strip(),
                         description=description.strip(),
