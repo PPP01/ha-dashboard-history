@@ -1730,7 +1730,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 
 ## Nach der Umsetzung
 
-Umgesetzt am 2026-08-31. **Die Codeauszüge oben sind ab hier historisch — das Repository ist die Wahrheit.** Stand danach: 136 pytest-Tests, 39 Integrationsprüfungen, alle grün.
+Umgesetzt am 2026-08-31. **Die Codeauszüge oben sind ab hier historisch — das Repository ist die Wahrheit.** Stand unmittelbar danach: 136 pytest-Tests, 39 Integrationsprüfungen, alle grün. Was seither aus der Bedienung dazukam, steht unter »Nach dem Plan«.
 
 ### Was der Plan falsch hatte
 
@@ -1793,8 +1793,120 @@ Der Vergleich war seit Tagen falsch und fiel nicht auf, **weil das Löschen ohne
 
 Behoben durch exakten Vergleich auf den eigenen Schlüssel. Das Dashboard ist mit dem Werkzeug selbst wiederhergestellt worden — `restore_state` auf den Stand vor der Löschung, mit Titel, Symbol und drei Karten, ohne Rest.
 
+### Nach dem Plan: zehn Commits aus der Bedienung (2026-09-01 bis 09-02)
+
+Keiner davon stand in einem Plan. Alle zehn kamen daher, dass der Nutzer das
+Werkzeug benutzt hat — und das ist der Befund über den Befunden: Sieben der
+zehn behandeln nicht falsche Rechnung, sondern **falsche oder halbe Auskunft**.
+Der Code wusste es jeweils; die Zeile, die davon erzählte, log.
+
+**Was der Nutzer sah, und was daraus wurde:**
+
+| Beobachtung | Commit | Kern |
+|---|---|---|
+| Drei gleichnamige Dashboards, keins umzubenennen | `3766495` | HAs eigene Sammlung statt eines Nachbaus — siehe Nachtrag 2026-08-31 |
+| Sein Arbeits-Dashboard war gelöscht | `29f7b31`, `b99d204` | Ein Präfix ist keine Benennung — siehe Nachtrag 2026-09-01 |
+| Fremde Browser-Protokolle im Repository | `77f3c26` | `git add -A` nahm mit, was ein Werkzeug hinterließ |
+| »Rückgängig« ließ den Eintrag nicht nach oben rücken | `f0cbc92` | Der aktuelle Stand wird jetzt **gerechnet**, nicht vermutet |
+| 16 gelöschte Dashboards, nicht wegzubekommen | `ec6c60b`, `d59f7a5` | Einklappen, und ein `forget`, das wirklich vergisst |
+| Der neue Knopf war unsichtbar | `4c37379` | Die Panel-URL trug `?v=0.1.0` von Hand |
+| »4 moved« trug »same as now« | `6409b57` | Beide Hälften wahr, die Zeile zusammen irreführend |
+| »Zurück zu *diesem* Stand« fehlte | `78dcfef` | Zwei Ziele, benannt, statt eines verschobenen |
+
+**Stand danach: 153 pytest-Tests, 64 Integrationsprüfungen, Panel-Konsole
+still.**
+
+#### Die zwei, die ich am wenigsten erwartet hätte
+
+**Der Fingerabdruck an der Panel-URL.** Der Nutzer fragte »wo könnte ich es
+löschen?« — der Knopf war gebaut, geprüft und ausgeliefert, und er sah ihn
+nicht. Die Modul-URL hieß `panel.js?v=0.1.0`, eine handgepflegte Zahl, und
+Home Assistant setzt auf einem statischen Pfad kein `Cache-Control`, nur ETag
+und Last-Modified. Also griff der Browser-Cache mal und mal nicht: der
+schlimmste Fehlermodus, weil er beim Entwickeln oft nicht auftritt. Jetzt ist
+der Cache-Schlüssel ein Digest der Datei selbst — er ändert sich genau dann,
+wenn sie sich ändert. **Eine ausgelieferte Funktion, die niemand sieht, ist
+nicht ausgeliefert**, und geprüft wird das nur dort, wo ein echter Browser
+lädt.
+
+**Die halbe Wahrheit in einer Zeile.** »1 added« und »4 moved« trugen beide
+das Abzeichen »same state as now«. Beide Angaben waren einzeln richtig: Es
+fehlt nichts, und der Stand *nach* dieser Änderung ist der heutige. Zusammen
+gelesen behauptete die Zeile, die Reihenfolge sei dieselbe — obwohl das
+Werkzeug es besser wusste und selbst »4 moved« geschrieben hatte. Behoben,
+indem jede Hälfte sagt, worüber sie spricht. Und `78dcfef` zog die
+Konsequenz: Wo zwei Stände in Frage kommen, wird nicht einer geraten, sondern
+werden beide angeboten — **Entscheidung 9 ist dafür teilweise
+zurückgenommen**, mit Begründung in der Spec.
+
+#### Und eine Rücknahme meiner eigenen Ablehnung
+
+»Zurück zu *diesem* Stand« hatte ich zwei Tage früher abgelehnt, und die
+Ablehnung war für den damaligen Vorschlag richtig: Das Ziel einer Zeile
+stillschweigend zu verschieben ist eine Falle. Für den zweiten Vorschlag war
+sie falsch, weil er nichts verschob, sondern **hinzufügte**. Der Unterschied
+liegt nicht am Ziel, sondern daran, wer wählt. Wer eine Entscheidung der Spec
+zitiert, muss prüfen, ob sie die vorliegende Frage überhaupt beantwortet.
+
+### Veröffentlichung 0.2.0 (2026-09-02)
+
+Bis hierher lag alles lokal. Die Anlage lief weiter auf `0.1.0` —
+also ohne Beschreibungen, ohne Klartext, ohne echtes Vergessen **und ohne die
+Reparatur des Wiederanlegens**, die dort am meisten zählt: Die alte Fassung
+kann bei einem `restore_state` ein Dashboard erzeugen, das sich auflisten,
+aber nicht umbenennen und nicht löschen lässt.
+
+Deshalb `v0.2.0`, geschoben und als Release veröffentlicht. Zwei Dinge, die
+dabei zählen: HACS erkennt eine Aktualisierung nur an einer aufsteigenden
+Versionsnummer — ein Vorabversions-Suffix sortiert nach Semver **unterhalb**
+der Grundversion und wäre unsichtbar. Und die Versionsnummer steht an zwei
+Stellen (`manifest.json`, `const.py`); die zweite ist seit `4c37379` nur noch
+der Rückfall für die Panel-URL, was ihr Kommentar jetzt auch sagt.
+
+#### Der Schritt selbst fand drei Fehler
+
+**Das Panel stirbt nach einer Aktualisierung** — und zwar durch die
+Reparatur, die es sichtbar gemacht hat. Im Protokoll der Wegwerf-Instanz
+stand, gemeldet vom Browser des Nutzers:
+
+```
+Error: Failed to execute 'define' on 'CustomElementRegistry':
+the name "dashboard-history-panel" has already been used
+```
+
+Der Fingerabdruck aus `4c37379` ändert die Modul-URL, sobald sich die Datei
+ändert. Genau das lässt HAs Frontend `panel.js` in derselben
+Seitensitzung **ein zweites Mal** laden — und `customElements.define`
+verträgt denselben Namen nur einmal. Wer nach einer Aktualisierung nicht hart
+neu lädt, hätte ein totes Panel gesehen: in dem Moment, in dem er dazu am
+wenigsten Anlass hat. Ein Wächter (`if (!customElements.get(…))`) fängt es;
+eine Definition ist nicht ersetzbar, also bedient die alte weiter bis zum
+nächsten vollständigen Laden. Veraltet ist besser als kaputt.
+
+**Die Prüfung dazu hatte zuerst keine Zähne.** Sie importierte das Modul
+zweimal unter `?v=probe-a` und `?v=probe-b` — festen URLs. Der Nachweis gegen
+die ungeschützte Fassung meldete »kein Fehler«, weil der Browser die feste
+Probe-URL aus dem eigenen Cache beantwortete: **dasselbe fehlende
+`Cache-Control`**, das den ursprünglichen Fehler verursacht hat, hat auch
+seinen Nachweis verdeckt. Mit `Date.now()` in der URL meldet sie den Fehler
+wortgetreu. Erst danach ist sie eine Prüfung.
+
+**`run_checks.py` lief zu früh los.** `wait_for_api` wartete auf
+`/manifest.json` — das antwortet lange, bevor die Integration eingerichtet
+ist. Nach einem Neustart ist der Konfigurationseintrag schon da, also kehrte
+`ensure_integration` sofort zurück, und die ersten Prüfungen fielen gegen ein
+Home Assistant, das die Integration noch nicht geladen hatte: zwei
+Fehlmeldungen und ein Abbruch, zweimal hintereinander. Gewartet wird jetzt
+darauf, dass die *Dienste* registriert sind. **Ein Bereitschaftssignal muss
+das sein, wovon die Prüfung abhängt — nicht das Nächstbeste, was antwortet.**
+
+Die Reihenfolge ist dabei keine Nebensache: Die Fingerabdruck-Prüfung
+schlägt fehl, solange `panel.js` sich geändert hat, seit Home Assistant sie
+registriert hat. Das ist richtig so und sagt es selbst — wer `panel.js`
+anfasst, startet die Instanz neu, bevor er prüft.
+
 ### Ausdrücklich offen geblieben
 
 - **Ein umbenannter *Ansichts*titel** wird weiter nicht als Änderung benannt (`_views_by_key` schlüsselt auf `path`). Durch den Rückfall aus Entscheidung 11 nicht mehr irreführend: Die Erklärung sagt dann, dass sie es nicht in Karten ausdrücken kann, und verweist auf den Diff.
 - **Die Einstellung, ob der Diff offen oder zu startet.** Vorerst zu. Ihr Platz wäre ein Options-Flow.
-- **Kein Push.** Alles liegt lokal auf `main`.
+- **Die Messung des Platzbedarfs** über echte Nutzung (Plan 1, »Offen«). Die Erfassung läuft seit dem 2026-08-30 — drei Tage sind keine Messung.

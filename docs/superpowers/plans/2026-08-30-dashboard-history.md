@@ -2798,13 +2798,15 @@ billig prüfbar:
 
 ### Offen
 
-- [ ] **Anforderung an Teil 2 aus der Bedienung.** Die Dienste erwarten unter
+- [x] **Anforderung an Teil 2 aus der Bedienung.** Die Dienste erwarten unter
   `revision` den *Zustand, gegen den verglichen wird*. Ein Mensch denkt aber
   in *Änderungen* und greift zur Zeile, in der die Löschung steht — also eine
   zu spät. Die Meldung »nothing is missing since that revision« fängt das ab,
   aber die Oberfläche muss die Stolperstelle gar nicht erst nachbauen: Dort
   klickt man auf die Änderung (»diese Löschung rückgängig«), nicht auf einen
-  Zustand.
+  Zustand. **Erfüllt** (Spec, Entscheidung 9): Das Panel rechnet den Stand
+  davor selbst aus. Wo zwei Stände in Frage kommen, bietet es seit dem
+  2026-09-02 beide benannt an, statt einen zu raten.
 - [x] **Wiederanlegen eines gelöschten Dashboards.** Auf Entscheidung des
   Nutzers in den Umfang genommen (Spec, Entscheidung 8) und umgesetzt:
   `restore_state` legt ein fehlendes Dashboard mit Titel, Symbol und
@@ -2813,4 +2815,4 @@ billig prüfbar:
 
 - [x] **Entscheidung 1 der Spec beurteilen.** Beantwortet: Der Speicherweg trägt, keine Wartezeit nötig. Spec und Plan sind entsprechend nachgezogen.
 - [ ] **Platzbedarf über echte Nutzung messen.** Nach einigen Wochen `du -sh config/dashboard_history/` gegen die Zahl der Commits halten und mit den 27 KB je Stand aus der Spec vergleichen.
-- [ ] **Erst danach über Teil 2 entscheiden** — das Panel. Bis dahin zeigt sich, ob die Einordnung in der Praxis das Richtige erkennt.
+- [x] **Erst danach über Teil 2 entscheiden** — das Panel. Von der Wirklichkeit überholt: Das Panel ist gebaut und in Benutzung, und die Einordnung hat sich dabei bewährt. Was sie *nicht* erkennt, sagt sie seit Entscheidung 11 ehrlich, statt »nichts geändert« zu behaupten.

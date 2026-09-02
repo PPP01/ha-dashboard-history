@@ -19,8 +19,11 @@ PANEL_URL_PATH = "dashboard-history"
 PANEL_TITLE = "Dashboard History"
 PANEL_ICON = "mdi:history"
 PANEL_COMPONENT = "dashboard-history-panel"
-# Bumped whenever panel.js changes, so browsers do not serve a stale copy.
-PANEL_VERSION = "0.1.0"
+# The integration version, and only the fallback for the panel URL: the
+# cache key is a digest of panel.js itself (see panel.py). Keeping a
+# hand-maintained number as the cache key served everyone a stale panel
+# until somebody remembered to raise it.
+PANEL_VERSION = "0.2.0"
 
 # Seconds to wait before reconciling after a panel changed. Long enough to
 # collapse the burst Home Assistant fires while starting up.
