@@ -115,6 +115,31 @@ def test_a_version_resolves_to_the_commit_it_marks(store):
     assert store.resolve(tag.id.decode()) == first
 
 
+def test_a_version_resolves_by_its_name(store):
+    # The claim that a tag name works as a revision stood in the spec and
+    # in the README and was never true: dulwich's Repo.__getitem__ does no
+    # ref-name expansion, so `repo[b"v1.0.0"]` raises KeyError even when
+    # the tag is right there. It went unnoticed because the only test
+    # resolved the tag's *object id* instead of its name.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "Title", "Text.", first)
+    assert store.resolve("home/v1.0.0") == first
+
+
+def test_a_version_name_reads_the_state_it_marks(store):
+    # This is what makes going back to a version free: read_at takes the
+    # name straight through, so restore_state needs no new code at all.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "Title", "Text.", first)
+    store.write_snapshot("home", "a: 2\n", "second")
+    assert store.read_at("home", "home/v1.0.0") == "a: 1\n"
+
+
+def test_an_unknown_name_still_resolves_to_nothing(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.resolve("home/v9.9.9") is None
+
+
 def test_metadata_travels_with_the_state(store):
     first = store.write_snapshot("home", "a: 1\n", "first", meta="title: Home\n")
     assert store.read_meta_at("home", first) == "title: Home\n"

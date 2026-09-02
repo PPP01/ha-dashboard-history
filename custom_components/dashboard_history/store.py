@@ -506,10 +506,9 @@ class HistoryStore:
         """Turn a revision into a full commit hash, or None if unknown.
 
         Accepts what a person is actually likely to paste: a full hash, a
-        ref such as HEAD, an annotated tag, or an abbreviated hash of the
-        kind `git log --oneline` prints. dulwich resolves none of the
-        abbreviated forms by itself, and the abbreviated form is exactly
-        what anyone who looks into the repository will copy out of it.
+        ref such as HEAD, the name of a version, or an abbreviated hash of
+        the kind `git log --oneline` prints. dulwich resolves neither the
+        names nor the abbreviated forms by itself.
         """
         repo = self._repo()
         return None if repo is None else self._resolve(repo, revision)
@@ -520,19 +519,28 @@ class HistoryStore:
         if not name:
             return None
         sha = None
-        try:
-            sha = repo[name].id
-        except (KeyError, ValueError):
+        # git's own search order. dulwich expands none of it by itself:
+        # `repo[b"v1.0.0"]` raises KeyError even when refs/tags/v1.0.0 is
+        # right there, because Repo.__getitem__ does no ref-name
+        # expansion. Measured on dulwich 1.2.14 (2026-09-02) - and the
+        # belief that it did was what Entscheidung 10 rested on when it
+        # kept the version services. A tag is only addressable from here.
+        for candidate in (name, b"refs/tags/" + name, b"refs/heads/" + name):
+            try:
+                sha = repo[candidate].id
+            except (KeyError, ValueError):
+                continue
+            break
+        if sha is None and 4 <= len(name) < 40:
             # git itself refuses fewer than four characters; so do we.
-            if 4 <= len(name) < 40:
-                lowered = name.lower()
-                if all(char in b"0123456789abcdef" for char in lowered):
-                    matches = list(repo.object_store.iter_prefix(lowered))
-                    # An ambiguous prefix is refused rather than guessed:
-                    # picking one of two commits would be worse than
-                    # saying it is not clear which was meant.
-                    if len(matches) == 1:
-                        sha = matches[0]
+            lowered = name.lower()
+            if all(char in b"0123456789abcdef" for char in lowered):
+                matches = list(repo.object_store.iter_prefix(lowered))
+                # An ambiguous prefix is refused rather than guessed:
+                # picking one of two commits would be worse than saying
+                # it is not clear which was meant.
+                if len(matches) == 1:
+                    sha = matches[0]
         if sha is None:
             return None
         obj = repo[sha]
