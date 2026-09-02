@@ -11,8 +11,12 @@ Umsetzung mit `superpowers:subagent-driven-development`.
 
 ## Sprache
 
-- **Code, Kommentare, Docstrings, Dienstnamen, Log-Meldungen und README: Englisch.** Alles, was ein fremder Mitwirkender je zu sehen bekommt. Das Projekt soll veröffentlichungsfähig sein.
-- **Spec, Plan, Commit-Botschaften und die Kommunikation mit dem Nutzer: Deutsch**, mit echten Umlauten (ä ö ü ß) und deutschen Anführungszeichen »…«.
+Die Regel ist **das Publikum**, nicht die Art des Dokuments: Wer nach außen liest, liest Englisch.
+
+- **Englisch — alles, was ein fremder Mitwirkender je zu sehen bekommt.** Code, Kommentare, Docstrings, Dienstnamen, Log-Meldungen, README **und Commit-Botschaften**. Dazu jede Fläche auf GitHub: Issues, Pull Requests, Release Notes, Repository-Beschreibung, Labels.
+  - **Commit-Botschaften waren bis 2026-09-02 Deutsch** — 51 davon liegen öffentlich und bleiben stehen. Sie werden **nicht** umgeschrieben: Es gibt ein Release `v0.2.0`, an dem HACS hängt. Eine Historie, die an einem Punkt die Konvention wechselt, ist ehrlicher als eine nachträglich geglättete. Der Grund für die Umstellung: In diesem Projekt tragen die Commit-Bodys das *Warum*, und in `git blame` ist das die einzige Stelle, an der ein Mitwirkender es findet.
+- **Deutsch — was nach innen gehört.** Die Kommunikation mit dem Nutzer, und das Entwurfsjournal unter `docs/superpowers/` (Spec und Pläne). Mit echten Umlauten (ä ö ü ß) und deutschen Anführungszeichen »…«.
+  - Das ist eine bewusste Ausnahme vom Publikums-Prinzip und **in der README ausgeschildert**, damit niemand davorsteht und rätselt. Die Begründungen leben von ihrer Formulierung; 6909 Zeilen davon zu übertragen wäre keine mechanische Aufgabe, und die README ist die Vordertür, nicht die Spec.
 - **Die globale Gedankenstrich-Regel des Entwicklers gilt hier nicht.** Geviert- und Halbgeviertstrich sind beide in Ordnung; ein vorhandener ist kein Anlass für eine Korrektur. Keine Zeit darauf verwenden.
 
 ## Harte Regeln
@@ -65,5 +69,5 @@ Umgebung: HA 2026.8.3, Container-Python 3.14.6, Entwicklungsrechner Python 3.12.
 
 ## Git
 
-- Commit-Format: Subject im Imperativ, erster Buchstabe groß, max. 50 Zeichen. Leerzeile. Body max. 72 Zeichen pro Zeile, begründet das *Warum*. Abschluss mit `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+- Commit-Format: **Englisch** (siehe »Sprache«). Subject im Imperativ, erster Buchstabe groß, max. 50 Zeichen. Leerzeile. Body max. 72 Zeichen pro Zeile, begründet das *Warum*. Abschluss mit `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Branch ist `main`, Remote ist `origin` (öffentlich auf GitHub). **Geschoben, getaggt und veröffentlicht wird nur nach ausdrücklicher Ansage des Nutzers.** Das Repository ist öffentlich lesbar: keine Pfade fremder Rechner, keine Angaben über die Anlage, an der erprobt wird, keine Zugangsdaten — auch nicht in Testdaten oder Kommentaren.

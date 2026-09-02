@@ -317,6 +317,17 @@ git stores the states deduplicated and compressed.
 
 ## Development
 
+**A note on language.** Everything here is English: the code, the
+comments, the commit messages, and anything on GitHub. One exception, and
+it is deliberate — the design record under `docs/superpowers/` is written
+in German. It is the author's working journal: every design decision in
+this project is numbered there together with the reasoning and the
+measurements behind it, and translating that would cost the precision it
+is written for. Nothing in it is needed to use this integration or to
+find your way around the code; this README and the comments carry that.
+If you want the reasoning behind a particular decision and do not read
+German, open an issue and ask — answering in English is easy.
+
 The three modules that carry the logic — `yaml_io.py`, `analyze.py` and
 `restore.py` — import nothing from Home Assistant, so the test suite runs
 without an installation:
