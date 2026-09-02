@@ -927,4 +927,13 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 }
 
-customElements.define("dashboard-history-panel", DashboardHistoryPanel);
+// Defining the same name twice throws, and a second definition is exactly
+// what an update now causes: the fingerprint in the module URL changes, so
+// the frontend imports panel.js again while the element registered from the
+// previous URL is still in this page session. Without this guard the panel
+// dies with "the name has already been used with this registry" for anyone
+// who does not hard-reload after an update - which is the one moment they
+// have no reason to. A definition cannot be replaced, so the previous one
+// keeps serving until the next full page load. Stale beats broken.
+if (!customElements.get("dashboard-history-panel"))
+  customElements.define("dashboard-history-panel", DashboardHistoryPanel);

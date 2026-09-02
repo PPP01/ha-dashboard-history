@@ -523,6 +523,31 @@ async def main():
             )
             print(f"    dialog still open after Cancel: {gone}")
 
+            print("\n-- Loading the module twice, the way an update does --")
+            # This Chrome starts empty and therefore never meets the case by
+            # itself: a second definition needs a page session that already
+            # loaded panel.js under a different fingerprint. The user's own
+            # browser had one, and the panel died there with "the name has
+            # already been used with this registry" - reported to Home
+            # Assistant's log by the frontend, not by anything here.
+            # A fresh query string per run, and not a fixed one: Home
+            # Assistant sends no Cache-Control on a static path, so a fixed
+            # probe URL is answered from this browser's cache on the next
+            # run - which made this check pass against a panel.js that had
+            # the guard removed. A check that cannot fail proves nothing.
+            report = await page.js(
+                "(async () => { const tag = Date.now(); try {"
+                '  await import("/dashboard_history/panel.js?v=" + tag + "a");'
+                '  await import("/dashboard_history/panel.js?v=" + tag + "b");'
+                '  return "loaded twice, no error";'
+                " } catch (error) { return String(error); } })()"
+            )
+            print(f"    {report}")
+            registered = await page.js(
+                '!!customElements.get("dashboard-history-panel")'
+            )
+            print(f"    element still registered: {registered}")
+
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:
         chrome.terminate()

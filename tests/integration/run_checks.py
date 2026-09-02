@@ -73,6 +73,31 @@ def wait_for_api(seconds: int = 180) -> bool:
     return False
 
 
+def wait_for_integration(access: str, seconds: int = 120) -> bool:
+    """Wait until the integration's services are actually registered.
+
+    /manifest.json answers long before this. On a restart the config entry
+    is already there, so ensure_integration returns at once - and the very
+    first check then ran against a Home Assistant that had not set the
+    integration up yet. That produced two false failures and a crash, twice
+    in a row, and cost a container restart to chase. A readiness signal has
+    to be the thing the checks depend on, not the nearest thing answering.
+    """
+    headers = {"Authorization": f"Bearer {access}"}
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            answer = requests.get(f"{BASE}/api/services", headers=headers, timeout=10)
+            if answer.status_code == 200 and any(
+                entry.get("domain") == "dashboard_history" for entry in answer.json()
+            ):
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    return False
+
+
 def onboard() -> str | None:
     """Create the owner account, if this instance has none yet."""
     steps = requests.get(f"{BASE}/api/onboarding", timeout=10).json()
@@ -1118,6 +1143,8 @@ if __name__ == "__main__":
     access = token()
     if not ensure_integration(access):
         raise SystemExit("Could not set the integration up")
+    if not wait_for_integration(access):
+        raise SystemExit("The integration never finished setting up")
     print(f"Prüfungen gegen {BASE}\n")
     asyncio.run(run(access))
     print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")
