@@ -552,7 +552,7 @@ async def main():
             )
             print(f"    element still registered: {registered}")
 
-            print("\n-- Versionen als Abschnitte --")
+            print("\n-- Versions as sections --")
             # The dashboard picked out of "DELETED" above carries no
             # versions - back to a live one, the same way "-- Plain words
             # on a live dashboard --" does: the first one that still
@@ -585,7 +585,7 @@ async def main():
                 )
             await page.shot("13-version-sections.png")
 
-            print("\n-- Der Knopf an der Zeile --")
+            print("\n-- The button on a row --")
             await page.js(f'{PANEL}.querySelector(".change").click()')
             # Wait for the row's own explain/deleted_since fetch to settle,
             # not just for the button to appear - it renders on the first,
@@ -604,7 +604,7 @@ async def main():
             print(f"    label: {label!r}")
             await page.shot("14-version-button.png")
 
-            print("\n-- Die drei Nummern --")
+            print("\n-- The three numbers --")
             if not has_button:
                 print("    no 'Version up to here' button - nothing to click")
             else:
@@ -628,6 +628,48 @@ async def main():
                 # person clicking it would, and leaves nothing open behind.
                 await page.js(
                     f'{PANEL}.querySelector("dialog.version .actions button[value=cancel]")'
+                    "?.click()"
+                )
+
+            print("\n-- A section stays open behind the preview --")
+            # _guard() rebuilds the whole shadow DOM on every guarded call,
+            # including the preview fetch "Back to this version" triggers -
+            # a section with no persisted open state would report itself
+            # collapsed the moment that fetch starts, well before Cancel is
+            # ever pressed. _verOpen in panel.js exists to prevent exactly
+            # that; this is the section that would notice if it stopped
+            # working.
+            key = await page.js(
+                "(() => { const p = " + PANEL
+                + '; const d = [...p.querySelectorAll("details.ver")]'
+                '   .find((x) => x.querySelector("summary [data-state]"));'
+                " if (!d) return null;"
+                # Sections start collapsed - open this one first, then
+                # click its own "Back to this version" button, all in one
+                # step so there is no gap for another render to land in.
+                " if (!d.open) d.open = true;"
+                " d.querySelector('summary [data-state]').click();"
+                " return d.dataset.key; })()"
+            )
+            if not key:
+                print("    no version section with a 'Back to this version' button")
+            else:
+                print(f"    section: {key!r}")
+                await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
+                still_open = await page.js(
+                    "(() => { const p = " + PANEL
+                    + '; const d = [...p.querySelectorAll("details.ver")]'
+                    f"   .find((x) => x.dataset.key === {json.dumps(key)});"
+                    " return d ? d.open : null; })()"
+                )
+                print(
+                    f"    {key!r} is "
+                    + ("STILL OPEN" if still_open else "COLLAPSED")
+                    + " behind the preview dialog"
+                )
+                await page.shot("16-section-stays-open.png")
+                await page.js(
+                    f'{PANEL}.querySelector("dialog.confirm .actions button[value=cancel]")'
                     "?.click()"
                 )
 
