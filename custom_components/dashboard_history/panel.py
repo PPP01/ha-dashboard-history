@@ -29,10 +29,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+_HERE = Path(__file__).parent
 _MODULE_URL = f"/{DOMAIN}/panel.js"
 _PARTS_URL = f"/{DOMAIN}/panel"
-_SOURCE = Path(__file__).parent / "panel.js"
-_PARTS = Path(__file__).parent / "panel"
+_SOURCE = _HERE / "panel.js"
+_PARTS = _HERE / "panel"
 
 
 def _fingerprint() -> str:
@@ -44,12 +45,15 @@ def _fingerprint() -> str:
     intermittent cache failure the hand-maintained version number caused,
     one level down and considerably harder to spot.
 
-    The file name goes into the digest as well, so that renaming a part
-    changes the fingerprint even when its contents do not.
+    The search descends into sub-directories, and it is each file's path
+    relative to this package - not its bare name - that goes into the
+    digest. Renaming or moving a part therefore changes the fingerprint
+    even when its contents do not, and `panel/style.js` cannot collide
+    with a future `panel/sub/style.js`.
     """
     digest = hashlib.sha256()
-    for path in [_SOURCE, *sorted(_PARTS.glob("*.js"))]:
-        digest.update(path.name.encode("utf-8"))
+    for path in [_SOURCE, *sorted(_PARTS.rglob("*.js"))]:
+        digest.update(path.relative_to(_HERE).as_posix().encode("utf-8"))
         digest.update(path.read_bytes())
     return digest.hexdigest()[:12]
 

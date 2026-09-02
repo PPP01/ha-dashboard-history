@@ -20,9 +20,9 @@ PANEL_TITLE = "Dashboard History"
 PANEL_ICON = "mdi:history"
 PANEL_COMPONENT = "dashboard-history-panel"
 # The integration version, and only the fallback for the panel URL: the
-# cache key is a digest of panel.js itself (see panel.py). Keeping a
-# hand-maintained number as the cache key served everyone a stale panel
-# until somebody remembered to raise it.
+# cache key is a digest of panel.js and every part it is built from (see
+# panel.py). Keeping a hand-maintained number as the cache key served
+# everyone a stale panel until somebody remembered to raise it.
 PANEL_VERSION = "0.2.0"
 
 # Seconds to wait before reconciling after a panel changed. Long enough to

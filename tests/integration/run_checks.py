@@ -279,6 +279,21 @@ async def run(access: str) -> None:
         f"HTTP {module.status_code}, {len(module.content)} bytes",
     )
 
+    # And so do the parts it imports. The directory is registered as a
+    # static path of its own, separately from panel.js - so it can break on
+    # its own too, and then the panel loads and draws nothing. Naming each
+    # part in the check means a failure says which one is missing.
+    for part in ("style.js", "render.js"):
+        served = requests.get(f"{BASE}/dashboard_history/panel/{part}", timeout=30)
+        on_disk = source.parent / "panel" / part
+        size = on_disk.stat().st_size if on_disk.exists() else -1
+        check(
+            f"panel/{part} is served",
+            served.status_code == 200 and len(served.content) == size,
+            f"HTTP {served.status_code}, {len(served.content)} bytes"
+            f" against {size} on disk",
+        )
+
     # And it is served under a URL that changes when the file does. This
     # used to be a hand-maintained constant, so a changed panel kept being
     # served from the browser cache under the same URL - which is how a
@@ -289,11 +304,12 @@ async def run(access: str) -> None:
         "_panel_custom", {}
     ).get("module_url", "")
     # Mirrors panel.py's _fingerprint: every file the panel is built from,
-    # name and content, entry point first and the parts sorted after it.
-    # Digesting panel.js alone would let a changed part keep its cached URL.
+    # entry point first and the parts sorted after it, each one's path
+    # relative to the package plus its content. Digesting panel.js alone
+    # would let a changed part keep its cached URL.
     digest = hashlib.sha256()
-    for path in [source, *sorted((source.parent / "panel").glob("*.js"))]:
-        digest.update(path.name.encode("utf-8"))
+    for path in [source, *sorted((source.parent / "panel").rglob("*.js"))]:
+        digest.update(path.relative_to(source.parent).as_posix().encode("utf-8"))
         digest.update(path.read_bytes())
     want = digest.hexdigest()[:12]
     fresh = f"v={want}" in module_url
@@ -303,8 +319,10 @@ async def run(access: str) -> None:
         detail = module_url
     else:
         detail = (
-            f"{module_url} but the files hash to {want} - the panel changed "
-            "since Home Assistant registered it, so restart the container"
+            f"{module_url} but the files hash to {want} - either the panel "
+            "changed since Home Assistant registered it, so restart the "
+            "container, or this digest has drifted apart from _fingerprint "
+            "in panel.py and the two no longer compute the same thing"
         )
     check("the panel module URL carries a fingerprint of the file", fresh, detail)
 
