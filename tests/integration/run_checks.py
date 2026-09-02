@@ -1295,6 +1295,88 @@ async def run_versions(access: str) -> None:
                 f"{mark and mark['revision'][:10]} vs {history[0]['revision'][:10]}",
             )
 
+        # The services layer, not the WebSocket one. Both are thin skins
+        # over the same operations, and the point of that design is that
+        # they cannot drift - which holds only if both are exercised.
+        # services.py passes its arguments positionally, so a reordering
+        # there would be invisible to every check above this line.
+        offered_by_service = await socket.call(
+            "call_service",
+            domain="dashboard_history",
+            service="next_versions",
+            service_data={"dashboard": key},
+            return_response=True,
+        )
+        service_candidates = offered_by_service["response"].get("candidates", {})
+        check(
+            "the next_versions service answers like the command",
+            set(service_candidates) == {"patch", "minor", "major", "current"},
+            str(service_candidates),
+        )
+
+        made_by_service = await socket.call(
+            "call_service",
+            domain="dashboard_history",
+            service="create_version",
+            service_data={
+                "dashboard": key,
+                "level": "patch",
+                "title": "Über den Dienst angelegt",
+                "description": "Beweist die Reihenfolge der Argumente.",
+            },
+            return_response=True,
+        )
+        by_service = made_by_service["response"].get("created")
+        check(
+            "the create_version service creates the patch candidate",
+            by_service == service_candidates.get("patch"),
+            f"{by_service} vs {service_candidates.get('patch')}",
+        )
+        if not by_service:
+            return
+
+        # The title has to have landed in the title. A positional slip in
+        # services.py would put it in the description or the level and
+        # still answer with a plausible name.
+        listed_by_service = await socket.call(
+            "call_service",
+            domain="dashboard_history",
+            service="versions",
+            service_data={"dashboard": key},
+            return_response=True,
+        )
+        service_mark = next(
+            (
+                v
+                for v in listed_by_service["response"]["versions"]
+                if v["name"] == by_service
+            ),
+            None,
+        )
+        check(
+            "the versions service puts the title in the title",
+            bool(service_mark)
+            and service_mark["title"] == "Über den Dienst angelegt",
+            str(service_mark),
+        )
+
+        # Every version in the installation, not one dashboard's. The only
+        # call in this file that leaves the dashboard out, and so the only
+        # one that would catch a filter applied when none was asked for.
+        everywhere = await socket.call("dashboard_history/versions")
+        names = [v["name"] for v in everywhere["versions"]]
+        own = [
+            v["name"]
+            for v in (
+                await socket.call("dashboard_history/versions", dashboard=key)
+            )["versions"]
+        ]
+        check(
+            "versions without a dashboard answers across all of them",
+            by_service in names and set(own) <= set(names),
+            f"{len(names)} in total, {len(own)} for this dashboard",
+        )
+
 
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
