@@ -1174,7 +1174,17 @@ async def run_versions(access: str) -> None:
         before = len(changes)
         revision = changes[0]["revision"]
 
-        offered = await socket.call("dashboard_history/next_versions", dashboard=key)
+        # Socket.call raises on a WebSocket error, and an unregistered
+        # command is one. Guarded so a missing or misregistered command
+        # reports a failed check instead of taking the whole run down with
+        # a traceback - the same shape the other checks in this file use.
+        try:
+            offered = await socket.call(
+                "dashboard_history/next_versions", dashboard=key
+            )
+        except RuntimeError as err:
+            check("the next_versions command answers", False, str(err))
+            return
         candidates = offered.get("candidates", {})
         check(
             "three candidates are offered, patch among them",
