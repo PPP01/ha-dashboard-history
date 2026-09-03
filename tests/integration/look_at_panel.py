@@ -499,12 +499,27 @@ async def main():
             # which as one sentence is a contradiction. Both halves were
             # true; nothing said the message was about the change and the
             # chip about the state it left behind.
+            # textContent, not innerText: a chip inside a collapsed
+            # version section is not rendered, and innerText answers ""
+            # for anything unrendered. The element was there, the title
+            # read back fine, and the text came out empty - a check that
+            # reports nothing where something stands.
+            #
+            # `now` being absent is not a fault either: the first row of
+            # a version section carries no chip of its own, because the
+            # section head a few pixels above says the same thing. On a
+            # dashboard whose newest entry is marked, there is therefore
+            # no `.chip.now` at all.
             chips = await page.js(
                 "(() => { const p = " + PANEL + "; return {"
-                '  now: p.querySelector(".chip.now")?.innerText ?? null,'
+                '  now: p.querySelector(".chip.now")?.textContent.trim() ?? null,'
                 '  nowTitle: p.querySelector(".chip.now")?.title ?? null,'
-                '  sameas: p.querySelector(".chip.sameas")?.innerText ?? null,'
+                '  sameas: p.querySelector(".chip.sameas")?.textContent.trim() ?? null,'
                 '  sameasTitle: p.querySelector(".chip.sameas")?.title ?? null,'
+                '  versionChip: p.querySelector(".chip.ver")?.textContent.trim() ?? null,'
+                '  headsThatSayIt: [...p.querySelectorAll("details.ver summary .count")]'
+                '    .map(x => x.textContent.trim())'
+                '    .filter(x => x.indexOf("state") >= 0),'
                 " }; })()"
             )
             for name, value in chips.items():

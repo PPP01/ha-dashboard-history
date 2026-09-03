@@ -626,18 +626,44 @@ class DashboardHistoryPanel extends HTMLElement {
     const change = this._changes[index];
     if (!change) return "";
     const carried = (change.versions || []).map((v) => v.name.split("/").pop());
-    if (carried.length) return `This state already carries ${joinNames(carried)}.`;
+    if (carried.length) return `This state already carries ${this._someNames(carried)}.`;
     const alike = this._matchingElsewhere(index);
-    if (alike.length) return `This state is identical in content to ${joinNames(alike)}.`;
+    if (alike.length) return `This is the same state as ${this._someNames(alike)}.`;
     return "";
+  }
+
+  /**
+   * A couple of names, and how many were left out.
+   *
+   * Measured on the test bench: eighteen versions sat on states equal to
+   * the live one, and the chip listed every one of them - a label longer
+   * than the row it labelled. A history that goes back and forth while
+   * versions are made collects these, and the count is unbounded.
+   *
+   * Cut, never silently: the project's own rule for the explanation
+   * lists is that a summary which omits without saying so is worse than
+   * a long one. The tooltip carries all of them.
+   *
+   * The one named is the first, which is the version on the most recent
+   * matching state - not the highest number. Those usually coincide and
+   * need not: a version made today on an old state sorts by that state.
+   */
+  _someNames(names) {
+    if (names.length <= 2) return joinNames(names);
+    return `${names[0]} and ${names.length - 1} more`;
   }
 
   /**
    * Versions that hold what this entry holds without sitting on it.
    *
    * A version on the entry itself is excluded: the section head already
-   * names that one, and "identical in content to v1.0.0" on the very
-   * entry v1.0.0 marks reads as a riddle rather than as news.
+   * names that one, and "same state as v1.0.0" on the very entry that
+   * v1.0.0 marks reads as a riddle rather than as news.
+   *
+   * The rule this follows: a version is named only where it sits
+   * somewhere else. That is exactly one place - the newest entry - and
+   * everywhere else the answer is either circular or two lines away in
+   * the section head.
    */
   _matchingElsewhere(index) {
     const change = this._changes[index];
@@ -671,9 +697,10 @@ class DashboardHistoryPanel extends HTMLElement {
    * Never "the version you are on". Going back to a version writes a
    * fresh entry, so the state you are in is a later one that happens to
    * hold the same thing - a different entry with the same content. The
-   * sentence this feeds says "identical in content to", and the
-   * distinction is the whole reason it is worth saying: a reader who
-   * concludes they are *on* v1.0.0 draws wrong conclusions from it.
+   * sentence this feeds says "same state as", never "is": states being
+   * equal is not entries being the same one, and a reader who concludes
+   * they are *on* v1.0.0 draws wrong conclusions from it. The tooltip
+   * spells out what a chip has no room for.
    *
    * `same_as_now` is computed against the live configuration for every
    * entry, so an entry carrying a version and matching now is exactly
@@ -729,14 +756,19 @@ class DashboardHistoryPanel extends HTMLElement {
       .join("");
     // Two different truths, and one wording for both was an overclaim.
     // A version sitting on the newest entry *is* where the dashboard is.
-    // A version further down whose content matches only holds the same
+    // A version further down whose state matches only holds the same
     // thing: going back to it wrote a newer entry, and that entry, not
     // this version, is where you are. Saying "current state" there
     // invites the reading Decision 9 exists to prevent.
+    //
+    // "same state as now" and not a wording of its own: three places say
+    // this one fact, and they said it in two vocabularies until somebody
+    // read all three together and asked whether they meant the same
+    // thing. They do.
     const top = section.rows[0];
     const here = this._changes[top]?.same_as_now;
     const back = here
-      ? `<span class="count">${top === 0 ? "current state" : "same content as now"}</span>`
+      ? `<span class="count">${top === 0 ? "current state" : "same state as now"}</span>`
       : `<button class="act ghost" data-state="${escape(first.name)}"
                  >Back to this version</button>`;
     return `
@@ -781,7 +813,9 @@ class DashboardHistoryPanel extends HTMLElement {
     const parts = sections.map((section) => {
       if (!section.versions) return this._renderTopSection(section, label);
       const rows = section.rows
-        .map((index) => this._renderRow(this._changes[index], index))
+        .map((index, position) =>
+          this._renderRow(this._changes[index], index, position === 0),
+        )
         .join("");
       const key = section.versions[0].name;
       return `<details class="ver" data-key="${escape(key)}"
@@ -803,7 +837,7 @@ class DashboardHistoryPanel extends HTMLElement {
       this._renderRow(this._changes[index], index),
     );
     // The panel knew this and kept it to itself: the head of the
-    // version's own section reads "same content as now", the row up here
+    // version's own section reads "same state as now", the row up here
     // reads "current state", and nothing joined the two. Somebody had to
     // read the source to find out which version they were looking at.
     const matching = this._versionsMatchingNow();
@@ -812,8 +846,9 @@ class DashboardHistoryPanel extends HTMLElement {
     // as a chip beside "current state" instead: inside the frame the eye
     // stops at, rather than in a line under it that gets read past.
     const sameVer = matching.length
-      ? `<span class="why matches">What the dashboard holds right now is
-           identical in content to ${escape(joinNames(matching))}.</span>`
+      ? `<span class="why matches" title="${escape(joinNames(matching))}"
+           >What the dashboard holds right now is the same state as
+           ${escape(this._someNames(matching))}.</span>`
       : "";
     // Placed by what it describes. Below, the crowned row *is* the
     // current state and the sentence belongs under it. Here nothing is
@@ -838,7 +873,7 @@ class DashboardHistoryPanel extends HTMLElement {
             </div>${rest}`;
   }
 
-  _renderRow(change, index) {
+  _renderRow(change, index, spokenFor = false) {
     // The word "state" in both chips is load-bearing, and it was missing.
     //
     // A row says two things about two different subjects: the message is
@@ -851,16 +886,21 @@ class DashboardHistoryPanel extends HTMLElement {
     // are. A lower entry can hold byte-identical content without being
     // where you are - move a card up and down and there is a whole run of
     // them, all worded alike.
+    // `spokenFor` is the first row of a version section, and its head
+    // carries the same chip a few pixels above it. Two identical labels
+    // stacked is not emphasis, it is noise - and it was measurable: the
+    // head read "same content as now" while the row under it read "same
+    // state as now", one fact wearing two coats.
     const chip =
-      index === 0 && change.same_as_now
-        ? `<span class="chip now"
+      spokenFor || !change.same_as_now
+        ? ""
+        : index === 0
+          ? `<span class="chip now"
                  title="This is the state the dashboard holds right now."
                  >current state</span>`
-        : change.same_as_now
-          ? `<span class="chip sameas"
+          : `<span class="chip sameas"
                    title="The change described here left the dashboard in exactly the state it holds right now."
-                   >same state as now</span>`
-          : "";
+                   >same state as now</span>`;
     // Beside "current state" rather than in a sentence under the card.
     // Both said the same thing; only one of them sits inside the frame
     // the eye stops at, and the sentence below was read past. Kept short
@@ -873,7 +913,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const named = matches.length
       ? `<span class="chip ver"
                title="A different entry that holds exactly what ${escape(joinNames(matches))} holds. Going back to a version writes a new entry; this is that entry."
-               >identical in content to ${escape(joinNames(matches))}</span>`
+               >same state as ${escape(this._someNames(matches))}</span>`
       : "";
     return `
         <div class="card">
