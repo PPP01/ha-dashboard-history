@@ -16,11 +16,11 @@ import logging
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .analyze import explain_change, explain_effect, find_removed
+from .analyze import explain_change, explain_effect, find_removed, plan_undo
 from . import versions as versioning
 from .const import DOMAIN
 from .keys import is_absent, is_live
-from .restore import reinsert
+from .restore import apply_undo, reinsert
 from .snapshot import (
     async_create_dashboard,
     async_get_all_meta,
@@ -371,6 +371,84 @@ async def async_restore_state(
     if note:
         result["note"] = note
     return result
+
+
+async def async_undo_change(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    revision: str,
+    confirm: bool = False,
+) -> dict:
+    """Take one change back and keep everything since - if that is exact.
+
+    The difference to `restore_state` is reach, not degree: this writes
+    only the cards the change touched, that one replaces the dashboard.
+    It is offered only where the plan can prove itself, and the proof is
+    remade here on every call - including the confirming one. Somebody
+    can save between seeing the preview and pressing the button, and
+    writing a preview computed before that would throw their work away
+    with a proof that was true a minute ago.
+    """
+    full, text, error = await _state_at(hass, store, key, revision)
+    if error is not None:
+        return {"available": False, "reason": error}
+
+    before = await hass.async_add_executor_job(store.previous_change, key, full)
+    if before is None:
+        return {
+            "available": False,
+            "reason": "this is the first recorded state, so there is nothing "
+            "before it to go back to",
+        }
+    _, before_text, error = await _state_at(hass, store, key, before)
+    if error is not None:
+        return {"available": False, "reason": error}
+
+    known = await async_known_keys(hass)
+    if is_absent(key, known):
+        # Nothing to undo *into*. Bringing the whole dashboard back is a
+        # different operation, and `restore_state` already offers it.
+        return {"available": False, "reason": f"{key} does not exist right now"}
+
+    current = await async_get_config(hass, key) or {}
+    plan = await hass.async_add_executor_job(
+        plan_undo, load(before_text) or {}, load(text) or {}, current
+    )
+    if plan.blocked is not None:
+        return {"available": False, "reason": plan.blocked}
+    try:
+        result = await hass.async_add_executor_job(apply_undo, current, plan)
+    except LookupError as err:
+        return {"available": False, "reason": str(err)}
+
+    diff = _diff(current, result, key)
+    if not diff:
+        return {"available": False, "reason": "this change is already taken back"}
+
+    answer = {
+        "available": True,
+        "applied": False,
+        "preview": diff,
+        "explanation": _as_dict(explain_effect(current, result)),
+        # Lets the panel drop the coarse "back to the state before this
+        # change" button where it would write exactly the same thing.
+        # Worked out here because it is a comparison, and a comparison in
+        # the panel is logic in the panel.
+        "equals_state_before": result == (load(before_text) or {}),
+    }
+    if not confirm:
+        return answer
+    # The state about to be overwritten, kept first - the same net the
+    # other two writing operations got. It answers with a note rather
+    # than a refusal: somebody who cannot be given a snapshot still gets
+    # their undo, and is told.
+    lost = await _keep_the_live_state(hass, store, key, current)
+    await async_save_config(hass, key, result)
+    answer["applied"] = True
+    if lost:
+        answer["note"] = lost
+    return answer
 
 
 async def async_next_versions(

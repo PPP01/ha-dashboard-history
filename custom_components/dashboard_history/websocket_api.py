@@ -98,6 +98,16 @@ _COMMANDS = (
         },
     ),
     _command(
+        f"{DOMAIN}/undo_change",
+        {**_DASHBOARD, **_REVISION, vol.Optional("confirm", default=False): bool},
+        operations.async_undo_change,
+        lambda msg: {
+            "key": msg["dashboard"],
+            "revision": msg["revision"],
+            "confirm": msg["confirm"],
+        },
+    ),
+    _command(
         f"{DOMAIN}/describe",
         {**_REVISION, vol.Optional("text", default=""): str},
         operations.async_describe,

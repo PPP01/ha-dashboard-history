@@ -56,6 +56,15 @@ async def async_register(hass: HomeAssistant) -> None:
             bool(call.data.get("confirm")),
         )
 
+    async def undo_change(call: ServiceCall) -> dict:
+        return await operations.async_undo_change(
+            hass,
+            store,
+            call.data["dashboard"],
+            call.data["revision"],
+            bool(call.data.get("confirm")),
+        )
+
     async def describe(call: ServiceCall) -> dict:
         return await operations.async_describe(
             hass, store, call.data["revision"], call.data.get("text", "")
@@ -102,6 +111,10 @@ async def async_register(hass: HomeAssistant) -> None:
             vol.Optional("confirm", default=False): bool,
         })),
         ("restore_state", restore_state, DASHBOARD.extend({
+            vol.Required("revision"): cv.string,
+            vol.Optional("confirm", default=False): bool,
+        })),
+        ("undo_change", undo_change, DASHBOARD.extend({
             vol.Required("revision"): cv.string,
             vol.Optional("confirm", default=False): bool,
         })),

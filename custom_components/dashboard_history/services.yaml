@@ -97,6 +97,30 @@ restore_state:
       selector:
         boolean:
 
+undo_change:
+  name: Undo one change
+  description: >-
+    Take a single change back and keep everything saved since. Only
+    offered when it is provably exact: the cards the change produced
+    must still be in the dashboard, unchanged and only once. Without
+    confirm it answers with a preview and writes nothing.
+  fields:
+    dashboard:
+      required: true
+      example: dashboard-karte
+      selector:
+        text:
+    revision:
+      required: true
+      description: A revision from the history service.
+      selector:
+        text:
+    confirm:
+      description: Without this, nothing is written.
+      default: false
+      selector:
+        boolean:
+
 describe:
   name: Describe a change
   description: >-
