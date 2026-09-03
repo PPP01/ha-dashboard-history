@@ -635,15 +635,39 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # only one state has is one line in the history, not one per card on
     # it. Undoing it is the same two questions in a coarser grain - is it
     # still exactly as the change left it, and is it still there at all.
-    for index, (key, view) in enumerate(_views_by_key(current)):
-        if key in old_views or key not in new_views:
+    #
+    # Both branches ask that of the view's *content*, not of its key. A
+    # key is a path, and a path is renameable and reusable: asking only
+    # whether one is present answers "already taken back" for a view
+    # somebody renamed, and "already back" for a stranger that happens to
+    # sit on the same path. Both are the one error this tool must never
+    # make - a sentence that says nothing changed while something did.
+    now_places = _views_by_key(current)
+
+    for key, view in _views_by_key(after):
+        if key in old_views:
             continue
-        # The change added this view. Take it away, if nobody worked on it.
-        if view != new_views[key]:
-            name = _view_name(view, key)
+        # The change added this view. Take it away - the very one it
+        # added, found by what it holds.
+        name = _view_name(view, key)
+        found = [
+            index for index, (_, standing) in enumerate(now_places) if standing == view
+        ]
+        if len(found) > 1:
             return UndoPlan(
-                blocked=f'the view "{name}" was changed again after this'
+                blocked=f'{len(found)} views now look exactly like "{name}", '
+                f"so an exact undo cannot tell them apart"
             )
+        if not found:
+            if key in now_views:
+                return UndoPlan(
+                    blocked=f'the view "{name}" was changed again after this'
+                )
+            return UndoPlan(
+                blocked=f'the view "{name}" is no longer on the dashboard as '
+                f"this change left it, so an exact undo cannot take it away"
+            )
+        index = found[0]
         steps.append(
             UndoStep(
                 action="remove",
@@ -654,14 +678,28 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
                 index=index,
                 expect=view,
                 payload=None,
-                label=f'view: {_view_name(view, key)}',
+                label=f'view: {name}',
             )
         )
 
     for index, (key, view) in enumerate(_views_by_key(before)):
-        if key in new_views or key in now_views:
-            # Either the change did not remove it, or it is already back.
+        if key in new_views:
+            # The change did not remove it.
             continue
+        # Already back, either on its own path or - a view without one is
+        # keyed by its position - somewhere else. Inserting would make a
+        # second copy.
+        if any(standing == view for _, standing in now_places):
+            continue
+        standing = now_views.get(key)
+        if standing is not None and view.get("path") is not None:
+            # A different view holds that path today. Two views on one
+            # path is a broken dashboard, and picking one of them is a
+            # guess, so this refuses instead.
+            return UndoPlan(
+                blocked=f'a different view now sits at "{view["path"]}", so the '
+                f'view "{_view_name(view, key)}" cannot be put back there'
+            )
         steps.append(
             UndoStep(
                 action="insert",

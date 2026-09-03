@@ -751,3 +751,49 @@ def test_an_added_view_changed_since_is_refused():
     )
     assert plan.steps == ()
     assert "changed again" in plan.blocked
+
+
+def test_an_added_view_renamed_since_is_refused():
+    """A path is renameable, so its absence is not proof of anything.
+
+    The change added the view `b`; somebody has since given it the path
+    `c`. Looking only for the key would find nothing, plan nothing, and
+    let the caller answer "this change is already taken back" - which is
+    a false statement about a view that is still there.
+    """
+    a = {"path": "a", "title": "A", "cards": []}
+    b = {"path": "b", "title": "B", "cards": []}
+    renamed = {"path": "c", "title": "B", "cards": []}
+    plan = analyze.plan_undo(
+        {"views": [a]}, {"views": [a, b]}, {"views": [a, renamed]}
+    )
+    assert plan.steps == ()
+    assert "no longer on the dashboard" in plan.blocked
+    assert "B" in plan.blocked
+
+
+def test_a_stranger_on_a_removed_views_path_is_refused():
+    """A path is reusable, so its presence is not proof either.
+
+    The change removed the view `b`; a different view carries that path
+    today. Counting the path as "already back" would answer that the
+    change is undone while the view it removed is nowhere - and putting
+    the old one back regardless would leave two views on one path.
+    """
+    a = {"path": "a", "title": "A", "cards": []}
+    b = {"path": "b", "title": "B", "cards": []}
+    stranger = {"path": "b", "title": "Something else", "cards": []}
+    plan = analyze.plan_undo(
+        {"views": [a, b]}, {"views": [a]}, {"views": [a, stranger]}
+    )
+    assert plan.steps == ()
+    assert "a different view now sits at" in plan.blocked
+
+
+def test_a_removed_view_really_back_needs_no_step():
+    """The control: the same path, holding the same view again."""
+    a = {"path": "a", "title": "A", "cards": []}
+    b = {"path": "b", "title": "B", "cards": []}
+    plan = analyze.plan_undo({"views": [a, b]}, {"views": [a]}, {"views": [a, b]})
+    assert plan.blocked is None
+    assert plan.steps == ()
