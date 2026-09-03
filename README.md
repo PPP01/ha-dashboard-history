@@ -42,6 +42,85 @@ is no single correct answer.
 Deletions are also the painful case. A card you moved by accident, you
 move back. A card you deleted is gone.
 
+## Telling a move from a deletion
+
+This is the hardest thing the integration does, and it is worth
+understanding, because it decides what you get offered when something
+goes missing.
+
+A card has no identifier. Not a hidden one, not an optional one —
+measured across twelve real dashboards, 1783 cards carried exactly zero
+identifiers between them. So when two states of a dashboard are
+compared, the cards have to be recognised **by their content**. Four
+passes do that:
+
+1. Identical cards pair up **in the same card list**.
+2. Whatever is left over is looked for **anywhere on the dashboard**. A
+   card found somewhere else was moved — and a moved card is not
+   missing.
+3. What is still left is paired **within its own list** by a
+   content-based fingerprint — entity, title, name, heading, first
+   entity of a list, first line of text — choosing the **most similar**
+   candidate.
+4. Anything unpaired is a real deletion on one side, a real addition on
+   the other.
+
+Pass 1 running before pass 2 is what keeps this honest. Delete a card
+from one view while an identical card sits untouched in another, and a
+global search running first would pair your deleted card with the
+untouched one and lose the deletion entirely. Every card claims its own
+place first.
+
+### What you will see
+
+**You drag a card into another view, or into another section.**
+
+```
+1 moved
+  tile: Living room lamp was moved to "Kitchen"
+```
+
+Nothing is offered to put back, because nothing is missing. To undo it,
+use **Undo this change** (or **Back to the state before this change**)
+— that puts the whole dashboard back, which also takes along anything
+else you saved in the same step.
+
+**You have two similar cards, delete one and edit the other.**
+
+Say two tile cards on the same light: you delete the first and change
+the second from blue to green. The surviving card matches its own old
+form in three fields of four; it matches the deleted card in two of
+five. The closer pair wins, so the card offered back is the one you
+actually deleted — not the survivor.
+
+Before this, the first match won instead of the best one, and the
+result was backwards: you were offered the old version of a card that
+was still on the dashboard, and the card you really lost was never
+offered at all.
+
+### Two things it still gets wrong
+
+Both are named here rather than hidden, and both are covered by tests
+so that they cannot drift silently.
+
+**A card with nothing to recognise it by.** Some cards carry no entity,
+no title, no name, no heading, no entity list, no text, and no nameable
+card inside them — measured on a real installation, 27 of 484, mostly
+custom chart cards, `vertical-stack` and `conditional`. Edit one of
+those and the data cannot say whether it is the same card changed, or
+the old one deleted and a new one added. You will see `1 removed, 1
+added` and be offered the old version back. Accepting that gives you
+the card twice; the diff shown before you accept is your protection.
+
+**A card moved and edited in the same save.** Pass 2 no longer
+recognises it (the content changed), and pass 3 does not look across
+places. So it reads as a deletion plus an addition, with the same
+consequence as above. Looking for edited cards across views would close
+this and open something worse: the same entity on two views is
+ordinary, so a real deletion could be mistaken for a move and never be
+offered back at all. A missed offer is worse than one you can decline.
+
+
 ## Installation
 
 1. Add this repository to HACS as a custom repository (type: Integration).
