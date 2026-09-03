@@ -189,7 +189,16 @@ class DashboardHistoryPanel extends HTMLElement {
     const listed = await this._call("dashboards");
     this._dashboards = listed.dashboards || [];
     if (this._selected) {
-      const history = await this._call("history", { dashboard: this._selected });
+      const asked = this._selected;
+      const history = await this._call("history", { dashboard: asked });
+      // Same race as in `_select`, and reachable from further away: this
+      // one is started by an event, so it can be in flight at the moment
+      // somebody picks another dashboard. Its answer is dropped, but the
+      // list read before it is still current and worth drawing.
+      if (this._selected !== asked) {
+        this._render();
+        return;
+      }
       this._changes = history.changes || [];
       // An expanded row keeps its place, but not its answers: after a
       // change from outside, "Put back" would be offering items worked
@@ -200,7 +209,9 @@ class DashboardHistoryPanel extends HTMLElement {
         this._items = [];
         this._explanation = null;
       } else {
-        this._take(await this._detailFor(openAt));
+        const detail = await this._detailFor(openAt);
+        if (this._selected !== asked) return;
+        this._take(detail);
       }
     }
     this._render();
@@ -278,6 +289,12 @@ class DashboardHistoryPanel extends HTMLElement {
     const result = await this._guard(() =>
       this._call("history", { dashboard: key }),
     );
+    // Click two dashboards quickly and both requests are in flight. The
+    // slower answer arriving last would be written into the list under
+    // the name of the dashboard the faster one selected - a history
+    // shown beside the wrong title, with buttons that act on the title.
+    // Whoever is no longer the selection drops its answer.
+    if (this._selected !== key) return;
     this._changes = result ? result.changes || [] : [];
     this._render();
   }
