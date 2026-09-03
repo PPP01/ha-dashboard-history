@@ -1360,11 +1360,20 @@ async def run_undo(access: str) -> None:
     edited = {"type": "markdown", "content": "Card one\n\nEdited body"}
     later = {"type": "markdown", "content": "Added afterwards"}
 
-    def state(cards):
-        return {"views": [{"path": "a", "title": "A", "cards": list(cards)}]}
+    fresh = {"type": "markdown", "content": "Brand new"}
+    tail = {"type": "markdown", "content": "Saved after that"}
 
-    async def save(socket, cards):
-        await socket.call("lovelace/config/save", url_path=key, config=state(cards))
+    # The title is a parameter because one check needs a change the undo
+    # cannot fully reach: it works on cards and views, never on a view's
+    # own labels, and that is exactly when `equals_state_before` has to
+    # say no.
+    def state(cards, title="A"):
+        return {"views": [{"path": "a", "title": title, "cards": list(cards)}]}
+
+    async def save(socket, cards, title="A"):
+        await socket.call(
+            "lovelace/config/save", url_path=key, config=state(cards, title)
+        )
         await asyncio.sleep(4)
 
     async def newest(socket):
@@ -1435,6 +1444,70 @@ async def run_undo(access: str) -> None:
             answer.get("available") is False
             and "changed again" in (answer.get("reason") or ""),
             answer.get("reason", ""),
+        )
+
+        # `equals_state_before` is what the panel drops its coarse "back
+        # to the state before this change" button on, so a wrong answer
+        # here either hides a real way back or offers two buttons that
+        # look alike and are not. Both directions, because a flag that is
+        # always true would pass one of them on its own.
+        await save(socket, [keep, first, later])
+        await save(socket, [keep, later])
+        lone = await newest(socket)
+        answer = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=lone
+        )
+        check(
+            "one deletion, nothing since: the undo writes the whole old state",
+            answer.get("available") is True
+            and answer.get("equals_state_before") is True,
+            f"available={answer.get('available')} "
+            f"equals={answer.get('equals_state_before')} "
+            f"{answer.get('reason', '')}",
+        )
+
+        await save(socket, [keep, first, later])
+        await save(socket, [keep, later], title="Renamed")
+        mixed = await newest(socket)
+        answer = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=mixed
+        )
+        check(
+            "a change with a part the undo cannot reach says so",
+            answer.get("available") is True
+            and answer.get("equals_state_before") is False,
+            f"available={answer.get('available')} "
+            f"equals={answer.get('equals_state_before')} "
+            f"{answer.get('reason', '')}",
+        )
+
+        # The undo that *deletes*. Decision 15 calls this the first time
+        # this tool removes a card, so it is checked against the exact
+        # card list rather than against a count: what has to hold is that
+        # the added card goes and the one saved after it stays.
+        await save(socket, [keep, later, fresh], title="Renamed")
+        the_add = await newest(socket)
+        await save(socket, [keep, later, fresh, tail], title="Renamed")
+        answer = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=the_add
+        )
+        check(
+            "an added card can be taken back away again",
+            answer.get("available") is True,
+            answer.get("reason", ""),
+        )
+        await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=the_add,
+            confirm=True,
+        )
+        await asyncio.sleep(4)
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "the added card is gone and the later one is still there",
+            live["views"][0]["cards"] == [keep, later, tail],
+            str(live["views"][0]["cards"]),
         )
 
 
