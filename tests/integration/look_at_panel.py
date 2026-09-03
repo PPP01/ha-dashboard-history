@@ -340,17 +340,24 @@ async def main():
             # missing, and they differ in reach rather than in wording:
             # "Put back" reinserts one item into today's configuration,
             # setting a state back writes a whole state over the
-            # dashboard. Reported as confusing by the first person to
-            # meet them, on the one row where both happen to do the same
-            # thing. The sentence only appears where both are on screen.
+            # dashboard. They used to share a sentence spelling that
+            # difference out ("Put back adds..."), only where both were
+            # on screen - decision 15 (Task 5) removed it: the coarse
+            # button is now folded behind its own
+            # "Replace the whole dashboard instead" summary, which carries
+            # that distinction structurally instead of in a shared
+            # sentence. Checked here in its place: the fold exists and
+            # starts closed wherever a coarse button survives.
             reach = await page.js(
                 "(() => { const d = " + PANEL + '.querySelector(".detail");'
-                " if (!d) return null; return {"
+                " if (!d) return null;"
+                " const fold = d.querySelector('details.more');"
+                " return {"
                 '  putBack: d.querySelectorAll("[data-restore]").length,'
                 '  setBack: d.querySelectorAll(".backto [data-state]").length,'
-                '  toldApart: [...d.querySelectorAll(".why")]'
-                '    .map(x => x.textContent.replace(/\\s+/g, " ").trim())'
-                '    .find(x => x.indexOf("Put back adds") === 0) ?? null,'
+                "  foldSummary: fold"
+                "    ? fold.querySelector('summary').textContent.trim() : null,"
+                "  foldStartsClosed: fold ? !fold.open : null,"
                 " }; })()"
             )
             for name, value in (reach or {}).items():
@@ -393,34 +400,70 @@ async def main():
                 await page.shot("6-expanded-live.png")
 
             print("\n-- The confirm dialog: words on top, diff collapsed --")
-            await page.js(f'{PANEL}.querySelector("[data-state]").click()')
-            await page.settle(f'{PANEL}.querySelector("dialog.confirm").open')
-            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
-            shape = await page.js(
-                "(() => { const d = "
-                + PANEL
-                + '.querySelector("dialog.confirm");'
-                ' const details = d.querySelector("details.raw");'
-                " return {"
-                '  heading: d.querySelector(".plain h3").innerText,'
-                "  diffCollapsed: details ? !details.open : null,"
-                '  diffPresent: !!d.querySelector("details.raw pre"),'
-                '  plainText: d.querySelector(".plain").innerText.slice(0, 300),'
-                '  keeps: d.querySelector(".keeps")'
-                '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
-                " }; })()"
-            )
-            print(f"    heading: {shape['heading']!r}")
-            print(f"    keeps: {shape['keeps']!r}")
-            print(f"    diff present: {shape['diffPresent']}, collapsed: {shape['diffCollapsed']}")
-            print("    " + shape["plainText"].strip().replace("\n", "\n    "))
-            await page.shot("7-confirm-dialog.png")
-            # Cancel, emphatically: this instance is disposable but the
-            # point of the preview is that nothing is written.
-            await page.js(
-                f'{PANEL}.querySelector("dialog.confirm").close("cancel")'
-            )
-            await asyncio.sleep(0.5)
+            # Since decision 15, _renderSetBack folds its coarse buttons
+            # behind <details class="more"> and can render none at all: the
+            # "before" one disappears where the targeted undo already
+            # reaches that state, and the "after" one where this row's own
+            # state is already current. Row 0 - still expanded from the
+            # section above - may or may not have one left, so later rows
+            # are tried in turn until one does. A row's own async fetch
+            # (deleted_since/explain/undo_change) renders the detail div at
+            # once and fills in its buttons only once it resolves, so each
+            # try waits for the busy indicator to clear rather than for the
+            # div itself. Clicking an element inside a collapsed <details>
+            # works regardless: .click() dispatches straight to the
+            # handler and does not need the element to be visible.
+            total_rows = await page.js(f'{PANEL}.querySelectorAll(".change").length')
+            row = 0
+            has_state_button = await page.js(f'!!{PANEL}.querySelector("[data-state]")')
+            while not has_state_button and row + 1 < total_rows:
+                row += 1
+                await page.js(f'{PANEL}.querySelectorAll(".change")[{row}].click()')
+                await page.settle(f'!{PANEL}.querySelector(".bar .muted")')
+                has_state_button = await page.js(
+                    f'!!{PANEL}.querySelector("[data-state]")'
+                )
+            if not has_state_button:
+                print(
+                    "    no row on this dashboard offers a coarse 'set back' "
+                    "button any more - the targeted undo and the current "
+                    "state cover everything, so there is nothing left to "
+                    "open the confirm dialog with"
+                )
+            else:
+                if row:
+                    print(f"    row 0 offered none; row {row} does")
+                await page.js(f'{PANEL}.querySelector("[data-state]").click()')
+                await page.settle(f'{PANEL}.querySelector("dialog.confirm").open')
+                await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+                shape = await page.js(
+                    "(() => { const d = "
+                    + PANEL
+                    + '.querySelector("dialog.confirm");'
+                    ' const details = d.querySelector("details.raw");'
+                    " return {"
+                    '  heading: d.querySelector(".plain h3").innerText,'
+                    "  diffCollapsed: details ? !details.open : null,"
+                    '  diffPresent: !!d.querySelector("details.raw pre"),'
+                    '  plainText: d.querySelector(".plain").innerText.slice(0, 300),'
+                    '  keeps: d.querySelector(".keeps")'
+                    '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
+                    " }; })()"
+                )
+                print(f"    heading: {shape['heading']!r}")
+                print(f"    keeps: {shape['keeps']!r}")
+                print(
+                    f"    diff present: {shape['diffPresent']}, "
+                    f"collapsed: {shape['diffCollapsed']}"
+                )
+                print("    " + shape["plainText"].strip().replace("\n", "\n    "))
+                await page.shot("7-confirm-dialog.png")
+                # Cancel, emphatically: this instance is disposable but the
+                # point of the preview is that nothing is written.
+                await page.js(
+                    f'{PANEL}.querySelector("dialog.confirm").close("cancel")'
+                )
+                await asyncio.sleep(0.5)
 
             print("\n-- Where am I: the current state --")
             shape = await page.js(
@@ -439,13 +482,31 @@ async def main():
             # Row 1's target is row 2. On a history that went back and forth
             # that is the current state, and the button used to be offered
             # anyway - with a preview reading "No difference."
-            await page.js(f'{PANEL}.querySelectorAll(".change")[1].click()')
+            #
+            # A plain click toggles a row - clicking one already open
+            # collapses it instead. The confirm-dialog section above tries
+            # rows in order until one still offers a coarse button, since
+            # decision 15, and can leave row 1 - not row 0 - open behind
+            # it. Read `_open` first and click only when row 1 is not
+            # already it, so this always opens rather than sometimes
+            # closing.
+            await page.js(
+                "(() => { const p = " + ELEMENT + "; const rev = p._changes[1].revision;"
+                " if (p._open !== rev) " + PANEL + '.querySelectorAll(".change")[1].click();'
+                " })()"
+            )
             await page.settle(f'!!{PANEL}.querySelectorAll(".detail")[0]')
             state = await page.js(
                 "(() => { const d = " + PANEL + '.querySelector(".detail"); return {'
                 # `?? null` on purpose: an undefined value is dropped from
                 # the object by returnByValue, and the key vanishes with it.
-                '  button: d.querySelector("[data-state]")?.innerText.trim() ?? null,'
+                # `textContent`, not `innerText`: since decision 15 this
+                # button can sit inside a closed <details class="more">,
+                # and a closed <details> gives its non-summary content no
+                # layout box at all - `innerText` answers "" for anything
+                # with none, which read as "no label" where there truly
+                # was one.
+                '  button: d.querySelector("[data-state]")?.textContent.trim() ?? null,'
                 '  reason: d.querySelector(".why")?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 " }; })()"
             )
@@ -454,11 +515,23 @@ async def main():
             await page.shot("8-no-pointless-button.png")
 
             print("\n-- The button on the current state --")
-            await page.js(f'{PANEL}.querySelectorAll(".change")[0].click()')
+            # Same toggle hazard as above, the other way round: row 0 was
+            # the one left open until the section above switched to row 1,
+            # so a plain click here normally opens it - but would collapse
+            # it instead on a run where row 0 itself was the one still
+            # carrying a coarse button. Idempotent for the same reason.
+            await page.js(
+                "(() => { const p = " + ELEMENT + "; const rev = p._changes[0].revision;"
+                " if (p._open !== rev) " + PANEL + '.querySelectorAll(".change")[0].click();'
+                " })()"
+            )
             await page.settle(f'!!{PANEL}.querySelector(".current .detail")')
+            # textContent, not innerText - same reason as above: this
+            # button can sit inside the closed "Replace the whole
+            # dashboard instead" fold.
             label = await page.js(
                 f'{PANEL}.querySelector(".current .detail [data-state]")'
-                "?.innerText.trim() ?? null"
+                "?.textContent.trim() ?? null"
             )
             print(f"    label: {label!r}")
             await page.shot("9-current-state.png")
@@ -492,14 +565,28 @@ async def main():
             else:
                 print(f"    row {picked['index']}: after={picked['self']} "
                       f"before={picked['before']}")
+                # Idempotent for the same reason as the two sections above:
+                # row 0 is whatever the section before this one left open,
+                # and if that happens to be the very row picked here, a
+                # plain click would collapse it instead of opening it.
                 await page.js(
-                    f'{PANEL}.querySelectorAll(".change")[{picked["index"]}].click()'
+                    "(() => { const p = " + ELEMENT + ";"
+                    f" const rev = p._changes[{picked['index']}].revision;"
+                    " if (p._open !== rev) " + PANEL
+                    + f'.querySelectorAll(".change")[{picked["index"]}].click();'
+                    " })()"
                 )
                 await page.settle(f'!!{PANEL}.querySelector(".detail .backto")')
+                # textContent, not innerText: since decision 15 these
+                # buttons sit inside the closed "Replace the whole
+                # dashboard instead" fold, and a closed <details> gives its
+                # non-summary content no layout box - innerText reads that
+                # as "", which made every label below come back empty
+                # while the aim itself was still exactly right.
                 aim = await page.js(
                     "(() => { const b = [..." + PANEL
                     + '.querySelectorAll(".detail .backto button")];'
-                    " return b.map(x => [x.innerText.trim(),"
+                    " return b.map(x => [x.textContent.trim(),"
                     "                     x.dataset.state.slice(0, 7)]); })()"
                 )
                 for label, target in aim:
@@ -797,20 +884,33 @@ async def main():
             # and the detail takes its "first recorded state" branch,
             # which carries neither a list nor a button. Zeros that meant
             # "wrong row", not "missing feature".
+            #
+            # `_undo` reset to null, deliberately: it is filled in by a
+            # real `undo_change` fetch that this synthetic setup never
+            # makes, so it would otherwise still carry whatever a real
+            # row on this instance answered earlier - and since decision
+            # 15 (Task 5), `_renderSetBack` reads it to decide whether the
+            # "before" button survives. Left stale, this section could
+            # pass or fail depending on what ran before it rather than on
+            # what it sets up. The old shared "Put back adds..." sentence
+            # is gone with the same change; the fold's own summary now
+            # carries that distinction, checked here in its place.
             told = await page.js(
                 "(() => { const p = " + ELEMENT + ";"
                 " p._items = [{position: 0, kind: 'card',"
                 "              label: 'tile: demo', view: 'home'}];"
                 " p._open = p._changes[1].revision;"
+                " p._undo = null;"
                 " p._render();"
                 " const d = p.shadowRoot.querySelector('.detail');"
-                " return d ? {"
+                " if (!d) return null;"
+                " const fold = d.querySelector('details.more');"
+                " return {"
                 "   putBack: d.querySelectorAll('[data-restore]').length,"
                 "   setBack: d.querySelectorAll('.backto [data-state]').length,"
-                "   toldApart: [...d.querySelectorAll('.why')]"
-                "     .map(x => x.textContent.replace(/\\s+/g, ' ').trim())"
-                "     .find(x => x.indexOf('Put back adds') === 0) ?? null,"
-                " } : null; })()"
+                "   foldSummary: fold"
+                "     ? fold.querySelector('summary').textContent.trim() : null,"
+                " }; })()"
             )
             for name, value in (told or {}).items():
                 print(f"    {name}: {value!r}")
