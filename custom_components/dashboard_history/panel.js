@@ -530,7 +530,7 @@ class DashboardHistoryPanel extends HTMLElement {
    * row, and offering it there produced a dialog reading "No difference."
    * above a live Apply button.
    */
-  _renderSetBack(index) {
+  _renderSetBack(index, listed) {
     const before = this._before(index);
     const buttons = [];
     if (before && !this._changes[index + 1]?.same_as_now)
@@ -557,7 +557,28 @@ class DashboardHistoryPanel extends HTMLElement {
             dashboard holds now — nothing to set back.</span>`
         : "";
     if (!buttons.length) return why;
-    return `<div class="backto">
+    // Two kinds of button on one row, and they are not two labels for one
+    // action - they differ in *reach*. "Put back" reinserts one item into
+    // the configuration as it stands today and touches nothing else;
+    // setting a state back writes that whole state over the dashboard.
+    //
+    // Reported as confusing by the first person to meet them, and fairly:
+    // the case they met was the one where both do the same thing - the
+    // newest change, a single deletion, nothing after it. On a deletion
+    // three weeks old they diverge sharply, and nothing on screen said
+    // so. Each is described rather than contrasted, because "these are
+    // different" is unhelpful exactly where the outcomes coincide.
+    //
+    // Only where both are on screen. Where nothing is missing there is no
+    // "Put back" to tell apart, and the two cases exclude each other
+    // anyway: if the state before this change is what the dashboard holds
+    // now, then nothing has gone missing since it.
+    const apart = listed
+      ? `<span class="why">Put back adds a single item to the dashboard as
+           it stands today and changes nothing else. Setting the state back
+           replaces the whole dashboard with how it was then.</span>`
+      : "";
+    return `${apart}<div class="backto">
         ${buttons
           .map(
             (b) =>
@@ -603,7 +624,7 @@ class DashboardHistoryPanel extends HTMLElement {
     return `<div class="detail">
       ${plain}
       ${list}
-      ${this._renderSetBack(index)}
+      ${this._renderSetBack(index, this._items.length > 0)}
       ${this._renderMakeVersion(index)}
     </div>`;
   }

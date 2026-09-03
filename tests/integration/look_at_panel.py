@@ -336,6 +336,26 @@ async def main():
                 print("    NO plain words - the row would not stay expanded")
             await page.shot("5-expanded-deletion.png")
 
+            # Two kinds of button sit on a row where something is
+            # missing, and they differ in reach rather than in wording:
+            # "Put back" reinserts one item into today's configuration,
+            # setting a state back writes a whole state over the
+            # dashboard. Reported as confusing by the first person to
+            # meet them, on the one row where both happen to do the same
+            # thing. The sentence only appears where both are on screen.
+            reach = await page.js(
+                "(() => { const d = " + PANEL + '.querySelector(".detail");'
+                " if (!d) return null; return {"
+                '  putBack: d.querySelectorAll("[data-restore]").length,'
+                '  setBack: d.querySelectorAll(".backto [data-state]").length,'
+                '  toldApart: [...d.querySelectorAll(".why")]'
+                '    .map(x => x.textContent.replace(/\\s+/g, " ").trim())'
+                '    .find(x => x.indexOf("Put back adds") === 0) ?? null,'
+                " }; })()"
+            )
+            for name, value in (reach or {}).items():
+                print(f"    {name}: {value!r}")
+
             print("\n-- Plain words on a live dashboard --")
             # The first dashboard that still exists, whichever it is. Naming
             # one would put a name out of somebody's installation into a
@@ -763,6 +783,38 @@ async def main():
             for name, value in joined.items():
                 print(f"    {name}: {value!r}")
             await page.shot("17-current-names-its-version.png")
+
+            print("\n-- Two kinds of button, told apart --")
+            # The row the deletion section met had nothing missing, so
+            # "Put back" was not on screen and there was nothing to tell
+            # apart. Here both are put on one row on purpose: `_items` is
+            # what the panel renders the offers from, and entry 1 is the
+            # one that has a recorded state before it, so a "Back to"
+            # button is offered beside them.
+            #
+            # Entry 2 was the first choice and produced nothing at all:
+            # it is the oldest of the three, so `_before` finds nothing
+            # and the detail takes its "first recorded state" branch,
+            # which carries neither a list nor a button. Zeros that meant
+            # "wrong row", not "missing feature".
+            told = await page.js(
+                "(() => { const p = " + ELEMENT + ";"
+                " p._items = [{position: 0, kind: 'card',"
+                "              label: 'tile: demo', view: 'home'}];"
+                " p._open = p._changes[1].revision;"
+                " p._render();"
+                " const d = p.shadowRoot.querySelector('.detail');"
+                " return d ? {"
+                "   putBack: d.querySelectorAll('[data-restore]').length,"
+                "   setBack: d.querySelectorAll('.backto [data-state]').length,"
+                "   toldApart: [...d.querySelectorAll('.why')]"
+                "     .map(x => x.textContent.replace(/\\s+/g, ' ').trim())"
+                "     .find(x => x.indexOf('Put back adds') === 0) ?? null,"
+                " } : null; })()"
+            )
+            for name, value in (told or {}).items():
+                print(f"    {name}: {value!r}")
+            await page.shot("19-two-kinds-of-button.png")
 
             print("\n-- The create dialog, before a second name is given --")
             # Three entries, three answers. Anything that printed the same
