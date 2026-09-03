@@ -143,7 +143,8 @@ Worth walking through, because the two ways back behave very differently
 here — and because the exact one does not last forever.
 
 Change the URL of an `iframe` card. The history reads `1 removed, 1
-added`, and the row offers both kinds of button.
+added` — the tool cannot tell the edit from a deletion with an addition
+beside it. The two ways back then do very different things.
 
 **Undo this change** is exact:
 
@@ -169,6 +170,12 @@ definition — it never overwrites anything — so the only thing it can do
 with a card it believes was deleted is add it back. It believes that
 because the card carries nothing to recognise it by. Both halves are
 behaving exactly as designed; they simply meet a card with no identity.
+
+Which is why, on this row, only the undo is offered: where a change
+added something as well, a put-back of what it removed would stand the
+old card next to the new one. On the rows *before* this change the card
+still has its own **Put back** button, because there it is simply
+missing, with nothing added alongside it.
 
 **The exact way back does not run out with time.** Thirty saves and a
 week later, **Undo this change** still takes back that one save and
@@ -293,11 +300,11 @@ back would leave both versions standing. What is missing because of
 *later* changes keeps its button, under a line that says where it comes
 from.
 
-On the newest change the undo and a put-back can be the same thing, and
-sometimes they genuinely are: delete a single card, and putting it back or
-undoing the change both leave you with the same dashboard. That is the
-case most people meet first — which is exactly why the difference is easy
-to miss.
+That coincidence is the case most people meet first: delete a single
+card, and putting it back or undoing the change leave you with exactly
+the same dashboard. Which is exactly why the difference between the
+three was so easy to miss — the first shape anybody sees is the one
+where two of them agree.
 
 Now picture a deletion from three weeks ago. **Put back** brings that one
 card into today's dashboard and leaves the three weeks alone. **Undo this
