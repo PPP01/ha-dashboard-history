@@ -327,18 +327,16 @@ class DashboardHistoryPanel extends HTMLElement {
     // configuration, so it can answer "is this entry what a version
     // holds" only where "this entry" is the current one. Claiming it
     // anywhere else would need a comparison the panel does not have.
-    const carried = (change.versions || []).map((v) => v.name.split("/").pop());
-    const alike = (change.same_as_now ? this._versionsMatchingNow() : []).filter(
-      (name) => !carried.includes(name),
-    );
-    const already = carried.length
-      ? `This state already carries ${joinNames(carried)}.`
-      : alike.length
-        ? `This state is identical in content to ${joinNames(alike)}.`
-        : "";
+    const already = this._alreadyNamed(index);
     const carries = dialog.querySelector("[data-carries]");
-    carries.textContent = already
-      ? `${already} A new version here would be a second name for the same content.`
+    // Bold, and not because emphasis is decoration. This sentence was
+    // plain text under a muted line and got read straight past - the one
+    // person it was written for said so. The half that carries the news
+    // is the half that gets the weight; the consequence reads normally
+    // after it.
+    carries.innerHTML = already
+      ? `<strong>${escape(already)}</strong> A new version here would be a
+         second name for the same content.`
       : "";
     carries.hidden = !already;
     let level = "patch";
@@ -588,9 +586,7 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!before)
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
-        <div class="mkver">
-          <button class="act ghost" data-version="${index}">Version up to here</button>
-        </div></div>`;
+        ${this._renderMakeVersion(index)}</div>`;
     const list = this._items.length
       ? this._items
           .map(
@@ -608,10 +604,65 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${list}
       ${this._renderSetBack(index)}
-      <div class="mkver">
-        <button class="act ghost" data-version="${index}">Version up to here</button>
-      </div>
+      ${this._renderMakeVersion(index)}
     </div>`;
+  }
+
+  /**
+   * What is already named at the state of one change, if anything.
+   *
+   * Two routes reach the same sentence: the state carries a version
+   * itself, or it holds exactly what one holds. Written once because two
+   * readers need it - the row, before the click, and the dialog after it
+   * - and two copies of a rule like this drift.
+   *
+   * The content case is only offered for the state the dashboard is in.
+   * `same_as_now` compares each entry against the live configuration, so
+   * it can answer "is this entry what a version holds" only where "this
+   * entry" is the current one. Claiming it anywhere else would need a
+   * comparison the panel does not have.
+   */
+  _alreadyNamed(index) {
+    const change = this._changes[index];
+    if (!change) return "";
+    const carried = (change.versions || []).map((v) => v.name.split("/").pop());
+    if (carried.length) return `This state already carries ${joinNames(carried)}.`;
+    const alike = this._matchingElsewhere(index);
+    if (alike.length) return `This state is identical in content to ${joinNames(alike)}.`;
+    return "";
+  }
+
+  /**
+   * Versions that hold what this entry holds without sitting on it.
+   *
+   * A version on the entry itself is excluded: the section head already
+   * names that one, and "identical in content to v1.0.0" on the very
+   * entry v1.0.0 marks reads as a riddle rather than as news.
+   */
+  _matchingElsewhere(index) {
+    const change = this._changes[index];
+    if (!change || !change.same_as_now) return [];
+    const own = (change.versions || []).map((v) => v.name.split("/").pop());
+    return this._versionsMatchingNow().filter((name) => !own.includes(name));
+  }
+
+  /**
+   * The button that makes a version, and what is already named there.
+   *
+   * The note sits beside the button rather than only in the dialog the
+   * button opens: telling somebody after they clicked is telling them
+   * late. The button stays, though - unlike "Back to this version",
+   * which is a pure no-op on the current state, a second version on the
+   * same content creates a name that did not exist and can be exactly
+   * what somebody means ("we went back to the old layout, and that is
+   * v1.0.0 now"). The design record allows two versions on one state.
+   */
+  _renderMakeVersion(index) {
+    const named = this._alreadyNamed(index);
+    return `<div class="mkver">
+        <button class="act ghost" data-version="${index}">Version up to here</button>
+        ${named ? `<span class="named">${escape(named)}</span>` : ""}
+      </div>`;
   }
 
   /**
@@ -756,9 +807,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // reads "current state", and nothing joined the two. Somebody had to
     // read the source to find out which version they were looking at.
     const matching = this._versionsMatchingNow();
+    // Only for the branch below, where nothing is crowned and so no row
+    // can carry the badge. Where a row *is* crowned, the same fact rides
+    // as a chip beside "current state" instead: inside the frame the eye
+    // stops at, rather than in a line under it that gets read past.
     const sameVer = matching.length
-      ? `<span class="why">What the dashboard holds right now is identical
-           in content to ${escape(joinNames(matching))}.</span>`
+      ? `<span class="why matches">What the dashboard holds right now is
+           identical in content to ${escape(joinNames(matching))}.</span>`
       : "";
     // Placed by what it describes. Below, the crowned row *is* the
     // current state and the sentence belongs under it. Here nothing is
@@ -780,7 +835,6 @@ class DashboardHistoryPanel extends HTMLElement {
     return `<div class="current">
               <p class="heading">${escape(heading)}</p>
               ${rows[0]}
-              ${sameVer}
             </div>${rest}`;
   }
 
@@ -807,10 +861,24 @@ class DashboardHistoryPanel extends HTMLElement {
                    title="The change described here left the dashboard in exactly the state it holds right now."
                    >same state as now</span>`
           : "";
+    // Beside "current state" rather than in a sentence under the card.
+    // Both said the same thing; only one of them sits inside the frame
+    // the eye stops at, and the sentence below was read past. Kept short
+    // for the same reason - a chip is a label, not a statement - with
+    // the part that cannot fit moved into the tooltip, where "a
+    // different entry" is spelled out. It says "identical in content
+    // to", never "is": going back to a version writes a new entry, and
+    // this is that entry, not that version.
+    const matches = index === 0 ? this._matchingElsewhere(index) : [];
+    const named = matches.length
+      ? `<span class="chip ver"
+               title="A different entry that holds exactly what ${escape(joinNames(matches))} holds. Going back to a version writes a new entry; this is that entry."
+               >identical in content to ${escape(joinNames(matches))}</span>`
+      : "";
     return `
         <div class="card">
           <div class="change" data-index="${index}">
-            <span class="what">${escape(change.description || change.message)}${chip}
+            <span class="what">${escape(change.description || change.message)}${chip}${named}
               ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
             </span>
             <span class="when">${escape(when(change.timestamp))}</span>

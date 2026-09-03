@@ -726,16 +726,23 @@ async def main():
                 "   message: '1 added', description: null,"
                 "   same_as_now: false, versions: []},"
                 " ];"
-                " p._open = null; p._verOpen = new Set(['demo/v1.0.0']);"
+                # Entry 0 expanded, so the note beside "Version up to
+                # here" renders: it has to be readable *before* the
+                # click, which is the whole reason it is not only in the
+                # dialog the click opens.
+                " p._open = p._changes[0].revision;"
+                " p._verOpen = new Set(['demo/v1.0.0']);"
                 " p._render(); return p._changes.length; })()"
             )
             joined = await page.js(
                 "(() => { const p = " + PANEL + "; return {"
-                '  currentSays: p.querySelector(".current .why")'
+                '  currentSays: p.querySelector(".current .chip.ver")'
                 '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 '  versionHead: [...p.querySelectorAll("details.ver summary .count")]'
                 "    .map(x => x.innerText.trim()),"
                 '  backButton: !!p.querySelector("details.ver summary [data-state]"),'
+                '  besideTheButton: p.querySelector(".mkver .named")'
+                '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 " }; })()"
             )
             for name, value in joined.items():
@@ -767,8 +774,12 @@ async def main():
                 said = await page.js(
                     "(() => { const c = " + PANEL
                     + '.querySelector("dialog.version [data-carries]");'
-                    " return c.hidden ? null"
-                    '   : c.innerText.replace(/\\s+/g, " ").trim(); })()'
+                    " return c.hidden ? null : {"
+                    '   text: c.innerText.replace(/\\s+/g, " ").trim(),'
+                    # The news half is bold. It was plain text under a
+                    # muted line once and got read straight past.
+                    '   bold: c.querySelector("strong")?.innerText ?? null,'
+                    " }; })()"
                 )
                 print(f"    entry {index} ({what}):\n      {said!r}")
                 # Cancelled every time. Nothing above ever clicks Create,

@@ -193,6 +193,15 @@ export const STYLE = `
     background: var(--secondary-background-color, #eee);
     color: var(--secondary-text-color, #727272);
   }
+  /* The same muted look as "sameas": the blue "current state" stays the
+     one signal, and this rides along beside it. Allowed to wrap, unlike
+     the other chips - it carries a version name and a narrow window
+     should break the line rather than the layout. */
+  .chip.ver {
+    background: var(--secondary-background-color, #eee);
+    color: var(--secondary-text-color, #727272);
+    white-space: normal;
+  }
   .current .card { box-shadow: 0 0 0 2px var(--primary-color, #03a9f4); }
   .heading {
     margin: 0 0 8px;
@@ -227,7 +236,14 @@ export const STYLE = `
   }
   .mkver {
     display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
     margin-top: 8px;
+  }
+  .mkver .named {
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
   }
   .why {
     display: block;
