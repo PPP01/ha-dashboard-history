@@ -18,6 +18,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .analyze import explain_change, explain_effect, find_removed
 from . import versions as versioning
+from .const import DOMAIN
 from .keys import is_absent, is_live
 from .restore import reinsert
 from .snapshot import (
@@ -42,6 +43,66 @@ def _diff(old: dict, new: dict, name: str) -> str:
             fromfile=f"live/{name}",
             tofile=f"restored/{name}",
         )
+    )
+
+
+async def _keep_the_live_state(
+    hass: HomeAssistant, store: HistoryStore, key: str, current: dict
+) -> str | None:
+    """Record what is on the dashboard now, before it is overwritten.
+
+    Answers with a note if the state could not be kept, and with None if
+    it is safely in the history - it never refuses. The case that
+    settles that is a full disk, where reading works and writing does
+    not: refusing there would leave somebody unable to restore anything
+    at the moment they want it most, in the name of a snapshot that
+    could not have been written either way.
+
+    Ordinarily there is nothing to do here. The recorder hears every
+    save, and three hours of ordinary use on the test rig produced no
+    gap at all - in which case the state is already the newest entry and
+    this writes nothing. It exists for the times "ordinarily" does not
+    hold: a save made while Home Assistant was starting, a storage file
+    edited from outside, a recorder that failed once. Without it the
+    state being replaced is gone, with nothing in the history to go back
+    to - and going back is the whole point of the tool.
+
+    Announced to nobody, deliberately. The panel reads
+    EVENT_HISTORY_UPDATED as "your page is stale, read it again", and
+    firing it here would send it to reload in the middle of the
+    operation: a page built from a history whose newest entry is the
+    state about to be replaced. That page looks right, which is worse
+    than looking wrong.
+
+    The result is *checked*, not assumed. `async_capture` swallows its
+    own failures by design - nothing in it may raise into Home Assistant
+    - so asking it whether it worked answers nothing. Asking the store
+    whether the live state is now its newest entry answers exactly the
+    question that matters, and stays right no matter how the recording
+    failed.
+    """
+    if not current:
+        # No live configuration at all, so there is nothing to keep and
+        # nothing the recorder could have missed. Saying otherwise here
+        # would put a warning on the one case that is already understood.
+        return None
+    capture = hass.data.get(DOMAIN, {}).get("capture")
+    if capture is not None:
+        try:
+            await capture.async_capture(
+                key=key, reason="before restoring", announce=False
+            )
+        except Exception:  # noqa: BLE001 - a note, never a refusal
+            _LOGGER.exception("Could not record %s before restoring it", key)
+    recorded = await hass.async_add_executor_job(store.read_at, key, "HEAD")
+    if recorded == dump(current):
+        return None
+    _LOGGER.warning(
+        "The state of %s at the time of the restore is not in the history", key
+    )
+    return (
+        "what was on the dashboard just before this could not be recorded, "
+        "so the history does not hold it"
     )
 
 
@@ -233,13 +294,17 @@ async def async_restore_deleted(
     explanation = _as_dict(explain_effect(current, restored))
     if not confirm:
         return {"applied": False, "preview": diff, "explanation": explanation}
+    lost = await _keep_the_live_state(hass, store, key, current)
     await async_save_config(hass, key, restored)
-    return {
+    result = {
         "applied": True,
         "preview": diff,
         "explanation": explanation,
         "restored": items[position].label,
     }
+    if lost:
+        result["note"] = lost
+    return result
 
 
 async def async_restore_state(
@@ -291,6 +356,11 @@ async def async_restore_state(
             # says what a person can do instead.
             return {"applied": False, "error": str(err)}
         created = True
+    else:
+        # Only when there is a live state to keep. A dashboard that is
+        # gone has none, and asking for one would record its absence a
+        # second time.
+        note = await _keep_the_live_state(hass, store, key, current)
     await async_save_config(hass, key, target)
     result = {
         "applied": True,
