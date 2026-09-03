@@ -353,4 +353,11 @@ export const STYLE = `
     text-transform: uppercase;
     letter-spacing: .06em;
   }
+  details.more { margin-top: 16px; }
+  details.more > summary {
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  details.more > summary:hover { color: var(--primary-text-color, #212121); }
 `;

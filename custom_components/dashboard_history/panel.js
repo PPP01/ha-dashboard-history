@@ -286,6 +286,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = null;
     this._items = [];
     this._explanation = null;
+    this._undo = null;
     const result = await this._guard(() =>
       this._call("history", { dashboard: key }),
     );
@@ -317,11 +318,12 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = change.revision;
     this._items = [];
     this._explanation = null;
+    this._undo = null;
     this._take(await this._guard(() => this._detailFor(index)));
     this._render();
   }
 
-  /** The two answers a row's detail is built from. */
+  /** The three answers a row's detail is built from. */
   _detailFor(index) {
     const before = this._before(index);
     return Promise.all([
@@ -335,13 +337,18 @@ class DashboardHistoryPanel extends HTMLElement {
         dashboard: this._selected,
         revision: this._changes[index].revision,
       }),
+      this._call("undo_change", {
+        dashboard: this._selected,
+        revision: this._changes[index].revision,
+      }),
     ]);
   }
 
   _take(answers) {
-    const [missing, explanation] = answers || [null, null];
+    const [missing, explanation, undo] = answers || [null, null, null];
     this._items = missing ? missing.items || [] : [];
     this._explanation = explanation;
+    this._undo = undo || null;
   }
 
   /** Show the preview, and write only if the person says so. */
@@ -639,6 +646,17 @@ class DashboardHistoryPanel extends HTMLElement {
     ]);
   }
 
+  _undoChange(index) {
+    this._confirm("Undo this change", (confirm) => [
+      "undo_change",
+      {
+        dashboard: this._selected,
+        revision: this._changes[index].revision,
+        confirm,
+      },
+    ]);
+  }
+
   _renderDashboard(d) {
     return `
         <button class="dash" data-key="${escape(d.key)}"
@@ -675,37 +693,29 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The two states a row can send you to, and the reason when one is not
-   * on offer.
+   * The coarse ways back, folded away.
    *
-   * A row is a change, so it sits between two states, and people arrive
-   * wanting either. Someone hunting a loss wants the state *before* the
-   * change that caused it. Someone who recognises a state they liked
-   * wants the one *after* the change that produced it. This used to offer
-   * only the first, on the reasoning that people think in changes - and
-   * they do, right up until they are choosing a destination.
+   * They used to stand beside the fine ones, and the first person to
+   * meet them read them as two labels for one action - fairly, because
+   * in the case they met (newest change, one deleted card) that is
+   * exactly what they were. Since decision 15 the row leads with the
+   * targeted undo, and these are the escape hatch: replace the whole
+   * dashboard, everything since gone. Folded, not removed - it is a
+   * real capability and somebody wants it about once a year.
    *
-   * Both labels name the *state*, and the pair reads "before"/"after"
-   * rather than one label being the other minus a word. An omission is
-   * what gets read past; a contrast is not.
-   *
-   * Either button disappears when its target is what the dashboard holds
-   * already. On a history that went back and forth that is every second
-   * row, and offering it there produced a dialog reading "No difference."
-   * above a live Apply button.
+   * The "before" button is left out when it would write exactly what
+   * the undo writes. The server says so with `equals_state_before`; the
+   * panel does not compare states, because a comparison here is logic
+   * here.
    */
-  _renderSetBack(index, listed) {
+  _renderSetBack(index) {
     const before = this._before(index);
     const buttons = [];
-    if (before && !this._changes[index + 1]?.same_as_now)
+    const same = this._undo?.available && this._undo.equals_state_before;
+    if (before && !this._changes[index + 1]?.same_as_now && !same)
       buttons.push({
         revision: before,
-        // At the newest change there is nothing after it to sweep away, so
-        // the shorter, plainer word is the honest one there.
-        label:
-          index === 0
-            ? "Undo this change"
-            : "Back to the state before this change",
+        label: "Back to the state before this change",
       });
     if (!this._changes[index]?.same_as_now)
       buttons.push({
@@ -713,44 +723,27 @@ class DashboardHistoryPanel extends HTMLElement {
         label: "Back to the state after this change",
       });
 
-    // Only the "before" case needs saying. When the state *after* is the
-    // current one, the row already carries a sentence saying so.
     const why =
       before && this._changes[index + 1]?.same_as_now
         ? `<span class="why">The state before this change is what the
             dashboard holds now — nothing to set back.</span>`
         : "";
     if (!buttons.length) return why;
-    // Two kinds of button on one row, and they are not two labels for one
-    // action - they differ in *reach*. "Put back" reinserts one item into
-    // the configuration as it stands today and touches nothing else;
-    // setting a state back writes that whole state over the dashboard.
-    //
-    // Reported as confusing by the first person to meet them, and fairly:
-    // the case they met was the one where both do the same thing - the
-    // newest change, a single deletion, nothing after it. On a deletion
-    // three weeks old they diverge sharply, and nothing on screen said
-    // so. Each is described rather than contrasted, because "these are
-    // different" is unhelpful exactly where the outcomes coincide.
-    //
-    // Only where both are on screen. Where nothing is missing there is no
-    // "Put back" to tell apart, and the two cases exclude each other
-    // anyway: if the state before this change is what the dashboard holds
-    // now, then nothing has gone missing since it.
-    const apart = listed
-      ? `<span class="why">Put back adds a single item to the dashboard as
-           it stands today and changes nothing else. Setting the state back
-           replaces the whole dashboard with how it was then.</span>`
-      : "";
-    return `${apart}<div class="backto">
-        ${buttons
-          .map(
-            (b) =>
-              `<button class="act ghost" data-state="${escape(b.revision)}"
-                >${b.label}</button>`,
-          )
-          .join("")}
-      </div>${why}`;
+    return `<details class="more">
+        <summary>Replace the whole dashboard instead</summary>
+        <p class="why" style="margin-top:8px">Setting a state back replaces
+          the whole dashboard with how it was then. Everything saved since
+          is no longer what the dashboard holds.</p>
+        <div class="backto">
+          ${buttons
+            .map(
+              (b) =>
+                `<button class="act ghost" data-state="${escape(b.revision)}"
+                  >${b.label}</button>`,
+            )
+            .join("")}
+        </div>${why}
+      </details>`;
   }
 
   _renderDetail(index) {
@@ -772,23 +765,76 @@ class DashboardHistoryPanel extends HTMLElement {
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
         ${this._renderMakeVersion(index)}</div>`;
-    const list = this._items.length
-      ? this._items
-          .map(
-            (item) => `
-          <div class="item">
-            <span class="label">${escape(item.label)}
-              <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
-            </span>
-            <button class="act" data-restore="${item.position}">Put back</button>
-          </div>`,
-          )
-          .join("")
-      : `<p class="muted">Nothing from before this change is missing today.</p>`;
+    // Which of the missing items the undo takes care of. Two reasons,
+    // and only these two - decision 15:
+    //
+    // "covered": the undo restores exactly this one item and does
+    // nothing else. That is one shape only, a change that deleted a
+    // single thing, and it is the shape somebody reported as confusing
+    // because the two buttons there really do the same work.
+    //
+    // "trap": the change also *added* something. Then a plain put-back
+    // is not merely redundant, it is wrong: an edit whose key field was
+    // touched reads as one removal plus one addition, and adding the old
+    // card back leaves both versions standing. Measured, not feared.
+    const undo = this._undo?.available ? this._undo : null;
+    const added = /\d+ added/.test(this._changes[index]?.message || "");
+    const mine = new Set(
+      (this._explanation?.groups || [])
+        .flatMap((group) => group.entries)
+        .filter((entry) => entry.kind === "removed")
+        .map((entry) => entry.label),
+    );
+    // A missing view's label carries a "view: " lead-in the explanation's
+    // entry does not (deleted_since names it for a list of mixed cards and
+    // views; explain already sits under a view heading and does not need
+    // to say so again). Comparing the two forms as they stand would leave
+    // a removed-and-re-added view uncovered - exactly the trap, on the
+    // one item shape most likely to hit it.
+    const bareLabel = (label) => label.replace(/^view: /, "");
+    const swallowed = (item) =>
+      undo && mine.has(bareLabel(item.label)) && (added || mine.size === 1);
+    const own = this._items.filter((item) => !swallowed(item));
+
+    const rows = own
+      .map(
+        (item) => `
+        <div class="item">
+          <span class="label">${escape(item.label)}
+            <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
+          </span>
+          <button class="act" data-restore="${item.position}">Put back</button>
+        </div>`,
+      )
+      .join("");
+    // Named when the undo has taken the rest off the list: otherwise the
+    // remaining rows read as "this change deleted these", which is then
+    // exactly wrong.
+    const heading =
+      own.length && own.length < this._items.length
+        ? `<p class="why" style="margin-top:16px">Also missing since then,
+             from later changes:</p>`
+        : "";
+    const list = rows
+      ? heading + rows
+      : undo
+        ? ""
+        : `<p class="muted">Nothing from before this change is missing today.</p>`;
+
+    const kept = index === 0 ? "" : ` and keeps the ${index} change${index === 1 ? "" : "s"} made since`;
+    const offer = undo
+      ? `<div class="backto">
+           <button class="act" data-undo="${index}">Undo this change</button>
+         </div>
+         <p class="why" style="margin-top:8px">Puts this change back${kept}.</p>`
+      : `<p class="why">This change cannot be taken back exactly:
+           ${escape(this._undo?.reason || "no reason given")}.</p>`;
+
     return `<div class="detail">
       ${plain}
+      ${offer}
       ${list}
-      ${this._renderSetBack(index, this._items.length > 0)}
+      ${this._renderSetBack(index)}
       ${this._renderMakeVersion(index)}
     </div>`;
   }
@@ -1236,6 +1282,12 @@ class DashboardHistoryPanel extends HTMLElement {
         // of them on a row, a generic heading would leave you guessing
         // which one you pressed.
         this._restoreState(element.dataset.state, element.textContent.trim());
+      }),
+    );
+    root.querySelectorAll("[data-undo]").forEach((element) =>
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this._undoChange(Number(element.dataset.undo));
       }),
     );
     root.querySelectorAll("[data-forget]").forEach((element) =>
