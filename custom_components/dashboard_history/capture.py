@@ -11,6 +11,7 @@ inconvenience, a failed save is not.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.core import Event, HomeAssistant, callback
@@ -18,7 +19,7 @@ from homeassistant.helpers.event import async_call_later
 
 from .analyze import change_message
 from .const import EVENT_HISTORY_UPDATED, EVENT_LOVELACE_UPDATED, RECONCILE_DELAY
-from .keys import deletions_to_record
+from .keys import deletions_to_record, is_safe_key
 
 try:  # The authoritative source; the literal below is only a fallback.
     from homeassistant.components.frontend import EVENT_PANELS_UPDATED
@@ -44,6 +45,29 @@ class HistoryCapture:
         self._store = store
         self._unsubscribe: list = []
         self._pending = None
+        # Two locks, one job each, and the split is not a refinement -
+        # a single lock over both halves loses states.
+        #
+        # `_writing` fixes the ordering. Two saves in quick succession
+        # both read, then both write, and whoever writes second builds
+        # its message against a HEAD that is already the newer state: the
+        # older state arrives last and is described by comparison with
+        # its own successor. Measured: seven saves came out as the chain
+        # 1,2,3,4,6,5,7, one of them claiming "changed outside Home
+        # Assistant" about a save Home Assistant had just made itself. So
+        # the HEAD lookup, the message and the commit are one section.
+        #
+        # `_reading` keeps that section from swallowing what it is meant
+        # to protect. Measured with both halves under one lock: a
+        # reconciliation over a grown repository held it for 16.6 s, a
+        # save waited 7.2 s for it, and by the time it could look, the
+        # dashboard had been deleted - so it wrote nothing and that state
+        # is gone for good. Reading is therefore locked on its own,
+        # touches no git, and finishes in milliseconds; a caller that
+        # waits for `_writing` waits with the state already in its hands.
+        # A slow write delays the history. A slow read destroys it.
+        self._reading = asyncio.Lock()
+        self._writing = asyncio.Lock()
 
     async def async_start(self) -> None:
         """Reconcile once, then listen."""
@@ -91,20 +115,59 @@ class HistoryCapture:
         self._pending = None
         await self.async_capture(reason="reconcile")
 
-    async def async_capture(self, key: str | None = None, reason: str = "save") -> list[str]:
+    async def async_capture(
+        self, key: str | None = None, reason: str = "save", announce: bool = True
+    ) -> list[str]:
         """Record the current state of one or all dashboards.
 
         Returns the revisions that were created. An unchanged dashboard
         produces none.
+
+        `announce=False` records without telling anybody. It exists for
+        the snapshot taken immediately *before* a restore: the panel
+        waits for `EVENT_HISTORY_UPDATED` to know its page is stale, and
+        firing it there would send it to reload a history whose newest
+        entry is the state about to be overwritten - a page half a
+        restore old, which then looks correct and is not.
+
+        Reading and writing are locked *separately*, and that split is
+        the whole design. See `_reading` and `_writing`.
+        """
+        async with self._reading:
+            read = await self._async_read(key)
+        if read is None:
+            return []
+        async with self._writing:
+            return await self._async_write(*read, key, reason, announce)
+
+    async def _async_read(self, key: str | None):
+        """Ask Home Assistant what is there. Fast, and never touches git.
+
+        Answers None when the configurations could not be read at all -
+        which is different from reading them and finding nothing, and
+        must not be turned into "every dashboard was deleted".
         """
         try:
             configs = await async_get_all_configs(self._hass)
         except Exception:  # noqa: BLE001 - never let a recording break a save
             _LOGGER.exception("Could not read dashboard configurations")
-            return []
+            return None
 
         if key is not None:
             configs = {k: v for k, v in configs.items() if k == key}
+
+        # A key decides a file name and a tag namespace, so one that is
+        # not a single path segment is turned away rather than written
+        # somewhere else. Logged by name at warning level: this is a
+        # dashboard whose history simply will not exist, and silence
+        # there would be the worst of the three possible answers.
+        for name in sorted(k for k in configs if not is_safe_key(k)):
+            _LOGGER.warning(
+                "Not recording dashboard %r: its url_path is not a single "
+                "path segment, so it has no place in the history",
+                name,
+            )
+        configs = {k: v for k, v in configs.items() if is_safe_key(k)}
 
         try:
             metas = await async_get_all_meta(self._hass)
@@ -112,11 +175,24 @@ class HistoryCapture:
             _LOGGER.exception("Could not read dashboard metadata")
             metas = {}
 
+        known = await async_known_keys(self._hass) if key is None else None
+        return configs, metas, known
+
+    async def _async_write(
+        self,
+        configs: dict[str, dict],
+        metas: dict[str, dict],
+        known: set[str] | None,
+        key: str | None,
+        reason: str,
+        announce: bool,
+    ) -> list[str]:
+        """Write what was read. All the git work, one caller at a time."""
         revisions: list[str] = []
         touched: list[str] = []
         if key is None:
             try:
-                for name, revision in await self._async_record_deletions():
+                for name, revision in await self._async_record_deletions(known):
                     touched.append(name)
                     revisions.append(revision)
             except Exception:  # noqa: BLE001
@@ -132,7 +208,7 @@ class HistoryCapture:
             if revision is not None:
                 touched.append(name)
                 revisions.append(revision)
-        if revisions:
+        if revisions and announce:
             self._announce(touched, reason)
         return revisions
 
@@ -156,7 +232,9 @@ class HistoryCapture:
         except Exception:  # noqa: BLE001 - announcing is a courtesy, not the point
             _LOGGER.exception("Could not announce the recorded change")
 
-    async def _async_record_deletions(self) -> list[tuple[str, str]]:
+    async def _async_record_deletions(
+        self, known: set[str] | None
+    ) -> list[tuple[str, str]]:
         """Record dashboards the history knows but Home Assistant does not.
 
         Answers with (dashboard, revision) pairs rather than bare
@@ -172,8 +250,12 @@ class HistoryCapture:
         A missing *configuration* is not enough to conclude a deletion: a
         dashboard that has never been saved has none either. Only one that
         Home Assistant no longer knows at all counts.
+
+        `known` is read in the read phase, with the configurations, and
+        handed in here: it is a question for Home Assistant, and every
+        question for Home Assistant is asked while the answer is still
+        current rather than after a wait for the write lock.
         """
-        known = await async_known_keys(self._hass)
         tracked = await self._hass.async_add_executor_job(
             self._store.list_dashboards
         )
