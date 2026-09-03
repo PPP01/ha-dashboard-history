@@ -166,6 +166,34 @@ it sits between:
 Either one disappears when its target is what the dashboard holds already,
 so a button never offers a change that changes nothing.
 
+**Two ways back, and what each one reaches.** A row where something is
+missing carries two kinds of button, and they are not two labels for one
+action. They differ in reach:
+
+| Button | What it touches |
+| --- | --- |
+| **Put back** | One item. It is reinserted into the dashboard *as it stands today*, and nothing else changes. |
+| **Undo this change** / **Back to the state before this change** | The whole dashboard. That earlier state is written over what is there now. |
+
+On the newest change the two can look identical, and sometimes they
+genuinely are: delete a single card, and putting it back or undoing the
+change both leave you with the same dashboard. That is the case most
+people meet first — which is exactly why the difference is easy to miss.
+
+Now picture a deletion from three weeks ago. **Put back** brings that one
+card into today's dashboard and leaves the three weeks alone. **Back to
+the state before this change** throws them away.
+
+Where both are on screen, the panel says so:
+
+> Put back adds a single item to the dashboard as it stands today and
+> changes nothing else. Setting the state back replaces the whole
+> dashboard with how it was then.
+
+It describes each rather than claiming they differ. Where the outcomes do
+coincide — and on the newest single deletion they do — "these are not the
+same thing" would be the confusing sentence, not the helpful one.
+
 Nothing is written until you have confirmed it — and before you do, the
 panel says in plain words what will happen:
 
