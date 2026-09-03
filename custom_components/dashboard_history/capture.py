@@ -17,7 +17,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 
 from .analyze import change_message
-from .const import EVENT_LOVELACE_UPDATED, RECONCILE_DELAY
+from .const import EVENT_HISTORY_UPDATED, EVENT_LOVELACE_UPDATED, RECONCILE_DELAY
 from .keys import deletions_to_record
 
 try:  # The authoritative source; the literal below is only a fallback.
@@ -113,9 +113,12 @@ class HistoryCapture:
             metas = {}
 
         revisions: list[str] = []
+        touched: list[str] = []
         if key is None:
             try:
-                revisions.extend(await self._async_record_deletions())
+                for name, revision in await self._async_record_deletions():
+                    touched.append(name)
+                    revisions.append(revision)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Could not record deleted dashboards")
         for name, config in sorted(configs.items()):
@@ -127,11 +130,38 @@ class HistoryCapture:
                 _LOGGER.exception("Could not record dashboard %s", name)
                 continue
             if revision is not None:
+                touched.append(name)
                 revisions.append(revision)
+        if revisions:
+            self._announce(touched, reason)
         return revisions
 
-    async def _async_record_deletions(self) -> list[str]:
+    def _announce(self, touched: list[str], reason: str) -> None:
+        """Say that the history has grown, and which dashboards grew.
+
+        Only when something was written. An unchanged dashboard produces
+        no revision, and a page that refreshes for nothing teaches people
+        to stop trusting that a refresh means anything.
+
+        Swallowed like every other failure in here: a listener that is
+        not there, or a bus that refuses, must not turn a recorded change
+        into a lost one. The worst this costs is a panel that shows its
+        age until somebody presses reload.
+        """
+        try:
+            self._hass.bus.async_fire(
+                EVENT_HISTORY_UPDATED,
+                {"dashboards": sorted(set(touched)), "reason": reason},
+            )
+        except Exception:  # noqa: BLE001 - announcing is a courtesy, not the point
+            _LOGGER.exception("Could not announce the recorded change")
+
+    async def _async_record_deletions(self) -> list[tuple[str, str]]:
         """Record dashboards the history knows but Home Assistant does not.
+
+        Answers with (dashboard, revision) pairs rather than bare
+        revisions: the caller announces which dashboards changed, and a
+        deleted one is exactly the case a panel most needs to hear about.
 
         Losing a whole dashboard is the heaviest loss this integration can
         witness, and Home Assistant announces it with no event at all - so
@@ -147,15 +177,15 @@ class HistoryCapture:
         tracked = await self._hass.async_add_executor_job(
             self._store.list_dashboards
         )
-        revisions: list[str] = []
+        gone: list[tuple[str, str]] = []
         for name in deletions_to_record(tracked, known):
             revision = await self._hass.async_add_executor_job(
                 self._store.mark_deleted, name, f"{name}: dashboard deleted"
             )
             if revision is not None:
                 _LOGGER.info("Dashboard %s is gone; recorded its deletion", name)
-                revisions.append(revision)
-        return revisions
+                gone.append((name, revision))
+        return gone
 
     def _write_one(
         self, name: str, config: dict, reason: str, meta: dict | None = None

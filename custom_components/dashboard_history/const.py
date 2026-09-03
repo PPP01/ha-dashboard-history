@@ -25,6 +25,15 @@ PANEL_COMPONENT = "dashboard-history-panel"
 # everyone a stale panel until somebody remembered to raise it.
 PANEL_VERSION = "0.2.0"
 
+# Fired once the recorder has written something, naming the dashboards it
+# wrote. The panel listens for this and not for `lovelace_updated`,
+# because that one arrives *before* the commit exists: measured on
+# 2026-09-03, restore_state returned after 26 ms and the commit landed
+# 150 ms later. A panel refreshing in that window reads a history whose
+# newest entry is the state it just replaced - so nothing matches the
+# live configuration, nothing is crowned, and the page looks broken.
+EVENT_HISTORY_UPDATED = "dashboard_history_updated"
+
 # Seconds to wait before reconciling after a panel changed. Long enough to
 # collapse the burst Home Assistant fires while starting up.
 RECONCILE_DELAY = 10

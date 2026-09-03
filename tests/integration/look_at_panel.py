@@ -858,6 +858,88 @@ async def main():
                 await asyncio.sleep(0.3)
             await page.shot("18-create-dialog-warns.png")
 
+            print("\n-- The page hears about a change from elsewhere --")
+            # The panel subscribes to the recorder's own event. Proving
+            # that needs a change made *outside* the panel, so the page's
+            # own `hass` connection saves a dashboard directly - the same
+            # thing that happens when somebody edits in another tab.
+            key = "dh-live-check"
+            picked = await page.js(
+                "(() => { const p = " + PANEL + ";"
+                f' const b = [...p.querySelectorAll(".dash")].find(x => x.dataset.key === {json.dumps(key)});'
+                " if (!b) return null; b.click(); return b.dataset.key; })()"
+            )
+            if not picked:
+                print(f"    {key} is not in the list - run run_checks.py first")
+            else:
+                # Not `_selected` alone: it is assigned before the fetch
+                # it starts, so waiting on it succeeded while `_changes`
+                # still held the synthetic entries an earlier section put
+                # there - and the "before" revision read back as
+                # "aaaaaaa1111", which made the check below prove the
+                # load rather than the live update. A real revision is
+                # forty characters.
+                await page.settle(
+                    f"{ELEMENT}._selected === {json.dumps(key)}"
+                    f" && ({ELEMENT}._changes[0]?.revision || '').length === 40"
+                )
+                before = await page.js(f"{ELEMENT}._changes[0]?.revision ?? null")
+                print(f"    newest before: {before and before[:7]}")
+                # Started, not awaited: page.js evaluates with
+                # awaitPromise, and this promise settles long before the
+                # recorder does. The wait belongs in settle() below.
+                await page.js(
+                    "(() => { const p = " + ELEMENT + ";"
+                    " p.hass.callWS({type: 'lovelace/config/save',"
+                    f"   url_path: {json.dumps(key)},"
+                    "    config: {views: [{path: 'p', title: 'P', cards: ["
+                    "      {type: 'markdown', content: 'from elsewhere ' + Date.now()}"
+                    "    ]}]}});"
+                    " return true; })()"
+                )
+                moved = await page.settle(
+                    f"{ELEMENT}._changes[0] && {ELEMENT}._changes[0].revision !== "
+                    f"{json.dumps(before)}",
+                    15,
+                )
+                after = await page.js(f"{ELEMENT}._changes[0]?.revision ?? null")
+                print(f"    newest after : {after and after[:7]}")
+                print(f"    refreshed without a reload: {moved}")
+                crowned = await page.js(
+                    f'!!{PANEL}.querySelector(".current .chip.now")'
+                )
+                # The whole point: not merely refreshed, but refreshed
+                # late enough that the newest entry matches the live
+                # configuration and is crowned.
+                print(f"    and the newest entry is crowned: {crowned}")
+                await page.shot("20-live-update.png")
+
+            print("\n-- The reload button --")
+            shape = await page.js(
+                "(() => { const b = " + PANEL + '.querySelector(".bar [data-refresh]");'
+                # Measured, not read off the declaration: getComputedStyle
+                # resolves `margin-left: auto` into the pixels it worked
+                # out, so comparing it against "auto" can never be true.
+                # Where the button sits is the question anyway.
+                " const bar = " + PANEL + '.querySelector(".bar");'
+                " if (!b || !bar) return null;"
+                " const at = b.getBoundingClientRect();"
+                " const row = bar.getBoundingClientRect();"
+                " return {label: b.textContent.trim(), title: b.title,"
+                "         pixelsFromRightEdge: Math.round(row.right - at.right)};"
+                " })()"
+            )
+            print(f"    {shape}")
+            if shape:
+                await page.js(
+                    f'{PANEL}.querySelector(".bar [data-refresh]").click()'
+                )
+                await asyncio.sleep(1.5)
+                alive = await page.js(
+                    f'{PANEL}.querySelectorAll(".change").length'
+                )
+                print(f"    rows after pressing it: {alive}")
+
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:
         chrome.terminate()

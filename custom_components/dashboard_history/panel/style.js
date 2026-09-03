@@ -19,6 +19,21 @@ export const STYLE = `
     font-size: 20px;
     box-sizing: border-box;
   }
+  /* Pushed to the far end by margin, not by a spacer element: the bar is
+     a flex row and "working..." comes and goes between the two. */
+  .bar .reload {
+    margin-left: auto;
+    padding: 2px 10px 4px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1.2;
+    cursor: pointer;
+    opacity: .8;
+  }
+  .bar .reload:hover { opacity: 1; }
   .layout { display: flex; align-items: stretch; height: calc(100% - 56px); }
   .side {
     width: 280px;

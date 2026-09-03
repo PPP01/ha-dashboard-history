@@ -16,6 +16,12 @@
 
 const DOMAIN = "dashboard_history";
 
+// Must match EVENT_HISTORY_UPDATED in const.py; a test compares the two.
+// Deliberately not `lovelace_updated`: that one fires *before* the
+// recorder has written anything, and refreshing on it reads a history
+// whose newest entry is the state that was just replaced.
+const EVENT_RECORDED = "dashboard_history_updated";
+
 // The parts are fetched with this module's own query string, so a new
 // release busts them together with the entry point. panel.py digests
 // every file into that query for exactly this reason: a plain import
@@ -84,6 +90,129 @@ class DashboardHistoryPanel extends HTMLElement {
         () => this._loadDashboards(),
         (err) => this._failedToLoad(err),
       );
+    }
+    this._listen();
+  }
+
+  /**
+   * Hear about recorded changes, once.
+   *
+   * `set hass` runs again and again, so the slot is claimed before the
+   * subscription resolves - two subscriptions would refresh the page
+   * twice for one change. A failure here costs live updates and nothing
+   * else: the reload button and the panel's own actions still work, so
+   * it is reported to the console rather than to the page.
+   */
+  _listen() {
+    if (this._sub || !this._hass?.connection) return;
+    this._sub = "pending";
+    this._hass.connection
+      .subscribeEvents((event) => this._onRecorded(event), EVENT_RECORDED)
+      .then(
+        (off) => {
+          this._sub = off;
+          // Removed while we were subscribing.
+          if (!this.isConnected) this._unlisten();
+        },
+        (err) => {
+          this._sub = null;
+          console.warn(`${DOMAIN}: no live updates; use the reload button`, err);
+        },
+      );
+  }
+
+  _unlisten() {
+    const off = this._sub;
+    this._sub = null;
+    if (typeof off === "function") off();
+  }
+
+  disconnectedCallback() {
+    // Home Assistant keeps panels around between visits. A subscription
+    // that outlives the element would keep fetching a history nobody is
+    // looking at.
+    this._unlisten();
+  }
+
+  /**
+   * A change has been recorded. Decide whether this page cares.
+   */
+  _onRecorded(event) {
+    if (this._awaiting) {
+      // An action of our own is waiting for exactly this and refreshes
+      // itself; a second refresh here would race it.
+      const done = this._awaiting;
+      this._awaiting = null;
+      done();
+      return;
+    }
+    if (this.shadowRoot?.querySelector("dialog[open]")) return;
+    const named = event?.data?.dashboards;
+    if (
+      Array.isArray(named) &&
+      named.length &&
+      this._selected &&
+      !named.includes(this._selected)
+    ) {
+      // Another dashboard. The sidebar may have gained or lost one; the
+      // history in front of this person did not change.
+      this._loadDashboardsQuietly();
+      return;
+    }
+    this._refreshQuietly();
+  }
+
+  /**
+   * Resolve once the recorder reports, or after `seconds` regardless.
+   *
+   * The fallback is not decoration. A confirmed write always changes the
+   * configuration and therefore always produces a commit - but if the
+   * announcement were ever lost, waiting for it forever would leave the
+   * page frozen mid-action, which is worse than the flicker this exists
+   * to remove.
+   */
+  _recorded(seconds = 3) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this._awaiting = null;
+        resolve();
+      }, seconds * 1000);
+      this._awaiting = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  }
+
+  /** Read everything again, keeping the row that is open if it survives. */
+  async _refresh() {
+    const listed = await this._call("dashboards");
+    this._dashboards = listed.dashboards || [];
+    if (this._selected) {
+      const history = await this._call("history", { dashboard: this._selected });
+      this._changes = history.changes || [];
+      // An expanded row keeps its place, but not its answers: after a
+      // change from outside, "Put back" would be offering items worked
+      // out against a dashboard that has moved on.
+      const openAt = this._changes.findIndex((c) => c.revision === this._open);
+      if (openAt < 0) {
+        this._open = null;
+        this._items = [];
+        this._explanation = null;
+      } else {
+        this._take(await this._detailFor(openAt));
+      }
+    }
+    this._render();
+  }
+
+  async _refreshQuietly() {
+    try {
+      await this._refresh();
+    } catch {
+      // Nobody asked for this one. An error banner arriving from nowhere
+      // is worse than a page that is briefly out of date; the button
+      // reports its own failures.
     }
   }
 
@@ -171,25 +300,31 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = change.revision;
     this._items = [];
     this._explanation = null;
+    this._take(await this._guard(() => this._detailFor(index)));
+    this._render();
+  }
+
+  /** The two answers a row's detail is built from. */
+  _detailFor(index) {
     const before = this._before(index);
-    const answers = await this._guard(() =>
-      Promise.all([
-        before
-          ? this._call("deleted_since", {
-              dashboard: this._selected,
-              revision: before,
-            })
-          : Promise.resolve({ items: [] }),
-        this._call("explain", {
-          dashboard: this._selected,
-          revision: change.revision,
-        }),
-      ]),
-    );
+    return Promise.all([
+      before
+        ? this._call("deleted_since", {
+            dashboard: this._selected,
+            revision: before,
+          })
+        : Promise.resolve({ items: [] }),
+      this._call("explain", {
+        dashboard: this._selected,
+        revision: this._changes[index].revision,
+      }),
+    ]);
+  }
+
+  _take(answers) {
     const [missing, explanation] = answers || [null, null];
     this._items = missing ? missing.items || [] : [];
     this._explanation = explanation;
-    this._render();
   }
 
   /** Show the preview, and write only if the person says so. */
@@ -245,7 +380,19 @@ class DashboardHistoryPanel extends HTMLElement {
       });
     });
     if (answer !== "apply") return;
-    const applied = await this._guard(() => this._call(...request(true)));
+    // Armed before the write: the recorder is quick, and an announcement
+    // that arrives first would find nobody waiting.
+    const recorded = this._recorded();
+    const applied = await this._guard(async () => {
+      const result = await this._call(...request(true));
+      // Still busy until the recorder has it. Reloading in between reads
+      // a history whose newest entry is the state just replaced - so
+      // nothing matches the live configuration, nothing is crowned, and
+      // the page looks half-built. Measured at 30 to 150 ms of exactly
+      // that.
+      await recorded;
+      return result;
+    });
     if (applied?.error) this._error = applied.error;
     else if (applied?.note) this._error = applied.note;
     await this._select(this._selected);
@@ -958,6 +1105,8 @@ class DashboardHistoryPanel extends HTMLElement {
       <div class="bar">
         <span>Dashboard History</span>
         ${this._busy ? '<span class="muted" style="font-size:14px">working…</span>' : ""}
+        <button class="reload" data-refresh="1" title="Reload the history"
+                aria-label="Reload the history">\u21bb</button>
       </div>
       ${this._error ? `<div class="banner"><span class="grow">${escape(this._error)}</span></div>` : ""}
       <div class="layout">
@@ -1074,6 +1223,11 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     root.querySelectorAll("[data-forget]").forEach((element) =>
       element.addEventListener("click", () => this._forget()),
+    );
+    root.querySelectorAll("[data-refresh]").forEach((element) =>
+      // Guarded, unlike the automatic one: somebody who pressed a button
+      // is owed both the "working" state and the failure if there is one.
+      element.addEventListener("click", () => this._guard(() => this._refresh())),
     );
     root.querySelectorAll("[data-describe]").forEach((element) =>
       element.addEventListener("click", (event) => {

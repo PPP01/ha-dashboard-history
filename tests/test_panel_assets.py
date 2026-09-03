@@ -12,6 +12,7 @@ should not wait for a container.
 """
 
 import pathlib
+import re
 
 PANEL = pathlib.Path(__file__).resolve().parent.parent / "custom_components" / (
     "dashboard_history"
@@ -47,3 +48,25 @@ def test_no_substitution_hides_in_the_stylesheet():
     everywhere, which is why only the stylesheet is asked.
     """
     assert "${" not in (PANEL / "panel" / "style.js").read_text(encoding="utf-8")
+
+
+def test_the_panel_listens_for_the_event_the_recorder_fires():
+    """One name, two languages, and nothing else to keep them together.
+
+    The recorder announces a written commit on the bus and the panel
+    subscribes to it; that is the whole live-update path. A rename on one
+    side alone breaks it silently - the page simply stops refreshing, and
+    nothing anywhere reports an error. Nine milliseconds here instead.
+    """
+    fired = re.search(
+        r'^EVENT_HISTORY_UPDATED = "([^"]+)"',
+        (PANEL / "const.py").read_text(encoding="utf-8"),
+        re.M,
+    )
+    heard = re.search(
+        r'^const EVENT_RECORDED = "([^"]+)";',
+        (PANEL / "panel.js").read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert fired and heard, "one of the two declarations was not found at all"
+    assert fired.group(1) == heard.group(1)

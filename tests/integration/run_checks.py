@@ -32,6 +32,19 @@ import requests
 import websockets
 
 BASE = os.environ.get("HA_TEST_URL", "http://127.0.0.1:8124")
+# Read from the integration rather than repeated here: this file cannot
+# import it (no Home Assistant), and a second copy of an event name is a
+# second thing to forget when it changes.
+EVENT_HISTORY_UPDATED = re.search(
+    r'^EVENT_HISTORY_UPDATED = "([^"]+)"',
+    (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "custom_components"
+        / "dashboard_history"
+        / "const.py"
+    ).read_text(encoding="utf-8"),
+    re.M,
+).group(1)
 CONFIG = pathlib.Path(
     os.environ.get(
         "HA_TEST_CONFIG",
@@ -204,6 +217,30 @@ class Socket:
             if not message.get("success"):
                 raise RuntimeError(f"{type_}: {message.get('error')}")
             return message.get("result")
+
+    async def wait_for_event(self, event_type: str, seconds: float = 10):
+        """Read pushed messages until one is the event asked for.
+
+        Its own reader, because `call` throws away every message that is
+        not the answer it waits for - subscribed events included. Answers
+        None on timeout rather than raising: "it never came" is a result
+        a check wants to report, not an exception.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        while True:
+            left = deadline - loop.time()
+            if left <= 0:
+                return None
+            try:
+                raw = await asyncio.wait_for(self._connection.recv(), timeout=left)
+            except (asyncio.TimeoutError, TimeoutError):
+                return None
+            message = json.loads(raw)
+            if message.get("type") != "event":
+                continue
+            if message.get("event", {}).get("event_type") == event_type:
+                return message["event"]
 
 
 # -- setting the integration up ----------------------------------------
@@ -1310,6 +1347,69 @@ async def run_moves(access: str) -> None:
         )
 
 
+async def run_live_updates(access: str) -> None:
+    """The panel is told when the history has grown - and only then.
+
+    The panel used to reload the moment a service returned, which is
+    before the recorder has written anything: measured on 2026-09-03,
+    restore_state answered after 26 ms and the commit landed 150 ms
+    later. In that window the newest recorded entry is the state that was
+    just replaced, so nothing matches the live configuration and the page
+    shows no current state at all.
+    """
+    key = "dh-live-check"
+    same = {
+        "views": [
+            {"path": "p", "title": "P", "cards": [{"type": "markdown", "content": "one"}]}
+        ]
+    }
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        # The exact key, never a prefix, and never deleted-then-created.
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Live"
+            )
+            await asyncio.sleep(4)
+        await socket.call("lovelace/config/save", url_path=key, config=same)
+        await asyncio.sleep(4)
+
+        await socket.call("subscribe_events", event_type=EVENT_HISTORY_UPDATED)
+
+        changed = json.loads(json.dumps(same))
+        changed["views"][0]["cards"].append(
+            {"type": "markdown", "content": f"two {time.time()}"}
+        )
+        await socket.call("lovelace/config/save", url_path=key, config=changed)
+        seen = await socket.wait_for_event(EVENT_HISTORY_UPDATED, 10)
+        check(
+            "a recorded change is announced on the bus",
+            seen is not None,
+            str(seen and seen.get("data")),
+        )
+        if seen:
+            named = (seen.get("data") or {}).get("dashboards") or []
+            check(
+                "and the announcement names the dashboard that changed",
+                key in named,
+                f"{named}",
+            )
+
+        # The control, and the reason this section can fail at all: saving
+        # the very same configuration writes no commit, so there is
+        # nothing to announce. A panel that reloaded on every save would
+        # pass every check above and still be wrong.
+        await socket.call("lovelace/config/save", url_path=key, config=changed)
+        again = await socket.wait_for_event(EVENT_HISTORY_UPDATED, 6)
+        check(
+            "a save that changes nothing announces nothing",
+            again is None,
+            "silent"
+            if again is None
+            else f"announced anyway: {again.get('data')}",
+        )
+
+
 async def run_versions(access: str) -> None:
     """Versions of one dashboard: counting up, marking, going back.
 
@@ -1666,6 +1766,8 @@ if __name__ == "__main__":
     asyncio.run(run_explanation(access))
     print("\n  -- Die Vorschau vor dem Übernehmen --")
     asyncio.run(run_preview_explains(access))
+    print("\n  -- Die Seite erfaehrt davon --")
+    asyncio.run(run_live_updates(access))
     print("\n  -- Verschieben ist kein Verlust --")
     asyncio.run(run_moves(access))
     print("\n  -- Versionen je Dashboard --")
