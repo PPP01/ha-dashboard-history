@@ -46,6 +46,16 @@ def _diff(old: dict, new: dict, name: str) -> str:
     )
 
 
+def _preview(old: dict, new: dict, name: str) -> tuple[str, dict]:
+    """The diff and the plain words for it, worked out in one place.
+
+    Both are real work - two YAML dumps and a difflib pass, then a
+    second card-matching run - and both belong off the event loop. They
+    are paired here so that costs one executor hop rather than two.
+    """
+    return _diff(old, new, name), _as_dict(explain_effect(old, new))
+
+
 async def _keep_the_live_state(
     hass: HomeAssistant, store: HistoryStore, key: str, current: dict
 ) -> str | None:
@@ -422,7 +432,13 @@ async def async_undo_change(
     except LookupError as err:
         return {"available": False, "reason": str(err)}
 
-    diff = _diff(current, result, key)
+    # In an executor, and not out of habit: since the row itself asks for
+    # the undo, this runs on every expansion of a change rather than only
+    # on a button click - so a dashboard with a few hundred cards would
+    # be dumping YAML and matching cards on the event loop each time.
+    diff, explanation = await hass.async_add_executor_job(
+        _preview, current, result, key
+    )
     if not diff:
         return {"available": False, "reason": "this change is already taken back"}
 
@@ -430,7 +446,7 @@ async def async_undo_change(
         "available": True,
         "applied": False,
         "preview": diff,
-        "explanation": _as_dict(explain_effect(current, result)),
+        "explanation": explanation,
         # Lets the panel drop the coarse "back to the state before this
         # change" button where it would write exactly the same thing.
         # Worked out here because it is a comparison, and a comparison in

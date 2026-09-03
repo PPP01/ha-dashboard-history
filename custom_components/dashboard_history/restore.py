@@ -21,8 +21,13 @@ if TYPE_CHECKING:
     from .analyze import RemovedItem, UndoPlan, UndoStep
 
 
-def _find_view(views: list, item: RemovedItem) -> dict | None:
-    """Locate the view an item belongs to, by path or by position."""
+def _find_view(views: list, item: RemovedItem | UndoStep) -> dict | None:
+    """Locate the view an item belongs to, by path or by position.
+
+    Both kinds of instruction carry the same two fields, so both take
+    this route: a `RemovedItem` from `find_removed`, an `UndoStep` from
+    `plan_undo`.
+    """
     if item.view_path is not None:
         for view in views:
             if isinstance(view, dict) and view.get("path") == item.view_path:
