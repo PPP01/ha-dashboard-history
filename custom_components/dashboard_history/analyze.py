@@ -14,6 +14,7 @@ something that is still there.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -196,60 +197,234 @@ def _describe(card: Any, depth: int = 0) -> str:
     return kind
 
 
-def _match_cards(old_cards: list, new_cards: list):
-    """Return (removed_indices, added_indices, edited_pairs, moved_pairs)."""
-    unmatched_new = list(range(len(new_cards)))
-    removed: list[int] = []
-    edited: list[tuple[int, int]] = []
-    exact: list[tuple[int, int]] = []
+@dataclass(frozen=True)
+class Slot:
+    """One card at the place it sits in a dashboard.
 
-    # Pass one: exact content matches. Same card, possibly at a new index.
-    pending: list[int] = []
-    for old_index, card in enumerate(old_cards):
-        match = next((j for j in unmatched_new if new_cards[j] == card), None)
-        if match is None:
-            pending.append(old_index)
+    Matching used to happen inside a single card list, which is why a
+    card that crossed any boundary - into another view, into another
+    section - was unmatched on both sides at once and read as a deletion
+    plus an addition. Carrying the place along with the card is what lets
+    the passes below cross those boundaries deliberately rather than
+    never.
+    """
+
+    view_key: Any
+    view_index: int
+    view: dict
+    location: tuple
+    index: int
+    card: Any
+
+
+@dataclass(frozen=True)
+class Matching:
+    """Every card of one dashboard, paired across two of its states."""
+
+    removed: list
+    added: list
+    edited: list  # (old, new)
+    moved: list  # (old, new)
+
+
+def _slots(config: dict, keys: set) -> list[Slot]:
+    """Every card of the named views, in the order they are written."""
+    found: list[Slot] = []
+    for view_index, (key, view) in enumerate(_views_by_key(config)):
+        if key not in keys:
             continue
-        unmatched_new.remove(match)
-        exact.append((old_index, match))
-
-    # Pass two: weak matches among what is left. Same card, edited.
-    for old_index in pending:
-        key = _weak_key(old_cards[old_index])
-        match = (
-            next((j for j in unmatched_new if _weak_key(new_cards[j]) == key), None)
-            if key is not None
-            else None
-        )
-        if match is None:
-            removed.append(old_index)
-        else:
-            unmatched_new.remove(match)
-            edited.append((old_index, match))
-
-    return removed, unmatched_new, edited, _moved(exact, edited)
+        for location, cards in card_containers(view):
+            for index, card in enumerate(cards):
+                found.append(Slot(key, view_index, view, location, index, card))
+    return found
 
 
-def _moved(
-    exact: list[tuple[int, int]], edited: list[tuple[int, int]]
-) -> list[tuple[int, int]]:
-    """Which matched cards changed position *relative to each other*.
+def _similarity(old_card: Any, new_card: Any) -> float:
+    """How alike two card configurations are, between 0 and 1.
+
+    Top-level fields only, and deliberately so: this decides between
+    candidates that already share a weak key, so it needs to separate
+    "same card, one field edited" from "different card of the same type
+    on the same entity". Counting fields does that, and a reader can work
+    out the number by hand - which matters for a value that decides which
+    card gets offered back.
+    """
+    if old_card == new_card:
+        return 1.0
+    if not isinstance(old_card, dict) or not isinstance(new_card, dict):
+        return 0.0
+    fields = set(old_card) | set(new_card)
+    if not fields:
+        return 1.0
+    return sum(1 for f in fields if old_card.get(f) == new_card.get(f)) / len(fields)
+
+
+def _fingerprint(card: Any) -> str:
+    """A string that is equal exactly when two cards are equal.
+
+    `sort_keys` because two cards that differ only in the order their
+    keys were written are the same card - YAML and the frontend do not
+    agree on an order, and neither should this. `default=str` so a value
+    no encoder expected cannot take the recording down; the worst it can
+    do is make two cards look different that are not, which reads as an
+    edit rather than as a crash.
+    """
+    try:
+        return json.dumps(card, sort_keys=True, default=str)
+    except (TypeError, ValueError):  # pragma: no cover - guarded, not expected
+        return repr(card)
+
+
+def _place(slot: Slot) -> tuple:
+    """The card list a slot belongs to, across the whole dashboard."""
+    return (slot.view_key, slot.location)
+
+
+def match_cards(old: dict, new: dict) -> Matching:
+    """Pair the cards of two states of one dashboard.
+
+    Four passes, and their order carries the whole correctness.
+
+    1. **Identical, in the same place.** The ordinary case.
+    2. **Identical, anywhere on the dashboard.** What is left over is
+       looked for everywhere else: a card found there moved, and a moved
+       card is not missing. Offering it back would put a second copy on
+       the dashboard.
+    3. **Same weak key, in the same place, best match first.** Not the
+       first match: with two cards of one type on one entity, taking the
+       first married the *deleted* card to the survivor and then declared
+       the survivor deleted - offering back a card still on the
+       dashboard, while the one really gone was never offered. Pairing
+       the most similar candidates first settles it.
+    4. Whatever is left: gone on the old side, new on the new side.
+
+    Pass 1 must run before pass 2, and that is not a detail. Delete a card
+    from one view while an identical one sits untouched in another, and a
+    global pass running first would marry the deleted card to the
+    untouched one and swallow the deletion whole. Claiming every card at
+    its own place first leaves the deletion where it belongs.
+
+    Views that only one state has are left out entirely - a whole view
+    appearing or disappearing is reported as one line, not as one per
+    card on it.
+
+    One gap, named rather than closed: a card that moved *and* changed in
+    the same save is matched by neither pass 2 (no longer identical) nor
+    pass 3 (no longer in the same place), so it still reads as a deletion
+    plus an addition. Weak matching across views would close it and open
+    a worse hole, because the same entity on two views is ordinary.
+    """
+    old_keys = {key for key, _ in _views_by_key(old)}
+    new_keys = {key for key, _ in _views_by_key(new)}
+    common = old_keys & new_keys
+    old_open = _slots(old, common)
+    new_open = _slots(new, common)
+
+    taken_old: set[int] = set()
+    taken_new: set[int] = set()
+    in_place: list[tuple[int, int]] = []
+    displaced: list[tuple[int, int]] = []
+    edited: list[tuple[int, int]] = []
+
+    def claim(pairs: list, i: int, j: int) -> None:
+        taken_old.add(i)
+        taken_new.add(j)
+        pairs.append((i, j))
+
+    # Passes 1 and 2 look for exact equality, so they are done through a
+    # fingerprint rather than by comparing every old card against every
+    # new one. That comparison is quadratic over the whole dashboard, and
+    # measured before this: 0.9 ms at a hundred cards but 78 ms at twelve
+    # hundred, on a path that runs at every save *and* every time a row
+    # is expanded. Pass 3 stays quadratic and may: it only ever sees the
+    # cards the first two passes could not place, which is one or two.
+    here: dict[tuple, list[int]] = {}
+    anywhere: dict[str, list[int]] = {}
+    for j, new_slot in enumerate(new_open):
+        mark = _fingerprint(new_slot.card)
+        here.setdefault((_place(new_slot), mark), []).append(j)
+        anywhere.setdefault(mark, []).append(j)
+
+    for pairs, buckets, at_place in (
+        (in_place, here, True),
+        (displaced, anywhere, False),
+    ):
+        for i, old_slot in enumerate(old_open):
+            if i in taken_old:
+                continue
+            mark = _fingerprint(old_slot.card)
+            waiting = buckets.get((_place(old_slot), mark) if at_place else mark, ())
+            match = next((j for j in waiting if j not in taken_new), None)
+            if match is not None:
+                claim(pairs, i, match)
+
+    candidates: list[tuple[float, int, int]] = []
+    for i, old_slot in enumerate(old_open):
+        if i in taken_old:
+            continue
+        key = _weak_key(old_slot.card)
+        if key is None:
+            continue
+        for j, new_slot in enumerate(new_open):
+            if j in taken_new or _place(new_slot) != _place(old_slot):
+                continue
+            if _weak_key(new_slot.card) == key:
+                candidates.append((_similarity(old_slot.card, new_slot.card), i, j))
+    # Best first; ties settled by the order the cards are written in, so
+    # the same pair of states always produces the same answer.
+    for _score, i, j in sorted(candidates, key=lambda c: (-c[0], c[1], c[2])):
+        if i not in taken_old and j not in taken_new:
+            claim(edited, i, j)
+
+    return Matching(
+        removed=[slot for i, slot in enumerate(old_open) if i not in taken_old],
+        added=[slot for j, slot in enumerate(new_open) if j not in taken_new],
+        edited=[(old_open[i], new_open[j]) for i, j in edited],
+        moved=[(old_open[i], new_open[j]) for i, j in displaced]
+        + _reordered(old_open, new_open, in_place, edited),
+    )
+
+
+def _reordered(
+    old_open: list[Slot],
+    new_open: list[Slot],
+    in_place: list[tuple[int, int]],
+    edited: list[tuple[int, int]],
+) -> list[tuple[Slot, Slot]]:
+    """Which cards that stayed put changed position *relative to each other*.
 
     A raw index comparison calls every card behind a deletion moved. On a
     large view that is twenty entries of noise wrapped around the single
     fact that matters, and it is not what anyone means by "moved" either.
     What people mean is a change in the order, so that is what is
-    measured: a card's rank among the survivors, before against after.
+    measured: a card's rank among the survivors of its own card list,
+    before against after.
 
     Edited cards take part in the ranking - they still hold a position -
-    but are not reported here, because they are already reported as edited.
+    but are not reported here, because they are already reported as
+    edited.
     """
-    pairs = sorted(exact + edited)
-    old_rank = {old: rank for rank, (old, _) in enumerate(pairs)}
-    new_rank = {
-        new: rank for rank, (_, new) in enumerate(sorted(pairs, key=lambda p: p[1]))
-    }
-    return [(old, new) for old, new in exact if old_rank[old] != new_rank[new]]
+    kept = set(in_place)
+    grouped: dict[tuple, list[tuple[int, int]]] = {}
+    for pair in in_place + edited:
+        grouped.setdefault(_place(old_open[pair[0]]), []).append(pair)
+
+    out: list[tuple[Slot, Slot]] = []
+    for pairs in grouped.values():
+        old_rank = {
+            i: rank
+            for rank, (i, _) in enumerate(sorted(pairs, key=lambda p: old_open[p[0]].index))
+        }
+        new_rank = {
+            j: rank
+            for rank, (_, j) in enumerate(sorted(pairs, key=lambda p: new_open[p[1]].index))
+        }
+        out += [
+            (old_open[i], new_open[j])
+            for i, j in pairs
+            if (i, j) in kept and old_rank[i] != new_rank[j]
+        ]
+    return out
 
 
 def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
@@ -265,16 +440,21 @@ def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
 def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     """Everything that disappeared between two states.
 
-    Only disappearances are reported. Restoring them is additive — nothing
-    is overwritten — and therefore always well defined, which is not true
+    Only disappearances are reported. Restoring them is additive - nothing
+    is overwritten - and therefore always well defined, which is not true
     for undoing an edit.
+
+    A card that merely moved does not appear here. It is not missing, and
+    putting it back would leave the dashboard holding it twice.
     """
     new_views = dict(_views_by_key(new))
-    items: list[RemovedItem] = []
+    gone_by_view: dict[int, list[Slot]] = {}
+    for slot in match_cards(old, new).removed:
+        gone_by_view.setdefault(slot.view_index, []).append(slot)
 
+    items: list[RemovedItem] = []
     for view_index, (key, old_view) in enumerate(_views_by_key(old)):
-        new_view = new_views.get(key)
-        if new_view is None:
+        if key not in new_views:
             items.append(
                 RemovedItem(
                     kind="view",
@@ -287,60 +467,47 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 )
             )
             continue
-
-        new_containers = dict(card_containers(new_view))
-        for location, old_cards in card_containers(old_view):
-            new_cards = new_containers.get(location, [])
-            removed, _, _, _ = _match_cards(old_cards, new_cards)
-            for index in removed:
-                items.append(
-                    RemovedItem(
-                        kind="card",
-                        view_path=old_view.get("path"),
-                        view_index=view_index,
-                        location=location,
-                        index=index,
-                        payload=old_cards[index],
-                        label=_describe(old_cards[index]),
-                    )
-                )
+        items += [
+            RemovedItem(
+                kind="card",
+                view_path=old_view.get("path"),
+                view_index=view_index,
+                location=slot.location,
+                index=slot.index,
+                payload=slot.card,
+                label=_describe(slot.card),
+            )
+            for slot in gone_by_view.get(view_index, [])
+        ]
     return items
 
 
 def summarize(old: dict, new: dict) -> Summary:
     """Count what changed, for the history display."""
-    new_views = dict(_views_by_key(new))
-    added = removed = edited = moved = 0
+    matching = match_cards(old, new)
+    added = len(matching.added)
+    removed = len(matching.removed)
 
-    for key, old_view in _views_by_key(old):
-        new_view = new_views.get(key)
-        if new_view is None:
-            removed += sum(len(cards) for _, cards in card_containers(old_view))
-            continue
-        new_containers = dict(card_containers(new_view))
-        old_locations = set()
-        for location, old_cards in card_containers(old_view):
-            old_locations.add(location)
-            r, a, e, m = _match_cards(old_cards, new_containers.get(location, []))
-            removed += len(r)
-            added += len(a)
-            edited += len(e)
-            # One entry per moved card already, so a swap contributes
-            # two. Multiplying would count each of them twice.
-            moved += len(m)
-        # A container only the new state has - a section added to a view.
-        # Walking the old state's containers alone never visited it, so
-        # moving a card into a new section read as a bare deletion.
-        for location, new_cards in new_containers.items():
-            if location not in old_locations:
-                added += len(new_cards)
-
+    # A whole view arriving or leaving is counted by its cards here, while
+    # the explanation reduces it to a single line. Different questions: a
+    # count says how much, a sentence says what.
     old_keys = {key for key, _ in _views_by_key(old)}
-    for key, new_view in _views_by_key(new):
+    new_keys = {key for key, _ in _views_by_key(new)}
+    for key, view in _views_by_key(old):
+        if key not in new_keys:
+            removed += sum(len(cards) for _, cards in card_containers(view))
+    for key, view in _views_by_key(new):
         if key not in old_keys:
-            added += sum(len(cards) for _, cards in card_containers(new_view))
+            added += sum(len(cards) for _, cards in card_containers(view))
 
-    return Summary(added=added, removed=removed, edited=edited, moved=moved)
+    # One entry per moved card already, so a swap contributes two.
+    # Multiplying would count each of them twice.
+    return Summary(
+        added=added,
+        removed=removed,
+        edited=len(matching.edited),
+        moved=len(matching.moved),
+    )
 
 
 # Card labels already carry their type ("tile: light.b"), so they need no
@@ -350,6 +517,7 @@ _PAST = {
     ("card", "added"): "{label} was added",
     ("card", "edited"): "{label} was changed",
     ("card", "moved"): "{label} was moved",
+    ("card", "moved_to"): "{label} was moved to {where}",
     ("view", "removed"): 'the whole view "{label}" was deleted',
     ("view", "added"): 'the whole view "{label}" was added',
 }
@@ -359,6 +527,7 @@ _FUTURE = {
     ("card", "added"): "{label} comes back",
     ("card", "edited"): "{label} goes back to how it was",
     ("card", "moved"): "{label} moves back to where it was",
+    ("card", "moved_to"): "{label} moves back to {where}",
     ("view", "removed"): 'the whole view "{label}" will be deleted',
     ("view", "added"): 'the whole view "{label}" comes back',
 }
@@ -402,41 +571,32 @@ def _capped(name: str, entries: list[Entry]) -> ViewChanges:
     )
 
 
-def _card_entries(words: dict, old_view: dict, new_view: dict) -> list[Entry]:
-    """Every nameable card change between two states of one view."""
-    old_containers = dict(card_containers(old_view))
-    new_containers = dict(card_containers(new_view))
-    entries: list[Entry] = []
+def _section_name(slot: Slot) -> str:
+    """The section a card landed in, named the way Home Assistant names one.
 
-    for location, old_cards in old_containers.items():
-        new_cards = new_containers.get(location, [])
-        removed, added, edited, moved = _match_cards(old_cards, new_cards)
-        entries += [
-            _entry(words, "removed", "card", _describe(old_cards[index]))
-            for index in removed
-        ]
-        entries += [
-            _entry(words, "added", "card", _describe(new_cards[index]))
-            for index in added
-        ]
-        entries += [
-            _entry(words, "edited", "card", _describe(new_cards[index]))
-            for _, index in edited
-        ]
-        entries += [
-            _entry(words, "moved", "card", _describe(old_cards[index]))
-            for index, _ in moved
-        ]
+    Not by a `title` field: measured on the installation this was built
+    against, 0 of 80 sections carry one. Home Assistant names a section
+    with a `heading` card at its top instead, and 51 of those 80 have
+    one. Where there is none there is no name to give, and saying so
+    beats inventing one.
+    """
+    if slot.location[:1] != ("sections",):
+        return "another place in this view"
+    sections = slot.view.get("sections") or []
+    index = slot.location[1]
+    section = sections[index] if 0 <= index < len(sections) else {}
+    cards = (section or {}).get("cards") or []
+    first = cards[0] if cards else None
+    if isinstance(first, dict) and first.get("type") == "heading" and first.get("heading"):
+        return f'the section "{first["heading"]}"'
+    return "another section"
 
-    # A container that only the new state has - a section added to a view.
-    # Its cards are new, and reporting the cards they were moved out of as
-    # a bare deletion would be a half-truth.
-    for location, new_cards in new_containers.items():
-        if location not in old_containers:
-            entries += [
-                _entry(words, "added", "card", _describe(card)) for card in new_cards
-            ]
-    return entries
+
+def _where(old_slot: Slot, new_slot: Slot) -> str:
+    """Where a card went, said from the place it left."""
+    if new_slot.view_key != old_slot.view_key:
+        return f'"{_view_name(new_slot.view, new_slot.view_key)}"'
+    return _section_name(new_slot)
 
 
 def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
@@ -445,21 +605,54 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
     `reassure` says whether a "nothing is lost" line is wanted when
     nothing is removed. It is passed rather than inferred from `words`:
     identity of a wording table is not the question being asked.
+
+    Cards are grouped by the view they sat in *before*. A card that left
+    for another view is reported in the view it left - that is where
+    somebody who misses it looks - and it says where it went instead of
+    leaving them to guess.
     """
+    matching = match_cards(old, new)
+    by_view: dict[Any, list[Entry]] = {}
+
+    def add(key: Any, entry: Entry) -> None:
+        by_view.setdefault(key, []).append(entry)
+
+    for slot in matching.removed:
+        add(slot.view_key, _entry(words, "removed", "card", _describe(slot.card)))
+    for slot in matching.added:
+        add(slot.view_key, _entry(words, "added", "card", _describe(slot.card)))
+    for _was, now in matching.edited:
+        add(now.view_key, _entry(words, "edited", "card", _describe(now.card)))
+    for was, now in matching.moved:
+        label = _describe(was.card)
+        if _place(was) == _place(now):
+            add(was.view_key, _entry(words, "moved", "card", label))
+        else:
+            add(
+                was.view_key,
+                Entry(
+                    kind="moved",
+                    what="card",
+                    label=label,
+                    text=words[("card", "moved_to")].format(
+                        label=label, where=_where(was, now)
+                    ),
+                ),
+            )
+
     new_views = dict(_views_by_key(new))
     old_keys = {key for key, _ in _views_by_key(old)}
     groups: list[ViewChanges] = []
     removed_anything = False
 
     for key, old_view in _views_by_key(old):
-        new_view = new_views.get(key)
         name = _view_name(old_view, key)
-        if new_view is None:
+        if key not in new_views:
             # One line for the view, not one per card on it.
             groups.append(ViewChanges(name, [_entry(words, "removed", "view", name)]))
             removed_anything = True
             continue
-        entries = _card_entries(words, old_view, new_view)
+        entries = by_view.get(key, [])
         if entries:
             groups.append(_capped(name, entries))
             removed_anything = removed_anything or any(

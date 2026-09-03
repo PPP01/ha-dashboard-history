@@ -458,12 +458,16 @@ def test_a_real_dashboard_restored_from_nothing_stays_readable():
         assert result.note == "Nothing on this dashboard is deleted." or not result.groups
 
 
-def test_a_card_moved_into_a_new_section_is_not_only_a_deletion():
-    # summarize walked the old state's containers and looked each up in
-    # the new one. A section added in the new state was therefore never
-    # visited, and its cards never counted: moving a card into a new
-    # section read as a bare deletion. Half a truth in the one line
-    # people scan when looking for something they lost.
+def test_a_card_moved_into_a_new_section_is_not_a_deletion_at_all():
+    # Corrected twice, and the sequence is the point. summarize first
+    # walked the old state's containers and looked each up in the new
+    # one, so a section added in the new state was never visited and its
+    # cards never counted: moving a card into a new section read as a
+    # bare deletion. Counting the new container's cards as added made
+    # that "1 removed, 1 added" - half a truth, and this test pinned the
+    # half. Matching crosses container boundaries now, so the whole
+    # truth is available: nothing deleted, nothing added, one card moved,
+    # and nothing offered back that is still on the dashboard.
     old = {"views": [{"path": "home", "title": "Home", "cards": [A, B]}]}
     new = {
         "views": [
@@ -471,4 +475,131 @@ def test_a_card_moved_into_a_new_section_is_not_only_a_deletion():
         ]
     }
     counts = analyze.summarize(old, new)
+    assert (counts.removed, counts.added, counts.moved) == (0, 0, 1)
+    assert analyze.find_removed(old, new) == []
+
+
+# --------------------------------------------------------------- moving
+#
+# A card that moved is not missing, and offering it back puts a second
+# copy on the dashboard. Matching used to run inside one container only -
+# one card list of one view - so every card that crossed a container
+# boundary was unmatched on both sides at once: gone from the old place,
+# new in the other. The row read "1 removed, 1 added" and the interface
+# offered a restore that duplicates.
+
+_VIEW_A = {"path": "a", "title": "A"}
+_VIEW_B = {"path": "b", "title": "B"}
+
+
+def _two_views(a_cards, b_cards):
+    return {
+        "views": [
+            {**_VIEW_A, "cards": list(a_cards)},
+            {**_VIEW_B, "cards": list(b_cards)},
+        ]
+    }
+
+
+def test_a_card_moved_to_another_view_is_not_offered_back():
+    old = _two_views([A, B], [C])
+    new = _two_views([A], [C, B])
+    assert analyze.find_removed(old, new) == []
+
+
+def test_a_card_moved_to_another_view_counts_as_moved():
+    counts = analyze.summarize(_two_views([A, B], [C]), _two_views([A], [C, B]))
+    assert (counts.added, counts.removed, counts.moved) == (0, 0, 1)
+
+
+def test_a_card_moved_between_sections_is_not_offered_back():
+    old = {"views": [{"path": "home", "sections": [{"cards": [A, B]}, {"cards": [C]}]}]}
+    new = {"views": [{"path": "home", "sections": [{"cards": [A]}, {"cards": [C, B]}]}]}
+    assert analyze.find_removed(old, new) == []
+
+
+def test_a_real_deletion_survives_an_identical_card_elsewhere():
+    # The trap the staging exists for. B is deleted from view A while an
+    # identical B sits untouched in view B. Pairing across places before
+    # pairing in place would marry the deleted card to the untouched one
+    # and swallow the deletion whole.
+    old = _two_views([A, B], [B])
+    new = _two_views([A], [B])
+    found = analyze.find_removed(old, new)
+    assert [item.payload for item in found] == [B]
+    assert found[0].view_path == "a"
+
+
+def test_two_identical_cards_with_one_deleted_is_one_deletion():
+    assert len(analyze.find_removed(_config([A, B, B]), _config([A, B]))) == 1
+
+
+# ------------------------------------------------- the ambiguous twin
+#
+# Two cards of the same type and entity: the first is deleted, the second
+# edited. Pass two took the *first* weak match, which married the deleted
+# card to the survivor and then declared the survivor deleted - offering
+# back a card that is still on the dashboard, while the one really gone
+# was never offered at all. Measured: the survivor differs from its own
+# old form in one field of four (0.75), from the deleted card in three of
+# five (0.40), so pairing by best similarity settles it.
+
+_GONE = {"type": "tile", "entity": "light.a", "icon": "mdi:one", "name": "One"}
+_BLUE = {"type": "tile", "entity": "light.a", "color": "blue", "name": "Two"}
+_GREEN = {"type": "tile", "entity": "light.a", "color": "green", "name": "Two"}
+
+
+def test_the_deleted_twin_is_offered_not_the_edited_one():
+    found = analyze.find_removed(_config([_GONE, _BLUE]), _config([_GREEN]))
+    assert [item.payload for item in found] == [_GONE]
+
+
+def test_the_edited_twin_is_reported_as_edited():
+    counts = analyze.summarize(_config([_GONE, _BLUE]), _config([_GREEN]))
+    assert (counts.removed, counts.added, counts.edited) == (1, 0, 1)
+
+
+# ----------------------------------------------------- the named limits
+#
+# Both of these are known gaps, pinned as tests rather than left as
+# prose. A limit nobody wrote down is a limit that moves silently.
+
+_KEYLESS = {"type": "custom:apexcharts-card", "graph_span": "24h"}
+
+
+def test_a_card_with_nothing_to_recognise_it_by_still_reads_as_two_changes():
+    # Measured on the installation this was built against: 27 of 484
+    # cards carry no entity, title, name, heading, entity list, text or
+    # nameable inner card. Editing one is indistinguishable from
+    # deleting it and adding another, in the data itself.
+    counts = analyze.summarize(_config([_KEYLESS]), _config([dict(_KEYLESS, graph_span="48h")]))
     assert (counts.removed, counts.added) == (1, 1)
+
+
+def test_a_card_moved_and_edited_at_once_still_reads_as_two_changes():
+    # Exact matching crosses container boundaries, weak matching does
+    # not. A card that moved *and* changed is therefore matched by
+    # neither. Deliberate: weak matching across views would risk the
+    # opposite error, and the same entity on two views is ordinary.
+    old = _two_views([A, B], [C])
+    new = _two_views([A], [C, dict(B, name="renamed")])
+    counts = analyze.summarize(old, new)
+    assert (counts.removed, counts.added) == (1, 1)
+
+
+# ------------------------------------------------------- saying where
+def test_a_moved_card_says_which_view_it_went_to():
+    words = analyze.explain_change(_two_views([A, B], [C]), _two_views([A], [C, B]))
+    said = [entry.text for group in words.groups for entry in group.entries]
+    assert said == ['tile: light.b was moved to "B"']
+
+
+def test_a_card_moved_into_a_named_section_says_its_name():
+    heading = {"type": "heading", "heading": "Heizung"}
+    old = {"views": [{"path": "home", "title": "Home",
+                      "sections": [{"cards": [A, B]}, {"cards": [heading]}]}]}
+    new = {"views": [{"path": "home", "title": "Home",
+                      "sections": [{"cards": [A]}, {"cards": [heading, B]}]}]}
+    words = analyze.explain_change(old, new)
+    said = [entry.text for group in words.groups for entry in group.entries]
+    assert said == ['tile: light.b was moved to the section "Heizung"']
