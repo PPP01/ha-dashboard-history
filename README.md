@@ -120,6 +120,68 @@ this and open something worse: the same entity on two views is
 ordinary, so a real deletion could be mistaken for a move and never be
 offered back at all. A missed offer is worse than one you can decline.
 
+### What the gap costs, and when
+
+Worth walking through, because the two ways back behave very differently
+here — and because the cheap way has a time limit.
+
+Change the URL of an `iframe` card. The history reads `1 removed, 1
+added`, and the row offers both kinds of button.
+
+**Undo this change** is exact:
+
+```diff
+     - type: iframe
+-      url: https://example.com/new
++      url: https://example.com/old
+```
+
+**Put back** cannot be, and the preview says so before you accept:
+
+```diff
+     - type: iframe
++      url: https://example.com/old
++      aspect_ratio: 60%
++    - type: iframe
+       url: https://example.com/new
+       aspect_ratio: 60%
+```
+
+That is not a fault in the button. **Put back** is additive by
+definition — it never overwrites anything — so the only thing it can do
+with a card it believes was deleted is add it back. It believes that
+because the card carries nothing to recognise it by. Both halves are
+behaving exactly as designed; they simply meet a card with no identity.
+
+**The cheap way has a time limit.** Immediately after the edit, **Undo
+this change** costs nothing: there is nothing else in that step to
+undo. A week and thirty saves later the same button is
+**Back to the state before this change**, and it takes all thirty with
+it — with a preview to match. From then on the choice is:
+
+| | |
+| --- | --- |
+| **Put back** | Two cards. Delete the one you do not want, by hand. |
+| **Back to the state before this change** | The other thirty changes go too. |
+
+"Go" rather than "are lost": every one of them is still recorded, and
+you can come forward again the same way. But it is a large step taken
+for a small mistake, and you would be redoing work you had already
+decided on.
+
+**So the practical advice is simply: fix it soon.** If you notice that
+one of these cards is wrong, the exact undo is right there. Leave it a
+month and only the two blunter options remain.
+
+**And the reason it is like this** is the one this whole page keeps
+coming back to. A card with no entity, title, name, heading, entity
+list or text has no identity across two states, and nothing can invent
+one. The tool could guess — pair up whatever is left over and hope. The
+cost of guessing wrong in the other direction is worse than this: a
+card you really deleted, quietly reclassified as an edit, and never
+offered back at all. A duplicate you can see in a preview and decline
+beats a deletion you are never told about.
+
 
 ## Installation
 
