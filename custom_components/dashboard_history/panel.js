@@ -429,15 +429,26 @@ class DashboardHistoryPanel extends HTMLElement {
       await recorded;
       return result;
     });
-    if (applied?.error) this._error = applied.error;
-    // And again on the confirming call, which is the one that matters:
-    // it is answered with a refusal rather than a write, and nothing
-    // else here would say so.
-    else if (applied?.available === false)
-      this._error = applied.reason || "this cannot be taken back exactly";
-    else if (applied?.note) this._error = applied.note;
+    const said =
+      applied?.error ||
+      // And a refusal on the confirming call as well, which is the one
+      // that matters: the undo re-proves itself there, so this is the
+      // answer somebody gets instead of a write.
+      (applied?.available === false
+        ? applied.reason || "this cannot be taken back exactly"
+        : "") ||
+      applied?.note ||
+      "";
     await this._select(this._selected);
     await this._loadDashboardsQuietly();
+    // After the reload, not before it. `_select` goes through `_guard`,
+    // and `_guard` clears the banner on its way in - so anything written
+    // here first is wiped by the very refresh that follows it, which is
+    // what happened to every note this dialog has ever tried to leave.
+    if (said) {
+      this._error = said;
+      this._render();
+    }
   }
 
   async _loadDashboardsQuietly() {
