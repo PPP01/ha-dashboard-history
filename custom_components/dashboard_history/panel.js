@@ -208,6 +208,7 @@ class DashboardHistoryPanel extends HTMLElement {
         this._open = null;
         this._items = [];
         this._explanation = null;
+        this._undo = null;
       } else {
         const detail = await this._detailFor(openAt);
         if (this._selected !== asked) return;
@@ -360,6 +361,17 @@ class DashboardHistoryPanel extends HTMLElement {
       this._render();
       return;
     }
+    // The undo re-proves itself on every call, so a preview can come
+    // back as a refusal - somebody saved between the row being drawn and
+    // the button being pressed, which is exactly the case decision 15
+    // asks it to catch. Without this the dialog opened on an empty diff
+    // with a live Apply, and the sentence that names the reason and the
+    // card was thrown away by the one screen that exists to show it.
+    if (preview.available === false) {
+      this._error = preview.reason || "this cannot be taken back exactly";
+      this._render();
+      return;
+    }
     const dialog = this.shadowRoot.querySelector("dialog.confirm");
     dialog.querySelector("h2").textContent = title;
     // The integration answers "already identical" when the target state is
@@ -418,6 +430,11 @@ class DashboardHistoryPanel extends HTMLElement {
       return result;
     });
     if (applied?.error) this._error = applied.error;
+    // And again on the confirming call, which is the one that matters:
+    // it is answered with a refusal rather than a write, and nothing
+    // else here would say so.
+    else if (applied?.available === false)
+      this._error = applied.reason || "this cannot be taken back exactly";
     else if (applied?.note) this._error = applied.note;
     await this._select(this._selected);
     await this._loadDashboardsQuietly();
