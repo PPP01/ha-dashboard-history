@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     # annotations` keeps those lazy. A real import would have to be
     # relative inside the integration and absolute in the tests, which
     # load this module flat - it cannot be both.
-    from .analyze import RemovedItem
+    from .analyze import RemovedItem, UndoPlan, UndoStep
 
 
 def _find_view(views: list, item: RemovedItem) -> dict | None:
@@ -79,4 +79,96 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
     # If the list has shrunk since, append rather than fail: getting the
     # card back matters more than getting its exact old position back.
     cards.insert(min(item.index, len(cards)), copy.deepcopy(item.payload))
+    return result
+
+
+def _cards_for(views: list, step: UndoStep) -> list:
+    """The card list a step points at, or a refusal."""
+    view = _find_view(views, step)
+    if view is None:
+        raise LookupError(
+            f"the view {step.label} belonged to no longer exists "
+            f"(path={step.view_path!r}, index={step.view_index})"
+        )
+    cards = _cards_at(view, step.location)
+    if cards is None:
+        raise LookupError(
+            f"the card list {step.label} belonged to no longer exists "
+            f"(location={step.location!r})"
+        )
+    return cards
+
+
+def _standing_there(items: list, step: UndoStep) -> None:
+    """Refuse unless the expected thing is still at that index."""
+    if step.index >= len(items) or items[step.index] != step.expect:
+        raise LookupError(
+            f"{step.label} is no longer where the undo was planned for it"
+        )
+
+
+def apply_undo(config: dict, plan: UndoPlan) -> dict:
+    """Return a new configuration with an undo plan applied.
+
+    The order is not a detail. Removals first, highest index first, so
+    an earlier removal never shifts a later one. Insertions last, lowest
+    index first, so each one lands at the index it was given. Any other
+    order silently writes to the wrong place.
+
+    There is no replacement step, deliberately: a card is put back by
+    being removed where it sits today and inserted where it came from.
+    An edit can move a card as well, and a replacement written in place
+    would then land on its neighbour - the reasoning and the measurement
+    are in `plan_undo`, which is where that is decided.
+
+    Every removal checks that the thing it was planned for is still
+    standing there. The plan was made against a state read a moment
+    earlier, and a moment is enough for somebody to press save - so this
+    refuses rather than overwrites. `LookupError` carries a sentence a
+    person can read; the caller turns it into an answer.
+
+    The configuration handed in is never modified.
+    """
+    if plan.blocked is not None:
+        raise LookupError(plan.blocked)
+    result = copy.deepcopy(config)
+    views = result.setdefault("views", [])
+
+    # Cards before views: a card step finds its view by path, but falls
+    # back to the index, and removing a view first would move it.
+    removals = [step for step in plan.steps if step.action == "remove"]
+    for step in sorted(
+        (step for step in removals if step.kind == "card"), key=lambda s: -s.index
+    ):
+        cards = _cards_for(views, step)
+        _standing_there(cards, step)
+        del cards[step.index]
+    for step in sorted(
+        (step for step in removals if step.kind == "view"), key=lambda s: -s.index
+    ):
+        # Located, not indexed. `_views_by_key` skips anything that is not
+        # a dict, so its position and the position in `views` are the same
+        # only until somebody writes a stray list entry - and a wrong index
+        # here deletes the wrong view.
+        view = _find_view(views, step)
+        if view is None or view != step.expect:
+            raise LookupError(
+                f"{step.label} is no longer where the undo was planned for it"
+            )
+        del views[views.index(view)]
+
+    for step in sorted(
+        (step for step in plan.steps if step.action == "insert"),
+        key=lambda s: s.index,
+    ):
+        if step.kind == "view":
+            views.insert(min(step.index, len(views)), copy.deepcopy(step.payload))
+            continue
+        cards = _cards_for(views, step)
+        # If the list has shrunk since, append rather than fail - the same
+        # trade `reinsert` makes, and for the same reason. What this undo
+        # proves is that the change's own cards are untouched, never that
+        # their neighbourhood is; `equals_state_before` in the caller is
+        # what tells the truth about the whole state.
+        cards.insert(min(step.index, len(cards)), copy.deepcopy(step.payload))
     return result
