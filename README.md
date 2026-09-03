@@ -15,6 +15,9 @@ backup, if at all. This integration keeps a history of its own.
 - Records every dashboard save automatically. No configuration needed.
 - Shows the history of each dashboard: when it changed and what changed.
 - **Puts back what disappeared** — a deleted card, a deleted view.
+- **Takes one change back on its own** — only what that change touched,
+  with everything you saved since left standing. Offered where it can be
+  proved exact, refused with a reason where it cannot.
 - Restores a whole dashboard to an earlier state.
 - **Says in plain words what a change did**, and what restoring it would
   do — cards and views by name, with the diff underneath for anyone who
@@ -24,8 +27,12 @@ backup, if at all. This integration keeps a history of its own.
 
 ## What it does not do
 
-- **It does not undo edits.** Only disappearances can be restored. See
-  "Why only deletions?" below — the reason is not laziness.
+- **It undoes an edit only where it can prove the undo exact.** *Put back*
+  reaches disappearances and nothing else; *Undo this change* reaches an
+  edit too, but only while the card that change produced still stands in
+  the dashboard, untouched and exactly once. Otherwise it refuses and
+  says why. See "Why only deletions?" below — the reason is not
+  laziness.
 - It does not record *who* made a change. Home Assistant does not pass
   that information to integrations.
 - It is not a backup. It covers dashboards, nothing else.
@@ -41,6 +48,15 @@ is no single correct answer.
 
 Deletions are also the painful case. A card you moved by accident, you
 move back. A card you deleted is gone.
+
+**What changed, and what did not.** The identity is still missing — but
+in one shape it can be *proved* instead of assumed. Take the card a
+change produced, byte for byte, and look for it in the dashboard as it
+stands today. If it is there exactly once, it can be pointed at without
+an identifier, and undoing that change is a definite exchange rather
+than a merge. If it is there twice, or not at all, the tool refuses and
+names the card. That is what **Undo this change** rests on, and it is
+why it is offered on some rows and not on others.
 
 ## Telling a move from a deletion
 
@@ -80,10 +96,11 @@ place first.
   tile: Living room lamp was moved to "Kitchen"
 ```
 
-Nothing is offered to put back, because nothing is missing. To undo it,
-use **Undo this change** (or **Back to the state before this change**)
-— that puts the whole dashboard back, which also takes along anything
-else you saved in the same step.
+Nothing is offered to put back, because nothing is missing. **Undo this
+change** still takes it back: a moved card is the same card, so it can
+be lifted off where it sits and put back where it came from. That
+reverses the whole save it belonged to — anything else you did in the
+same step comes back too — but nothing you saved afterwards.
 
 **You have two similar cards, delete one and edit the other.**
 
@@ -123,7 +140,7 @@ offered back at all. A missed offer is worse than one you can decline.
 ### What the gap costs, and when
 
 Worth walking through, because the two ways back behave very differently
-here — and because the cheap way has a time limit.
+here — and because the exact one does not last forever.
 
 Change the URL of an `iframe` card. The history reads `1 removed, 1
 added`, and the row offers both kinds of button.
@@ -153,11 +170,24 @@ with a card it believes was deleted is add it back. It believes that
 because the card carries nothing to recognise it by. Both halves are
 behaving exactly as designed; they simply meet a card with no identity.
 
-**The cheap way has a time limit.** Immediately after the edit, **Undo
-this change** costs nothing: there is nothing else in that step to
-undo. A week and thirty saves later the same button is
-**Back to the state before this change**, and it takes all thirty with
-it — with a preview to match. From then on the choice is:
+**The exact way back does not run out with time.** Thirty saves and a
+week later, **Undo this change** still takes back that one save and
+leaves the other thirty standing. What it needs is not haste but the
+card it produced: still on the dashboard, byte for byte as that change
+left it, and there exactly once.
+
+**What ends it is a second edit, not the calendar.** Change the URL
+again and there is no version left that this change produced. Two cards
+that end up byte-identical do it too: then there are two candidates and
+nothing to tell them apart. Either way the row says so rather than
+guessing:
+
+> This change cannot be taken back exactly: iframe was changed again
+> after this, so there is no exact version left to put back.
+
+(Just `iframe`, because that is the whole problem: the card carries no
+title, no name and no entity to call it by.) From then on the choice is
+the blunt one:
 
 | | |
 | --- | --- |
@@ -169,9 +199,8 @@ you can come forward again the same way. But it is a large step taken
 for a small mistake, and you would be redoing work you had already
 decided on.
 
-**So the practical advice is simply: fix it soon.** If you notice that
-one of these cards is wrong, the exact undo is right there. Leave it a
-month and only the two blunter options remain.
+**So the practical advice is still: fix it soon** — only "soon" now
+means "before you edit that card again", not "before the week is out".
 
 **And the reason it is like this** is the one this whole page keeps
 coming back to. A card with no entity, title, name, heading, entity
@@ -219,7 +248,7 @@ single card back, the panel works that out for you, so the trap is not
 signposted, it is gone.
 
 For setting the *whole* dashboard back, a row offers **both** of the states
-it sits between:
+it sits between, folded away under *Replace the whole dashboard instead*:
 
 - *Back to the state before this change* — for undoing something.
 - *Back to the state after this change* — for a state you recognise and
@@ -228,33 +257,64 @@ it sits between:
 Either one disappears when its target is what the dashboard holds already,
 so a button never offers a change that changes nothing.
 
-**Two ways back, and what each one reaches.** A row where something is
-missing carries two kinds of button, and they are not two labels for one
-action. They differ in reach:
+**Three ways back, and what each one reaches.** A row can carry more than
+one kind of button, and they are not labels for one action. They differ in
+reach:
 
 | Button | What it touches |
 | --- | --- |
+| **Undo this change** | That one change, and nothing else. Everything saved since stays exactly as it is. |
 | **Put back** | One item. It is reinserted into the dashboard *as it stands today*, and nothing else changes. |
-| **Undo this change** / **Back to the state before this change** | The whole dashboard. That earlier state is written over what is there now. |
+| **Back to the state before this change** | The whole dashboard. That earlier state is written over what is there now. |
 
-On the newest change the two can look identical, and sometimes they
-genuinely are: delete a single card, and putting it back or undoing the
-change both leave you with the same dashboard. That is the case most
-people meet first — which is exactly why the difference is easy to miss.
+**The row leads with the undo**, because it is what people mean by undoing
+something. It is offered only where it can be proved exact — every card
+that change produced still standing in the dashboard, untouched and
+exactly once. Where it cannot, the row says so in place of the button:
+
+> This change cannot be taken back exactly: tile: Living room lamp was
+> changed again after this, so there is no exact version left to put
+> back.
+
+The two whole-dashboard buttons sit underneath, behind a fold. They are a
+real capability and somebody wants one about once a year; leading with
+them was the panel offering the largest step first. And where the undo
+would write exactly the state before the change, *Back to the state before
+this change* is left out altogether — two buttons doing literally the same
+thing is what the first person to see them side by side reported.
+
+**Where the undo already covers an item, that item's own Put back button
+is gone**, for one of two reasons and no others. Either the undo brings
+back exactly that one item and nothing else — a change that deleted a
+single thing — or the change also *added* something, and then a put-back
+is not merely redundant but wrong: an edit that touches the identifying
+field reads as one removal plus one addition, so putting the old card
+back would leave both versions standing. What is missing because of
+*later* changes keeps its button, under a line that says where it comes
+from.
+
+On the newest change the undo and a put-back can be the same thing, and
+sometimes they genuinely are: delete a single card, and putting it back or
+undoing the change both leave you with the same dashboard. That is the
+case most people meet first — which is exactly why the difference is easy
+to miss.
 
 Now picture a deletion from three weeks ago. **Put back** brings that one
-card into today's dashboard and leaves the three weeks alone. **Back to
-the state before this change** throws them away.
+card into today's dashboard and leaves the three weeks alone. **Undo this
+change** does the same here, and would also take back anything else that
+one save did. **Back to the state before this change** throws the three
+weeks away.
 
-Where both are on screen, the panel says so:
+Each button says what it does rather than claiming the others are wrong:
 
-> Put back adds a single item to the dashboard as it stands today and
-> changes nothing else. Setting the state back replaces the whole
-> dashboard with how it was then.
+> Puts this change back and keeps the 12 changes made since.
 
-It describes each rather than claiming they differ. Where the outcomes do
-coincide — and on the newest single deletion they do — "these are not the
-same thing" would be the confusing sentence, not the helpful one.
+> Setting a state back replaces the whole dashboard with how it was then.
+> Everything saved since is no longer what the dashboard holds.
+
+Where the outcomes do coincide — and on the newest single deletion they do
+— "these are not the same thing" would be the confusing sentence, not the
+helpful one.
 
 Nothing is written until you have confirmed it — and before you do, the
 panel says in plain words what will happen:
@@ -394,11 +454,19 @@ dashboard's internal id (`energie_2`) — the two are not the same string.
 | `deleted_since` | What disappeared since a revision |
 | `restore_deleted` | Put one of them back (needs `confirm`) |
 | `restore_state` | Set a dashboard back to an earlier state (needs `confirm`) |
+| `undo_change` | Take one change back and keep the ones after it (needs `confirm`) |
 | `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
 | `versions` | The named versions, all of them or one dashboard's |
 | `next_versions` | What the next patch, minor and major would be called |
 | `create_version` | Name a recorded state as a version |
 | `debug_snapshot` | What the integration currently sees |
+
+Three of them write a *dashboard* state — `restore_deleted`,
+`restore_state` and `undo_change` — and without `confirm` each of them
+answers with the preview and writes nothing. `undo_change` can answer
+with a refusal instead, where it cannot prove itself exact, and it works
+that proof out again on the confirming call: somebody may have saved
+while you were reading the preview.
 
 `describe` and `create_version` are the only writing services without
 `confirm`. Neither can put a dashboard into a state you would need
