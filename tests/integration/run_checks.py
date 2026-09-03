@@ -1347,6 +1347,97 @@ async def run_moves(access: str) -> None:
         )
 
 
+async def run_undo(access: str) -> None:
+    """Taking one change back while keeping the ones after it.
+
+    pytest settles the arithmetic. What it cannot reach is the path a
+    person travels: Home Assistant saves, the recorder commits, the
+    panel asks, and only then does anything get written back.
+    """
+    key = "dh-undo-check"
+    keep = {"type": "markdown", "content": "Untouched"}
+    first = {"type": "markdown", "content": "Card one\n\nOriginal body"}
+    edited = {"type": "markdown", "content": "Card one\n\nEdited body"}
+    later = {"type": "markdown", "content": "Added afterwards"}
+
+    def state(cards):
+        return {"views": [{"path": "a", "title": "A", "cards": list(cards)}]}
+
+    async def save(socket, cards):
+        await socket.call("lovelace/config/save", url_path=key, config=state(cards))
+        await asyncio.sleep(4)
+
+    async def newest(socket):
+        answer = await socket.call("dashboard_history/history", dashboard=key)
+        return answer["changes"][0]["revision"]
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Undo"
+            )
+            await asyncio.sleep(4)
+
+        await save(socket, [keep, first])
+        await save(socket, [keep, edited])
+        the_edit = await newest(socket)
+        await save(socket, [keep, edited, later])
+
+        answer = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=the_edit
+        )
+        check(
+            "an edit two saves back is still exactly undoable",
+            answer.get("available") is True,
+            answer.get("reason", ""),
+        )
+        check(
+            "the preview writes nothing without confirm",
+            answer.get("applied") is False and bool(answer.get("preview")),
+        )
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "the dashboard is untouched after a preview",
+            live["views"][0]["cards"] == [keep, edited, later],
+        )
+
+        answer = await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=the_edit,
+            confirm=True,
+        )
+        await asyncio.sleep(4)
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "the undo restores the old card and keeps the later one",
+            live["views"][0]["cards"] == [keep, first, later],
+            str(live["views"][0]["cards"]),
+        )
+        check(
+            "the undo leaves exactly one copy, not two",
+            len(live["views"][0]["cards"]) == 3,
+        )
+
+        # The control. Edit the same card twice, then ask for the first
+        # edit back: there is no exact version left, and a tool that said
+        # yes here would overwrite the second edit.
+        await save(socket, [keep, first, later])
+        await save(socket, [keep, edited, later])
+        once = await newest(socket)
+        await save(socket, [keep, {"type": "markdown", "content": "Card one\n\nThird body"}, later])
+        answer = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=once
+        )
+        check(
+            "a card edited again since refuses the undo",
+            answer.get("available") is False
+            and "changed again" in (answer.get("reason") or ""),
+            answer.get("reason", ""),
+        )
+
+
 async def run_live_updates(access: str) -> None:
     """The panel is told when the history has grown - and only then.
 
@@ -1772,6 +1863,8 @@ if __name__ == "__main__":
     asyncio.run(run_moves(access))
     print("\n  -- Versionen je Dashboard --")
     asyncio.run(run_versions(access))
+    print("\n  -- Eine Aenderung gezielt zuruecknehmen --")
+    asyncio.run(run_undo(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))
