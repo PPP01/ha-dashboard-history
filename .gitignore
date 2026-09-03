@@ -18,3 +18,10 @@ tests/.real-storage
 .codex/
 codex-*.json
 *.codex.md
+
+# Gemini & Antigravity
+.gemini/
+GEMINI.md
+.antigravity/
+.agents/
+AGENTS.md
