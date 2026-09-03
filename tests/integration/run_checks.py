@@ -1209,6 +1209,107 @@ async def run_preview_explains(access: str) -> None:
         )
 
 
+async def run_moves(access: str) -> None:
+    """A card that moved is not missing, over the real path.
+
+    pytest settles the rule inside `analyze.py`. What it cannot reach is
+    the path a person actually travels: Home Assistant saves, the
+    recorder writes a commit, and the panel asks `deleted_since` what to
+    offer. Every bug this project has found lived in exactly that gap.
+    """
+    key = "dh-move-check"
+    a_card = {"type": "markdown", "content": "Stays where it is"}
+    travels = {"type": "markdown", "content": "Travels between the views"}
+    b_card = {"type": "markdown", "content": "Waits in the other view"}
+
+    def state(a_cards, b_cards):
+        return {
+            "views": [
+                {"path": "a", "title": "A", "cards": list(a_cards)},
+                {"path": "b", "title": "B", "cards": list(b_cards)},
+            ]
+        }
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        # The exact key, never a prefix, and never deleted-then-created:
+        # Home Assistant collapses that pair inside the debounce and the
+        # recorder never sees the deletion.
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Move"
+            )
+            await asyncio.sleep(4)
+
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config=state([a_card, travels], [b_card]),
+        )
+        await asyncio.sleep(4)
+        before = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ][0]["revision"]
+
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config=state([a_card], [b_card, travels]),
+        )
+        await asyncio.sleep(4)
+
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        message = changes[0]["message"]
+        check(
+            "moving a card between views is recorded as a move",
+            "moved" in message and "removed" not in message,
+            f"{message!r}",
+        )
+
+        offered = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=before
+        )
+        check(
+            "and nothing is offered back, because nothing is missing",
+            offered["items"] == [],
+            f"{[item['label'] for item in offered['items']]}"
+            if offered["items"]
+            else "no offer - the card is on the dashboard, elsewhere",
+        )
+
+        # The revision of the move itself, not the state before it:
+        # `explain` is given the change, and working that out wrongly is
+        # the trap decision 9 removed rather than signposted.
+        words = await socket.call(
+            "dashboard_history/explain", dashboard=key, revision=changes[0]["revision"]
+        )
+        said = [
+            entry["text"] for group in words["groups"] for entry in group["entries"]
+        ]
+        check(
+            "and the words say which view it went to",
+            any('moved to "B"' in line for line in said),
+            f"{said}",
+        )
+
+        # The control. Without it this section could not tell a working
+        # rule from one that stopped offering anything at all.
+        await socket.call(
+            "lovelace/config/save", url_path=key, config=state([a_card], [b_card])
+        )
+        await asyncio.sleep(4)
+        gone = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=before
+        )
+        check(
+            "a card really deleted is still offered back",
+            [item["label"] for item in gone["items"]] != [],
+            f"{[item['label'] for item in gone['items']]}",
+        )
+
+
 async def run_versions(access: str) -> None:
     """Versions of one dashboard: counting up, marking, going back.
 
@@ -1565,6 +1666,8 @@ if __name__ == "__main__":
     asyncio.run(run_explanation(access))
     print("\n  -- Die Vorschau vor dem Übernehmen --")
     asyncio.run(run_preview_explains(access))
+    print("\n  -- Verschieben ist kein Verlust --")
+    asyncio.run(run_moves(access))
     print("\n  -- Versionen je Dashboard --")
     asyncio.run(run_versions(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
