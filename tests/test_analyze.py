@@ -603,3 +603,121 @@ def test_a_card_moved_into_a_named_section_says_its_name():
     words = analyze.explain_change(old, new)
     said = [entry.text for group in words.groups for entry in group.entries]
     assert said == ['tile: light.b was moved to the section "Heizung"']
+
+
+# ---------------------------------------------------------- planning an undo
+def test_an_edited_card_can_be_taken_back():
+    old = {"type": "tile", "entity": "light.a", "name": "Bett"}
+    new = {"type": "tile", "entity": "light.a", "name": "Bettlampe"}
+    plan = analyze.plan_undo(_config([old]), _config([new]), _config([new]))
+    assert plan.blocked is None
+    assert [(s.action, s.expect, s.payload) for s in plan.steps] == [
+        ("remove", new, None),
+        ("insert", None, old),
+    ]
+
+
+def test_a_card_edited_twice_is_refused():
+    old = {"type": "tile", "entity": "light.a", "name": "Bett"}
+    once = {"type": "tile", "entity": "light.a", "name": "Bettlampe"}
+    twice = {"type": "tile", "entity": "light.a", "name": "Nachttisch"}
+    plan = analyze.plan_undo(_config([old]), _config([once]), _config([twice]))
+    assert plan.steps == ()
+    assert "changed again after this" in plan.blocked
+    # Named the way the tool names cards everywhere else - `_describe`
+    # prefers the card's own name over its entity, so this reads
+    # "tile: Bettlampe", not "tile: light.a".
+    assert "Bettlampe" in plan.blocked
+
+
+def test_two_identical_candidates_are_refused():
+    old = {"type": "tile", "entity": "light.a", "name": "Bett"}
+    new = {"type": "tile", "entity": "light.a", "name": "Bettlampe"}
+    plan = analyze.plan_undo(_config([old]), _config([new]), _config([new, new]))
+    assert plan.steps == ()
+    assert "cannot tell them apart" in plan.blocked
+
+
+def test_a_deleted_card_is_planned_back_at_its_old_place():
+    a = {"type": "tile", "entity": "light.a"}
+    b = {"type": "tile", "entity": "light.b"}
+    plan = analyze.plan_undo(_config([a, b]), _config([a]), _config([a]))
+    assert [(s.action, s.index, s.payload) for s in plan.steps] == [("insert", 1, b)]
+
+
+def test_a_deleted_card_already_back_needs_no_step():
+    a = {"type": "tile", "entity": "light.a"}
+    b = {"type": "tile", "entity": "light.b"}
+    plan = analyze.plan_undo(_config([a, b]), _config([a]), _config([a, b]))
+    assert plan.blocked is None
+    assert plan.steps == ()
+
+
+def test_an_added_card_is_planned_away():
+    a = {"type": "tile", "entity": "light.a"}
+    b = {"type": "tile", "entity": "light.b"}
+    plan = analyze.plan_undo(_config([a]), _config([a, b]), _config([a, b]))
+    assert [(s.action, s.expect) for s in plan.steps] == [("remove", b)]
+
+
+def test_a_change_without_card_effect_is_refused():
+    a = {"type": "tile", "entity": "light.a"}
+    plan = analyze.plan_undo(_config([a]), _config([a]), _config([a]))
+    assert plan.blocked == "this change did not alter any cards"
+
+
+def test_later_work_elsewhere_does_not_block():
+    """The check is on what the change produced, not on its neighbours."""
+    old = {"type": "tile", "entity": "light.a", "name": "Bett"}
+    new = {"type": "tile", "entity": "light.a", "name": "Bettlampe"}
+    later = {"type": "tile", "entity": "light.z"}
+    plan = analyze.plan_undo(_config([old]), _config([new]), _config([new, later]))
+    assert plan.blocked is None
+    assert [s.action for s in plan.steps] == ["remove", "insert"]
+
+
+def test_a_moved_card_is_removed_here_and_put_back_there():
+    stays = {"type": "markdown", "content": "Stays"}
+    travels = {"type": "markdown", "content": "Travels"}
+    before = {
+        "views": [
+            {"path": "a", "cards": [stays, travels]},
+            {"path": "b", "cards": []},
+        ]
+    }
+    after = {
+        "views": [
+            {"path": "a", "cards": [stays]},
+            {"path": "b", "cards": [travels]},
+        ]
+    }
+    plan = analyze.plan_undo(before, after, after)
+    actions = [(s.action, s.view_path, s.index) for s in plan.steps]
+    assert ("remove", "b", 0) in actions
+    assert ("insert", "a", 1) in actions
+
+
+def test_an_edited_card_goes_back_to_its_own_place():
+    """Where an edit is put back is decided on the old side, not today's.
+
+    An edit can move a card too, and `_place` leaves the index out - so
+    such a card arrives as *edited*, not as moved, and a step written
+    at today's index would land on its neighbour. Two edited cards that
+    also swapped are the smallest case where that shows: today card 0
+    is `new1` and card 1 is `new0`, so `old0` must be taken off index 1
+    and put back at index 0.
+    """
+    old0 = {"type": "tile", "entity": "light.a", "name": "Bett"}
+    old1 = {"type": "tile", "entity": "light.b", "name": "Tisch"}
+    new0 = {"type": "tile", "entity": "light.a", "name": "Bettlampe"}
+    new1 = {"type": "tile", "entity": "light.b", "name": "Tischlampe"}
+    plan = analyze.plan_undo(
+        _config([old0, old1]), _config([new1, new0]), _config([new1, new0])
+    )
+    assert plan.blocked is None
+    assert [(s.action, s.index) for s in plan.steps] == [
+        ("remove", 1),
+        ("insert", 0),
+        ("remove", 0),
+        ("insert", 1),
+    ]
