@@ -1343,6 +1343,54 @@ async def run_versions(access: str) -> None:
         # them all. Measured before this plan was written: it tags a
         # stranger's commit, and the version is then invisible in this
         # dashboard's history for good.
+        # The fixture that lets the check below fail. Without it both
+        # sides of that comparison were the same commit: TARGET is
+        # normally the dashboard saved last, so the repository's HEAD and
+        # TARGET's own newest state coincided, and the old fallback to
+        # HEAD - the very bug the check is named after - would have
+        # passed here unnoticed. A dashboard of its own, saved *after*
+        # TARGET's last save, puts a stranger's commit at HEAD.
+        #
+        # And it is asserted rather than assumed. If the save did not
+        # land, or landed on the same commit, the check below is back to
+        # comparing something with itself, and that has to be visible in
+        # the run rather than hidden in it.
+        stranger = "dh-head-check"
+        for existing in (await socket.call("lovelace/dashboards/list")) or []:
+            # By the exact key, never by a prefix. On 2026-09-01 a prefix
+            # match in this file swept up a dashboard somebody was
+            # working in, because the prefix was a prefix of that one too.
+            if existing.get("url_path") == stranger:
+                try:
+                    await socket.call(
+                        "lovelace/dashboards/delete", dashboard_id=existing["id"]
+                    )
+                except RuntimeError:
+                    pass
+        await socket.call(
+            "lovelace/dashboards/create", url_path=stranger, title="DH Head"
+        )
+        await socket.call(
+            "lovelace/config/save",
+            url_path=stranger,
+            config={"views": [{"path": "h", "title": "H", "cards": [{"type": "map"}]}]},
+        )
+        await asyncio.sleep(4)
+        mine = (await socket.call("dashboard_history/history", dashboard=key))["changes"]
+        theirs = (await socket.call("dashboard_history/history", dashboard=stranger))[
+            "changes"
+        ]
+        at_head = theirs[0]["revision"] if theirs else None
+        foreign = bool(at_head) and bool(mine) and at_head != mine[0]["revision"]
+        check(
+            "a stranger's save sits at HEAD, so the next check can fail",
+            foreign,
+            f"HEAD at {at_head[:10]}, {key} newest at {mine[0]['revision'][:10]}"
+            if foreign
+            else "HEAD and this dashboard's newest state are the same commit - "
+            "the check below is comparing something with itself",
+        )
+
         loose = await socket.call(
             "dashboard_history/create_version",
             dashboard=key,
@@ -1359,18 +1407,43 @@ async def run_versions(access: str) -> None:
             history = (await socket.call("dashboard_history/history", dashboard=key))[
                 "changes"
             ]
-            # Weaker than it reads, and knowingly so: TARGET is very likely
-            # the dashboard saved last, so the repository's HEAD and this
-            # dashboard's own newest state are the same commit and the two
-            # sides of the comparison cannot disagree. Making it bite needs
-            # a fixture this section does not have - a *second* dashboard
-            # saved after TARGET's last save, so that HEAD is a stranger's
-            # commit while the version is asked for TARGET.
+            # Three sides, not two, and the third is the point: the
+            # version must sit on this dashboard's newest state *and* not
+            # on HEAD, which the fixture above has just made a stranger's
+            # commit. The fallback this guards against would land exactly
+            # there, and the version would then never appear in this
+            # dashboard's history at all - list_changes walks only the
+            # paths the dashboard touched.
             check(
                 "and it lands on this dashboard's own newest state, not on HEAD",
-                bool(mark) and mark["revision"] == history[0]["revision"],
-                f"{mark and mark['revision'][:10]} vs {history[0]['revision'][:10]}",
+                bool(mark)
+                and mark["revision"] == history[0]["revision"]
+                and mark["revision"] != at_head,
+                f"{mark and mark['revision'][:10]} vs {history[0]['revision'][:10]}"
+                f" for {key}, HEAD at {at_head and at_head[:10]}",
             )
+
+        # Taken down by its own id, never by a prefix. Its history stays -
+        # nothing in a check script deletes history - so HEAD stays
+        # foreign for the service checks below, which ask the same thing
+        # through the other skin.
+        made = await socket.call("lovelace/dashboards/list")
+        leftover = next((d["id"] for d in made if d["url_path"] == stranger), None)
+        if leftover:
+            try:
+                await socket.call(
+                    "lovelace/dashboards/delete", dashboard_id=leftover
+                )
+            except RuntimeError:
+                pass
+            # Waited out, not left pending. A deletion is noticed by the
+            # reconcile, ten seconds later, and a run that ends before
+            # that leaves the burst to collide with the *next* run's
+            # first checks - measured on 2026-09-03, where exactly such a
+            # collision was recorded as one commit reading "2 removed"
+            # and cost two runs to understand. Fifteen seconds here buys
+            # an instance that is settled when the run ends.
+            await asyncio.sleep(RECONCILE_WAIT)
 
         # The services layer, not the WebSocket one. Both are thin skins
         # over the same operations, and the point of that design is that
