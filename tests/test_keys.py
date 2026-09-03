@@ -8,6 +8,7 @@ where a mistake wipes every history at once.
 """
 
 import keys
+import versions
 
 
 def test_the_id_and_the_url_path_are_kept_apart():
@@ -84,3 +85,58 @@ def test_a_dashboard_home_assistant_does_not_have_is_absent():
 
 def test_nothing_is_absent_when_home_assistant_cannot_be_asked():
     assert keys.is_absent("a", None) is False
+
+
+def test_an_ordinary_url_path_is_a_safe_key():
+    # What Home Assistant's own frontend lets a person type: letters,
+    # digits, `-` and `_`, with a `-` required on top. Plus the default
+    # dashboard's key, which the integration makes up itself.
+    for key in ("home", "energie-strom", "a-hurz", "dashboard-standard", "_default"):
+        assert keys.is_safe_key(key), key
+
+
+def test_a_key_may_hold_an_umlaut():
+    # It is a file name, not an identifier, and the store writes UTF-8.
+    # Nothing about a wärme is unsafe.
+    assert keys.is_safe_key("wärme")
+
+
+def test_a_key_that_is_not_one_path_segment_is_refused():
+    """The whole rule, in the cases that made it necessary.
+
+    `energie-x/growatt` is what a *view* is addressed by, and it reads
+    like a dashboard - which is how the mistake starts. `../entwichen`
+    is the one that was measured: recorded to a file outside the
+    repository the integration owns.
+    """
+    for key in ("energie-x/growatt", "../entwichen", "/absolut", "..", ".", ""):
+        assert not keys.is_safe_key(key), key
+    assert not keys.is_safe_key("x\\y")
+
+
+def test_a_key_with_a_control_character_is_refused():
+    # It would break the tag name it is put into and split the log line
+    # that reports it.
+    assert not keys.is_safe_key("zwei\nzeilen")
+    assert not keys.is_safe_key("null\x00byte")
+
+
+def test_something_that_is_not_a_string_is_refused():
+    assert not keys.is_safe_key(None)
+    assert not keys.is_safe_key(5)
+
+
+def test_a_safe_key_cannot_reach_into_another_dashboards_versions():
+    """Which is what the rule buys on the tag side.
+
+    `HistoryStore.list_versions` picks a dashboard's versions out by the
+    prefix `<key>/`, so a key holding a slash would let the tag
+    `a/b/v1.0.0` be read as a version of `a` as well as of `a/b`. It
+    cannot happen: a key is one segment, so the name it produces carries
+    exactly one slash, and the numbers read back are the ones put in.
+    """
+    for key in ("home", "energie-strom", "_default", "wärme"):
+        assert keys.is_safe_key(key)
+        name = versions.version_name(key, (1, 2, 3))
+        assert name.count("/") == 1
+        assert versions.parse(key, name) == (1, 2, 3)

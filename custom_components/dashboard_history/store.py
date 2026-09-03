@@ -79,6 +79,40 @@ class HistoryStore:
         porcelain.init(str(self.path))
         _LOGGER.info("Created dashboard history repository at %s", self.path)
 
+    def _file_for(self, key: str, *folders: str) -> Path:
+        """The file a key names in the store, or a refusal.
+
+        The key comes from Home Assistant's dashboard registry and ends
+        up in a file name, so it decides where this class writes.
+        Measured before this check existed: a dashboard registered over
+        the API under the url_path "../weiter-weg" was recorded to a file
+        outside the repository this class owns, where nothing reads it
+        back and nothing removes it.
+
+        Asked of the built path, not of the key, and that is the point:
+        `keys.is_safe_key` decides one layer up what may become a key at
+        all, and this decides the only thing that matters *here* - the
+        file stays inside the store. Two independent questions rather
+        than the same one asked twice, and this one holds whatever a
+        later caller hands in.
+
+        Deliberately not stricter than that. A key with a slash in it
+        makes a nested `energie/x.yaml`, which is wrong but is still a
+        file this store owns - and one recorded before the key rule
+        existed has to stay deletable, or its history is stuck where no
+        operation can reach it. Refusing new ones is the key rule's job;
+        refusing to write outside the store is this one's.
+        """
+        base = self.path.joinpath(*folders)
+        target = base / f"{key}.yaml"
+        root = self.path.resolve()
+        resolved = target.resolve()
+        if resolved == root or root not in resolved.parents:
+            raise ValueError(
+                f"dashboard key {key!r} does not name a file in the store"
+            )
+        return target
+
     def write_snapshot(
         self, key: str, text: str, message: str, meta: str | None = None
     ) -> str | None:
@@ -91,8 +125,8 @@ class HistoryStore:
         """
         with self._lock:
             self._ensure()
-            target = self.path / f"{key}.yaml"
-            meta_target = self.path / "meta" / f"{key}.yaml"
+            target = self._file_for(key)
+            meta_target = self._file_for(key, "meta")
 
             # Compare against the last commit, never against the file on
             # disk. If an earlier run wrote the file but did not get to
@@ -160,9 +194,9 @@ class HistoryStore:
             if self.read_at(key, "HEAD") is None:
                 # Never recorded, or already marked deleted.
                 return None
-            paths = [self.path / f"{key}.yaml"]
+            paths = [self._file_for(key)]
             if self.read_meta_at(key, "HEAD") is not None:
-                paths.append(self.path / "meta" / f"{key}.yaml")
+                paths.append(self._file_for(key, "meta"))
             porcelain.remove(str(self.path), [str(path) for path in paths])
             revision = porcelain.commit(
                 str(self.path),

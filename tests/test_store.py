@@ -845,14 +845,15 @@ def test_a_lightweight_tag_on_a_blob_is_not_a_state_to_return_to(store):
 
 
 def test_a_tag_blocks_every_namespace_it_stands_in(store):
-    # A dashboard key may hold a slash - Home Assistant accepts
-    # `url_path="dh-slash/check"` - and then the blocking parent of
-    # `dh-slash/check/v1.0.0` is `dh-slash/check`, not `dh-slash`. Looking
-    # only at the first segment let the real collision through, and it
-    # then surfaced raw: measured on dulwich 1.2.14 it is a
-    # NotADirectoryError here, the deeper cousin of the IsADirectoryError
-    # this refusal was written against.
-    first = store.write_snapshot("dh-slash/check", "a: 1\n", "first")
+    # A version *name* may hold more than one segment even though a
+    # dashboard *key* may not: a tag made by hand does, and so does every
+    # tag written before `keys.is_safe_key` existed. The blocking parent
+    # of `dh-slash/check/v1.0.0` is then `dh-slash/check`, not
+    # `dh-slash`. Looking only at the first segment let the real collision
+    # through, and it then surfaced raw: measured on dulwich 1.2.14 it is
+    # a NotADirectoryError here, the deeper cousin of the
+    # IsADirectoryError this refusal was written against.
+    first = store.write_snapshot("dh-slash", "a: 1\n", "first")
     store.create_version("dh-slash/check", "Loose", "", first)
     with pytest.raises(ValueError, match="dh-slash/check"):
         store.create_version("dh-slash/check/v1.0.0", "Blocked", "", first)
@@ -860,8 +861,51 @@ def test_a_tag_blocks_every_namespace_it_stands_in(store):
 
 def test_a_tag_in_the_first_segment_still_blocks(store):
     # The other end of the same name: `dh-slash` is a proper prefix too,
-    # so it blocks just as it always did for a key without a slash.
-    first = store.write_snapshot("dh-slash/check", "a: 1\n", "first")
+    # so it blocks just as it always did for a name of one segment.
+    first = store.write_snapshot("dh-slash", "a: 1\n", "first")
     store.create_version("dh-slash", "Loose", "", first)
     with pytest.raises(ValueError, match="dh-slash"):
         store.create_version("dh-slash/check/v1.0.0", "Blocked", "", first)
+
+
+def test_a_key_that_leaves_the_store_writes_nothing(store, tmp_path):
+    """The store refuses rather than writing beside itself.
+
+    Measured before this check existed: a dashboard registered over the
+    API under the url_path "../weiter-weg" was recorded to a file next to
+    the repository, where nothing reads it back and nothing removes it.
+    `keys.is_safe_key` turns such a key away earlier; this is the store
+    answering for its own boundary, whoever calls it.
+    """
+    with pytest.raises(ValueError, match="does not name a file in the store"):
+        store.write_snapshot("../weiter-weg", "a: 1\n", "escaped")
+    assert not (tmp_path / "weiter-weg.yaml").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["history"]
+
+
+def test_an_absolute_key_writes_nothing(store, tmp_path):
+    with pytest.raises(ValueError, match="does not name a file in the store"):
+        store.write_snapshot("/absolut", "a: 1\n", "escaped")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["history"]
+
+
+def test_a_key_that_leaves_the_store_deletes_nothing(store):
+    # Refused earlier than the boundary check, and for a plainer reason:
+    # there is no such record to delete. Worth pinning anyway - the answer
+    # has to be "nothing happened", not an exception out of dulwich.
+    assert store.mark_deleted("../weiter-weg", "gone") is None
+
+
+def test_a_nested_key_stays_readable_and_deletable(store):
+    """A record from before the key rule must not get stuck.
+
+    A key holding a slash makes a nested file. That is wrong, and no new
+    one can appear - but one already written has to stay reachable, or
+    its history sits where no operation can either read or end it. Which
+    is why the boundary check refuses escaping paths and not nested ones.
+    """
+    first = store.write_snapshot("energie/x", "a: 1\n", "legacy")
+    assert first is not None
+    assert store.read_at("energie/x", "HEAD") == "a: 1\n"
+    assert store.mark_deleted("energie/x", "energie/x: dashboard deleted") is not None
+    assert store.read_at("energie/x", "HEAD") is None

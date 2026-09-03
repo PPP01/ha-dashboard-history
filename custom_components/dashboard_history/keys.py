@@ -43,6 +43,39 @@ def storage_keys(
     return pairs
 
 
+def is_safe_key(key) -> bool:
+    """Whether a key may be turned into a file name and a tag prefix.
+
+    A dashboard key becomes both: `<key>.yaml` in the store, and the
+    first segment of a version's tag, `<key>/v1.0.0`. So it has to be one
+    ordinary path segment and nothing else. Measured before this rule
+    existed: a dashboard registered over the API under the url_path
+    "../weiter-weg" was recorded to a file *outside* the repository this
+    integration owns, where nothing reads it back and nothing removes it.
+
+    Nothing legitimate is turned away by this. Home Assistant's own
+    frontend accepts letters, digits, `-` and `_` in a url_path and
+    nothing more, and demands a `-` on top of that. A dashboard
+    registered with a slash over the API is a ghost either way: the
+    frontend looks a panel up by the *first* path segment alone, so the
+    thing answers 404 and no browser ever reaches it. Refusing to record
+    a ghost costs nobody anything; recording it costs a stray file and a
+    tag namespace that two dashboards share.
+
+    A rule, then, and not a repair: the answer is no history rather than
+    a history somewhere else.
+    """
+    if not isinstance(key, str) or not key:
+        return False
+    if key in (".", ".."):
+        return False
+    if "/" in key or "\\" in key:
+        return False
+    # A control character would break the tag name it is put into and
+    # split the log line it is reported in. Nothing means one.
+    return not any(ch < " " or ch == "\x7f" for ch in key)
+
+
 def deletions_to_record(
     tracked: Iterable[str], known: set[str] | None
 ) -> list[str]:
