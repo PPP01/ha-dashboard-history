@@ -313,7 +313,7 @@ Zurueckholen
 
     | Was die Änderung tat | Prüfung am heutigen Stand | Rücknahme |
     |---|---|---|
-    | Karte **bearbeitet** (alt→neu) | `zähler[neu] == 1` | die eine Fundstelle durch *alt* ersetzen |
+    | Karte **bearbeitet** (alt→neu) | `zähler[neu] == 1` | die eine Fundstelle entfernen, *alt* am alten Platz einsetzen |
     | Karte **verschoben** | `zähler[karte] == 1` | dort entfernen, am alten Platz einsetzen |
     | Karte **hinzugefügt** | `zähler[neu] == 1` | die eine Fundstelle entfernen |
     | Karte **gelöscht** | `zähler[alt] == 0` | am alten Platz einsetzen |
@@ -321,7 +321,11 @@ Zurueckholen
 
     **Alles oder nichts.** Trifft eine dieser Bedingungen nicht zu, ist die *ganze* Rücknahme verweigert, nicht nur der eine Punkt. Ein halb zurückgenommener Stand ist einer, den niemand gewollt hat und den die Zeile daneben nicht mehr beschreibt. Die Verweigerung nennt Grund und Karte, wie Entscheidung 5 es verlangt — »geht nicht, weil …« statt eines Warnhinweises, der die Entscheidung an jemanden weiterreicht, der die Verschränkung nicht sehen kann.
 
-    **Die Reihenfolge beim Anwenden ist Teil der Korrektheit:** erst alle Ersetzungen (positionsneutral), dann alle Entfernungen, dann alle Einsetzungen. Andersherum verschöben die Entfernungen genau die Indizes, an denen eingesetzt werden soll.
+    **Ganze Views nach derselben Regel, und ebenfalls über den Inhalt.** Eine View, die nur ein Stand hat, ist eine Zeile im Verlauf und nicht eine je Karte; gefragt wird bei ihr dasselbe, nur gröber. Entscheidend ist, dass auch hier der **Inhalt** zählt und nicht der `path`: Ein Pfad ist umbenennbar und wiederverwendbar. Wer nur nachsieht, ob einer vorhanden ist, meldet für eine seither umbenannte View »schon zurückgenommen« und hält eine fremde View auf demselben Pfad für die eigene — beides Sätze, die dem Dashboard widersprechen, also genau der Fehler, den diese Spec durchgehend am schwersten wiegt. Sitzt eine fremde View auf dem Pfad, wird verweigert statt eingesetzt: zwei Views auf einem Pfad sind ein kaputtes Dashboard. *(Am 2026-09-03 nach einem Review nachgezogen; die erste Fassung fragte nur nach dem Pfad.)*
+
+    **Es gibt keinen Ersetzungsschritt — bearbeitet und verschoben sind derselbe Vorgang.** *(Am 2026-09-03 beim Bauen korrigiert; der erste Entwurf dieser Entscheidung hatte einen.)* »Die eine Fundstelle an Ort und Stelle durch *alt* ersetzen« klingt sparsamer und ist still falsch. Der Ort einer Karte wird **ohne ihren Index** festgehalten, deshalb kommt eine Karte, die in derselben Speicherung bearbeitet **und** verschoben wurde, hier als »bearbeitet« an — und eine Ersetzung am heutigen Index landet auf ihrer Nachbarin. Über 6000 erzeugte Verläufe gemessen: **48** still falsche Ergebnisse mit Ersetzung, **0** mit Entfernen + Einsetzen, bei genau gleich vielen Verweigerungen (309 zu 309). Gebaut ist deshalb die zweite Fassung, und sie ist auch die einfachere: Bearbeitung und Verschiebung brauchen keine zwei Regeln mehr, sondern eine.
+
+    **Die Reihenfolge beim Anwenden ist Teil der Korrektheit:** erst alle Entfernungen, absteigend nach Index, dann alle Einsetzungen, aufsteigend. Andersherum verschöbe jeder Schritt die Indizes des nächsten — still, versteht sich. Karten vor Views, weil ein Kartenschritt seine View notfalls über die Position findet und ein vorher entferntes View diese Position verschiebt. Jede Entfernung prüft zusätzlich, ob das Geplante überhaupt noch dort steht: Der Plan ist einen Augenblick älter als seine Anwendung, und ein Augenblick reicht für eine Speicherung.
 
     **Beim Bestätigen wird neu gerechnet, nicht das Vorschauergebnis geschrieben.** Ändert jemand das Dashboard zwischen Vorschau und `confirm`, ist der Undo womöglich nicht mehr exakt; dann kommt die Verweigerung zurück statt eines Schreibvorgangs. Ohne das wäre die Beweisführung an der einen Stelle wertlos, an der sie zählt.
 
