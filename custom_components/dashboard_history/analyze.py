@@ -566,7 +566,17 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     almost every real history.
     """
     matching = match_cards(before, after)
-    if not (matching.removed or matching.added or matching.edited or matching.moved):
+    old_views = dict(_views_by_key(before))
+    new_views = dict(_views_by_key(after))
+    now_views = dict(_views_by_key(current))
+    view_work = set(old_views) ^ set(new_views)
+    if not (
+        matching.removed
+        or matching.added
+        or matching.edited
+        or matching.moved
+        or view_work
+    ):
         return UndoPlan(blocked="this change did not alter any cards")
 
     by_mark: dict[str, list[Slot]] = {}
@@ -619,6 +629,51 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
             continue
         steps.append(
             _step(old_slot, "insert", None, old_slot.card, _describe(old_slot.card))
+        )
+
+    # Whole views, which `match_cards` leaves out on purpose: a view that
+    # only one state has is one line in the history, not one per card on
+    # it. Undoing it is the same two questions in a coarser grain - is it
+    # still exactly as the change left it, and is it still there at all.
+    for index, (key, view) in enumerate(_views_by_key(current)):
+        if key in old_views or key not in new_views:
+            continue
+        # The change added this view. Take it away, if nobody worked on it.
+        if view != new_views[key]:
+            name = _view_name(view, key)
+            return UndoPlan(
+                blocked=f'the view "{name}" was changed again after this'
+            )
+        steps.append(
+            UndoStep(
+                action="remove",
+                kind="view",
+                view_path=view.get("path"),
+                view_index=index,
+                location=(),
+                index=index,
+                expect=view,
+                payload=None,
+                label=f'view: {_view_name(view, key)}',
+            )
+        )
+
+    for index, (key, view) in enumerate(_views_by_key(before)):
+        if key in new_views or key in now_views:
+            # Either the change did not remove it, or it is already back.
+            continue
+        steps.append(
+            UndoStep(
+                action="insert",
+                kind="view",
+                view_path=view.get("path"),
+                view_index=index,
+                location=(),
+                index=index,
+                expect=None,
+                payload=view,
+                label=f'view: {_view_name(view, key)}',
+            )
         )
 
     return UndoPlan(blocked=None, steps=tuple(steps))

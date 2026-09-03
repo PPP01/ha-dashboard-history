@@ -721,3 +721,33 @@ def test_an_edited_card_goes_back_to_its_own_place():
         ("remove", 0),
         ("insert", 1),
     ]
+
+
+def test_a_deleted_view_is_planned_back():
+    a = {"path": "a", "title": "A", "cards": [{"type": "tile", "entity": "light.a"}]}
+    b = {"path": "b", "title": "B", "cards": []}
+    plan = analyze.plan_undo({"views": [a, b]}, {"views": [a]}, {"views": [a]})
+    assert plan.blocked is None
+    assert [(s.action, s.kind, s.payload) for s in plan.steps] == [
+        ("insert", "view", b)
+    ]
+
+
+def test_an_added_view_is_planned_away():
+    a = {"path": "a", "title": "A", "cards": []}
+    b = {"path": "b", "title": "B", "cards": []}
+    plan = analyze.plan_undo({"views": [a]}, {"views": [a, b]}, {"views": [a, b]})
+    assert [(s.action, s.kind, s.index) for s in plan.steps] == [
+        ("remove", "view", 1)
+    ]
+
+
+def test_an_added_view_changed_since_is_refused():
+    a = {"path": "a", "title": "A", "cards": []}
+    b = {"path": "b", "title": "B", "cards": []}
+    worked_on = {"path": "b", "title": "B", "cards": [{"type": "tile"}]}
+    plan = analyze.plan_undo(
+        {"views": [a]}, {"views": [a, b]}, {"views": [a, worked_on]}
+    )
+    assert plan.steps == ()
+    assert "changed again" in plan.blocked
