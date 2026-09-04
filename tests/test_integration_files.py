@@ -33,3 +33,20 @@ def test_the_english_translation_is_the_strings_file():
     # custom integration ships both, and they must not drift apart.
     english = json.loads((PACKAGE / "translations" / "en.json").read_text(encoding="utf-8"))
     assert english == _strings()
+
+
+def test_the_options_step_has_words():
+    # Without them the switch appears in the interface as the bare word
+    # "daily_versions", and hassfest - which HACS runs on a published
+    # integration - reports the gap.
+    step = _strings()["options"]["step"]["init"]
+    assert step["title"] and step["description"]
+
+
+def test_the_switch_says_what_it_does_and_what_it_does_not():
+    # The explanation carries the sentence that matters: nothing is
+    # deleted either way. A switch about versions on a tool whose whole
+    # promise is that nothing is lost has to say so where it is read.
+    step = _strings()["options"]["step"]["init"]
+    assert step["data"]["daily_versions"]
+    assert "deleted" in step["data_description"]["daily_versions"]

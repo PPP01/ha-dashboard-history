@@ -322,6 +322,36 @@ def reload_entry(access: str) -> bool:
     return answer.ok and answer.json().get("require_restart") is False
 
 
+def daily_versions_switch(access: str, enabled: bool) -> tuple[bool, list]:
+    """Set the switch the way a person does, and report what was offered.
+
+    Driven over the options flow rather than by writing the entry:
+    whether the form exists at all, and whether it accepts this field, is
+    exactly what is being checked.
+    """
+    headers = {"Authorization": f"Bearer {access}"}
+    identifier = entry_id(access)
+    if not identifier:
+        return False, []
+    started = requests.post(
+        f"{BASE}/api/config/config_entries/options/flow",
+        headers=headers,
+        json={"handler": identifier, "show_advanced_options": False},
+        timeout=60,
+    )
+    started.raise_for_status()
+    step = started.json()
+    offered = step.get("data_schema") or []
+    done = requests.post(
+        f"{BASE}/api/config/config_entries/options/flow/{step['flow_id']}",
+        headers=headers,
+        json={"daily_versions": enabled},
+        timeout=60,
+    )
+    done.raise_for_status()
+    return done.json().get("type") == "create_entry", offered
+
+
 async def pick_target(access: str) -> str:
     """Which dashboard the checks work on, when nobody has named one.
 
@@ -2531,6 +2561,37 @@ async def run_milestones(access: str) -> None:
         )
 
 
+async def run_daily_switch(access: str) -> None:
+    """The switch that stops the automatic daily versions.
+
+    What it does on a day boundary cannot be shown here, for the reason
+    named in `run_milestones`. What can be shown is everything else: that
+    the form exists, that it offers this one field, that it takes both
+    answers, and that the recording carries on regardless - because the
+    switch deliberately triggers no reload.
+    """
+    off, offered = daily_versions_switch(access, False)
+    check("the options offer the daily versions as a switch",
+          any(field.get("name") == "daily_versions" for field in offered),
+          str([field.get("name") for field in offered]))
+    check("turning the daily versions off is accepted", off)
+
+    on, _ = daily_versions_switch(access, True)
+    check("and turning them back on is accepted", on)
+
+    # Left switched on, and checked rather than assumed: every later run
+    # of this file expects the ordinary behaviour, and a bench left in a
+    # configuration nobody chose is how a check starts failing for
+    # reasons that have nothing to do with it.
+    async with Socket(access) as socket:
+        answer = await socket.call("dashboard_history/dashboards")
+    check(
+        "and the integration is still answering afterwards",
+        bool(answer.get("dashboards")),
+        str(len(answer.get("dashboards") or [])),
+    )
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -2584,6 +2645,8 @@ if __name__ == "__main__":
     asyncio.run(run_positions(access))
     print("\n  -- Versionen, die von selbst entstehen --")
     asyncio.run(run_milestones(access))
+    print("\n  -- Der Schalter fuer die Tagesversionen --")
+    asyncio.run(run_daily_switch(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))

@@ -9,5 +9,19 @@
     "abort": {
       "already_configured": "Dashboard History is already set up. One instance records every dashboard."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dashboard History",
+        "description": "A version marks a state you can come back to by name.",
+        "data": {
+          "daily_versions": "Mark the state at the end of each day"
+        },
+        "data_description": {
+          "daily_versions": "On the first change of a new day, the state that was there before it is marked as a version, named after the day it belongs to. Turn this off to keep only the versions you make yourself. Nothing is deleted either way: every state stays in the history, marked or not."
+        }
+      }
+    }
   }
 }
