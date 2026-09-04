@@ -662,34 +662,63 @@ class HistoryStore:
             return None
         return Repo(str(self.path))
 
-    def list_changes(self, key: str, limit: int | None = 50) -> list[Change]:
+    def list_changes(
+        self, key: str, limit: int | None = 50, before: str | None = None
+    ) -> list[Change]:
         """Every recorded state of one dashboard, newest first.
 
-        `limit=None` walks the whole history.
+        `limit=None` walks the whole history. `before` starts the walk one
+        step past that revision - the entry it names is not repeated, so a
+        caller can page without stitching duplicates together. A cursor
+        rather than an offset because an offset drifts: save while somebody
+        is paging and every later page shifts by one.
+
+        A `before` that is no change of this dashboard - another
+        dashboard's commit, HEAD - starts the walk at the newest change
+        older than it. An unknown `before` yields nothing: asking about a
+        revision that is gone is not an error, and `matching_revisions`
+        takes the same line.
         """
         repo = self._repo()
         if repo is None:
             return []
         notes = self.descriptions()
+        # Both paths: a rename touches only the metadata, and a change
+        # that is recorded but never shown is the worst of both.
+        paths = [f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()]
+        walk: dict = {"paths": paths}
+        cursor: bytes | None = None
+        if before is not None:
+            resolved = self._resolve(repo, before)
+            if resolved is None:
+                return []
+            # `include` walks *from* that commit and hands the commit
+            # itself back first - but only if it touches these paths. A
+            # cursor from another dashboard is not in the list at all,
+            # so the first entry is dropped only when it *is* the cursor.
+            # Same guard as `previous_change`.
+            cursor = resolved.encode()
+            walk["include"] = [cursor]
+        if limit is not None:
+            walk["max_entries"] = limit + 1 if cursor is not None else limit
         try:
-            # Both paths: a rename touches only the metadata, and a change
-            # that is recorded but never shown is the worst of both.
-            walker = repo.get_walker(
-                paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
-                max_entries=limit,
-            )
-            return [
-                Change(
-                    revision=_as_text(entry.commit.id),
-                    timestamp=entry.commit.commit_time,
-                    message=entry.commit.message.decode("utf-8").strip(),
-                    description=notes.get(_as_text(entry.commit.id), ""),
-                )
-                for entry in walker
-            ]
+            entries = list(repo.get_walker(**walk))
         except KeyError:
             # No HEAD yet: an empty repository has no history to walk.
             return []
+        if cursor is not None and entries and entries[0].commit.id == cursor:
+            entries = entries[1:]
+        if limit is not None:
+            entries = entries[:limit]
+        return [
+            Change(
+                revision=_as_text(entry.commit.id),
+                timestamp=entry.commit.commit_time,
+                message=entry.commit.message.decode("utf-8").strip(),
+                description=notes.get(_as_text(entry.commit.id), ""),
+            )
+            for entry in entries
+        ]
 
     def descriptions(self) -> dict[str, str]:
         """Every description, by revision.

@@ -1112,3 +1112,59 @@ def test_forgetting_clears_the_index_and_the_working_tree_too(store):
     assert not (store.path / "gone.yaml").exists()
     assert not (store.path / "meta" / "gone.yaml").exists()
     assert store.survey().names == ["keep"]
+
+
+def test_history_can_start_at_an_older_revision(store):
+    """Paging means: carry on from here, not from position n."""
+    revisions = [
+        store.write_snapshot("home", f"a: {i}\n", f"home: change {i}")
+        for i in range(6)
+    ]
+    # revisions[0] is the oldest. Carry on from the fourth-oldest:
+    older = store.list_changes("home", limit=2, before=revisions[3])
+    assert [c.revision for c in older] == [revisions[2], revisions[1]]
+
+
+def test_the_cursor_itself_is_not_repeated(store):
+    """Otherwise every page would open with the end of the one before."""
+    revisions = [
+        store.write_snapshot("home", f"a: {i}\n", f"home: change {i}")
+        for i in range(4)
+    ]
+    older = store.list_changes("home", limit=10, before=revisions[2])
+    assert revisions[2] not in [c.revision for c in older]
+
+
+def test_a_cursor_that_is_not_a_change_of_this_dashboard_drops_nothing(store):
+    """The walker yields the cursor only if it touches this dashboard.
+
+    If it does not - another dashboard's commit, HEAD - the first entry
+    is already a real change, and dropping it blindly would lose one.
+    Same guard as `previous_change`.
+    """
+    revisions = [
+        store.write_snapshot("home", f"a: {i}\n", f"home: change {i}")
+        for i in range(3)
+    ]
+    other = store.write_snapshot("other", "b: 1\n", "other: change")
+    assert [c.revision for c in store.list_changes("home", before=other)] == list(
+        reversed(revisions)
+    )
+    # And the limit still means what it says.
+    assert len(store.list_changes("home", limit=2, before=other)) == 2
+
+
+def test_an_unknown_cursor_yields_nothing(store):
+    """Asking is free - a revision that does not exist is not an error."""
+    store.write_snapshot("home", "a: 1\n", "home: first")
+    assert store.list_changes("home", before="f" * 40) == []
+
+
+def test_history_without_a_cursor_is_unchanged(store):
+    """The regression that counts: the existing call stays as it was."""
+    store.write_snapshot("home", "a: 1\n", "home: first")
+    store.write_snapshot("home", "a: 2\n", "home: second")
+    assert [c.message for c in store.list_changes("home")] == [
+        "home: second",
+        "home: first",
+    ]
