@@ -847,6 +847,34 @@ async def _wait_for_history_to_move(socket, key: str, seen: str, seconds: float)
     return await _wait_for(fetch, lambda c: bool(c) and c[0]["revision"] != seen, seconds)
 
 
+async def _versions_settled(socket, key: str, seconds: float = 20) -> list:
+    """The versions of `key`, once two reads in a row agree.
+
+    A daily version is written by a task the recorder's announcement
+    starts, so it lands shortly *after* the change that caused it is
+    readable. Counting versions straight after a save would race that
+    task. Two equal reads are the cheapest honest answer to "is it
+    finished"; a fixed sleep would be a guess, and this file has paid for
+    guesses before.
+    """
+    seen: list | None = None
+
+    async def fetch():
+        nonlocal seen
+        now = [
+            v["name"]
+            for v in (
+                await socket.call("dashboard_history/versions", dashboard=key)
+            )["versions"]
+        ]
+        settled = seen is not None and seen == now
+        seen = now
+        return now, settled
+
+    found, _ = await _wait_for(fetch, lambda pair: pair[1], seconds)
+    return found
+
+
 def _store_has(dashboard_id: str) -> bool:
     """Whether the dashboard registry *on disk* holds this entry.
 
@@ -2473,6 +2501,33 @@ async def run_milestones(access: str) -> None:
             bool(found)
             and bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", found[0]["title"])),
             found[0]["title"] if found else "",
+        )
+
+        # The day mark, in the one direction a running instance can be
+        # made to show. Two changes in a row, and the second is measured:
+        # its predecessor was recorded minutes ago, so it is certainly
+        # from today whatever day the bench happens to run on. That the
+        # *other* direction works - a predecessor from an earlier day
+        # does get a mark - is settled in pytest, on `versions.same_day`.
+        # No API can backdate a commit, so it cannot be shown from here,
+        # and pretending otherwise with a sleep would be worse than
+        # saying it plainly.
+        async def save(title: str) -> None:
+            await socket.call(
+                "lovelace/config/save",
+                url_path=key,
+                config={"views": [{"path": "p", "title": title, "cards": []}]},
+            )
+            await _wait_until_recorded(socket, key)
+
+        await save("Floor A")
+        settled = await _versions_settled(socket, key)
+        await save("Floor B")
+        again = await _versions_settled(socket, key)
+        check(
+            "a second change on the same day adds no further version",
+            again == settled,
+            f"{settled} -> {again}",
         )
 
 

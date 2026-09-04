@@ -37,3 +37,9 @@ EVENT_HISTORY_UPDATED = "dashboard_history_updated"
 # Seconds to wait before reconciling after a panel changed. Long enough to
 # collapse the burst Home Assistant fires while starting up.
 RECONCILE_DELAY = 10
+
+# Whether a version is made for the state at the end of each day. On by
+# default: the simple mode of decision 17 shows nothing but versions, and
+# an installation that has to be configured before it works is one that
+# does not work. Switched off by people who keep their own milestones.
+OPTION_DAILY_VERSIONS = "daily_versions"

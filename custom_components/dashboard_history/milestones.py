@@ -18,6 +18,7 @@ would be a state that is gone.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -26,6 +27,7 @@ from homeassistant.util import dt as dt_util
 
 from . import operations
 from . import versions as versioning
+from .const import EVENT_HISTORY_UPDATED, OPTION_DAILY_VERSIONS
 from .store import Change, HistoryStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +50,11 @@ class Milestones:
         # checkbox.
         self._entry = entry
         self._unsubscribe = None
+        # One day mark at a time. Two changes arriving close together
+        # would otherwise both read the same predecessor, both find it
+        # unmarked, and both tag it - two versions on one state, one
+        # second apart, neither of them wrong on its own.
+        self._marking = asyncio.Lock()
 
     # -- the floor -----------------------------------------------------
 
@@ -144,3 +151,94 @@ class Milestones:
             _LOGGER.debug("No automatic version for %s: %s", key, answer.get("error"))
             return None
         return created
+
+    # -- the day mark --------------------------------------------------
+
+    @callback
+    def async_arm(self) -> None:
+        """Start marking the end of a day when the history grows.
+
+        Armed *after* the floor is laid, and that order is the whole
+        reason this is a call of its own. `candidates` counts up from the
+        highest version that exists, so on a dashboard with none the
+        first automatic version would be `v0.0.1` rather than `v1.0.1`.
+        The recorder's opening pass has already announced itself by the
+        time `async_start` returns, so nothing it recorded can reach
+        here - the first pass lays the floor, everything after it may
+        raise day marks.
+
+        `EVENT_HISTORY_UPDATED` rather than `lovelace_updated`: it is
+        fired once the commit exists and it names the dashboards that
+        actually changed. The snapshot taken just before a restore is
+        recorded with `announce=False` and so never arrives here, which
+        is right - the dialog in front of a restore asks about that state
+        itself.
+        """
+        if self._unsubscribe is not None:
+            return
+        self._unsubscribe = self._hass.bus.async_listen(
+            EVENT_HISTORY_UPDATED, self._handle_recorded
+        )
+
+    @callback
+    def async_disarm(self) -> None:
+        """Stop listening."""
+        if self._unsubscribe is not None:
+            self._unsubscribe()
+            self._unsubscribe = None
+
+    @callback
+    def _handle_recorded(self, event: Event) -> None:
+        """React without holding up the bus, or the recorder's write lock.
+
+        The event is fired from inside the recorder's write section. Doing
+        git work here would run it under a lock this module has no
+        business holding - the same reason `capture._handle_event` hands
+        its work to a task rather than doing it where it stands.
+        """
+        for key in event.data.get("dashboards") or []:
+            self._hass.async_create_task(self._async_mark_day(key))
+
+    async def _async_mark_day(self, key: str) -> None:
+        """Mark the state that was there before this new day started."""
+        try:
+            async with self._marking:
+                if not self._entry.options.get(OPTION_DAILY_VERSIONS, True):
+                    return
+                newest = await self._hass.async_add_executor_job(
+                    self._store.list_changes, key, 2
+                )
+                if len(newest) < 2:
+                    # The first state this dashboard ever had. There is
+                    # nothing before it, so there is no day to close.
+                    return
+                current, previous = newest
+                zone = dt_util.DEFAULT_TIME_ZONE
+                if versioning.same_day(previous.timestamp, current.timestamp, zone):
+                    return
+                found = await self._hass.async_add_executor_job(
+                    self._store.list_versions, key
+                )
+                # Already marked, by a person or by an earlier run of
+                # this. Without the check a dashboard saved twice across
+                # one midnight would collect a second tag on the same
+                # state, and the numbering would count on regardless.
+                if any(v.revision == previous.revision for v in found):
+                    return
+                # A dashboard created while Home Assistant was running
+                # has never had a floor laid - `async_lay_the_floor` ran
+                # at setup, and this one did not exist then. Its first
+                # automatic version is therefore made at major level, so
+                # that it is `v1.0.0` and not `v0.0.1`: `candidates`
+                # counts up from the highest version there is, and with
+                # none there is the patch candidate is v0.0.1. A later
+                # start would then find a version, leave the dashboard
+                # alone, and strand it on the v0.0.x track for good.
+                # What is being marked is the last state of the day
+                # before, which is exactly what a floor is anyway.
+                level = "patch" if found else "major"
+                name = await self._async_make(key, level, previous)
+                if name is not None:
+                    _LOGGER.info("Marked the end of a day with %s", name)
+        except Exception:  # noqa: BLE001 - a missing mark, never a lost save
+            _LOGGER.exception("Could not make the daily version of %s", key)

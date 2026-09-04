@@ -58,6 +58,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not make its first versions")
 
+    # Only now, and see `async_arm` for why: before the floor is laid,
+    # the first automatic version of a dashboard would be numbered
+    # v0.0.1 instead of v1.0.1.
+    milestones.async_arm()
+
     _LOGGER.debug("Dashboard History set up")
     return True
 
@@ -66,6 +71,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Tear the integration down."""
     panel.async_unregister(hass)
     data = hass.data.pop(DOMAIN, None)
+    if data and (milestones := data.get("milestones")) is not None:
+        milestones.async_disarm()
     if data and (capture := data.get("capture")) is not None:
         await capture.async_stop()
     return True
