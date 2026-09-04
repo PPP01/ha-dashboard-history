@@ -129,3 +129,46 @@ def test_an_edit_and_a_move_in_one_save_both_land():
     assert plan.blocked is None
     result = restore.apply_undo(after, plan)
     assert result["views"][0]["cards"] == [A, B, x]
+
+
+# -- a section index is not a section ----------------------------------
+#
+# Measured on 2026-09-04: putting a card back walked ("sections", i,
+# "cards") in whatever state it was handed. Where that index pointed at
+# an existing but different section, the card was filed there without a
+# word - the loud LookupError only appeared when the index ran off the
+# end. The quiet outcome is the dangerous one.
+
+
+def _sections(*sections):
+    return {"views": [{"path": "home", "type": "sections",
+                       "sections": [dict(s) for s in sections]}]}
+
+
+def test_a_card_refuses_to_go_back_into_a_different_section():
+    """The first of two sections is gone, so index 0 is now "Unten"."""
+    old = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B]})
+    new = _sections({"title": "Unten", "cards": [B]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    with pytest.raises(LookupError, match="section"):
+        restore.reinsert(new, item)
+
+
+def test_a_card_refuses_when_a_section_was_pushed_along():
+    """A section inserted in front moves "Unten" from index 1 to 2."""
+    old = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B, C]})
+    new = _sections({"title": "Neu", "cards": []},
+                    {"title": "Oben", "cards": [A]},
+                    {"title": "Unten", "cards": [B]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == C)
+    with pytest.raises(LookupError, match="section"):
+        restore.reinsert(new, item)
+
+
+def test_a_card_goes_back_into_the_section_it_came_from():
+    """The everyday case: the section is still standing where it was."""
+    old = _sections({"title": "Oben", "cards": [A, B]})
+    new = _sections({"title": "Oben", "cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    result = restore.reinsert(new, item)
+    assert result["views"][0]["sections"][0]["cards"] == [A, B]

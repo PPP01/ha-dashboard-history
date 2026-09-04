@@ -104,10 +104,27 @@ Geprüft und in Ordnung:
 
 Drei Pakete, in dieser Reihenfolge:
 
-1. **Verweigern statt stumm falsch schreiben** – für Ansichten und Sections. Sobald eine positionsbasierte Adresse im Spiel ist und die Struktur sich verschoben hat, `UndoPlan(blocked=…)` beziehungsweise `LookupError`. Klein, deckt C1 und C2 sofort ab und entspricht Entscheidung 4 der Spec: raten ist verboten, verweigern erlaubt. Heilt die falschen Historientexte nicht.
+1. **Verweigern statt stumm falsch schreiben** – für Ansichten und Sections. Sobald eine positionsbasierte Adresse im Spiel ist und die Struktur sich verschoben hat, `UndoPlan(blocked=…)` beziehungsweise `LookupError`. Klein, deckt C1 und C2 sofort ab und entspricht Entscheidung 4 der Spec: raten ist verboten, verweigern erlaubt. Heilt die falschen Historientexte nicht. **Erledigt am 2026-09-04**, siehe unten.
 2. **Identitätskette in der eigenen Historie** – bei jedem erfassten Speichervorgang Ansichten und Sections dem Vorgänger zuordnen (Pfad, dann identischer Inhalt, dann Ähnlichkeit, sonst neu) und die Zuordnung als dritte Spur neben `<key>.yaml` und `meta/<key>.yaml` mitcommitten. `analyze` bekommt sie als optionalen Parameter gereicht und bleibt Home-Assistant-frei; ohne Karte gilt das heutige Verhalten. Rückwirkend berechenbar, weil jeder Zwischenstand als Commit vorliegt. Behebt C1, C2, W2 und die falschen Historientexte.
 3. **Sections als eigene Granularität** – `kind="section"` in `find_removed` und `reinsert`, analog zu `kind="view"`. Behebt W1, setzt Paket 2 voraus.
 
 Paket 2 berührt die Spec: Entscheidung 4 argumentiert mit »Lovelace-Karten haben keine Kennung«. Dass die Integration sich selbst welche führt, ohne fremde Dashboards zu verändern, gehört dort begründet.
 
 Nicht weiterverfolgt, weil die Spec es ausschließt: Kennungen in die Dashboards des Nutzers schreiben. Home Assistant bietet keinen Erweiterungspunkt vor dem Speichern – `LovelaceStorage.async_save` schreibt die Konfiguration wörtlich durch, das Event `lovelace_updated` kommt danach. Möglich wäre nur, den WebSocket-Befehl zu ersetzen (verboten) oder nach dem Event zurückzuschreiben (verändert fremde Dashboards, verdoppelt die Historie, verliert das Rennen gegen einen offenen Editor, wirkt nur nach vorn). Dass Home Assistant `id`-Felder auf Views, Sections und Karten unverändert speichert, ist geprüft und stimmt – es ändert an der Abwägung nichts.
+
+## Stand vom 2026-09-04: Paket 1 ist umgesetzt
+
+C1 und C2 schreiben nicht mehr. Beide Wege verweigern, statt still den falschen Stand zu setzen:
+
+- `analyze._positions_lie` prüft für jedes Ständepaar, das `plan_undo` liest oder beschreibt (`before`/`after`, `before`/`current`, `after`/`current`), ob ein positionsbasierter Schlüssel in beiden dieselbe Ansicht meint. Verlässlich ist er nur bei gleicher Schlüsselmenge und gleichem Inhalt beziehungsweise gleichem, gesetztem Titel.
+- `analyze._sections_lie` macht dasselbe eine Ebene tiefer über die Titelfolge der Sections – ohne die Ausnahme für Pfade, weil eine Section nie einen hat.
+- `RemovedItem.anchor` merkt sich `(Anzahl der Sections, Titel)` der Section, aus der eine Karte stammt; `restore._anchor_holds` verweigert, bevor sie in eine fremde Section wandert. Die Prüfung sitzt beim Schreiben, weil dort nur das einzelne Element ankommt – anders als beim Undo, dessen Plan ohnehin vor jedem Schreibvorgang neu berechnet wird.
+
+Belegt: 260 pytest-Fälle (251 vorher, neun neue, jeder zuerst rot gesehen) und sieben Prüfungen in `run_checks.run_positions`, die alle fünf gemessenen Schadensfälle sowie zwei Kontrollfälle gegen ein laufendes Home Assistant treiben.
+
+Zwei Grenzen, beide bewusst und im Code vermerkt:
+
+- Titellose Sections in einer umsortierten Ansicht bleiben unerkannt. Ein Titel ist alles, was es heute an Wiedererkennung gibt.
+- Eine **hinzugefügte** pfadlose Ansicht führt zur Verweigerung, obwohl ihre Nachbarn noch stimmen. Die Regel ist an dieser Stelle strenger als nötig; Paket 2 hebt das auf.
+
+W1 bis W4 sind unverändert offen. Die falschen Historientexte aus C1 ebenfalls: Verweigern hält das Schreiben an, es korrigiert nicht, was die Zeile erzählt.

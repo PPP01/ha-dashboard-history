@@ -54,6 +54,27 @@ def _cards_at(view: dict, location: tuple) -> list | None:
     return current if isinstance(current, list) else None
 
 
+def _anchor_holds(view: dict, item: RemovedItem) -> bool:
+    """Whether the section at that index is still the one the card left.
+
+    Only cards that sat in a section carry an anchor, so everything else
+    passes straight through. Measured on 2026-09-04: without this, a card
+    whose section had been pushed along by a new neighbour was filed in
+    that neighbour instead - no error, no mention in the preview.
+    """
+    if item.anchor is None:
+        return True
+    count, title = item.anchor
+    sections = view.get("sections") or []
+    if len(sections) != count:
+        return False
+    index = item.location[1]
+    if not isinstance(index, int) or not 0 <= index < len(sections):
+        return False
+    section = sections[index]
+    return isinstance(section, dict) and section.get("title") == title
+
+
 def reinsert(config: dict, item: RemovedItem) -> dict:
     """Return a new configuration with `item` put back.
 
@@ -72,6 +93,12 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
         raise LookupError(
             f"the view this card belonged to no longer exists "
             f"(path={item.view_path!r}, index={item.view_index})"
+        )
+
+    if not _anchor_holds(view, item):
+        raise LookupError(
+            "the section this card sat in is not the one standing at that "
+            "place now, so putting it back would file it in a stranger"
         )
 
     cards = _cards_at(view, item.location)

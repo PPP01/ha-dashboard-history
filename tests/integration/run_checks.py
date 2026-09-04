@@ -767,6 +767,12 @@ async def _wait_for_newest(socket, key: str, phrase: str, seconds: float) -> str
     )
 
 
+async def _newest_revision(socket, key: str) -> str:
+    """The newest recorded revision of `key`, or "" when it has none yet."""
+    changes = (await socket.call("dashboard_history/history", dashboard=key))["changes"]
+    return changes[0]["revision"] if changes else ""
+
+
 async def _wait_for_history_to_move(socket, key: str, seen: str, seconds: float) -> list:
     """The history of `key`, once its newest revision is no longer `seen`."""
     async def fetch():
@@ -1561,6 +1567,204 @@ async def run_undo(access: str) -> None:
         )
 
 
+async def run_positions(access: str) -> None:
+    """A position is an address, not an identity.
+
+    Found on 2026-09-04. A view without a URL path is keyed by where it
+    sits, and a section has nothing else at all - Home Assistant gives it
+    neither path nor id. Delete the view in front of such a view, or drop
+    a new one before it, and the same key names something else. Measured
+    before the fix: the undo wrote a card onto a view nobody had touched,
+    and in one case left the dashboard empty, both times behind a preview
+    that read like any other undo.
+
+    None of it was reachable from pytest, and every case here writes
+    nothing - the refusal has to happen while the plan is made.
+    """
+    light = {"type": "markdown", "content": "# Licht"}
+    weather = {"type": "markdown", "content": "# Wetter"}
+    guest = {"type": "markdown", "content": "# Gast"}
+
+    def sections(*blocks):
+        return {
+            "views": [
+                {
+                    "path": "home",
+                    "title": "Home",
+                    "type": "sections",
+                    "sections": [dict(block) for block in blocks],
+                }
+            ]
+        }
+
+    async def ready(socket, key: str) -> None:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+    async def save(socket, key: str, config: dict) -> list:
+        """Save, then wait for the recorder to move past what stood before.
+
+        Counting entries was the first attempt and it does not hold:
+        creating a dashboard records a state of its own, so the count is
+        already where the wait wants it before the save is even seen.
+        """
+        seen = await _newest_revision(socket, key)
+        await socket.call("lovelace/config/save", url_path=key, config=config)
+        return await _wait_for_history_to_move(socket, key, seen, 30)
+
+    async def undo_of_the_last_change(socket, key: str, before: dict, after: dict):
+        await ready(socket, key)
+        await save(socket, key, before)
+        changes = await save(socket, key, after)
+        return await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=changes[0]["revision"]
+        )
+
+    refused = (
+        (
+            "dh-position-gone",
+            "a pathless view deleted before another is refused",
+            {
+                "views": [
+                    {"title": "Home", "cards": [light]},
+                    {"title": "Wetter", "cards": [weather]},
+                ]
+            },
+            {"views": [{"title": "Wetter", "cards": [weather]}]},
+            "URL path",
+        ),
+        (
+            "dh-position-shifted",
+            "a pathless view shifted by a deletion is refused",
+            {
+                "views": [
+                    {"path": "a", "title": "Erd", "cards": [light]},
+                    {"path": "b", "title": "Gaeste", "cards": [guest]},
+                    {"title": "Home", "cards": [weather]},
+                ]
+            },
+            {
+                "views": [
+                    {"path": "a", "title": "Erd", "cards": [light]},
+                    {"title": "Home", "cards": [weather]},
+                ]
+            },
+            "URL path",
+        ),
+        (
+            "dh-position-pushed",
+            "a view inserted before a pathless one is refused",
+            {"views": [{"title": "Home", "cards": [weather]}]},
+            {
+                "views": [
+                    {"path": "neu", "title": "Neu", "cards": [guest]},
+                    {"title": "Home", "cards": [weather]},
+                ]
+            },
+            "URL path",
+        ),
+        (
+            "dh-position-section",
+            "a section inserted before another is refused",
+            sections({"title": "Unten", "cards": [weather]}),
+            sections(
+                {"title": "Neu", "cards": [guest]}, {"title": "Unten", "cards": [weather]}
+            ),
+            "section",
+        ),
+    )
+
+    async with Socket(access) as socket:
+        for key, name, before, after, phrase in refused:
+            answer = await undo_of_the_last_change(socket, key, before, after)
+            check(
+                name,
+                answer.get("available") is False and phrase in (answer.get("reason") or ""),
+                answer.get("reason", "the undo was offered"),
+            )
+
+        # The everyday case has to survive all of that: nothing moved, so
+        # the position does mean the same view, and the undo stands.
+        answer = await undo_of_the_last_change(
+            socket,
+            "dh-position-steady",
+            {
+                "views": [
+                    {"path": "a", "title": "Erd", "cards": [light]},
+                    {"title": "Home", "cards": [weather, guest]},
+                ]
+            },
+            {
+                "views": [
+                    {"path": "a", "title": "Erd", "cards": [light]},
+                    {"title": "Home", "cards": [guest]},
+                ]
+            },
+        )
+        check(
+            "a card deleted from a pathless view that stayed put is still undoable",
+            answer.get("available") is True,
+            answer.get("reason", ""),
+        )
+
+        # And the other way back, which walks the same section index.
+        key = "dh-position-putback"
+        await ready(socket, key)
+        changes = await save(
+            socket,
+            key,
+            sections(
+                {"title": "Oben", "cards": [light]},
+                {"title": "Unten", "cards": [weather, guest]},
+            ),
+        )
+        base = changes[0]["revision"]
+        await save(
+            socket,
+            key,
+            sections(
+                {"title": "Neu", "cards": []},
+                {"title": "Oben", "cards": [light]},
+                {"title": "Unten", "cards": [weather]},
+            ),
+        )
+        gone = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=base
+        )
+        answer = await socket.call(
+            "dashboard_history/restore_deleted",
+            dashboard=key,
+            revision=base,
+            position=0,
+        )
+        check(
+            "a card whose section was pushed along is not filed in a stranger",
+            bool(gone.get("items")) and "section" in (answer.get("error") or ""),
+            answer.get("error", "it was offered a place"),
+        )
+
+        key = "dh-position-putback-steady"
+        await ready(socket, key)
+        changes = await save(
+            socket, key, sections({"title": "Oben", "cards": [light, weather]})
+        )
+        base = changes[0]["revision"]
+        await save(socket, key, sections({"title": "Oben", "cards": [light]}))
+        answer = await socket.call(
+            "dashboard_history/restore_deleted",
+            dashboard=key,
+            revision=base,
+            position=0,
+        )
+        check(
+            "a card still goes back into the section it came from",
+            bool(answer.get("preview")) and not answer.get("error"),
+            answer.get("error", ""),
+        )
+
+
 async def run_live_updates(access: str) -> None:
     """The panel is told when the history has grown - and only then.
 
@@ -2074,6 +2278,8 @@ if __name__ == "__main__":
     asyncio.run(run_versions(access))
     print("\n  -- Eine Aenderung gezielt zuruecknehmen --")
     asyncio.run(run_undo(access))
+    print("\n  -- Position ist keine Identitaet --")
+    asyncio.run(run_positions(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))

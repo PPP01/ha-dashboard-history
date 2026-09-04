@@ -31,6 +31,12 @@ class RemovedItem:
     index: int  # position in the card list, or of the view itself
     payload: dict
     label: str
+    # What the section this card sat in looked like, when it sat in one:
+    # how many sections the view had, and that section's title. A section
+    # carries no path and no id, so its index is its only address - and
+    # an address is exactly what stops being true when the neighbours
+    # change. `restore` refuses rather than file the card in a stranger.
+    anchor: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -492,6 +498,101 @@ def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
     return result
 
 
+def _by_position(config: dict) -> dict:
+    """Only the views keyed by where they sit, by that key."""
+    return {
+        key: view
+        for key, view in _views_by_key(config)
+        if isinstance(key, tuple) and key and key[0] == "#"
+    }
+
+
+def _positions_lie(one: dict, other: dict) -> bool:
+    """Whether a position means a different view in the two states.
+
+    A path is an identity; a position is an address. Delete the view in
+    front of a pathless one, or drop a new one before it, and the same
+    key names something else - measured on 2026-09-04 against a running
+    Home Assistant, that wrote a card onto a view nobody had touched and,
+    in one case, emptied the dashboard.
+
+    Two things make a position trustworthy here, and nothing else does:
+    the same set of positions in both states, and the same view standing
+    at each of them. "The same view" is content or, for a view somebody
+    edited, a title that is there and unchanged.
+
+    Deliberately strict. A pathless view *added* since is refused too,
+    though its neighbours may still line up - the identity chain of
+    package 2 is what lifts that, and until it exists a refusal is the
+    answer decision 4 asks for.
+    """
+    here, there = _by_position(one), _by_position(other)
+    if set(here) != set(there):
+        return True
+    for key, view in here.items():
+        standing = there[key]
+        if view == standing:
+            continue
+        title = view.get("title")
+        if title is not None and title == standing.get("title"):
+            continue
+        return True
+    return False
+
+
+def _section_marks(view: dict) -> list:
+    """The titles of a view's sections, in order - all the identity there is."""
+    return [
+        section.get("title") if isinstance(section, dict) else None
+        for section in view.get("sections") or []
+    ]
+
+
+def _sections_lie(one: dict, other: dict) -> bool:
+    """Whether a section index means a different section in the two states.
+
+    Same reasoning as `_positions_lie`, one level down and without the
+    escape hatch: a view can have a path, a section never does. Any
+    change to the run of sections - one added, one removed, one renamed,
+    two swapped - makes every index below it point somewhere new.
+
+    Sections without titles in a reordered view slip through this. The
+    identity chain of package 2 is what closes that; a title is what
+    there is to work with today.
+    """
+    here, there = dict(_views_by_key(one)), dict(_views_by_key(other))
+    return any(
+        _section_marks(here[key]) != _section_marks(there[key])
+        for key in set(here) & set(there)
+    )
+
+
+def _section_anchor(view: dict, location: tuple) -> tuple | None:
+    """How to recognise the section a card sat in, or None outside one."""
+    if len(location) < 2 or location[0] != "sections":
+        return None
+    sections = view.get("sections") or []
+    index = location[1]
+    title = None
+    if isinstance(index, int) and 0 <= index < len(sections):
+        section = sections[index]
+        if isinstance(section, dict):
+            title = section.get("title")
+    return (len(sections), title)
+
+
+_POSITION_REFUSAL = (
+    "a view without a URL path sits somewhere else now, so an exact undo "
+    "cannot tell which view is which"
+)
+
+_SECTION_REFUSAL = (
+    "the sections of this dashboard are arranged differently now, and a "
+    "section has no path to recognise it by, so an exact undo cannot tell "
+    "them apart"
+)
+
+
 def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     """Everything that disappeared between two states.
 
@@ -531,6 +632,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 index=slot.index,
                 payload=slot.card,
                 label=_describe(slot.card),
+                anchor=_section_anchor(old_view, slot.location),
             )
             for slot in gone_by_view.get(view_index, [])
         ]
@@ -585,6 +687,15 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         or view_work
     ):
         return UndoPlan(blocked="this change did not alter any cards")
+
+    # Every state this plan reads from or writes to has to agree on what
+    # a position means: `before` and `after` decide what the change was,
+    # `current` is where the steps land.
+    pairs = ((before, after), (before, current), (after, current))
+    if any(_positions_lie(one, other) for one, other in pairs):
+        return UndoPlan(blocked=_POSITION_REFUSAL)
+    if any(_sections_lie(one, other) for one, other in pairs):
+        return UndoPlan(blocked=_SECTION_REFUSAL)
 
     by_mark: dict[str, list[Slot]] = {}
     for slot in _present(current):

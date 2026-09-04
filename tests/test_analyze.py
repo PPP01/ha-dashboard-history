@@ -841,3 +841,116 @@ def test_views_and_cards_are_both_named_when_both_changed():
         analyze.change_message("dash", old, new, "save")
         == "dash: 1 view removed, 1 removed"
     )
+
+
+# -- positions are not identities --------------------------------------
+#
+# A view without a URL path is keyed by where it sits. That is an
+# address, not an identity: delete the view before it, or drop a new one
+# in front of it, and the same key names a different view. Undoing on
+# such a key wrote the wrong state - silently, with a preview that read
+# like an ordinary undo. Measured on 2026-09-04 against a running Home
+# Assistant; the three cases below are what came back.
+#
+# The rule these tests pin down: when a position cannot be trusted to
+# mean the same view in both states, refuse. Decision 4 of the spec
+# already says guessing is forbidden, and refusing is what it allows.
+
+
+def test_undo_refuses_when_a_pathless_view_was_deleted_before_another():
+    """The deleted view and its successor share the key ("#", 0).
+
+    Home is gone, Wetter moved up into its place. Read by position this
+    is "the cards on view 0 changed", and the undo wrote Home's card
+    onto Wetter - destroying a card nobody touched.
+    """
+    home = {"title": "Home", "cards": [A]}
+    weather = {"title": "Wetter", "cards": [B]}
+    plan = analyze.plan_undo(
+        {"views": [home, weather]}, {"views": [weather]}, {"views": [weather]}
+    )
+    assert plan.blocked is not None
+    assert "URL path" in plan.blocked
+
+
+def test_undo_refuses_when_a_deletion_shifted_a_pathless_view():
+    """The pathless view is not even part of the change.
+
+    Deleting the view with path "b" moves Home from position 2 to 1.
+    Nothing about Home changed, yet the undo deleted it.
+    """
+    first = {"path": "a", "title": "A", "cards": [A]}
+    second = {"path": "b", "title": "B", "cards": [B]}
+    home = {"title": "Home", "cards": [C]}
+    plan = analyze.plan_undo(
+        {"views": [first, second, home]},
+        {"views": [first, home]},
+        {"views": [first, home]},
+    )
+    assert plan.blocked is not None
+    assert "URL path" in plan.blocked
+
+
+def test_undo_refuses_when_a_view_was_inserted_before_a_pathless_one():
+    """Both branches fire on the same view, and it disappears.
+
+    Home counts as added (its key is new) and as already back (its
+    content still stands), so it is removed and never put back. The
+    measured result was an empty dashboard.
+    """
+    home = {"title": "Home", "cards": [A]}
+    fresh = {"path": "neu", "title": "Neu", "cards": [B]}
+    plan = analyze.plan_undo(
+        {"views": [home]}, {"views": [fresh, home]}, {"views": [fresh, home]}
+    )
+    assert plan.blocked is not None
+    assert "URL path" in plan.blocked
+
+
+def test_undo_still_works_on_a_pathless_view_that_stayed_put():
+    """The everyday case must survive the rule above.
+
+    Nothing moved: the pathless view sits at the same position in both
+    states and holds the same title. Its position therefore does mean
+    the same view, and a card deleted from it is undoable as ever.
+    """
+    before = {"views": [{"path": "a", "cards": [A]}, {"title": "Home", "cards": [B, C]}]}
+    after = {"views": [{"path": "a", "cards": [A]}, {"title": "Home", "cards": [C]}]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert [(s.action, s.kind, s.payload) for s in plan.steps] == [
+        ("insert", "card", B)
+    ]
+
+
+def test_undo_refuses_when_a_section_was_inserted_before_another():
+    """Sections are addressed by index too, and never carry a path.
+
+    Home Assistant gives a section no path and no id, so ("sections", 1,
+    "cards") is the only address there is. Put a section in front and it
+    names a different one: measured, the undo pulled a card into the new
+    section and left the old one empty.
+    """
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"title": "Unten", "cards": [B]}]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"title": "Neu", "cards": [C]},
+                                   {"title": "Unten", "cards": [B]}]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is not None
+    assert "section" in plan.blocked
+
+
+def test_undo_still_works_when_the_sections_stayed_put():
+    """A card deleted from a section that did not move is undoable."""
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"title": "Oben", "cards": [A]},
+                                   {"title": "Unten", "cards": [B, C]}]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"title": "Oben", "cards": [A]},
+                                   {"title": "Unten", "cards": [C]}]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is None
+    assert [(s.action, s.kind, s.payload) for s in plan.steps] == [
+        ("insert", "card", B)
+    ]
