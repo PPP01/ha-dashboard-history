@@ -68,6 +68,16 @@ OWNER = {"name": "Testbench", "username": "testbench", "password": "testbench-on
 # Comfortably longer than RECONCILE_DELAY in const.py, which is 10 seconds.
 RECONCILE_WAIT = 15
 
+# How long a check may wait for the recorder to have written something.
+# Measured on 2026-09-04 against a repository grown by a day of test
+# runs: a save appeared after 14.1 s, a deletion after 45.9 s - the
+# latter is reconciliation, which walks every tracked dashboard. The
+# ceiling here used to be RECORDING_WAIT, which is 45 s, and it sat
+# just under that measurement: a slow pass came out as a failed check.
+# Every wait ends the moment its condition holds, so a generous ceiling
+# costs nothing except in the case it exists for.
+RECORDING_WAIT = 120
+
 _passed: list[str] = []
 _failed: list[str] = []
 
@@ -422,7 +432,7 @@ async def run(access: str) -> None:
         # waits for the write lock behind it - about twenty seconds on
         # this bench. Measured on 2026-09-04, a three-second sleep looked
         # at the history before the save had reached it.
-        newest = await _wait_for_newest(socket, target, "removed", RECONCILE_WAIT * 3)
+        newest = await _wait_for_newest(socket, target, "removed", RECORDING_WAIT)
         after = await socket.call("dashboard_history/history", dashboard=target)
         check(
             "the deletion was recorded with a summary",
@@ -562,7 +572,7 @@ async def run_lifecycle(access: str) -> None:
                 ]
             },
         )
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, key)
         history = await socket.call("dashboard_history/history", dashboard=key)
         check(
             "a new dashboard is recorded",
@@ -582,12 +592,12 @@ async def run_lifecycle(access: str) -> None:
         # about ten seconds for the eighteen on this bench, which put the
         # rename commit within a second of a fixed fifteen-second wait
         # and made this check fail one run in three.
-        newest = await _wait_for_newest(socket, key, "renamed to", RECONCILE_WAIT * 3)
+        newest = await _wait_for_newest(socket, key, "renamed to", RECORDING_WAIT)
         check("a rename is recorded and named", "renamed to" in newest, f"{newest!r}")
 
         # 2. Deleting the whole dashboard while Home Assistant runs.
         await socket.call("lovelace/dashboards/delete", dashboard_id=made["id"])
-        newest = await _wait_for_newest(socket, key, "dashboard deleted", RECONCILE_WAIT * 3)
+        newest = await _wait_for_newest(socket, key, "dashboard deleted", RECORDING_WAIT)
         check(
             "a deletion is recorded without a restart",
             "dashboard deleted" in newest,
@@ -767,10 +777,30 @@ async def _wait_for_newest(socket, key: str, phrase: str, seconds: float) -> str
     )
 
 
-async def _newest_revision(socket, key: str) -> str:
-    """The newest recorded revision of `key`, or "" when it has none yet."""
-    changes = (await socket.call("dashboard_history/history", dashboard=key))["changes"]
-    return changes[0]["revision"] if changes else ""
+async def _wait_until_recorded(socket, key: str, seconds: float = RECORDING_WAIT):
+    """Wait until the newest recorded state is the one the dashboard holds.
+
+    `same_as_now` is the recorder's own answer to that question, so this
+    needs no bookkeeping from the caller and stays right for a save that
+    changed nothing.
+
+    What stood here was `asyncio.sleep(4)`, and four seconds is not a
+    measurement. capture.py has the numbers: a reconciliation over a
+    grown repository held the write lock for 16.6 s while a save waited
+    7.2 s for it, and RECONCILE_DELAY is 10 s on its own. On a quiet
+    instance four seconds pass; in the middle of a full run, where the
+    repository has grown, two saves land in one commit and every
+    revision the check reaches for afterwards is the wrong one. Three
+    checks failed that way on 2026-09-04 - in `run_undo` and in
+    `run_forget` - and every one of them passed when run alone, which is
+    the signature of a wait that is too short rather than a defect.
+    """
+
+    async def fetch():
+        answer = await socket.call("dashboard_history/history", dashboard=key)
+        return answer["changes"]
+
+    return await _wait_for(fetch, lambda c: bool(c) and c[0].get("same_as_now"), seconds)
 
 
 async def _wait_for_history_to_move(socket, key: str, seen: str, seconds: float) -> list:
@@ -853,7 +883,7 @@ async def run_current_marker(access: str) -> None:
         )
         check("the newest change can be undone", applied["applied"] is True, str(applied.get("note")))
         after = await _wait_for_history_to_move(
-            socket, key, changes[0]["revision"], RECONCILE_WAIT * 3
+            socket, key, changes[0]["revision"], RECORDING_WAIT
         )
         # Counting is the wrong measure: `history` answers at most 50
         # entries, and this history passed that a while ago - a new entry at
@@ -917,7 +947,7 @@ async def run_current_marker(access: str) -> None:
             confirm=True,
         )
         restored = await _wait_for_history_to_move(
-            socket, key, after[0]["revision"], RECONCILE_WAIT * 3
+            socket, key, after[0]["revision"], RECORDING_WAIT
         )
         check(
             "and this section leaves the dashboard as it found it",
@@ -978,12 +1008,22 @@ async def run_forget(access: str) -> None:
         await socket.call(
             "lovelace/dashboards/create", url_path=key, title="DH Forget", icon="mdi:delete"
         )
+        # Not `_wait_until_recorded` here, and the difference matters: that
+        # one waits for the newest state to match what the dashboard holds,
+        # and this dashboard is about to be deleted - `same_as_now` is
+        # false for every entry of a dashboard that is gone, so the wait
+        # would sit out its timeout while reconciliation moved the ground
+        # underneath the checks below. What this needs is narrower anyway:
+        # that the save was recorded at all, before the deletion follows.
+        seen = (await socket.call("dashboard_history/history", dashboard=key))["changes"]
         await socket.call(
             "lovelace/config/save",
             url_path=key,
             config={"views": [{"path": "p", "title": "P", "cards": [{"type": "map"}]}]},
         )
-        await asyncio.sleep(4)
+        await _wait_for_history_to_move(
+            socket, key, seen[0]["revision"] if seen else "", RECORDING_WAIT
+        )
         made = await socket.call(
             "lovelace/dashboards/list"
         )
@@ -996,7 +1036,7 @@ async def run_forget(access: str) -> None:
         # writes the deletion up to RECONCILE_DELAY later. Forgetting in
         # that gap was what uncovered the stale index on 2026-09-04, so
         # the wait here is for the history, and the list is read after.
-        newest = await _wait_for_newest(socket, key, "dashboard deleted", RECONCILE_WAIT * 3)
+        newest = await _wait_for_newest(socket, key, "dashboard deleted", RECORDING_WAIT)
         listed = (await socket.call("dashboard_history/dashboards"))["dashboards"]
         check(
             "the sacrificial dashboard is recorded as deleted",
@@ -1339,7 +1379,7 @@ async def run_moves(access: str) -> None:
             url_path=key,
             config=state([a_card, travels], [b_card]),
         )
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, key)
         before = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ][0]["revision"]
@@ -1349,7 +1389,7 @@ async def run_moves(access: str) -> None:
             url_path=key,
             config=state([a_card], [b_card, travels]),
         )
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, key)
 
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
@@ -1392,7 +1432,7 @@ async def run_moves(access: str) -> None:
         await socket.call(
             "lovelace/config/save", url_path=key, config=state([a_card], [b_card])
         )
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, key)
         gone = await socket.call(
             "dashboard_history/deleted_since", dashboard=key, revision=before
         )
@@ -1430,7 +1470,7 @@ async def run_undo(access: str) -> None:
         await socket.call(
             "lovelace/config/save", url_path=key, config=state(cards, title)
         )
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, key)
 
     async def newest(socket):
         answer = await socket.call("dashboard_history/history", dashboard=key)
@@ -1610,9 +1650,8 @@ async def run_positions(access: str) -> None:
         creating a dashboard records a state of its own, so the count is
         already where the wait wants it before the save is even seen.
         """
-        seen = await _newest_revision(socket, key)
         await socket.call("lovelace/config/save", url_path=key, config=config)
-        return await _wait_for_history_to_move(socket, key, seen, 30)
+        return await _wait_until_recorded(socket, key)
 
     async def undo_of_the_last_change(socket, key: str, before: dict, after: dict):
         await ready(socket, key)
@@ -1790,7 +1829,7 @@ async def run_live_updates(access: str) -> None:
             )
             await asyncio.sleep(4)
         await socket.call("lovelace/config/save", url_path=key, config=same)
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, key)
 
         await socket.call("subscribe_events", event_type=EVENT_HISTORY_UPDATED)
 
@@ -1994,7 +2033,7 @@ async def run_versions(access: str) -> None:
             url_path=stranger,
             config={"views": [{"path": "h", "title": "H", "cards": [{"type": "map"}]}]},
         )
-        await asyncio.sleep(4)
+        await _wait_until_recorded(socket, stranger)
         mine = (await socket.call("dashboard_history/history", dashboard=key))["changes"]
         theirs = (await socket.call("dashboard_history/history", dashboard=stranger))[
             "changes"
