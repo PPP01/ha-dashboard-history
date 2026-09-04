@@ -120,23 +120,6 @@ def _same_as_live(store: HistoryStore, key: str, revisions: list, live: dict) ->
     return store.matching_revisions(key, revisions, dump(live))
 
 
-def _by_number(key: str, versions: list) -> list:
-    """Versions by number, highest first; names that will not parse last.
-
-    Ordered here rather than in the store: `list_versions` orders by the
-    time a tag was made, the only order that module can know, and the
-    numbering lives in `versions.py` by decision 13. Time and number
-    differ as soon as somebody goes back and marks an older state. A
-    name that will not parse sorts last instead of pretending to be
-    version zero.
-    """
-    return sorted(
-        versions,
-        key=lambda v: versioning.parse(key, v.name) or (-1, -1, -1),
-        reverse=True,
-    )
-
-
 async def _keep_the_live_state(
     hass: HomeAssistant, store: HistoryStore, key: str, current: str | None
 ) -> str | None:
@@ -353,7 +336,7 @@ async def async_history(
     ]
     matching_versions = [
         {"name": v.name, "title": v.title, "revision": v.revision}
-        for v in _by_number(key, versions)
+        for v in versioning.by_number(key, versions)
         if v.revision in same
     ]
     return {
@@ -668,12 +651,16 @@ async def async_versions(
     found = await hass.async_add_executor_job(store.list_versions, key)
     same: set[str] = set()
     if key is not None:
-        found = _by_number(key, found)
-        live = await async_get_config(hass, key)
-        if live is not None and found:
-            same = await hass.async_add_executor_job(
-                _same_as_live, store, key, [v.revision for v in found], live
-            )
+        found = versioning.by_number(key, found)
+        if found:
+            # Inside the guard, not before it: `async_get_config` loads
+            # every storage-mode dashboard there is, and a dashboard that
+            # was never tagged has nothing to compare it against.
+            live = await async_get_config(hass, key)
+            if live is not None:
+                same = await hass.async_add_executor_job(
+                    _same_as_live, store, key, [v.revision for v in found], live
+                )
     return {
         "versions": [
             {

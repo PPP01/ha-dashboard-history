@@ -68,3 +68,47 @@ def test_bumping_resets_what_is_below_it():
 def test_an_unknown_level_is_refused():
     with pytest.raises(ValueError):
         versions.bump((1, 2, 3), "enormous")
+
+
+class _Named:
+    """A stand-in for the store's Version: all `by_number` reads is a name."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+
+def test_ordering_by_number_is_numeric_not_alphabetical():
+    # The same classic as above, now for the whole list rather than the top.
+    marks = [_Named(f"heizung/v{n}") for n in ("1.9.0", "1.10.0", "1.2.0")]
+    assert [v.name for v in versions.by_number("heizung", marks)] == [
+        "heizung/v1.10.0",
+        "heizung/v1.9.0",
+        "heizung/v1.2.0",
+    ]
+
+
+def test_a_name_that_will_not_parse_sorts_last():
+    # Last, not first: a hand-made tag must never look like the newest
+    # version, and (-1, -1, -1) is below every real number including 0.0.0.
+    marks = [_Named("heizung/hand-made"), _Named("heizung/v0.0.0")]
+    assert [v.name for v in versions.by_number("heizung", marks)] == [
+        "heizung/v0.0.0",
+        "heizung/hand-made",
+    ]
+
+
+def test_another_dashboards_version_sorts_last_too():
+    # It parses as a version, just not as one of ours - so it must not
+    # decide the order of a list it does not belong to.
+    marks = [_Named("solar/v9.9.9"), _Named("heizung/v1.0.0")]
+    assert [v.name for v in versions.by_number("heizung", marks)] == [
+        "heizung/v1.0.0",
+        "solar/v9.9.9",
+    ]
+
+
+def test_ordering_an_empty_list_is_not_an_error():
+    assert versions.by_number("heizung", []) == []

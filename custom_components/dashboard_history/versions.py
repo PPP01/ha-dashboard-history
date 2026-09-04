@@ -55,6 +55,24 @@ def latest(key: str, names: Iterable[str]) -> tuple[int, int, int] | None:
     return max(found) if found else None
 
 
+def by_number(key: str, versions: Iterable) -> list:
+    """Versions by number, highest first; names that will not parse last.
+
+    Takes anything carrying a `.name` - the store's `Version`, or a
+    stand-in in a test. This module knows numbers, not storage.
+
+    Ordered by number rather than by the time the tag was made. The store
+    can only know the time, and the two differ as soon as somebody goes
+    back and marks an older state: the newer tag then carries the lower
+    number, and ordering by time would put it on top of one that contains
+    it. A name that will not parse sorts last rather than pretending to
+    be version zero.
+    """
+    return sorted(
+        versions, key=lambda v: parse(key, v.name) or (-1, -1, -1), reverse=True
+    )
+
+
 def bump(parts: tuple[int, int, int], level: str) -> tuple[int, int, int]:
     """The next version at one level. Everything below it resets to zero."""
     major, minor, patch = parts
