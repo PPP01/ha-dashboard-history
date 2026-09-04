@@ -28,7 +28,7 @@ from homeassistant.util import dt as dt_util
 from . import operations
 from . import versions as versioning
 from .const import EVENT_HISTORY_UPDATED, OPTION_DAILY_VERSIONS
-from .store import Change, HistoryStore
+from .store import Change, HistoryStore, Version
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,14 +74,14 @@ class Milestones:
         refuses it, and not asking saves a warning per deleted dashboard
         on every single start.
         """
-        made: list[str] = []
         try:
             live = await self._hass.async_add_executor_job(
                 self._store.list_dashboards
             )
         except Exception:  # noqa: BLE001 - a missing mark, never a broken start
             _LOGGER.exception("Could not list the dashboards to give a version to")
-            return made
+            return []
+        made: list[str] = []
         for key in live:
             name = await self._async_floor_for(key)
             if name is not None:
@@ -91,23 +91,15 @@ class Milestones:
         return made
 
     async def _async_floor_for(self, key: str) -> str | None:
-        """One dashboard's floor, or None if it needs none and if it fails.
+        """One dashboard's floor, or None if it needs none or cannot get one.
 
         One dashboard at a time, each in its own guard: the same shape
         `capture._async_write` uses, and for the same reason - a failure
         on the first must not cost the rest.
         """
         try:
-            found = await self._hass.async_add_executor_job(
-                self._store.list_versions, key
-            )
-            # A *numbered* version, not any tag at all. `list_versions`
-            # deliberately carries hand-made and unreadable names too -
-            # the design record wants those visible - and `candidates`
-            # skips them when counting up. A dashboard whose only tag is
-            # `heizung/wichtig` would otherwise be passed over here at
-            # every start and take `v0.0.1` as its first number.
-            if versioning.latest(key, [v.name for v in found]):
+            _, numbered = await self._async_versions(key)
+            if numbered is not None:
                 return None
             newest = await self._hass.async_add_executor_job(
                 self._store.list_changes, key, 1
@@ -129,6 +121,24 @@ class Milestones:
             return None
 
     # -- making one ----------------------------------------------------
+
+    async def _async_versions(
+        self, key: str
+    ) -> tuple[list[Version], tuple[int, int, int] | None]:
+        """Every tag a dashboard carries, and its highest readable number.
+
+        Both callers want a *numbered* version, and neither may read that
+        off the list itself: `list_versions` deliberately carries
+        hand-made and unreadable names too - the design record wants
+        those visible - and `candidates` skips them when counting up. A
+        dashboard whose only tag is `heizung/wichtig` therefore counts as
+        unnumbered here, which is what keeps it from taking `v0.0.1` as
+        its first number and staying on that track for good.
+        """
+        found = await self._hass.async_add_executor_job(
+            self._store.list_versions, key
+        )
+        return found, versioning.latest(key, [v.name for v in found])
 
     async def _async_make(
         self, key: str, level: str, change: Change
@@ -241,9 +251,7 @@ class Milestones:
                 zone = dt_util.DEFAULT_TIME_ZONE
                 if versioning.same_day(previous.timestamp, current.timestamp, zone):
                     return
-                found = await self._hass.async_add_executor_job(
-                    self._store.list_versions, key
-                )
+                found, numbered = await self._async_versions(key)
                 # Already marked, by a person or by an earlier run of
                 # this. Without the check a dashboard saved twice across
                 # one midnight would collect a second tag on the same
@@ -256,21 +264,12 @@ class Milestones:
                 # automatic version is therefore made at major level, so
                 # that it is `v1.0.0` and not `v0.0.1`: `candidates`
                 # counts up from the highest version there is, and with
-                # none there is the patch candidate is v0.0.1. A later
+                # none there the patch candidate is v0.0.1. A later
                 # start would then find a version, leave the dashboard
                 # alone, and strand it on the v0.0.x track for good.
                 # What is being marked is the last state of the day
                 # before, which is exactly what a floor is anyway.
-                # Measured the same way the floor measures it: what
-                # decides the level is whether a readable number exists,
-                # not whether some tag does. An unreadable one leaves
-                # the counting at (0,0,0), so patch there would be
-                # v0.0.1 and the floor would never come.
-                level = (
-                    "patch"
-                    if versioning.latest(key, [v.name for v in found])
-                    else "major"
-                )
+                level = "patch" if numbered is not None else "major"
                 name = await self._async_make(key, level, previous)
                 if name is not None:
                     _LOGGER.info("Marked the end of a day with %s", name)

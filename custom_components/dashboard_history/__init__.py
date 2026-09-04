@@ -10,8 +10,8 @@ from homeassistant.core import HomeAssistant
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
-from .milestones import Milestones
 from .const import DOMAIN, REPO_DIRNAME
+from .milestones import Milestones
 from .services import async_register
 from .store import HistoryStore
 

@@ -29,7 +29,7 @@ from .snapshot import (
     async_known_keys,
     async_save_config,
 )
-from .store import HistoryStore
+from .store import HistoryStore, Version
 from .yaml_io import dump, load_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ def _same_as_live(store: HistoryStore, key: str, revisions: list, live: dict) ->
     return store.matching_revisions(key, revisions, dump(live))
 
 
-def _version_dict(version) -> dict:
+def _version_dict(version: Version) -> dict:
     """One version as plain data, with its marker read rather than shown.
 
     Every place that hands a version outside goes through here, so the
