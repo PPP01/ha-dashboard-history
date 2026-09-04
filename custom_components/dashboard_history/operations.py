@@ -120,6 +120,23 @@ def _same_as_live(store: HistoryStore, key: str, revisions: list, live: dict) ->
     return store.matching_revisions(key, revisions, dump(live))
 
 
+def _by_number(key: str, versions: list) -> list:
+    """Versions by number, highest first; names that will not parse last.
+
+    Ordered here rather than in the store: `list_versions` orders by the
+    time a tag was made, the only order that module can know, and the
+    numbering lives in `versions.py` by decision 13. Time and number
+    differ as soon as somebody goes back and marks an older state. A
+    name that will not parse sorts last instead of pretending to be
+    version zero.
+    """
+    return sorted(
+        versions,
+        key=lambda v: versioning.parse(key, v.name) or (-1, -1, -1),
+        reverse=True,
+    )
+
+
 async def _keep_the_live_state(
     hass: HomeAssistant, store: HistoryStore, key: str, current: str | None
 ) -> str | None:
@@ -313,10 +330,16 @@ async def async_history(
         )
     live = await async_get_config(hass, key)
     same: set[str] = set()
-    if live is not None and changes:
-        same = await hass.async_add_executor_job(
-            _same_as_live, store, key, [c.revision for c in changes], live
-        )
+    if live is not None:
+        # Changes *and* versions in one pass: the comparison is by blob
+        # id, and a second call would open the same repository again.
+        # The versions join in because the badge would otherwise depend
+        # on how far somebody has paged - the finding this project is for.
+        wanted = [c.revision for c in changes] + [v.revision for v in versions]
+        if wanted:
+            same = await hass.async_add_executor_job(
+                _same_as_live, store, key, wanted, live
+            )
     rendered = [
         {
             "revision": c.revision,
@@ -328,12 +351,18 @@ async def async_history(
         }
         for c in changes
     ]
+    matching_versions = [
+        {"name": v.name, "title": v.title, "revision": v.revision}
+        for v in _by_number(key, versions)
+        if v.revision in same
+    ]
     return {
         "changes": rendered,
         # The cursor for the next page: the oldest change handed out.
         # None means there is nothing older - the panel then leaves the
         # button out rather than fetching an empty page.
         "next_cursor": rendered[-1]["revision"] if more and rendered else None,
+        "matching_versions": matching_versions,
     }
 
 

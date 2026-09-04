@@ -1863,6 +1863,32 @@ async def run_paging(access: str) -> None:
             str(everything.get("next_cursor")),
         )
 
+        # The badge must not depend on how far somebody has paged.
+        oldest = (
+            await socket.call("dashboard_history/history", dashboard=key, limit=1000)
+        )["changes"][-1]["revision"]
+        await socket.call(
+            "dashboard_history/create_version",
+            dashboard=key,
+            revision=oldest,
+            level="major",
+            title="Der alte Stand",
+        )
+        restored = await socket.call(
+            "dashboard_history/restore_state",
+            dashboard=key,
+            revision=oldest,
+            confirm=True,
+        )
+        await _wait_until_recorded(socket, key)
+        narrow = await socket.call("dashboard_history/history", dashboard=key, limit=1)
+        names = [v["name"].split("/")[-1] for v in narrow.get("matching_versions", [])]
+        check(
+            "a matching version is reported even from outside the window",
+            restored.get("applied") is True and "v1.0.0" in names,
+            f"applied={restored.get('applied')} matching={names}",
+        )
+
 
 async def run_live_updates(access: str) -> None:
     """The panel is told when the history has grown - and only then.
