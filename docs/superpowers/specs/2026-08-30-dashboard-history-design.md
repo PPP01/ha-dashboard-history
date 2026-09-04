@@ -240,7 +240,7 @@ Zurueckholen
 
     **Und »unwiederbringlich« wird wörtlich genommen.** Refs umzuschreiben macht die alten Objekte nur unerreichbar — `resolve()` findet sie weiter, der Inhalt bleibt lesbar. Es läuft deshalb `dulwich.gc.garbage_collect(prune=True, grace_period=0)`. Die Schonfrist ist bewusst Null: Die üblichen vierzehn Tage schützen Objekte, die ein anderer Schreiber gerade baut, und der einzige andere Schreiber ist dieselbe Klasse unter derselben Sperre. Ein Test prüft, dass der Text danach in keinem Blob des Objektspeichers mehr steht.
 
-13. **Versionen kehren in die Oberfläche zurück — je Dashboard, mit Versionsnummern.** *(Nachgetragen am 2026-09-02, auf Wunsch des Nutzers.)*
+13. **Versionen kehren in die Oberfläche zurück — je Dashboard, mit Versionsnummern.** *(Ergänzt am 2026-09-04 durch Entscheidung 17: Seither entstehen Versionen auch von selbst — bei der Einrichtung und beim ersten Speichervorgang eines Tages. Das Namensschema und die Infrastruktur bleiben unverändert.)* *(Nachgetragen am 2026-09-02, auf Wunsch des Nutzers.)*
 
     Entscheidung 10 hatte sie aus der Oberfläche genommen, weil sie damals dasselbe konnten wie eine Beschreibung: einen Punkt benennen. Zwei Wege für dieselbe Sache waren ein Konzept zu viel, und das Argument war richtig. Es trägt hier nicht mehr, weil eine Version ab dieser Entscheidung etwas kann, was eine Notiz nie konnte: **einen Stand herstellen.** Nicht »dieser Punkt hieß so«, sondern »bring mich dorthin zurück, und dann wieder her«. Das ist eine andere Sache, kein zweiter Weg zur selben.
 
@@ -380,6 +380,32 @@ Zurueckholen
     **Ein Nebenschauplatz, der leicht übersehen wird:** `forget` schreibt die Historie um. Führt es die Kennungsspur nicht mit, reißt die Kette rückwirkend — dieselbe Falle, die bei den Beschreibungen aus Entscheidung 10 bereits einmal zugeschnappt ist.
 
 
+17. **Zwei Modi — und der einfache kennt nur Versionen.** *(Nachgetragen am 2026-09-04, auf Wunsch des Nutzers. Aus den GitHub-Issues 1 und 2, dort verschärft.)*
+
+    Das Werkzeug zeigt heute Kurzhashes, Semver-Stufen und rohe YAML-Diffs. Für Entwickler ist das die Substanz, für die meisten Nutzer von Home Assistant eine Hürde vor einem einfachen Wunsch: **zu einem früheren Stand des Dashboards zurückkehren.** Wer darüber hinaus ein einzelnes gelöschtes Stück zurückholen will, wechselt in den erweiterten Modus — das bleibt möglich, ist aber nicht mehr der Normalweg.
+
+    **Der einfache Modus ist keine aufgeräumte Fassung des erweiterten, sondern ein anderes Angebot.** Er zeigt Versionen, nicht Änderungen: Die einzelnen Speichervorgänge liegen eingeklappt unter der Version, zu der sie gehören, genau wie es die Abschnitte heute schon tun. Eine gezielte Rücknahme einzelner Schritte gibt es dort **nicht** — an ihrer Stelle steht der Hinweis, dass der erweiterte Modus sie kann. Zurückgesprungen wird nur auf ganze Versionen.
+
+    **Damit hängt der einfache Modus vollständig an den Versionen, und die müssen halten.** Heute fällt eine Version aus der Oberfläche, sobald ihr Commit aus den neuesten fünfzig Änderungen rutscht (siehe »Offene Punkte«). Im erweiterten Modus ist das ärgerlich, weil die Änderungen darunter sichtbar bleiben. Im einfachen Modus wäre es der Totalausfall: ein Panel ohne einen einzigen Weg zurück, vorgeführt genau der Zielgruppe, die den Ausweg über den Moduswechsel nicht suchen würde. **Vorhaben G steht deshalb zwingend vor Vorhaben H.**
+
+    **Versionen müssen auch ohne Zutun entstehen.** Ein Modus, der nur Versionen kennt, aber darauf wartet, dass jemand welche anlegt, hilft dem gedachten Nutzer nicht — er legt keine an. Zwei Quellen sorgen dafür, dass immer welche da sind:
+
+    - **Bei der Einrichtung** bekommt jedes bestehende Dashboard ein `v1.0.0`. Das ist der Stand, auf den man zurückkann, bevor irgendetwas passiert ist.
+    - **Beim ersten Speichervorgang eines Tages** bekommt der Stand **davor** eine Version. Das ist per Definition der letzte Stand des Vortags, und die Konstruktion ist bewusst so herum gewählt: Sie braucht keinen Zeitgeber und keinen Mitternachtslauf, sie überlebt eine Nacht, in der Home Assistant aus war, und »Tag« ist dabei der Kalendertag in der Zeitzone, die Home Assistant selbst konfiguriert hat — nicht UTC, weil ein Nutzer seinen Tag nicht in UTC erlebt, und sie erfüllt die Bedingung »nur wenn es Änderungen gibt« von selbst — ohne Speichervorgang gibt es keinen ersten, also keine Version. Ein Dashboard, das drei Wochen ruht, sammelt keine einundzwanzig leeren Marken.
+
+    Für den Rücksprung ist das zugleich die richtige Bedeutung: »zurück auf den Stand, bevor ich heute angefangen habe«.
+
+    **Benennung.** Technisch bleibt es ein Semver-Tag nach Entscheidung 13 — die Infrastruktur bleibt unangetastet. Der Titel trägt das Datum (»3. September 2026«) und ist als automatisch gesetzt gekennzeichnet, damit selbst gesetzte Meilensteine sich davon abheben. Der einfache Modus zeigt nur den Titel, der erweiterte beides.
+
+    **Abschaltbar, in beiden Modi wirksam.** Die automatischen Tagesversionen entstehen unabhängig vom eingestellten Modus — sie sind Datengrundlage, nicht Anzeige, und ein Moduswechsel darf nicht ändern, was in der Historie entsteht. Wer seine Versionen selbst setzen will, schaltet sie im OptionsFlow ab.
+
+    **Was beim Rücksprung mit dem aktuellen Stand geschieht.** Wird eine ältere Version aktiviert, fragt der Dialog, ob der jetzige Stand eine eigene Version bekommen soll. »Verwerfen« heißt dabei **nicht löschen, sondern nicht markieren**: Der Stand wird ohnehin vor jedem Schreibvorgang als Änderung festgehalten (`_keep_the_live_state`), er bleibt also in der Historie und ist im erweiterten Modus auffindbar — er bekommt nur kein Tag und ist damit im einfachen Modus nicht mehr zu sehen. Ein Sonder-Tag »verworfen« braucht es dafür nicht, und die harte Regel bleibt unberührt: Gelöscht wird nichts, Versionen markieren nur. Die ganze Last trägt die Formulierung im Dialog — sie muss sagen, dass der Stand erhalten bleibt, ohne dem einfachen Modus eine Erklärung über Modi aufzubürden.
+
+    **Eine Folge, die Vorhaben C mitträgt.** Versionen sind dort die Schutzmarke: Was ein Tag trägt, wird beim Aufräumen nie angetastet. Automatische Tagesversionen machen damit jeden Tagesendstand unantastbar. Das ist vermutlich genau richtig — Tagesstände behalten, Zwischenstände verdichten —, aber es ist eine Entscheidung, die in Vorhaben C bewusst stehen muss, statt sich dort unbemerkt zu ergeben.
+
+    **Was der einfache Modus nicht ist:** eine Einschränkung der Rechte. Beide Modi können dasselbe schreiben; der einfache bietet nur weniger davon an. Und er ist eine Einstellung der Oberfläche, keine der Erfassung — bis auf die eine Ausnahme oben, und die gilt deshalb für beide.
+
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
@@ -450,6 +476,15 @@ Herzstück sind die Einordnungs-Tests — von ihnen hängt alles ab.
 | Stand ohne Kennungen | fällt auf das Verhalten vor Entscheidung 16 zurück, ohne Fehler und ohne Hinweis |
 | Nur eine Seite trägt Kennungen | ebenso — der Rückfall gilt für das Paar, nicht je Stand |
 | `forget` über ein Dashboard mit Kennungen | die Kennungsspur wird mitgeschrieben, die Kette reißt nicht rückwirkend |
+| Übereinstimmende Version außerhalb des Fensters | die Plakette bleibt sichtbar, auch wenn der Tag-Commit nicht geladen ist |
+| Blättern, während gespeichert wird | der Commit-Zeiger verrutscht nicht, keine Änderung erscheint doppelt oder fällt aus |
+| Einrichtung mit bestehenden Dashboards | jedes bekommt genau ein `v1.0.0`, keines zweimal |
+| Erster Speichervorgang eines Tages | der Stand davor bekommt die Tagesversion, mit Datum im Titel und als automatisch gekennzeichnet |
+| Zweiter Speichervorgang desselben Tages | keine weitere Tagesversion |
+| Tag ohne Speichervorgang | keine Version — eine ruhende Woche erzeugt keine sieben Marken |
+| Tagesversionen abgeschaltet | es entsteht keine, und der Rest der Erfassung bleibt unverändert |
+| Rücksprung mit »verwerfen« | der bisherige Stand bleibt als Änderung lesbar und trägt nur kein Tag |
+| Rücksprung mit »behalten« | er trägt eine Version, bevor der ältere Stand geschrieben wird |
 
 Die Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Installation.
 
@@ -510,6 +545,19 @@ Aus einem Gespräch über Versionen wurden vier Vorhaben. In eine Spec gepresst 
   **Was F nicht ist:** eine Reparatur der Karten-Zuordnung. Die liegt bei Entscheidung 14 und bleibt dort.
 
 
+### Nachgetragen am 2026-09-04: G und H
+
+Aus zwei GitHub-Issues, und die Reihenfolge zwischen ihnen ist keine Geschmacksfrage.
+
+- **G — Versionen, die halten.** *(Issue 1.)* Heute liefert `async_history` fünfzig Änderungen, und das Panel bezieht Versionen ausschließlich aus diesem Fenster. Eine Version außerhalb davon existiert für die Oberfläche nicht: kein Abschnitt, keine Plakette, kein Rücksprung. Das ist kein Anzeigefehler, sondern eine Marke ohne Haltbarkeit. G bringt die Übereinstimmungsprüfung auf die Serverseite (`matching_versions`, unabhängig vom Fenster), führt eine Blätterung über einen Commit-Zeiger statt über Zahlen ein — ein Zähler verrutscht, wenn während des Blätterns gespeichert wird — und macht die Versionen eines Dashboards als eigene Abfrage verfügbar.
+
+  **Die Oberflächenhälfte des Issues wird nicht hier gebaut.** Register und Suchfeld gehören in die Oberfläche, die H ohnehin neu ordnet; sie zuerst zu bauen hieße, `panel.js` zweimal umzubauen — die Datei, in der bisher die meisten Oberflächenfehler saßen.
+
+- **H — Die zwei Modi.** *(Issue 2, verschärft.)* Entscheidung 17. Enthält den Initialtag, die automatischen Tagesversionen, den Moduswechsel und die Oberfläche für beide Modi in einem Zug.
+
+**Wo F dabei bleibt:** hinter H. Die Identitätskette dient der gezielten Rücknahme einzelner Stücke — die es im einfachen Modus gar nicht gibt. Für den erweiterten Modus ist der Schaden durch Paket 1 bereits angehalten, es steht also nichts unter Druck. Wird der einfache Modus der Normalfall, sinkt F's Reichweite ohnehin auf die Nutzer, die bewusst gewechselt haben.
+
+
 ## Offene Punkte
 
 - ~~**Zugriff auf das Lovelace-Objekt im Speicher** ist noch nicht praktisch verifiziert.~~ **Erledigt am 2026-08-30.** An einer laufenden Anlage bestätigt: `debug_snapshot` meldet alle zehn Dashboards, die Warnung »Lovelace data not available in the expected shape« erscheint **nicht**, der Rückfall bleibt ungenutzt. Ein neu angelegtes Dashboard war sechs Sekunden später als Commit da — ohne jede Wartezeit. **Entscheidung 1 trägt.**
@@ -538,7 +586,7 @@ Aus einem Gespräch über Versionen wurden vier Vorhaben. In eine Spec gepresst 
 
   Das ist zugleich **Voraussetzung für Vorhaben E**: `store.previous_change` läuft die Elternkette, und aus einer verkehrten Kette bekäme eine gezielte Rücknahme den falschen Vorzustand — sie würde eine Karte entfernen, die nie hinzukam, und eine wieder einsetzen, die längst steht.
 
-- **Eine Version außerhalb der neuesten 50 Änderungen wird unsichtbar — Marke ohne Haltbarkeit.** *(Am 2026-09-03 am Prüfstand gemessen.)* `async_history` hängt Versionen über `marks.get(c.revision, [])` an Änderungen, und im Panel kommt *alles* über Versionen aus diesem einen Feld: Abschnittsköpfe, die Plakette »current state«, der Chip »same state as v1.0.0«. Fällt der Commit einer Version aus den neuesten 50 Änderungen, existiert sie für die Oberfläche nicht mehr. Belegt an `dh-probe`: Der Tag `dh-probe/v0.0.1` liegt unversehrt in der Ablage, sein Stand ist lesbar und **byteweise gleich dem aktuellen** — und trotzdem zeigt das Panel weder die Version noch den Hinweis auf die Übereinstimmung. Für einen Nutzer: Version setzen, fünfzigmal speichern, Version weg. Eine Marke, die verschwindet, ist keine. Die Plakette ist exakt zu reparieren (Übereinstimmung gegen *alle* Versionen prüfen statt gegen die sichtbaren); die Version wieder im Verlauf zu zeigen heißt, Commits von außerhalb des Fensters hereinzuholen, und bei 146 Versionen wäre das eine Wand aus Zeilen — das braucht einen eigenen kleinen Entwurf.
+- **Eine Version außerhalb der neuesten 50 Änderungen wird unsichtbar — Marke ohne Haltbarkeit.** *(Adressiert von Vorhaben G, Issue 1. Mit Entscheidung 17 wird daraus ein Sperrgrund: Der einfache Modus kennt nur Versionen, und was er nicht sieht, gibt es für ihn nicht.)* *(Am 2026-09-03 am Prüfstand gemessen.)* `async_history` hängt Versionen über `marks.get(c.revision, [])` an Änderungen, und im Panel kommt *alles* über Versionen aus diesem einen Feld: Abschnittsköpfe, die Plakette »current state«, der Chip »same state as v1.0.0«. Fällt der Commit einer Version aus den neuesten 50 Änderungen, existiert sie für die Oberfläche nicht mehr. Belegt an `dh-probe`: Der Tag `dh-probe/v0.0.1` liegt unversehrt in der Ablage, sein Stand ist lesbar und **byteweise gleich dem aktuellen** — und trotzdem zeigt das Panel weder die Version noch den Hinweis auf die Übereinstimmung. Für einen Nutzer: Version setzen, fünfzigmal speichern, Version weg. Eine Marke, die verschwindet, ist keine. Die Plakette ist exakt zu reparieren (Übereinstimmung gegen *alle* Versionen prüfen statt gegen die sichtbaren); die Version wieder im Verlauf zu zeigen heißt, Commits von außerhalb des Fensters hereinzuholen, und bei 146 Versionen wäre das eine Wand aus Zeilen — das braucht einen eigenen kleinen Entwurf.
 
 - **Eine Löschzeile ist als solche nicht erkennbar — und zwei Knöpfe stolpern darüber.** *(Aufgeworfen am 2026-09-02 vom Abschluss-Review.)* `history` sagt nicht, welche Änderung eine Löschung ist; das Panel kann es nur am generierten Meldungstext ablesen, und Textschnüffelei ist genau die Logik, die dort nicht liegen darf. Zwei Stellen leiden darunter: »Version bis hierher« auf der Löschzeile eines gelöschten Dashboards wird jetzt abgelehnt (siehe Randfälle), aber erst *nachdem* geklickt wurde; und »Back to the state after this change« wird dort ebenfalls angeboten, obwohl `restore_state` nur »did not exist at« antworten kann. Der saubere Weg ist ein Merkmal je Änderung in `history` — eine kleine Ergänzung, die beide Knöpfe vorher verschwinden ließe. Bewusst nicht mehr in dieser Fassung gebaut: Sie kam nach dem Abschluss-Review auf, und die Ablehnung ist heute wenigstens ehrlich statt still falsch.
 - ~~**Platzbedarf über sehr lange Zeiträume.**~~ **Am 2026-09-02 gemessen, mit einer unerwarteten Antwort.** Über hundert Stände bleibt es linear (28 KiB je Stand) — die Vermutung, git packe dann von selbst besser, ist **falsch**: dulwich packt überhaupt nie. Das Repository der Anlage führte nach zwei Tagen 122 lose Objekte und keinen einzigen Pack, denn `porcelain.commit` schreibt lose Objekte und dulwich kennt keine selbsttätige Bereinigung. Sämtliche Zahlen stehen unter »Reihenfolge der Vorhaben«; gehandelt wird in Vorhaben C.
