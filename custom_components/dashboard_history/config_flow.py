@@ -49,6 +49,13 @@ class DashboardHistoryOptionsFlow(OptionsFlow):
             # absurd price for a checkbox. `Milestones` holds the entry
             # and reads its options at every save instead, so this takes
             # effect at the next one.
+            #
+            # And note for the day a second option arrives: this
+            # replaces the options wholesale rather than merging. With
+            # one required field that carries a default it is the same
+            # thing; with two it would silently drop whichever the form
+            # did not show. Then this needs
+            # `data={**self.config_entry.options, **user_input}`.
             return self.async_create_entry(title="", data=user_input)
         return self.async_show_form(
             step_id="init",

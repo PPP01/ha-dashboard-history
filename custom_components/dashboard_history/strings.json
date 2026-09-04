@@ -19,7 +19,7 @@
           "daily_versions": "Mark the state at the end of each day"
         },
         "data_description": {
-          "daily_versions": "On the first change of a new day, the state that was there before it is marked as a version, named after the day it belongs to. Turn this off to keep only the versions you make yourself. Nothing is deleted either way: every state stays in the history, marked or not."
+          "daily_versions": "On the first change of a new day, the state that was there before it is marked as a version, named after the day it belongs to. Turn this off to stop those daily marks. Each dashboard still gets one v1.0.0 when the integration first sees it, so there is always a state to come back to. Nothing is deleted either way: every state stays in the history, marked or not."
         }
       }
     }

@@ -98,9 +98,16 @@ class Milestones:
         on the first must not cost the rest.
         """
         try:
-            if await self._hass.async_add_executor_job(
+            found = await self._hass.async_add_executor_job(
                 self._store.list_versions, key
-            ):
+            )
+            # A *numbered* version, not any tag at all. `list_versions`
+            # deliberately carries hand-made and unreadable names too -
+            # the design record wants those visible - and `candidates`
+            # skips them when counting up. A dashboard whose only tag is
+            # `heizung/wichtig` would otherwise be passed over here at
+            # every start and take `v0.0.1` as its first number.
+            if versioning.latest(key, [v.name for v in found]):
                 return None
             newest = await self._hass.async_add_executor_job(
                 self._store.list_changes, key, 1
@@ -109,7 +116,14 @@ class Milestones:
                 # Nothing recorded yet. Nothing to mark, and nothing wrong:
                 # a dashboard that has never been saved has no state.
                 return None
-            return await self._async_make(key, "major", newest[0])
+            made = await self._async_make(key, "major", newest[0])
+            if made is None:
+                # Unlike the day mark, this path only ever sees live
+                # dashboards - `list_dashboards` reads the tree at HEAD -
+                # so a refusal here is a real obstacle, and one that
+                # comes back at every start. Worth saying out loud.
+                _LOGGER.warning("Could not give %s a first version", key)
+            return made
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Could not make the first version of %s", key)
             return None
@@ -247,7 +261,16 @@ class Milestones:
                 # alone, and strand it on the v0.0.x track for good.
                 # What is being marked is the last state of the day
                 # before, which is exactly what a floor is anyway.
-                level = "patch" if found else "major"
+                # Measured the same way the floor measures it: what
+                # decides the level is whether a readable number exists,
+                # not whether some tag does. An unreadable one leaves
+                # the counting at (0,0,0), so patch there would be
+                # v0.0.1 and the floor would never come.
+                level = (
+                    "patch"
+                    if versioning.latest(key, [v.name for v in found])
+                    else "major"
+                )
                 name = await self._async_make(key, level, previous)
                 if name is not None:
                     _LOGGER.info("Marked the end of a day with %s", name)
