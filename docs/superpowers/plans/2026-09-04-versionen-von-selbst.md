@@ -71,6 +71,8 @@ Aus der Spec, für **jede** Aufgabe verbindlich:
 
 **Warum das hier liegt und nicht in `milestones.py`.** Der Modulkopf von `versions.py` nennt den Grund für seine Existenz: »eine kleine Rechnung, die auf eine Art falsch sein kann, die monatelang niemandem auffällt«. Ein Tageswechsel ist genau diese Art Rechnung — Zeitzone, Sommerzeit, Monatsnamen. Beides sind Fälle, die man nicht im Panel bemerkt und die reines pytest in Sekunden erledigt. Die harte Regel bleibt dabei wörtlich erhalten: `versions.py` importiert weiterhin nichts von Home Assistant, nur `datetime` aus der Standardbibliothek.
 
+**Das Beispiel in der Spec ist deutsch, der Titel wird englisch.** Entscheidung 17 schreibt »3. September 2026«; hier steht `3 September 2026`. Das ist keine Abweichung im Inhalt, sondern die Sprachregel des Projekts: Ein Versionstitel steht in `git`-Tags und damit vor jedem fremden Mitwirkenden, und für die zählt Englisch. Ausdrücklich vermerkt, damit es niemand später als Tippfehler berichtigt.
+
 **Zwei Fallen, die hier zugemacht werden.** Erstens `strftime("%B")`: Der Monatsname folgt der C-Locale des Containers, in dem Home Assistant läuft — dieselbe Version hieße auf einer Anlage »September« und auf der nächsten »Septembre«. Die Namen stehen deshalb als Tabelle im Modul. Zweitens UTC: Ein Speichervorgang um halb eins nachts in Berlin ist für den Menschen davor der nächste Tag und für UTC noch derselbe. Die Spec sagt dazu ausdrücklich »der Kalendertag in der Zeitzone, die Home Assistant selbst konfiguriert hat — nicht UTC«.
 
 - [ ] **Schritt 1: Die fehlschlagenden Tests schreiben**
@@ -750,7 +752,7 @@ EOF
 
 **Schnittstellen:**
 - Verbraucht: `versions.same_day` und `versions.day_title` aus Aufgabe 1, `Milestones._async_make` aus Aufgabe 2, `EVENT_HISTORY_UPDATED` aus `const.py`.
-- Liefert: `Milestones.async_arm()` und `Milestones.async_disarm()`, beide `@callback`. Nach `async_arm()` bekommt der Stand vor der ersten aufgezeichneten Änderung eines neuen Tages eine Version auf Patch-Ebene.
+- Liefert: `Milestones.async_arm()` und `Milestones.async_disarm()`, beide `@callback`. Nach `async_arm()` bekommt der Stand vor der ersten aufgezeichneten Änderung eines neuen Tages eine Version — auf Patch-Ebene, **außer** das Dashboard hat noch gar keine; dann auf Major-Ebene.
 
 **Die Konstruktion, und warum sie herum ist, wie sie ist.** Nicht »um Mitternacht eine Version anlegen«, sondern »beim ersten Eintrag eines neuen Tages den Stand davor markieren«. Die Spec begründet es: kein Zeitgeber, kein Mitternachtslauf, sie übersteht eine Nacht mit ausgeschaltetem Home Assistant, und die Bedingung »nur wenn es Änderungen gibt« erfüllt sich von selbst. Ein Dashboard, das drei Wochen ruht, sammelt keine einundzwanzig leeren Marken — es bekommt eine, und die trägt den Tag, an dem zuletzt etwas passiert ist.
 
@@ -760,7 +762,9 @@ EOF
 
 Der Preis ist benannt: Eine Änderung, die an Home Assistant vorbei passiert ist und beim Start eingesammelt wird, markiert ihren Tag nicht. Beim *nächsten* Speichern liegt der Vorgängerstand dann schon in diesem Lauf, und der Tag davor bleibt unmarkiert. Das betrifft nur Anlagen, die zwischen zwei Starts von außen bearbeitet werden.
 
-**Patch-Ebene.** Automatische Marken sind der kleinste Schritt und lassen Minor und Major dem Menschen. Nach dem Boden `v1.0.0` heißen sie `v1.0.1`, `v1.0.2` und so fort; wer selbst einen Meilenstein setzt, greift zu `v1.1.0` und hebt sich damit auch in der Nummer ab.
+**Patch-Ebene — mit einer Ausnahme, die ein Loch schließt.** Automatische Marken sind der kleinste Schritt und lassen Minor und Major dem Menschen. Nach dem Boden `v1.0.0` heißen sie `v1.0.1`, `v1.0.2` und so fort; wer selbst einen Meilenstein setzt, greift zu `v1.1.0` und hebt sich damit auch in der Nummer ab.
+
+Die Ausnahme betrifft ein Dashboard, das **im laufenden Betrieb** angelegt wurde: Der Boden wird beim Einrichten gelegt, und dieses Dashboard gab es da noch nicht. Läuft Home Assistant über den Tageswechsel durch, wäre seine allererste Version eine Tagesmarke auf Patch-Ebene — und `candidates` zählt vom höchsten vorhandenen Stand hoch, bei keinem vorhandenen also auf `v0.0.1`. Nachgemessen am 2026-09-04: `candidates("home", [])` liefert `{'patch': 'home/v0.0.1', 'minor': 'home/v0.1.0', 'major': 'home/v1.0.0'}`. Der nächste Start fände dann eine Version vor, ließe das Dashboard in Ruhe — und es bliebe für immer auf der `v0.0.x`-Schiene. Deshalb: **Hat ein Dashboard noch keine Version, entsteht die erste auf Major-Ebene**, also als `v1.0.0`. Der markierte Stand ist der letzte des Vortags, und genau das ist ein Boden.
 
 - [ ] **Schritt 1: Die fehlschlagende Prüfung schreiben**
 
@@ -948,7 +952,19 @@ Und ans Ende der Klasse anfügen:
                 # state, and the numbering would count on regardless.
                 if any(v.revision == previous.revision for v in found):
                     return
-                name = await self._async_make(key, "patch", previous)
+                # A dashboard created while Home Assistant was running
+                # has never had a floor laid - `async_lay_the_floor` ran
+                # at setup, and this one did not exist then. Its first
+                # automatic version is therefore made at major level, so
+                # that it is `v1.0.0` and not `v0.0.1`: `candidates`
+                # counts up from the highest version there is, and with
+                # none there is the patch candidate is v0.0.1. A later
+                # start would then find a version, leave the dashboard
+                # alone, and strand it on the v0.0.x track for good.
+                # What is being marked is the last state of the day
+                # before, which is exactly what a floor is anyway.
+                level = "patch" if found else "major"
+                name = await self._async_make(key, level, previous)
                 if name is not None:
                     _LOGGER.info("Marked the end of a day with %s", name)
         except Exception:  # noqa: BLE001 - a missing mark, never a lost save
@@ -1034,6 +1050,8 @@ EOF
 **Kein Update-Listener, und das ist die Entscheidung.** Der übliche Weg wäre `entry.add_update_listener(...)` mit einem Reload darin. Hier nicht: Ein Reload hält den Rekorder an und startet ihn neu, was einen vollständigen Durchlauf über alle Dashboards kostet — rund zwanzig Sekunden auf dem Prüfstand. Für einen Haken ist das eine absurde Rechnung. `Milestones` hält stattdessen den Config-Entry selbst und liest `entry.options` bei jedem Speichervorgang neu; Home Assistant tauscht das Options-Objekt am Eintrag aus, der Schalter wirkt also ab dem nächsten Speichervorgang und ohne Neustart.
 
 **Der Boden bleibt vom Schalter unberührt.** Abgeschaltet werden die *Tages*versionen; die eine Bodenversion ist die Voraussetzung dafür, dass der einfache Modus überhaupt etwas anzeigen kann, und sie entsteht genau einmal je Dashboard. Wer sie nicht will, benutzt den erweiterten Modus, in dem sie nicht stört. Das ist eine Auslegung, keine wörtliche Vorgabe der Spec — dort steht nur »Wer seine Versionen selbst setzen will, schaltet sie im OptionsFlow ab«, und »sie« sind im Satz davor die automatischen Tagesversionen.
+
+**Eine benannte Grenze für später.** `async_create_entry(title="", data=user_input)` ersetzt die Optionen vollständig. Solange es diese eine gibt, ist das gleichbedeutend — das Feld ist `vol.Required` mit Vorgabe, steht also immer in `user_input`. Wer in Vorhaben B oder C eine **zweite** Option ergänzt, muss hier auf `data={**self.config_entry.options, **user_input}` umstellen, sonst löscht das Formular die Optionen, die es nicht anzeigt. Bewusst noch nicht eingebaut: Ein Zusammenführen von Optionen, die es nicht gibt, wäre Vorrat, und diese Datei wird ohnehin angefasst, sobald die zweite dazukommt.
 
 **Die Falle mit `OptionsFlow.__init__`.** Am 2026-09-04 im Container nachgesehen: Der Konstruktor nimmt kein `config_entry` entgegen, und `self.config_entry` ist eine geerbte Eigenschaft, die den Eintrag über `hass` nachschlägt — *innerhalb* von `__init__` wirft sie. Alle älteren Beispiele setzen `self.config_entry = config_entry` im Konstruktor; das ist hier falsch und stirbt entweder sofort oder beim Deprecation-Lauf.
 
