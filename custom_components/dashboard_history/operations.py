@@ -655,18 +655,25 @@ async def async_create_version(
 async def async_versions(
     hass: HomeAssistant, store: HistoryStore, key: str | None = None
 ) -> dict:
-    """Every named point, newest first. One dashboard's, or all of them."""
+    """Every named point, newest first. One dashboard's, or all of them.
+
+    With a dashboard, each version also says whether it is the state the
+    dashboard holds right now (`same_as_now`). The simple mode of
+    decision 17 shows nothing but this list, so the list has to answer
+    that on its own - and against every version, not the ones inside a
+    window: a version outside the loaded window is exactly the one it
+    must still find. Without a dashboard there is no single live state
+    to compare against, and the field stays False.
+    """
     found = await hass.async_add_executor_job(store.list_versions, key)
+    same: set[str] = set()
     if key is not None:
-        # By number, not by the time the tag was made. Those differ as
-        # soon as somebody goes back and marks an older state: the newer
-        # tag then carries the lower number, and ordering by time would
-        # put it on top of one that contains it.
-        found = sorted(
-            found,
-            key=lambda v: versioning.parse(key, v.name) or (-1, -1, -1),
-            reverse=True,
-        )
+        found = _by_number(key, found)
+        live = await async_get_config(hass, key)
+        if live is not None and found:
+            same = await hass.async_add_executor_job(
+                _same_as_live, store, key, [v.revision for v in found], live
+            )
     return {
         "versions": [
             {
@@ -674,6 +681,7 @@ async def async_versions(
                 "revision": v.revision,
                 "title": v.title,
                 "description": v.description,
+                "same_as_now": v.revision in same,
             }
             for v in found
         ]

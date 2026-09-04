@@ -242,7 +242,8 @@ versions:
   name: Versions
   description: >-
     The named points in the history. Give a dashboard to see only its
-    own, ordered by version number.
+    own, ordered by version number, each saying whether it is the state
+    the dashboard holds right now.
   fields:
     dashboard:
       description: The dashboard, by its url_path. Leave empty for all.

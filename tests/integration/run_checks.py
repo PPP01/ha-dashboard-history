@@ -1889,6 +1889,24 @@ async def run_paging(access: str) -> None:
             f"applied={restored.get('applied')} matching={names}",
         )
 
+        listing = await socket.call("dashboard_history/versions", dashboard=key)
+        names = [v["name"].split("/")[-1] for v in listing.get("versions", [])]
+        check(
+            "every version of a dashboard is listed, newest number first",
+            bool(names) and names == sorted(
+                names,
+                key=lambda n: [int(p) for p in n.lstrip("v").split(".")],
+                reverse=True,
+            ),
+            str(names),
+        )
+        check(
+            "the listing says which version the dashboard holds right now",
+            any(v.get("same_as_now") for v in listing.get("versions", [])),
+            str([(v["name"].split("/")[-1], v.get("same_as_now"))
+                 for v in listing.get("versions", [])]),
+        )
+
 
 async def run_live_updates(access: str) -> None:
     """The panel is told when the history has grown - and only then.
