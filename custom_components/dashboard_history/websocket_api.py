@@ -99,12 +99,31 @@ _COMMANDS = (
     ),
     _command(
         f"{DOMAIN}/restore_state",
-        {**_DASHBOARD, **_REVISION, vol.Optional("confirm", default=False): bool},
+        {
+            **_DASHBOARD,
+            **_REVISION,
+            vol.Optional("confirm", default=False): bool,
+            # Only shaped here, never judged: an unknown level is
+            # answered by operations with a sentence the panel can show,
+            # and a schema that refused first would take that sentence
+            # away. The same reason create_version takes free text.
+            vol.Optional("keep_as_version"): vol.Any(
+                None,
+                vol.Schema(
+                    {
+                        vol.Optional("level", default="patch"): str,
+                        vol.Required("title"): str,
+                        vol.Optional("description", default=""): str,
+                    }
+                ),
+            ),
+        },
         operations.async_restore_state,
         lambda msg: {
             "key": msg["dashboard"],
             "revision": msg["revision"],
             "confirm": msg["confirm"],
+            "keep_as_version": msg.get("keep_as_version"),
         },
     ),
     _command(

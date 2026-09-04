@@ -2599,6 +2599,71 @@ async def run_daily_switch(access: str) -> None:
     )
 
 
+async def run_keep_as_version(access: str) -> None:
+    """Marking the state a restore is about to replace.
+
+    Only reachable here: the ordering that makes it correct sits between
+    two awaits inside `async_restore_state`, and pytest cannot import
+    that module at all.
+    """
+    key = "dh-keep-check"
+
+    async def save(socket, title: str) -> None:
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config={"views": [{"path": "p", "title": title, "cards": []}]},
+        )
+        await _wait_until_recorded(socket, key)
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Keep"
+            )
+            await asyncio.sleep(4)
+        await save(socket, "Older")
+        older = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ][0]["revision"]
+        await save(socket, "Newer")
+        newest = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ][0]["revision"]
+
+        answer = await socket.call(
+            "dashboard_history/restore_state",
+            dashboard=key,
+            revision=older,
+            confirm=True,
+            keep_as_version={"level": "minor", "title": "Before going back"},
+        )
+        kept = answer.get("kept_as_version") or {}
+        check(
+            "going back can mark the state it replaces",
+            answer.get("applied") is True and bool(kept.get("created")),
+            f"applied={answer.get('applied')} kept={kept}",
+        )
+        # The point of the whole exercise: the tag sits on the state that
+        # was on the screen, not on the one before it. Two saves were
+        # made above so that those two are different revisions.
+        listing = (await socket.call("dashboard_history/versions", dashboard=key))[
+            "versions"
+        ]
+        mine = [v for v in listing if v["name"] == kept.get("created")]
+        check(
+            "and it marks the state that was there, not the one before it",
+            bool(mine) and mine[0]["revision"] == newest,
+            f"{mine[:1]} vs newest {newest[:10]}",
+        )
+        check(
+            "and it is not marked as one nobody asked for",
+            bool(mine) and mine[0].get("automatic") is False,
+            str(mine[:1]),
+        )
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -2654,6 +2719,8 @@ if __name__ == "__main__":
     asyncio.run(run_milestones(access))
     print("\n  -- Der Schalter fuer die Tagesversionen --")
     asyncio.run(run_daily_switch(access))
+    print("\n  -- Den Stand sichern, bevor er ersetzt wird --")
+    asyncio.run(run_keep_as_version(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))

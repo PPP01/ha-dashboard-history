@@ -96,6 +96,17 @@ restore_state:
       default: false
       selector:
         boolean:
+    keep_as_version:
+      description: >-
+        Mark the state you are leaving, so it can be found again by name.
+        Give a title, and optionally a level (patch, minor, major) and a
+        description. The mark is made after the state is safely in the
+        history and before the older one is written, which is the only
+        moment it is the state you saw. Leave this out to change nothing;
+        nothing is deleted either way.
+      example: '{"level": "minor", "title": "Before going back"}'
+      selector:
+        object:
 
 undo_change:
   name: Undo one change

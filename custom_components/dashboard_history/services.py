@@ -82,7 +82,8 @@ async def async_register(hass: HomeAssistant) -> None:
             store,
             call.data["dashboard"],
             call.data["revision"],
-            bool(call.data.get("confirm")),
+            call.data.get("confirm", False),
+            call.data.get("keep_as_version"),
         )
 
     async def undo_change(call: ServiceCall) -> dict:
@@ -143,6 +144,7 @@ async def async_register(hass: HomeAssistant) -> None:
         ("restore_state", restore_state, DASHBOARD.extend({
             vol.Required("revision"): cv.string,
             vol.Optional("confirm", default=False): bool,
+            vol.Optional("keep_as_version"): vol.Any(None, dict),
         })),
         ("undo_change", undo_change, DASHBOARD.extend({
             vol.Required("revision"): cv.string,

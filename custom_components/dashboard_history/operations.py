@@ -417,12 +417,48 @@ async def async_restore_deleted(
     return result
 
 
+async def _async_keep_as_version(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    wanted: dict,
+    gap: str | None,
+) -> dict:
+    """Mark the state that is about to be replaced, if it can be marked.
+
+    Called after `_keep_the_live_state` and before the write, and that
+    is the whole reason it exists here rather than in a caller: only
+    between those two is the newest recorded state of this dashboard the
+    one that is on the screen. A panel marking it beforehand would tag
+    whatever was newest *then*, which after a save the recorder missed
+    is the state before it - a tag that points somewhere else and looks
+    perfectly right ever after.
+
+    `gap` is what `_keep_the_live_state` reported. When it says
+    something, the live state is not in the history at all, so there is
+    nothing here that could be marked truthfully. Answered rather than
+    raised: the restore itself goes ahead, for the same reason
+    `_keep_the_live_state` never refuses either.
+    """
+    if gap is not None:
+        return {"created": None, "error": gap}
+    return await async_create_version(
+        hass,
+        store,
+        key,
+        level=wanted.get("level") or "patch",
+        title=wanted.get("title") or "",
+        description=wanted.get("description") or "",
+    )
+
+
 async def async_restore_state(
     hass: HomeAssistant,
     store: HistoryStore,
     key: str,
     revision: str,
     confirm: bool = False,
+    keep_as_version: dict | None = None,
 ) -> dict:
     """Set a dashboard back to an earlier state, creating it if it is gone."""
     full, text, error = await _state_at(hass, store, key, revision)
@@ -474,6 +510,20 @@ async def async_restore_state(
         note = await _keep_the_live_state(
             hass, store, key, live_text if live is not None else None
         )
+    kept = None
+    if keep_as_version is not None:
+        kept = await _async_keep_as_version(
+            hass,
+            store,
+            key,
+            keep_as_version,
+            # A dashboard that is gone has no live state at all, so there
+            # is nothing to keep and nothing to mark. Said in the answer
+            # rather than silently skipped: somebody asked for a version.
+            "the dashboard was gone, so there was no state to mark"
+            if missing
+            else note,
+        )
     await async_save_config(hass, key, target)
     result = {
         "applied": True,
@@ -483,6 +533,8 @@ async def async_restore_state(
     }
     if note:
         result["note"] = note
+    if kept is not None:
+        result["kept_as_version"] = kept
     return result
 
 
