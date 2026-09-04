@@ -266,7 +266,11 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
 
 
 async def async_history(
-    hass: HomeAssistant, store: HistoryStore, key: str, limit: int = 50
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    limit: int = 50,
+    before: str | None = None,
 ) -> dict:
     """The recorded states of one dashboard, newest first.
 
@@ -287,10 +291,14 @@ async def async_history(
     builds its sections from that, so it never has to join two calls
     together - a join in the panel is logic in the panel.
     """
+    # One more than asked for: its presence answers "is there anything
+    # older?", and it costs one commit rather than a second query.
     changes, versions = await asyncio.gather(
-        hass.async_add_executor_job(store.list_changes, key, limit),
+        hass.async_add_executor_job(store.list_changes, key, limit + 1, before),
         hass.async_add_executor_job(store.list_versions, key),
     )
+    more = len(changes) > limit
+    changes = changes[:limit]
     # Which versions sit on which state. Gathered here rather than in the
     # panel: the panel would need a second call and a join, and a join is
     # logic. Two versions on one commit is allowed, so this is a list.
@@ -309,18 +317,23 @@ async def async_history(
         same = await hass.async_add_executor_job(
             _same_as_live, store, key, [c.revision for c in changes], live
         )
+    rendered = [
+        {
+            "revision": c.revision,
+            "timestamp": c.timestamp,
+            "message": c.message,
+            "description": c.description,
+            "same_as_now": c.revision in same,
+            "versions": marks.get(c.revision, []),
+        }
+        for c in changes
+    ]
     return {
-        "changes": [
-            {
-                "revision": c.revision,
-                "timestamp": c.timestamp,
-                "message": c.message,
-                "description": c.description,
-                "same_as_now": c.revision in same,
-                "versions": marks.get(c.revision, []),
-            }
-            for c in changes
-        ]
+        "changes": rendered,
+        # The cursor for the next page: the oldest change handed out.
+        # None means there is nothing older - the panel then leaves the
+        # button out rather than fetching an empty page.
+        "next_cursor": rendered[-1]["revision"] if more and rendered else None,
     }
 
 

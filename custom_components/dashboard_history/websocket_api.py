@@ -61,9 +61,19 @@ _COMMANDS = (
     ),
     _command(
         f"{DOMAIN}/history",
-        {**_DASHBOARD, vol.Optional("limit", default=50): int},
+        {
+            **_DASHBOARD,
+            # At least one: with zero there is no oldest entry to point
+            # from, and the answer would claim there is nothing older.
+            vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1)),
+            vol.Optional("before"): vol.Any(None, str),
+        },
         operations.async_history,
-        lambda msg: {"key": msg["dashboard"], "limit": msg["limit"]},
+        lambda msg: {
+            "key": msg["dashboard"],
+            "limit": msg["limit"],
+            "before": msg.get("before"),
+        },
     ),
     _command(
         f"{DOMAIN}/deleted_since",

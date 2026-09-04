@@ -1804,6 +1804,66 @@ async def run_positions(access: str) -> None:
         )
 
 
+async def run_paging(access: str) -> None:
+    """Paging by commit cursor.
+
+    Out of pytest's reach: `async_history` imports Home Assistant. And
+    the question only arises on a history longer than one page.
+    """
+    key = "dh-paging-check"
+
+    async def save(socket, index: int):
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config={"views": [{"path": "p", "title": f"Stand {index}", "cards": []}]},
+        )
+        # Not `_wait_for_history_to_move`: after the first run the
+        # dashboard is back on "Stand 0" (restored below), so the first
+        # save of the next run changes nothing, and waiting for movement
+        # would sit out RECORDING_WAIT. `same_as_now` is true at once for
+        # a save that changed nothing - the shape `run_undo` uses.
+        await _wait_until_recorded(socket, key)
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Paging"
+            )
+            await asyncio.sleep(4)
+        for index in range(5):
+            await save(socket, index)
+
+        first = await socket.call("dashboard_history/history", dashboard=key, limit=2)
+        check(
+            "a page carries a cursor to the next one",
+            len(first["changes"]) == 2 and bool(first.get("next_cursor")),
+            str(first.get("next_cursor"))[:12],
+        )
+        second = await socket.call(
+            "dashboard_history/history",
+            dashboard=key,
+            limit=2,
+            before=first["next_cursor"],
+        )
+        seen_first = {c["revision"] for c in first["changes"]}
+        seen_second = {c["revision"] for c in second["changes"]}
+        check(
+            "the second page repeats nothing from the first",
+            not (seen_first & seen_second) and len(seen_second) == 2,
+            f"{len(seen_first)} + {len(seen_second)}, overlap {len(seen_first & seen_second)}",
+        )
+        everything = await socket.call(
+            "dashboard_history/history", dashboard=key, limit=1000
+        )
+        check(
+            "the last page says there is nothing older",
+            everything.get("next_cursor") is None,
+            str(everything.get("next_cursor")),
+        )
+
+
 async def run_live_updates(access: str) -> None:
     """The panel is told when the history has grown - and only then.
 
@@ -2317,6 +2377,8 @@ if __name__ == "__main__":
     asyncio.run(run_versions(access))
     print("\n  -- Eine Aenderung gezielt zuruecknehmen --")
     asyncio.run(run_undo(access))
+    print("\n  -- Blaettern statt abschneiden --")
+    asyncio.run(run_paging(access))
     print("\n  -- Position ist keine Identitaet --")
     asyncio.run(run_positions(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
