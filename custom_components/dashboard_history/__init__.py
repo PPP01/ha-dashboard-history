@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
+from .milestones import Milestones
 from .const import DOMAIN, REPO_DIRNAME
 from .services import async_register
 from .store import HistoryStore
@@ -25,7 +26,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
     capture = HistoryCapture(hass, store)
-    hass.data[DOMAIN] = {"store": store, "capture": capture}
+    milestones = Milestones(hass, store, entry)
+    hass.data[DOMAIN] = {
+        "store": store,
+        "capture": capture,
+        "milestones": milestones,
+    }
 
     # Registered before the recording starts, on purpose: if the repository
     # cannot be created, an interface that answers with the reason is more
@@ -42,6 +48,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await capture.async_start()
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not start recording")
+
+    # Its own guard, separate from the recorder's: a repository that
+    # could not be created leaves nothing to mark, but a recorder that
+    # started perfectly well must not lose its versions because one
+    # dashboard's tag failed.
+    try:
+        await milestones.async_lay_the_floor()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Dashboard History could not make its first versions")
 
     _LOGGER.debug("Dashboard History set up")
     return True

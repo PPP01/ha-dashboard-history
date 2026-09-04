@@ -286,6 +286,42 @@ def ensure_integration(access: str) -> bool:
     return done.json().get("type") == "create_entry"
 
 
+def entry_id(access: str) -> str:
+    """This integration's config entry, by id. Empty when it has none."""
+    entries = requests.get(
+        f"{BASE}/api/config/config_entries/entry",
+        headers={"Authorization": f"Bearer {access}"},
+        timeout=30,
+    ).json()
+    for entry in entries:
+        if entry.get("domain") == "dashboard_history":
+            return entry.get("entry_id", "")
+    return ""
+
+
+def reload_entry(access: str) -> bool:
+    """Set the integration up again, without restarting Home Assistant.
+
+    The supported way to run `async_setup_entry` a second time, which is
+    where the first versions are made. A full restart would do it too and
+    is deliberately not used: polling an instance through its restart is
+    what gets the caller shut out by Home Assistant's own IP ban, and
+    this project learned that the expensive way.
+
+    The call waits for the whole setup, and the setup makes a pass over
+    every dashboard - about twenty seconds on a grown bench.
+    """
+    identifier = entry_id(access)
+    if not identifier:
+        return False
+    answer = requests.post(
+        f"{BASE}/api/config/config_entries/entry/{identifier}/reload",
+        headers={"Authorization": f"Bearer {access}"},
+        timeout=300,
+    )
+    return answer.ok and answer.json().get("require_restart") is False
+
+
 async def pick_target(access: str) -> str:
     """Which dashboard the checks work on, when nobody has named one.
 
@@ -2381,6 +2417,65 @@ async def run_permissions(access: str) -> None:
                 await socket.call("config/auth/delete", user_id=made["user"]["id"])
 
 
+async def run_milestones(access: str) -> None:
+    """The versions nobody asked for.
+
+    Out of pytest's reach twice over: the floor is laid while the
+    integration sets itself up, and `milestones` imports Home Assistant.
+    So it is driven the way a person would - make a dashboard, set the
+    integration up again, and look at what is there.
+
+    Runs after every check that examines state it built up earlier, and
+    that is on purpose: it sets the integration up again, and doing that
+    in the middle would pull the ground out from under those. Checks
+    added after this one may assume a freshly set-up integration.
+    """
+    key = "dh-floor-check"
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Floor"
+            )
+            await asyncio.sleep(4)
+        await socket.call(
+            "lovelace/config/save",
+            url_path=key,
+            config={"views": [{"path": "p", "title": "Floor", "cards": []}]},
+        )
+        await _wait_until_recorded(socket, key)
+
+    if not check("the integration can be set up again", reload_entry(access)):
+        return
+    if not check("and it comes back", wait_for_integration(access)):
+        return
+
+    async with Socket(access) as socket:
+        found = (await socket.call("dashboard_history/versions", dashboard=key))[
+            "versions"
+        ]
+        names = [v["name"].split("/")[-1] for v in found]
+        # Exactly one, on every run: the first setup makes it, and every
+        # later one finds it already there and leaves it alone. That is
+        # the "and none of them twice" half of the promise.
+        check(
+            "a dashboard without versions is given v1.0.0 when the integration starts",
+            names == ["v1.0.0"],
+            str(names),
+        )
+        check(
+            "and it says that nobody asked for it",
+            bool(found) and found[0].get("automatic") is True,
+            str(found[:1]),
+        )
+        check(
+            "and it is called after the day it marks",
+            bool(found)
+            and bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", found[0]["title"])),
+            found[0]["title"] if found else "",
+        )
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -2432,6 +2527,8 @@ if __name__ == "__main__":
     asyncio.run(run_paging(access))
     print("\n  -- Position ist keine Identitaet --")
     asyncio.run(run_positions(access))
+    print("\n  -- Versionen, die von selbst entstehen --")
+    asyncio.run(run_milestones(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))

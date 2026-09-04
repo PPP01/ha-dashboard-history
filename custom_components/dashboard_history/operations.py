@@ -120,6 +120,24 @@ def _same_as_live(store: HistoryStore, key: str, revisions: list, live: dict) ->
     return store.matching_revisions(key, revisions, dump(live))
 
 
+def _version_dict(version) -> dict:
+    """One version as plain data, with its marker read rather than shown.
+
+    Every place that hands a version outside goes through here, so the
+    panel sees one shape - and so `automatic` cannot be present in one
+    answer and missing from the next, which is the kind of difference a
+    frontend quietly renders as False.
+    """
+    description, automatic = versioning.read_description(version.description)
+    return {
+        "name": version.name,
+        "revision": version.revision,
+        "title": version.title,
+        "description": description,
+        "automatic": automatic,
+    }
+
+
 async def _keep_the_live_state(
     hass: HomeAssistant, store: HistoryStore, key: str, current: str | None
 ) -> str | None:
@@ -304,13 +322,7 @@ async def async_history(
     # logic. Two versions on one commit is allowed, so this is a list.
     marks: dict[str, list[dict]] = {}
     for version in versions:
-        marks.setdefault(version.revision, []).append(
-            {
-                "name": version.name,
-                "title": version.title,
-                "description": version.description,
-            }
-        )
+        marks.setdefault(version.revision, []).append(_version_dict(version))
     live = await async_get_config(hass, key)
     same: set[str] = set()
     if live is not None:
@@ -335,7 +347,7 @@ async def async_history(
         for c in changes
     ]
     matching_versions = [
-        {"name": v.name, "title": v.title, "revision": v.revision}
+        _version_dict(v)
         for v in versioning.by_number(key, versions)
         if v.revision in same
     ]
@@ -663,14 +675,7 @@ async def async_versions(
                 )
     return {
         "versions": [
-            {
-                "name": v.name,
-                "revision": v.revision,
-                "title": v.title,
-                "description": v.description,
-                "same_as_now": v.revision in same,
-            }
-            for v in found
+            {**_version_dict(v), "same_as_now": v.revision in same} for v in found
         ]
     }
 
