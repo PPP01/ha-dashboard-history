@@ -1862,6 +1862,13 @@ async def run_paging(access: str) -> None:
             everything.get("next_cursor") is None,
             str(everything.get("next_cursor")),
         )
+        combined = [c["revision"] for c in first["changes"] + second["changes"]]
+        first_four = [c["revision"] for c in everything["changes"]][:4]
+        check(
+            "the two pages together are the history's first four, in order",
+            combined == first_four,
+            f"{combined} vs {first_four}",
+        )
 
         # The badge must not depend on how far somebody has paged.
         oldest = (
