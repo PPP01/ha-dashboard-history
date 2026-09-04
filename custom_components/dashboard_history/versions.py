@@ -1,4 +1,4 @@
-"""Version numbers for the history: reading, ordering, counting up.
+"""Version numbers and daily marks: reading, ordering, counting up.
 
 Home-Assistant-free on purpose. This is a small calculation that can be
 wrong in a way nobody notices for months - `v1.10.0` sorting below
@@ -9,12 +9,19 @@ A version is an annotated git tag named `<key>/v<major>.<minor>.<patch>`.
 The dashboard key is part of the name because git tags share a single
 namespace: without it, only one dashboard in the whole installation
 could ever have a `v1.0.0`.
+
+The day a recorded state belongs to lives here for the same reason. A
+calendar day is a small calculation that goes wrong quietly - a time
+zone, a change of the clocks, a month name that follows whatever locale
+the container was built with - and plain pytest settles all three in
+under a second.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from datetime import date, datetime, tzinfo
 
 # Deliberately strict: three plain numbers, no leading zeros, no suffix.
 # Anything else is somebody's hand-made tag. Those stay visible, but they
@@ -104,3 +111,79 @@ def candidates(key: str, names: Iterable[str]) -> dict[str, str | None]:
     }
     found["current"] = version_name(key, current) if current else None
     return found
+
+
+# -- versions nobody asked for -----------------------------------------
+
+# The first line of the description an automatically made version
+# carries. A marker, not a sentence: what a person gets to read is built
+# from the flag this sets, so rewording it later fixes every tag that
+# already exists rather than only the next one. It stays out of the
+# *title*, which the simple mode shows on its own and which has room for
+# the date and nothing else.
+AUTOMATIC = "dashboard-history: automatic"
+
+# Spelled out rather than left to strftime("%B"). That follows the C
+# locale of whatever container Home Assistant runs in, so the same tag
+# would read "September" on one installation and something else on the
+# next - and a version name that depends on the machine is not a name.
+_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def automatic_description(text: str = "") -> str:
+    """The description an automatically made version carries."""
+    return f"{AUTOMATIC}\n{text}".rstrip() if text else AUTOMATIC
+
+
+def read_description(text: str) -> tuple[str, bool]:
+    """A stored description as (what a person wrote, was it automatic).
+
+    The marker is taken out rather than shown. Reported as a field, it is
+    something the interface can act on; reported as prose, it is a line
+    of machine talk in the middle of somebody's own words.
+    """
+    head, _, rest = text.partition("\n")
+    if head.strip() == AUTOMATIC:
+        return rest.strip(), True
+    return text.strip(), False
+
+
+def local_day(timestamp: int, zone: tzinfo) -> date:
+    """The calendar day a recorded state falls on, where the user lives.
+
+    Not UTC, and the design record says so in as many words. A save at
+    half past midnight in Berlin is the next day to the person who made
+    it and the same day to UTC; the daily version is named after the day
+    *they* had.
+    """
+    return datetime.fromtimestamp(timestamp, zone).date()
+
+
+def same_day(one: int, other: int, zone: tzinfo) -> bool:
+    """Whether two recorded states fall on the same local calendar day.
+
+    Compared as dates, not as a difference in seconds. A day is not
+    86400 seconds wherever the clocks change: the Sunday in March has
+    23 hours and the one in October has 25, and both are one day to
+    everybody living through them.
+    """
+    return local_day(one, zone) == local_day(other, zone)
+
+
+def day_title(timestamp: int, zone: tzinfo) -> str:
+    """What an automatic daily version is called: `3 September 2026`."""
+    when = datetime.fromtimestamp(timestamp, zone)
+    return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"

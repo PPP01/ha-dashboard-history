@@ -2,6 +2,8 @@
 
 import pytest
 import versions
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 
 def test_a_name_is_read_back():
@@ -112,3 +114,89 @@ def test_another_dashboards_version_sorts_last_too():
 
 def test_ordering_an_empty_list_is_not_an_error():
     assert versions.by_number("heizung", []) == []
+
+
+# -- the day a state belongs to ----------------------------------------
+
+BERLIN = ZoneInfo("Europe/Berlin")
+
+
+def _at(text: str, zone=BERLIN) -> int:
+    """A local wall-clock time as the epoch seconds a commit would hold."""
+    return int(datetime.fromisoformat(text).replace(tzinfo=zone).timestamp())
+
+
+def test_two_states_on_one_local_day_are_one_day():
+    assert versions.same_day(_at("2026-09-03T08:00"), _at("2026-09-03T23:59"), BERLIN)
+
+
+def test_midnight_starts_a_new_day():
+    assert not versions.same_day(
+        _at("2026-09-03T23:59"), _at("2026-09-04T00:01"), BERLIN
+    )
+
+
+def test_the_day_is_the_users_day_and_not_utc():
+    # 23:30 UTC is already the next day in Berlin. Judged in UTC these two
+    # states fall on one day; judged where the person lives, on two. The
+    # daily version is named after the day *they* had.
+    morning = _at("2026-09-03T07:00", timezone.utc)
+    late = _at("2026-09-03T23:30", timezone.utc)
+    assert versions.same_day(morning, late, timezone.utc)
+    assert not versions.same_day(morning, late, BERLIN)
+
+
+def test_the_clocks_going_forward_do_not_split_a_day():
+    # 2026-03-29: Berlin skips 02:00-03:00. A day is still one day.
+    assert versions.same_day(_at("2026-03-29T01:30"), _at("2026-03-29T03:30"), BERLIN)
+
+
+def test_the_clocks_going_back_do_not_join_two_days():
+    # 2026-10-25: Berlin lives 02:00-03:00 twice. Two days stay two.
+    assert not versions.same_day(
+        _at("2026-10-25T02:30"), _at("2026-10-26T02:30"), BERLIN
+    )
+
+
+def test_the_title_is_the_day_it_marks():
+    assert versions.day_title(_at("2026-09-03T21:15"), BERLIN) == "3 September 2026"
+
+
+def test_the_title_follows_the_local_day_too():
+    stamp = _at("2026-09-03T22:15", timezone.utc)
+    assert versions.day_title(stamp, timezone.utc) == "3 September 2026"
+    assert versions.day_title(stamp, BERLIN) == "4 September 2026"
+
+
+def test_the_month_is_english_whatever_the_container_thinks():
+    # Deliberately not strftime("%B"), which follows the C locale of
+    # whatever container Home Assistant runs in - the same tag would then
+    # read differently on two installations.
+    assert versions.day_title(_at("2026-01-09T12:00"), BERLIN) == "9 January 2026"
+    assert versions.day_title(_at("2026-12-31T12:00"), BERLIN) == "31 December 2026"
+
+
+# -- versions nobody asked for -----------------------------------------
+
+
+def test_an_automatic_version_says_that_it_is_one():
+    assert versions.read_description(versions.automatic_description()) == ("", True)
+
+
+def test_a_persons_own_description_is_not_marked():
+    assert versions.read_description("Before the heating rework") == (
+        "Before the heating rework",
+        False,
+    )
+
+
+def test_the_marker_is_never_shown_to_anybody():
+    # It is bookkeeping. A list that prints its own bookkeeping is one
+    # nobody trusts.
+    text = versions.automatic_description("The last state of that day.")
+    assert versions.read_description(text) == ("The last state of that day.", True)
+    assert versions.AUTOMATIC not in versions.read_description(text)[0]
+
+
+def test_an_empty_description_is_nobodys_words():
+    assert versions.read_description("") == ("", False)
