@@ -897,7 +897,13 @@ class HistoryStore:
         wanted = Blob.from_string(text.encode("utf-8")).id
         path = f"{key}.yaml".encode()
         same: set[str] = set()
-        for revision in revisions:
+        # Deduplicated: two versions may sit on one commit, and a version
+        # may sit on a change that is loaded beside it, so the same
+        # revision can arrive several times. Each repeat costs a resolve
+        # and a tree read for an answer the set already holds. `fromkeys`
+        # rather than `set` because it keeps the caller's order, and an
+        # answer that depends on dict ordering is a bad answer to debug.
+        for revision in dict.fromkeys(revisions):
             resolved = self._resolve(repo, revision)
             if resolved is None:
                 continue

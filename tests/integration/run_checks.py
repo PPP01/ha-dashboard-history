@@ -1871,9 +1871,9 @@ async def run_paging(access: str) -> None:
         )
 
         # The badge must not depend on how far somebody has paged.
-        oldest = (
-            await socket.call("dashboard_history/history", dashboard=key, limit=1000)
-        )["changes"][-1]["revision"]
+        # `everything` above is the whole history already - proven by its
+        # `next_cursor` being None - so the oldest entry is its last one.
+        oldest = everything["changes"][-1]["revision"]
         await socket.call(
             "dashboard_history/create_version",
             dashboard=key,
