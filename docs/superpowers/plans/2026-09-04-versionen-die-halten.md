@@ -724,3 +724,64 @@ EOF
 - `versions` liefert wie bisher alle Versionen eines Dashboards nach Nummer, jetzt mit `same_as_now` an jeder.
 
 **Was hier bewusst nicht passiert** und in Vorhaben H gehört: Register »Änderungen«/»Versionen«, das Suchfeld, die Schaltfläche »Ältere laden«, der abgesenkte Vorgabewert von 50 auf 25 — und jede Zeile in `panel.js`.
+
+---
+
+## Nachtrag vom 2026-09-04 — was offen blieb
+
+Alle vier Aufgaben sind umgesetzt (`954892a`, `372827f`, `4e7f0c3`, `7674db3`).
+pytest 265, Integrationslauf 118 Prüfungen. Das Abschlussreview über den ganzen
+Strang lautete »ready to merge«, ohne einen einzigen Critical- oder
+Important-Befund. Es hat die Blätter-Arithmetik nicht geglaubt, sondern den
+echten Store über jede Historienlänge von 1 bis 12 gegen die Limits 1, 2, 3, 5
+und 50 gefahren, einmal auch mit fremden Commits zwischen jedem Eintrag: die
+Seitenfolge rekonstruiert die Historie exakt — keine Wiederholung, keine Lücke.
+
+Von den sieben Minor-Befunden wurde **einer** behoben (`86ad073`): `run_paging`
+bewies »keine Überschneidung«, aber nie »keine Lücke«. Beides ist nicht dasselbe,
+und nur das Zweite fängt einen Zeiger, der aus der ungekürzten Liste stammt. Die
+neue Zusicherung wurde absichtlich zum Lügen gebracht (`[1:5]` statt `[:4]`),
+bis sie rot war, und erst dann zurückgestellt — eine Prüfung, die nur grün
+gesehen wurde, beweist nichts.
+
+**Diese sechs stehen noch offen.** Keiner blockiert, jeder ist eine Entscheidung:
+
+1. **`services.py` nimmt für `history` weiterhin ein blankes `int` als `limit`.**
+   Der WebSocket-Befehl lehnt `limit < 1` inzwischen ab, der Dienst nicht — eine
+   Automatisierung mit `limit: 0` bekommt `changes: []` und `next_cursor: null`,
+   obwohl Älteres da ist. Genau die Antwort, die falsch ist, ohne falsch
+   auszusehen. `services.yaml` deklariert für den Auswähler ohnehin schon
+   `min: 1`; `vol.All(int, vol.Range(min=1))` würde das Schema mit seiner eigenen
+   Beschreibung in Einklang bringen. Bewusst nicht getan, weil dieser Plan
+   ausdrücklich schrieb, das Dienst-Schema bleibe unangetastet.
+2. **Der Docstring von `async_history` kennt seinen neuen Vertrag nicht.**
+   `before`, `next_cursor` und `matching_versions` stehen nur in Zeilenkommentaren,
+   während `async_versions` seinen Docstring für `same_as_now` erweitert bekam. In
+   einer Codebasis, in der der Docstring der Vertrag ist, gegen den `services.py`
+   und das Panel geschrieben sind, verfällt so eine Schieflage.
+3. **`services.yaml` erwähnt die zwei neuen Antwortfelder des Dienstes `history`
+   nicht** — und der Dienst kennt kein `before`, `next_cursor` ist aus einem
+   Skript also unbrauchbar. Entweder beides dokumentieren und dazusagen, dass
+   Blättern nur über WebSocket geht, oder eine Zeile Hinweis.
+4. **»It costs nothing extra« im Body von `4e7f0c3` ist zu stark.** Jede weitere
+   Version kostet ein `_resolve` plus einen Commit- und Baum-Zugriff in
+   `matching_revisions`; eingespart wird nur der Blob-Zugriff. Auf der Anlage des
+   Entwicklers wächst `wanted` damit von rund 50 auf rund 200 Revisionen je
+   Historien-Abfrage. Kein Problem — die Objekte sind klein, die Arbeit liegt im
+   Executor —, aber die Begründung führt in die Irre, wer als Nächstes über
+   Skalierung nachdenkt. Der Commit-Body bleibt stehen: dieses Projekt schreibt
+   Historie nicht um.
+5. **`async_get_config` steht in `async_versions` vor der Prüfung `if found:`**
+   (`operations.py`), lädt also auch für ein Dashboard ohne eine einzige Version.
+   Zwei Zeilen Umstellung. Nicht gemacht, weil der Codeblock in Aufgabe 4 wörtlich
+   vorgegeben war.
+6. **`any(v.get("same_as_now") …)` in `run_paging` kann einen zu großzügigen
+   Fehler nicht fangen.** Heute schreibt `run_paging` bei jedem Lauf byteweise
+   denselben Inhalt, also passen mehrere Versionen zu Recht gleichzeitig, und eine
+   schärfere Zusicherung gibt der Aufbau nicht her. In Vorhaben H, wo eine Version
+   absichtlich auf *anderem* Inhalt sitzt, ließe sich auch ein `False` einfordern.
+
+Und einer, der schon vorher da war: `the sacrificial dashboard is recorded as
+deleted` im Forget-Block ist zeitkritisch geworden — über fünf Läufe unveränderten
+Codes zweimal rot, dreimal grün. Nicht Teil dieses Vorhabens, aber ein Prüfstand,
+dem man nicht mehr glaubt, ist keiner mehr.
