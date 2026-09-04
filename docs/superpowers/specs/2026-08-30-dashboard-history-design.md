@@ -50,6 +50,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 | Datei | Aufgabe | Home-Assistant-frei |
 |---|---|---|
 | `keys.py` | Welches Dashboard welches ist, und welches fehlt | **ja** |
+| `identity.py` | Welche Ansicht und welche Section über zwei Stände hinweg dieselbe ist — siehe Entscheidung 16 | **ja** |
 | `analyze.py` | Zwei Stände vergleichen und die Änderungen einordnen: Karte gelöscht, View gelöscht, bearbeitet, verschoben | **ja** |
 | `restore.py` | Die Umkehrung anwenden: gelöschtes Objekt wieder einsetzen, oder einen ganzen Stand herstellen | **ja** |
 | `versions.py` | Versionsnummern: einlesen, ordnen, hochzählen, Namen bilden — siehe Entscheidung 13 | **ja** |
@@ -78,7 +79,7 @@ Meldung, die einen Fehlalarm auslieferte) und in `keys.py` (welches Dashboard
 welches ist, und welches fehlt — beides hatte dort, wo es vorher lag, schon
 einmal einen Fehler).
 
-Die vier oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Diese Trennung ist keine Stilfrage: Sie erlaubt, die Einordnungs-Regeln — das Herz des Projekts — in Sekunden gegen Dutzende Fälle zu testen, statt sie an einer Live-Anlage zu erproben.
+Die fünf oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Diese Trennung ist keine Stilfrage: Sie erlaubt, die Einordnungs-Regeln — das Herz des Projekts — in Sekunden gegen Dutzende Fälle zu testen, statt sie an einer Live-Anlage zu erproben.
 
 ### Datenmodell
 
@@ -122,7 +123,7 @@ Zurueckholen
 
    Sollte Geschwindigkeit später doch drücken, ist die Antwort nicht ein zweiter Pfad, sondern Bündelung mehrerer Änderungen in einen Commit.
 
-4. **Zurückgeholt wird nur, was verschwunden ist — und ganze Stände.** Das ist keine Sparmaßnahme, sondern folgt aus der Datenlage: Karten haben keine Kennung, sind also nur über ihre Position bestimmt. Eine **ersetzende** Rücknahme (»diese Bearbeitung zurück, spätere behalten«) ist deshalb eine Zusammenführung ohne Identitäten und in verschränkten Fällen nicht eindeutig. Eine **additive** Rücknahme (»das hier fehlt, setze es wieder ein«) überschreibt nichts und ist immer wohldefiniert. Und die schmerzhaften Fälle sind genau die additiven: Eine verschobene Karte schiebt man zurück, eine gelöschte ist weg.
+4. **Zurückgeholt wird nur, was verschwunden ist — und ganze Stände.** Das ist keine Sparmaßnahme, sondern folgt aus der Datenlage: Karten haben keine Kennung, sind also nur über ihre Position bestimmt. Eine **ersetzende** Rücknahme (»diese Bearbeitung zurück, spätere behalten«) ist deshalb eine Zusammenführung ohne Identitäten und in verschränkten Fällen nicht eindeutig. Eine **additive** Rücknahme (»das hier fehlt, setze es wieder ein«) überschreibt nichts und ist immer wohldefiniert. Und die schmerzhaften Fälle sind genau die additiven: Eine verschobene Karte schiebt man zurück, eine gelöschte ist weg. *(Ergänzt am 2026-09-04 durch Entscheidung 16: Für Ansichten und Sections — nicht für Karten — führt die Integration seither eigene Kennungen mit. Der Grundsatz dieser Entscheidung bleibt unberührt; zurückgeholt wird weiterhin nur Verschwundenes.)*
 
    **Am 2026-09-03 eingegrenzt, nicht aufgehoben (Entscheidung 15).** Der Satz oben bleibt für den allgemeinen Fall wahr. Was hinzukommt: Wo sich die Eindeutigkeit *nachweisen* lässt — der Inhalt, den eine Änderung erzeugt hat, steht heute genau einmal im Dashboard —, ist eine ersetzende Rücknahme keine Zusammenführung ohne Identitäten mehr, sondern ein bestimmter Austausch. Angeboten wird sie nur dort. Überall sonst gilt Entscheidung 4 unverändert.
 
@@ -343,6 +344,42 @@ Zurueckholen
     **Vier Grenzen, ausdrücklich nicht geschlossen.** Beschriftungen (Titel, Symbol eines Dashboards) bleiben außen vor, weil `restore_state` sie ohnehin nicht schreibt. Die 27 merkmalslosen Karten aus Entscheidung 14 bleiben merkmalslos: Sind zwei gleich, ist der Zähler ≥ 2 und der Undo verweigert — richtig, aber dort hilft die Weiche nie. Die Duplikat-Falle bleibt bestehen, wo der Undo verweigert; dieses Vorhaben entschärft nur die Fälle, in denen es einen gibt. Und die Auswahl einzelner Stücke bleibt eine additive Sache: Wer aus einer Änderung nur eines zurückholen will, nimmt den Weg über »Put back«, nicht über den Undo.
 
 
+16. **Ansichten und Sections bekommen eine Identität — in der eigenen Historie, nicht im fremden Dashboard.** *(Nachgetragen am 2026-09-04, nach dem Befund vom selben Tag: `docs/superpowers/reviews/2026-09-04-pfadlose-views-und-sections.md`.)*
+
+    Entscheidung 4 stellt fest, dass Karten keine Kennung tragen und allein über ihre Position bestimmt sind. Eine Ebene höher gilt dasselbe, und dort ist es teurer. Eine Ansicht **ohne** URL-Pfad wird über ihre Position identifiziert, eine Section **immer** — Home Assistant gibt ihr weder Pfad noch Kennung, es gibt dort keine sichere Variante. Eine Position ist aber eine Adresse, keine Identität: Wird die Ansicht davor gelöscht oder eine neue davorgesetzt, benennt derselbe Schlüssel etwas anderes.
+
+    Am 2026-09-04 an einer laufenden Anlage gemessen, jeder Fall bis zum Endzustand durchgeklickt: Eine gelöschte pfadlose Ansicht kam im Bestätigungsdialog überhaupt nicht vor, und das Zurücknehmen schrieb ihre Karte auf eine Ansicht, die niemand angefasst hatte. Das Löschen einer Ansicht *mit* Pfad ließ die pfadlose dahinter nachrücken — und die Rücknahme löschte sie samt Inhalt, obwohl sie an der Änderung nicht beteiligt war. Eine vor die pfadlose gesetzte neue Ansicht ließ beide verschwinden: Sie galt gleichzeitig als hinzugefügt (ihr Schlüssel war neu) und als bereits zurück (ihr Inhalt stand noch), wurde entfernt und nie wieder eingesetzt; das Dashboard war danach leer. Auf Section-Ebene landete eine zurückgeholte Karte lautlos in der falschen Section. Betroffen sind an dieser Anlage 8 von 67 Ansichten ohne Pfad und alle 80 Sections in 24 Ansichten mit Sections-Layout.
+
+    **Das Schreiben ist bereits angehalten** — Paket 1 des Befunds verweigert, wo eine Position nicht mehr dasselbe bedeutet, ganz nach Entscheidung 4: Raten ist verboten, Verweigern erlaubt. Was fehlt, ist die Identität selbst. Ohne sie bleiben diese Rücknahmen dauerhaft verweigert, und die Historienzeile erzählt weiter »1 view removed, 2 views added« für eine Ansicht, die hinzugefügt wurde.
+
+    **Die Kennungen gehören der Integration, nicht dem Dashboard.** Der naheliegende Weg wäre, `id`-Felder in die Dashboards des Nutzers zu schreiben; nachgemessen speichert Home Assistant sie auf Ansichten, Sections und Karten unverändert wieder aus. Er ist trotzdem verworfen. Einen Erweiterungspunkt vor dem Speichern gibt es nicht: `LovelaceStorage.async_save` schreibt die Konfiguration wörtlich durch, und das Ereignis `lovelace_updated` kommt erst danach. Bliebe, den WebSocket-Befehl zu ersetzen — was die harte Regel verbietet, weil es bei einer Veröffentlichung alle Nutzer gleichzeitig träfe — oder nach dem Ereignis zurückzuschreiben. Das verändert fremde Dashboards, erzeugt zu jedem Speichervorgang des Nutzers einen zweiten Historieneintrag, verliert das Rennen gegen einen offenen Editor (`lovelace/config/save` kennt keine Versionsprüfung, das Frontend schickt die ganze Konfiguration) und wirkt ohnehin nur nach vorn.
+
+    **Also führt die Integration die Identitäten selbst mit,** als dritte Spur neben `<schlüssel>.yaml` und `meta/<schlüssel>.yaml`, mit jedem Stand mitcommittet:
+
+    ```yaml
+    # ids/dashboard-standard.yaml
+    views:
+      - id: v-7f3a
+        path: home            # null bei einer Ansicht ohne URL-Pfad
+        sections: [s-11c2, s-9d40]
+      - id: v-2b81
+        path: null
+        sections: []
+    ```
+
+    Die Reihenfolge ist die Position im Stand; ein eigenes Positionsfeld gibt es deshalb nicht, denn es könnte von der Wirklichkeit abweichen. Kennungen sind bedeutungslos und nur innerhalb eines Dashboards eindeutig. `meta/` bleibt unberührt: Dort steht, was ein Dashboard *ist* — Titel, Symbol, Seitenleiste —, hier steht, was *welches* ist.
+
+    **Zugeordnet wird beim Erfassen, in Stufen von sicher nach unsicher,** und jede Stufe vergibt nur, was die vorige offenließ: gleicher Pfad (beide gesetzt) erbt die Kennung; danach inhaltliche Gleichheit; danach hinreichende Ähnlichkeit, gemessen als Anteil gemeinsamer Karten-Fingerabdrücke mit Titelgleichheit als Zuschlag, dessen Schwelle der Plan an den echten Dashboards festlegt statt sie zu raten; alles Übrige ist neu. Zwei gleich gute Kandidaten erben **keiner** — dann greift die Verweigerung, statt zu raten. Die Zuordnung ist eindeutig: Jede alte Kennung wird höchstens einmal weitergereicht, wie es Entscheidung 14 für Karten hält. Sections werden innerhalb ihrer bereits zugeordneten Ansicht nach demselben Muster verfolgt.
+
+    **Warum eine Ähnlichkeitszuordnung hier trägt, wo sie anderswo wackelt:** Die Historie ist lückenlos. Zwischen zwei aufeinanderfolgenden Commits liegt genau ein Speichervorgang, und der berührt fast immer nur eine Ansicht. Die Zuordnung muss also nie über drei Wochen springen, sondern immer nur über einen Schritt — und sie erbt das Ergebnis des vorigen. Die zweite Stufe, schlichte Gleichheit, erledigt dabei den Großteil aller Fälle.
+
+    **Ohne Rückwirkung, auf Entscheidung des Nutzers vom 2026-09-04.** Der bestehende Verlauf wird **nicht** nachberechnet, obwohl es möglich wäre — jeder Zwischenstand liegt als Commit vor. Der Preis ist benannt: Alles, was vor der Einführung liegt, trägt keine Kennungen und bleibt beim heutigen Verhalten samt Verweigerung. Wo keine Kennungen vorliegen oder nur eine der beiden Seiten welche trägt, gilt genau das bisherige Verfahren — ohne Fehlermeldung und ohne Hinweis, denn es ist kein Fehler, sondern der Normalfall für alten Bestand.
+
+    **Was ausdrücklich nicht passiert: Karten bekommen keine Kennung.** Entscheidung 14 erkennt 96 % von ihnen an ihrem Inhalt wieder, und eine Kennung je Karte hieße bei 1526 Karten grob 30 KB zusätzlich je erfasstem Stand — bei heute 28 KiB je Stand eine Verdopplung, und der Platzbedarf ist in Vorhaben C ohnehin schon ein Thema. Damit bleibt der offene Punkt D5 offen: An 27 von 484 Karten ist nichts zu erkennen, und dort unterscheidet weiterhin keine Rechnung Bearbeitung von Löschung. Das Format oben schließt eine spätere Erweiterung nicht aus; entschieden wird darüber, wenn es Messwerte aus dem Betrieb gibt, nicht vorher.
+
+    **Ein Nebenschauplatz, der leicht übersehen wird:** `forget` schreibt die Historie um. Führt es die Kennungsspur nicht mit, reißt die Kette rückwirkend — dieselbe Falle, die bei den Beschreibungen aus Entscheidung 10 bereits einmal zugeschnappt ist.
+
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
@@ -404,6 +441,15 @@ Herzstück sind die Einordnungs-Tests — von ihnen hängt alles ab.
 | `resolve()` über einen Versions**namen** | `heizung/v1.0.0` löst auf den Commit auf — der Test, dessen Fehlen die Falschaussage in Entscheidung 10 durchgelassen hat |
 | Version anlegen und zurückwechseln | Tag entsteht, `read_at` über den Namen liefert den Stand, ein Rücksprung macht keine Version unerreichbar |
 | Abschnitte im Verlauf | jede Änderung landet unter genau einer Version, die neuesten über der obersten |
+| Position lügt: Ansicht ohne Pfad, davor gelöscht oder eingefügt | die Rücknahme verweigert, statt einen falschen Stand zu schreiben — die drei am 2026-09-04 gemessenen Fälle |
+| Position lügt: Section verschoben | dieselbe Verweigerung, und keine Karte landet in einer fremden Section |
+| Kennungen vergeben: unveränderte Ansicht | erbt ihre Kennung, auch ohne Pfad und über eine Verschiebung hinweg |
+| Kennungen vergeben: bearbeitete Ansicht | erbt sie ebenfalls, statt als gelöscht plus hinzugefügt zu gelten |
+| Kennungen vergeben: zwei gleich gute Kandidaten | keiner erbt, die Rücknahme verweigert — geraten wird nicht |
+| Kennungen vergeben: dieselbe Kennung nie zweimal | die Zuordnung ist eindeutig, wie bei den Karten in Entscheidung 14 |
+| Stand ohne Kennungen | fällt auf das Verhalten vor Entscheidung 16 zurück, ohne Fehler und ohne Hinweis |
+| Nur eine Seite trägt Kennungen | ebenso — der Rückfall gilt für das Paar, nicht je Stand |
+| `forget` über ein Dashboard mit Kennungen | die Kennungsspur wird mitgeschrieben, die Kette reißt nicht rückwirkend |
 
 Die Home-Assistant-freien Module laufen in reinem pytest, ohne laufende Installation.
 
@@ -450,6 +496,19 @@ Aus einem Gespräch über Versionen wurden vier Vorhaben. In eine Spec gepresst 
 - **E — Die gezielte Rücknahme.** Entscheidung 15, diese Spec, ein eigener Plan. Sie ist die Einlösung von Entscheidung 5 und steht **vor** B und C: Sie berührt `analyze.py` und `restore.py`, also denselben Kern, den Entscheidung 14 gerade umgebaut hat, und je länger dazwischen liegt, desto weniger trägt das frische Wissen darüber. B und C fassen den Kern nicht an und verlieren durch Warten nichts.
 
   Nicht Teil von E, obwohl beim Entwerfen gefunden und darum unter »Offene Punkte« festgehalten: die beiden Fenster-Fehler (Version außerhalb der neuesten 50, Dashboard außerhalb der letzten 1000 Commits). Sie liegen in `operations.py` und `store.py`, haben mit der Zuordnung nichts zu tun, und sie in E hineinzuziehen hieße, ein Vorhaben mit zwei unabhängigen Begründungen zu bauen.
+
+### Nachgetragen am 2026-09-04: F
+
+- **F — Die Identitätskette.** Entscheidung 16, diese Spec, ein eigener Plan. Sie steht **vor** B und C und nach dem bereits umgesetzten Paket 1 des Befunds vom 2026-09-04. Der Grund ist derselbe wie bei E: Sie fasst `analyze.py`, `restore.py`, `capture.py` und `store.py` an — denselben Kern, den Entscheidung 14, Entscheidung 15 und Paket 1 nacheinander umgebaut haben. Je länger dazwischen liegt, desto weniger trägt das frische Wissen darüber.
+
+  **Drei Pakete, in dieser Reihenfolge, und nur das erste ist fertig:**
+
+  1. **Verweigern statt stumm falsch schreiben.** *(Erledigt am 2026-09-04.)* `analyze` prüft für jedes Ständepaar, das eine Rücknahme liest oder beschreibt, ob eine positionsbasierte Adresse in beiden dasselbe meint; `restore` verweigert, bevor eine Karte in eine fremde Section wandert. Neun pytest-Fälle, sieben Prüfungen am laufenden Home Assistant.
+  2. **Die Identitätskette.** Entscheidung 16.
+  3. **Die Section als eigenes Stück.** `find_removed` und `reinsert` kennen heute nur ganze Ansichten und einzelne Karten. Wird eine Section gelöscht, werden ihre Karten **einzeln** zum Zurückholen angeboten, und jede einzelne verweigert — es gibt keinen Weg zurück, obwohl der vollständige Inhalt in der Historie liegt. Das braucht `kind="section"` auf beiden Seiten, baut auf Paket 2 auf und ist ohne dessen Identität nicht sinnvoll: `reinsert` wüsste sonst nicht, wohin die Section gehört.
+
+  **Was F nicht ist:** eine Reparatur der Karten-Zuordnung. Die liegt bei Entscheidung 14 und bleibt dort.
+
 
 ## Offene Punkte
 
