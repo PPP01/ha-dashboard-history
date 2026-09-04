@@ -197,7 +197,18 @@ class Milestones:
         its work to a task rather than doing it where it stands.
         """
         for key in event.data.get("dashboards") or []:
-            self._hass.async_create_task(self._async_mark_day(key))
+            # Bound to the config entry and not to `hass`: Home Assistant
+            # cancels an entry's background tasks when it unloads, so a
+            # mark in flight cannot outlive the instance whose lock it
+            # holds. Without that, a reload leaves the old task running
+            # against the old lock while the new instance holds a new
+            # one - and two versions land on one state, which is the
+            # very thing the lock is here to prevent.
+            self._entry.async_create_background_task(
+                self._hass,
+                self._async_mark_day(key),
+                name=f"dashboard_history mark day {key}",
+            )
 
     async def _async_mark_day(self, key: str) -> None:
         """Mark the state that was there before this new day started."""
