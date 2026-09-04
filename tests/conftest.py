@@ -8,12 +8,14 @@ import os
 import pathlib
 import sys
 
-_PACKAGE = (
+# Exported: the file-based tests read the package's assets from here
+# rather than each spelling the path out again.
+PACKAGE = (
     pathlib.Path(__file__).resolve().parents[1]
     / "custom_components"
     / "dashboard_history"
 )
-sys.path.insert(0, str(_PACKAGE))
+sys.path.insert(0, str(PACKAGE))
 
 # Some tests can run against real dashboards, which is worth a lot: the
 # synthetic cards are four, a real installation has hundreds, and the

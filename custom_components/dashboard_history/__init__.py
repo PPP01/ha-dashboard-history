@@ -6,13 +6,12 @@ import logging
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HomeAssistant
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
 from .const import DOMAIN, REPO_DIRNAME
 from .services import async_register
-from .snapshot import async_get_all_configs
 from .store import HistoryStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,28 +26,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
     capture = HistoryCapture(hass, store)
     hass.data[DOMAIN] = {"store": store, "capture": capture}
-
-    async def _debug_snapshot(call: ServiceCall) -> dict:
-        """Report what the integration can currently see.
-
-        Kept permanently. On any later hunt for a fault this answers the
-        first question - whether the dashboards are visible at all.
-        """
-        configs = await async_get_all_configs(hass)
-        return {
-            "count": len(configs),
-            "dashboards": {
-                key: {"views": len(config.get("views") or [])}
-                for key, config in sorted(configs.items())
-            },
-        }
-
-    hass.services.async_register(
-        DOMAIN,
-        "debug_snapshot",
-        _debug_snapshot,
-        supports_response=SupportsResponse.ONLY,
-    )
 
     # Registered before the recording starts, on purpose: if the repository
     # cannot be created, an interface that answers with the reason is more

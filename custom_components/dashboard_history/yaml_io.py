@@ -71,3 +71,15 @@ def dump(data) -> str:
 def load(text: str):
     """Parse YAML produced by `dump`."""
     return yaml.safe_load(text)
+
+
+def load_state(text: str | None) -> dict:
+    """A recorded dashboard text as a configuration; nothing as `{}`.
+
+    The one place that decides what an absent or empty text means. It
+    used to be decided at every caller, as `load(x) or {}` in five
+    spellings - and `load(None)` raises, so each had its own guard.
+    """
+    if not text:
+        return {}
+    return load(text) or {}

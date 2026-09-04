@@ -131,18 +131,7 @@ def onboard() -> str | None:
         timeout=30,
     )
     answer.raise_for_status()
-    code = answer.json()["auth_code"]
-    token = requests.post(
-        f"{BASE}/auth/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": f"{BASE}/",
-        },
-        timeout=30,
-    )
-    token.raise_for_status()
-    access = token.json()["access_token"]
+    access = _exchange_code(answer.json()["auth_code"])
     requests.post(
         f"{BASE}/api/onboarding/core_config",
         headers={"Authorization": f"Bearer {access}"},
@@ -150,6 +139,17 @@ def onboard() -> str | None:
         timeout=30,
     )
     return access
+
+
+def _exchange_code(code: str) -> str:
+    """Trade an authorization code for an access token, as a browser would."""
+    granted = requests.post(
+        f"{BASE}/auth/token",
+        data={"grant_type": "authorization_code", "code": code, "client_id": f"{BASE}/"},
+        timeout=30,
+    )
+    granted.raise_for_status()
+    return granted.json()["access_token"]
 
 
 def token() -> str:
@@ -396,12 +396,16 @@ async def run(access: str) -> None:
         )
 
         # The false alarm this project shipped once: a metadata-only commit
-        # must not claim somebody changed the dashboard from outside.
+        # must not claim somebody changed the dashboard from outside. The
+        # newest entry only - that is the one a startup pass writes. Every
+        # entry used to be asked, and a genuine outside change anywhere in
+        # the last fifty (this bench has one: a save lost to a crashed run,
+        # recorded at the next start, correctly) failed the check for weeks.
         messages = [c["message"] for c in history["changes"]]
         check(
             "no bogus 'changed outside Home Assistant' on a first run",
-            not any("changed outside" in m for m in messages),
-            f"messages: {messages[:3]}",
+            "changed outside" not in messages[0],
+            f"newest: {messages[0]!r}",
         )
 
         # Now edit a dashboard the way the frontend does, and see whether the
@@ -413,10 +417,13 @@ async def run(access: str) -> None:
         if removed is None:
             return
         await socket.call("lovelace/config/save", url_path=target, config=config)
-        await asyncio.sleep(3)
-
+        # Polled, not slept: right after a restart the recorder is still
+        # in its startup pass over every dashboard, and a save heard then
+        # waits for the write lock behind it - about twenty seconds on
+        # this bench. Measured on 2026-09-04, a three-second sleep looked
+        # at the history before the save had reached it.
+        newest = await _wait_for_newest(socket, target, "removed", RECONCILE_WAIT * 3)
         after = await socket.call("dashboard_history/history", dashboard=target)
-        newest = after["changes"][0]["message"]
         check(
             "the deletion was recorded with a summary",
             "removed" in newest,
@@ -464,8 +471,9 @@ async def run(access: str) -> None:
         check(
             "without confirm there is a preview and no write",
             preview["applied"] is False
-            and bool(preview["preview"])
+            and bool(preview.get("preview"))
             and live == config,
+            preview.get("error", ""),
         )
 
         applied = await socket.call(
@@ -568,16 +576,18 @@ async def run_lifecycle(access: str) -> None:
             dashboard_id=made["id"],
             title=renamed_title,
         )
-        await asyncio.sleep(RECONCILE_WAIT)
-        history = await socket.call("dashboard_history/history", dashboard=key)
-        newest = history["changes"][0]["message"]
+        # Polled rather than slept for a fixed time. The reconciliation
+        # starts RECONCILE_DELAY after the rename and then walks every
+        # dashboard under the write lock - measured on 2026-09-04 at
+        # about ten seconds for the eighteen on this bench, which put the
+        # rename commit within a second of a fixed fifteen-second wait
+        # and made this check fail one run in three.
+        newest = await _wait_for_newest(socket, key, "renamed to", RECONCILE_WAIT * 3)
         check("a rename is recorded and named", "renamed to" in newest, f"{newest!r}")
 
         # 2. Deleting the whole dashboard while Home Assistant runs.
         await socket.call("lovelace/dashboards/delete", dashboard_id=made["id"])
-        await asyncio.sleep(RECONCILE_WAIT)
-        history = await socket.call("dashboard_history/history", dashboard=key)
-        newest = history["changes"][0]["message"]
+        newest = await _wait_for_newest(socket, key, "dashboard deleted", RECONCILE_WAIT * 3)
         check(
             "a deletion is recorded without a restart",
             "dashboard deleted" in newest,
@@ -594,6 +604,7 @@ async def run_lifecycle(access: str) -> None:
         )
 
         # 3. Bringing it back - the least-tested path in the project.
+        history = await socket.call("dashboard_history/history", dashboard=key)
         before_deletion = history["changes"][1]["revision"]
         preview = await socket.call(
             "dashboard_history/restore_state", dashboard=key, revision=before_deletion
@@ -728,6 +739,42 @@ async def run_lifecycle(access: str) -> None:
             check("and it can be deleted again", deleted, detail)
 
 
+async def _wait_for(fetch, accept, seconds: float, every: float = 1.0):
+    """Poll `fetch` until `accept` likes its answer; hand back the last one.
+
+    The one loop behind every wait in this file. A fixed sleep was the
+    alternative, and it failed one run in three wherever the recorder's
+    pass ran close to the sleep's length; the last answer is returned
+    either way, so the check that follows can say what was there.
+    """
+    deadline = time.time() + seconds
+    while True:
+        value = await fetch()
+        if accept(value) or time.time() >= deadline:
+            return value
+        await asyncio.sleep(every)
+
+
+async def _newest_message(socket, key: str) -> str:
+    history = await socket.call("dashboard_history/history", dashboard=key)
+    return history["changes"][0]["message"] if history["changes"] else ""
+
+
+async def _wait_for_newest(socket, key: str, phrase: str, seconds: float) -> str:
+    """The newest history message for `key`, once it contains `phrase`."""
+    return await _wait_for(
+        lambda: _newest_message(socket, key), lambda m: phrase in m, seconds
+    )
+
+
+async def _wait_for_history_to_move(socket, key: str, seen: str, seconds: float) -> list:
+    """The history of `key`, once its newest revision is no longer `seen`."""
+    async def fetch():
+        return (await socket.call("dashboard_history/history", dashboard=key))["changes"]
+
+    return await _wait_for(fetch, lambda c: bool(c) and c[0]["revision"] != seen, seconds)
+
+
 def _store_has(dashboard_id: str) -> bool:
     """Whether the dashboard registry *on disk* holds this entry.
 
@@ -747,12 +794,10 @@ def _store_has(dashboard_id: str) -> bool:
 
 async def _wait_for_store_entry(dashboard_id: str, seconds: int = 20) -> bool:
     """Wait until the registry on disk holds this entry."""
-    deadline = time.time() + seconds
-    while time.time() < deadline:
-        if _store_has(dashboard_id):
-            return True
-        await asyncio.sleep(1)
-    return False
+    async def fetch():
+        return _store_has(dashboard_id)
+
+    return await _wait_for(fetch, bool, seconds)
 
 
 async def _wait_for_store_absence(dashboard_id: str, seconds: int = 30) -> bool:
@@ -761,12 +806,10 @@ async def _wait_for_store_absence(dashboard_id: str, seconds: int = 30) -> bool:
     Used as evidence that Home Assistant has actually written the file,
     which its delayed save makes impossible to assume.
     """
-    deadline = time.time() + seconds
-    while time.time() < deadline:
-        if not _store_has(dashboard_id):
-            return True
-        await asyncio.sleep(1)
-    return False
+    async def fetch():
+        return not _store_has(dashboard_id)
+
+    return await _wait_for(fetch, bool, seconds)
 
 
 async def run_current_marker(access: str) -> None:
@@ -803,11 +846,9 @@ async def run_current_marker(access: str) -> None:
             confirm=True,
         )
         check("the newest change can be undone", applied["applied"] is True, str(applied.get("note")))
-        await asyncio.sleep(RECONCILE_WAIT)
-
-        after = (await socket.call("dashboard_history/history", dashboard=key))[
-            "changes"
-        ]
+        after = await _wait_for_history_to_move(
+            socket, key, changes[0]["revision"], RECONCILE_WAIT * 3
+        )
         # Counting is the wrong measure: `history` answers at most 50
         # entries, and this history passed that a while ago - a new entry at
         # the top pushes one off the bottom, so the count cannot grow. What
@@ -869,10 +910,9 @@ async def run_current_marker(access: str) -> None:
             revision=changes[0]["revision"],
             confirm=True,
         )
-        await asyncio.sleep(RECONCILE_WAIT)
-        restored = (await socket.call("dashboard_history/history", dashboard=key))[
-            "changes"
-        ]
+        restored = await _wait_for_history_to_move(
+            socket, key, after[0]["revision"], RECONCILE_WAIT * 3
+        )
         check(
             "and this section leaves the dashboard as it found it",
             restored[0]["same_as_now"] is True
@@ -945,13 +985,18 @@ async def run_forget(access: str) -> None:
             "lovelace/dashboards/delete",
             dashboard_id=next(d["id"] for d in made if d["url_path"] == key),
         )
-        await asyncio.sleep(RECONCILE_WAIT)
-
+        # Recorded, not merely gone: the list says `exists: False` as soon
+        # as Home Assistant has dropped the dashboard, while the recorder
+        # writes the deletion up to RECONCILE_DELAY later. Forgetting in
+        # that gap was what uncovered the stale index on 2026-09-04, so
+        # the wait here is for the history, and the list is read after.
+        newest = await _wait_for_newest(socket, key, "dashboard deleted", RECONCILE_WAIT * 3)
         listed = (await socket.call("dashboard_history/dashboards"))["dashboards"]
         check(
             "the sacrificial dashboard is recorded as deleted",
-            any(d["key"] == key and not d["exists"] for d in listed),
-            key,
+            "dashboard deleted" in newest
+            and any(d["key"] == key and not d["exists"] for d in listed),
+            f"{newest!r}",
         )
 
         # A description on another dashboard, which the rewrite must carry.
@@ -1176,35 +1221,40 @@ async def run_explanation(access: str) -> None:
 
         # The change most in need of an explanation, and the one that used
         # to answer "did not exist at": a deletion, where the dashboard's
-        # file has left the tree.
-        deleted = next(
-            (
-                dashboard
-                for dashboard in (
-                    await socket.call("dashboard_history/dashboards")
-                )["dashboards"]
-                if not dashboard["exists"]
-            ),
-            None,
-        )
-        if deleted:
-            gone = (
-                await socket.call(
-                    "dashboard_history/history", dashboard=deleted["key"]
-                )
-            )["changes"]
-            answer = await socket.call(
-                "dashboard_history/explain",
-                dashboard=deleted["key"],
-                revision=gone[0]["revision"],
-            )
-            words = [
-                entry["text"] for group in answer["groups"] for entry in group["entries"]
+        # file has left the tree. Every deleted dashboard is asked, not
+        # the first in the list: since the list stopped ending at a
+        # thousand commits (2026-09-04) it begins with a probe that never
+        # had a view, and for that one "cannot be described in terms of
+        # cards" is the truth. None may answer with an error, and at least
+        # one has to name the view it lost.
+        deleted = [
+            dashboard["key"]
+            for dashboard in (await socket.call("dashboard_history/dashboards"))[
+                "dashboards"
             ]
+            if not dashboard["exists"]
+        ]
+        errors, named = [], []
+        for key in deleted:
+            gone = (await socket.call("dashboard_history/history", dashboard=key))[
+                "changes"
+            ]
+            answer = await socket.call(
+                "dashboard_history/explain", dashboard=key, revision=gone[0]["revision"]
+            )
+            if "error" in answer:
+                errors.append(f"{key}: {answer['error']}")
+            named += [
+                f"{key}: {entry['text']}"
+                for group in answer["groups"]
+                for entry in group["entries"]
+                if "deleted" in entry["text"]
+            ]
+        if deleted:
             check(
                 "a deletion is explained rather than reported as an error",
-                "error" not in answer and any("deleted" in word for word in words),
-                str(words[:2] or answer),
+                not errors and bool(named),
+                str(errors[:2] or named[:2]),
             )
 
 
@@ -1893,6 +1943,90 @@ async def run_versions(access: str) -> None:
         )
 
 
+async def run_permissions(access: str) -> None:
+    """A user who is not an administrator gets nothing from the services.
+
+    Found on 2026-09-03: `call_service` checks no permissions of its own,
+    so a plainly registered service was open to every signed-in user -
+    one who cannot edit a dashboard in the frontend could restore one, or
+    forget a history for good. The WebSocket commands were admin-only
+    from the start; this checks that the services are now too, by making
+    a user of the ordinary kind, signing in as them, and asking.
+
+    The user is created and removed here, by their own id, and nothing
+    else on the instance is touched.
+    """
+    headers = {"Authorization": f"Bearer {access}"}
+    client = f"{BASE}/"
+    made = None
+    try:
+        async with Socket(access) as socket:
+            made = await socket.call(
+                "config/auth/create",
+                name="Dashboard History non-admin check",
+                group_ids=["system-users"],
+            )
+            user_id = made["user"]["id"]
+            await socket.call(
+                "config/auth_provider/homeassistant/create",
+                user_id=user_id,
+                username="dh-nonadmin",
+                password="dh-nonadmin-only",
+            )
+        # Sign in as that user, the way the frontend does.
+        flow = requests.post(
+            f"{BASE}/auth/login_flow",
+            json={"client_id": client, "handler": ["homeassistant", None], "redirect_uri": client},
+            timeout=30,
+        ).json()
+        step = requests.post(
+            f"{BASE}/auth/login_flow/{flow['flow_id']}",
+            json={"client_id": client, "username": "dh-nonadmin", "password": "dh-nonadmin-only"},
+            timeout=30,
+        ).json()
+        code = step.get("result")
+        if not code:
+            check("a non-admin user could be signed in", False, json.dumps(step)[:200])
+            return
+        theirs = {"Authorization": f"Bearer {_exchange_code(code)}"}
+
+        # A read, and a write with confirm: both must be refused, not
+        # merely the write. The preview of a restore is the whole
+        # configuration, which this user is not shown anywhere else.
+        for service, body in (
+            ("history", {"dashboard": TARGET}),
+            ("restore_state", {"dashboard": TARGET, "revision": "HEAD", "confirm": True}),
+        ):
+            answer = requests.post(
+                f"{BASE}/api/services/dashboard_history/{service}?return_response",
+                headers=theirs,
+                json=body,
+                timeout=30,
+            )
+            check(
+                f"a non-admin is refused {service}",
+                answer.status_code == 401,
+                f"HTTP {answer.status_code}",
+            )
+        # And the same call from the administrator still works, so the
+        # refusal above is a permission and not a broken service.
+        answer = requests.post(
+            f"{BASE}/api/services/dashboard_history/history?return_response",
+            headers=headers,
+            json={"dashboard": TARGET},
+            timeout=30,
+        )
+        check(
+            "the administrator still gets history",
+            answer.status_code == 200 and "changes" in answer.json().get("service_response", {}),
+            f"HTTP {answer.status_code}",
+        )
+    finally:
+        if made is not None:
+            async with Socket(access) as socket:
+                await socket.call("config/auth/delete", user_id=made["user"]["id"])
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -1918,6 +2052,8 @@ if __name__ == "__main__":
     print(f"Dashboard für die Prüfungen: {TARGET}")
     print(f"Prüfungen gegen {BASE}\n")
     asyncio.run(run(access))
+    print("\n  -- Wer darf: nur Administratoren --")
+    asyncio.run(run_permissions(access))
     print("\n  -- Lebenszyklus eines Dashboards: anlegen, umbenennen, löschen, zurückholen --")
     asyncio.run(run_lifecycle(access))
     print("\n  -- Endgueltiges Loeschen --")

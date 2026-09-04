@@ -797,3 +797,47 @@ def test_a_removed_view_really_back_needs_no_step():
     plan = analyze.plan_undo({"views": [a, b]}, {"views": [a]}, {"views": [a, b]})
     assert plan.blocked is None
     assert plan.steps == ()
+
+
+# ------------------------------------------- whole views in the message
+#
+# A whole view counts as one, not as its cards - the same grain the
+# explanation uses. Why, and what it looked like before: `summarize`.
+
+
+def test_a_renamed_empty_view_is_not_called_no_card_changes():
+    old = {"views": [{"path": "home", "cards": []}]}
+    new = {"views": [{"path": "kitchen", "cards": []}]}
+    assert (
+        analyze.change_message("dash", old, new, "save")
+        == "dash: 1 view removed, 1 view added"
+    )
+
+
+def test_a_vanished_view_is_counted_as_a_view_and_not_as_its_cards():
+    old = {"views": [{"path": "home", "cards": [A]}, {"path": "gone", "cards": [B, C]}]}
+    new = {"views": [{"path": "home", "cards": [A]}]}
+    counts = analyze.summarize(old, new)
+    assert (counts.views_removed, counts.removed) == (1, 0)
+    assert analyze.change_message("dash", old, new, "save") == "dash: 1 view removed"
+
+
+def test_two_new_views_are_counted_in_the_plural():
+    old = {"views": [{"path": "home", "cards": [A]}]}
+    new = {
+        "views": [
+            {"path": "home", "cards": [A]},
+            {"path": "b", "cards": [B]},
+            {"path": "c", "cards": []},
+        ]
+    }
+    assert analyze.change_message("dash", old, new, "save") == "dash: 2 views added"
+
+
+def test_views_and_cards_are_both_named_when_both_changed():
+    old = {"views": [{"path": "home", "cards": [A, B]}, {"path": "gone", "cards": [C]}]}
+    new = {"views": [{"path": "home", "cards": [A]}]}
+    assert (
+        analyze.change_message("dash", old, new, "save")
+        == "dash: 1 view removed, 1 removed"
+    )

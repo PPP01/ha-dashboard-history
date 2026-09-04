@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Dashboard History",
+        "description": "Records every change to your dashboards and lets you put back what disappeared. There is nothing to configure: the history starts with the first save after setup."
+      }
+    },
+    "abort": {
+      "already_configured": "Dashboard History is already set up. One instance records every dashboard."
+    }
+  }
+}

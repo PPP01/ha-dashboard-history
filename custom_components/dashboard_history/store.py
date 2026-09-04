@@ -48,8 +48,38 @@ class Version:
     description: str
 
 
+@dataclass(frozen=True)
+class Survey:
+    """Every dashboard the history has ever held, and what each one is called.
+
+    `live` are the ones at HEAD. `last_meta` holds the last recorded
+    metadata text of every dashboard that has one: for a live dashboard
+    the text at HEAD, for a gone one the text its deletion removed - the
+    name and icon it should be listed under, and would come back with.
+    """
+
+    names: list[str]
+    live: set[str]
+    last_meta: dict[str, str]
+
+
 def _as_text(value) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
+
+
+def _owns(ref: bytes, key: str) -> bool:
+    """Whether a tag named `ref` is one of dashboard `key`'s versions.
+
+    A version is `<key>/v<major>.<minor>.<patch>`, so what follows the
+    key's own slash is one segment. Tested with startswith alone, "foo/"
+    also claimed `foo/bar/v1.0.0` - the version of a legacy dashboard
+    whose key holds a slash - and `forget("foo")` deleted it. Measured
+    on 2026-09-04.
+    """
+    namespace = f"{key}/".encode()
+    if not ref.startswith(namespace):
+        return False
+    return b"/" not in ref[len(namespace):]
 
 
 class HistoryStore:
@@ -63,6 +93,12 @@ class HistoryStore:
         # and the other seven raised FileLocked. Writes are serialised here
         # rather than left to chance.
         self._lock = threading.Lock()
+        # The last survey, keyed by the HEAD it was taken at. Names and
+        # metadata change only when HEAD does, and `forget` rewrites HEAD,
+        # so a stale entry cannot survive. Kept because the panel asks for
+        # the survey on every recorded change, and each one is a walk over
+        # the whole history.
+        self._survey: tuple[str, Survey] | None = None
 
     # -- writing -------------------------------------------------------
 
@@ -430,6 +466,7 @@ class HistoryStore:
         self._point_head(repo, nearest.get(order[-1].id) if order else None)
         self._rewrite_notes(repo, notes, kept)
         self._rewrite_tags(repo, versions, nearest, Tag, key)
+        self._drop_from_index(repo, key)
 
         # Rewriting refs only makes the old objects unreachable; the blobs
         # and commits stay on disk, and `resolve` still finds them. Without
@@ -442,6 +479,26 @@ class HistoryStore:
 
         garbage_collect(repo, prune=True, grace_period=0)
         return removed
+
+    def _drop_from_index(self, repo: Repo, key: str) -> None:
+        """Take the dashboard's two files out of the index and off the disk.
+
+        The rewrite above touches commits, refs and notes - not the index,
+        and not the working tree. Left alone, both still name the files
+        whenever `forget` runs while the dashboard is in HEAD, which the
+        operations layer allows: it asks Home Assistant whether the
+        dashboard is gone, not the recorder whether the deletion has been
+        written yet. The next commit of any dashboard then builds its tree
+        from that index and references blobs the collection below has
+        just pruned. Measured on 2026-09-04: a dashboard back from the
+        dead in HEAD, and every read of its path a KeyError.
+        """
+        index = repo.open_index()
+        for path in (f"{key}.yaml", f"meta/{key}.yaml"):
+            if path.encode() in index:
+                del index[path.encode()]
+            (self.path / path).unlink(missing_ok=True)
+        index.write()
 
     @staticmethod
     def _tree_without(repo: Repo, tree_id: bytes, target: bytes, tree_class) -> bytes:
@@ -494,7 +551,23 @@ class HistoryStore:
         repo.refs[branch] = head
 
     @staticmethod
-    def _raw_tags(repo: Repo) -> list:
+    def _each_tag(repo: Repo):
+        """Every tag ref with the object behind it, as `(ref, object)`.
+
+        A ref listed a moment ago and gone now is skipped. `forget`
+        deletes every tag and writes it back, and reads are not held off
+        while it does; measured on 2026-09-04, a history request in that
+        window failed whole on one vanished ref. Skipping it is what
+        dulwich's own `as_dict` does with an unresolvable ref.
+        """
+        for ref in repo.refs.as_dict(b"refs/tags"):
+            try:
+                yield ref, repo[repo.refs[b"refs/tags/" + ref]]
+            except KeyError:
+                continue
+
+    @classmethod
+    def _raw_tags(cls, repo: Repo) -> list:
         """Every ref under `refs/tags`, before the rewrite invalidates it.
 
         Both shapes, as `(ref, tag object or None, the sha it marks)`. An
@@ -512,8 +585,7 @@ class HistoryStore:
         explicitly, which makes them likely rather than exotic.
         """
         found = []
-        for ref in repo.refs.as_dict(b"refs/tags"):
-            tag = repo[repo.refs[b"refs/tags/" + ref]]
+        for ref, tag in cls._each_tag(repo):
             annotated = hasattr(tag, "object")
             found.append((ref, tag if annotated else None,
                           tag.object[1] if annotated else tag.id))
@@ -563,10 +635,9 @@ class HistoryStore:
         tag object for it would hand somebody back a different kind of tag
         than the one they made.
         """
-        namespace = f"{key}/".encode()
         for ref, old, target in versions:
             del repo.refs[b"refs/tags/" + ref]
-            if ref.startswith(namespace):
+            if _owns(ref, key):
                 continue  # this dashboard's own version; forgotten with it
             moved = nearest.get(target)
             if moved is None:
@@ -591,8 +662,11 @@ class HistoryStore:
             return None
         return Repo(str(self.path))
 
-    def list_changes(self, key: str, limit: int = 50) -> list[Change]:
-        """Every recorded state of one dashboard, newest first."""
+    def list_changes(self, key: str, limit: int | None = 50) -> list[Change]:
+        """Every recorded state of one dashboard, newest first.
+
+        `limit=None` walks the whole history.
+        """
         repo = self._repo()
         if repo is None:
             return []
@@ -638,15 +712,32 @@ class HistoryStore:
         Deliberately not the commit's parent. Another dashboard's commit
         can sit in between, and its state is no state of this dashboard
         at all - reading it would answer a question nobody asked.
+
+        Walked from the change itself, filtered on the dashboard's paths,
+        two entries deep: the change and the one before it. Listing the
+        dashboard's whole history to find a neighbour cost a walk over
+        all of it - and, capped at a thousand, answered None beyond that,
+        which every caller reads as "the first recorded state".
+
+        None when `revision` is not a change of this dashboard at all:
+        the first entry the filtered walk yields would then be some
+        earlier change of it, and calling that the predecessor of a
+        stranger would be wrong.
         """
-        full = self.resolve(revision)
+        repo = self._repo()
+        if repo is None:
+            return None
+        full = self._resolve(repo, revision)
         if full is None:
             return None
-        found = False
-        for change in self.list_changes(key, limit=1000):
-            if found:
-                return change.revision
-            found = change.revision == full
+        walker = repo.get_walker(
+            include=[full.encode()],
+            paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
+            max_entries=2,
+        )
+        found = [_as_text(entry.commit.id) for entry in walker]
+        if len(found) == 2 and found[0] == full:
+            return found[1]
         return None
 
     def resolve(self, revision: str) -> str | None:
@@ -768,12 +859,27 @@ class HistoryStore:
         repo = self._repo()
         if repo is None:
             return set()
-        path = f"{key}.yaml"
-        return {
-            revision
-            for revision in revisions
-            if self._read_from(repo, path, revision) == text
-        }
+        # By blob id, not by content: git names a blob by its bytes, so
+        # the id of `text` is the id every matching revision points at.
+        # Reading and decoding fifty blobs of a large dashboard to compare
+        # them was the alternative.
+        from dulwich.objects import Blob  # noqa: PLC0415
+
+        wanted = Blob.from_string(text.encode("utf-8")).id
+        path = f"{key}.yaml".encode()
+        same: set[str] = set()
+        for revision in revisions:
+            resolved = self._resolve(repo, revision)
+            if resolved is None:
+                continue
+            try:
+                tree = repo[repo[resolved.encode()].tree]
+                _, blob_id = tree.lookup_path(repo.get_object, path)
+            except KeyError:
+                continue
+            if blob_id == wanted:
+                same.add(revision)
+        return same
 
     def list_dashboards(self) -> list[str]:
         """Every dashboard the history currently tracks."""
@@ -790,18 +896,37 @@ class HistoryStore:
             if entry.path.endswith(b".yaml")
         )
 
-    def list_all_dashboards(self, limit: int = 1000) -> list[str]:
+    def list_all_dashboards(self) -> list[str]:
         """Every dashboard the history has ever held, deleted ones included.
 
         The deleted ones are the whole point of the method: a dashboard
         that is gone is exactly the one somebody comes looking for, and it
-        is no longer in HEAD to be found.
+        is no longer in HEAD to be found. The names half of `survey`,
+        without its reads: the callers only ask whether a key is known.
         """
         repo = self._repo()
         if repo is None or self._resolve(repo, "HEAD") is None:
             return []
+        return sorted(self._walk_history(repo)[0])
+
+    @staticmethod
+    def _walk_history(repo: Repo) -> tuple[set[str], dict[str, bytes]]:
+        """One walk over the whole history: every name, and every last meta.
+
+        The whole history, not the newest thousand commits. Capped, a
+        dashboard deleted a thousand saves ago left the panel's list and
+        could no longer be forgotten, silently - the invisible gap this
+        module exists to prevent. About a quarter of a second per
+        thousand commits.
+
+        The second half maps a key to the blob of the `meta/<key>.yaml`
+        its deletion removed - the newest such removal, since the walk
+        runs newest first. That is the name and icon a gone dashboard
+        last had.
+        """
         names: set[str] = set()
-        for entry in repo.get_walker(max_entries=limit):
+        removed_meta: dict[str, bytes] = {}
+        for entry in repo.get_walker():
             for change in entry.changes():
                 for one in change if isinstance(change, list) else [change]:
                     for side in (one.old, one.new):
@@ -809,19 +934,74 @@ class HistoryStore:
                         # Top level only: meta/<key>.yaml is not a dashboard.
                         if path and b"/" not in path and path.endswith(b".yaml"):
                             names.add(path.decode()[: -len(".yaml")])
-        return sorted(names)
+                    old_path = getattr(one.old, "path", None)
+                    if (
+                        old_path
+                        and old_path.startswith(b"meta/")
+                        and old_path.endswith(b".yaml")
+                        and getattr(one.new, "path", None) is None
+                    ):
+                        key = old_path[len("meta/") : -len(".yaml")].decode()
+                        removed_meta.setdefault(key, one.old.sha)
+        return names, removed_meta
 
-    def last_known_meta(self, key: str, limit: int = 5) -> str | None:
-        """The most recent metadata recorded for a dashboard.
+    def survey(self) -> Survey:
+        """Every dashboard ever, which are live, and what each is called.
 
-        For a deleted one that is the state just before the deletion -
-        which is the name and icon it should carry when it comes back.
+        One walk and one look at HEAD for all of it. Asking each deleted
+        dashboard on its own for its last name cost a path-filtered walk
+        apiece: measured on 2026-09-04, 0.67 s for the walk against 8.27 s
+        for twenty-two of those.
+
+        Metadata still in the tree at HEAD wins over what a deletion
+        removed: it is more recent, whether the dashboard is live or a
+        deletion missed it.
+
+        Cached by HEAD. The panel asks on every recorded change, and the
+        answer cannot change until HEAD does.
         """
-        for change in self.list_changes(key, limit=limit):
-            text = self.read_meta_at(key, change.revision)
-            if text is not None:
-                return text
-        return None
+        repo = self._repo()
+        if repo is None:
+            return Survey([], set(), {})
+        head = self._resolve(repo, "HEAD")
+        if head is None:
+            return Survey([], set(), {})
+        cached = self._survey
+        if cached is not None and cached[0] == head:
+            return cached[1]
+
+        names, removed_meta = self._walk_history(repo)
+        tree = repo[repo[head.encode()].tree]
+        live = {
+            entry.path.decode()[: -len(".yaml")]
+            for entry in tree.items()
+            if entry.path.endswith(b".yaml")
+        }
+        at_head: dict[str, bytes] = {}
+        try:
+            _, meta_id = tree.lookup_path(repo.get_object, b"meta")
+            for entry in repo[meta_id].items():
+                if entry.path.endswith(b".yaml"):
+                    at_head[entry.path.decode()[: -len(".yaml")]] = entry.sha
+        except KeyError:
+            pass  # no meta/ directory yet
+        last_meta: dict[str, str] = {}
+        for key in names:
+            blob = at_head.get(key)
+            if blob is None and key not in live:
+                blob = removed_meta.get(key)
+            if blob is None:
+                continue
+            try:
+                last_meta[key] = repo[blob].data.decode("utf-8")
+            except KeyError:
+                # Seen by the walk, pruned before the read: a `forget` ran
+                # in between, and reads are not held off while it does.
+                # A name without its title beats no list at all.
+                continue
+        found = Survey(sorted(names), live, last_meta)
+        self._survey = (head, found)
+        return found
 
     def list_versions(self, key: str | None = None) -> list[Version]:
         """Every named point, newest first. One dashboard's, or all of them.
@@ -834,13 +1014,11 @@ class HistoryStore:
         repo = self._repo()
         if repo is None:
             return []
-        prefix = None if key is None else f"{key}/"
         found: list[tuple[int, Version]] = []
-        for ref in repo.refs.as_dict(b"refs/tags"):
+        for ref, tag in self._each_tag(repo):
             name = ref.decode()
-            if prefix is not None and not name.startswith(prefix):
+            if key is not None and not _owns(ref, key):
                 continue
-            tag = repo[repo.refs[b"refs/tags/" + ref]]
             if hasattr(tag, "object"):
                 message = (tag.message or b"").decode("utf-8")
                 title, _, description = message.partition("\n\n")

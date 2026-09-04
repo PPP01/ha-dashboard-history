@@ -5,6 +5,15 @@ module, so neither can drift from the other.
 
 Nothing writes without `confirm: true`. Every restoring service returns a
 preview otherwise.
+
+Every service requires an administrator, exactly like the WebSocket
+commands and the panel. Found on 2026-09-03: Home Assistant's
+`call_service` checks no permissions of its own, so a plain
+`async_register` let any signed-in user - one who may not edit a
+dashboard in the frontend - restore one, read its whole configuration
+from the preview, or forget a history for good. Registered as admin
+services, a call from a user who is not one is refused with
+`Unauthorized`; a call without a user, from an automation, still runs.
 """
 
 from __future__ import annotations
@@ -14,9 +23,11 @@ import logging
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 
 from . import operations
 from .const import DOMAIN
+from .snapshot import async_get_all_configs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +37,24 @@ DASHBOARD = vol.Schema({vol.Required("dashboard"): cv.string})
 async def async_register(hass: HomeAssistant) -> None:
     """Register every service."""
     store = hass.data[DOMAIN]["store"]
+
+    async def debug_snapshot(call: ServiceCall) -> dict:
+        """Report what the integration can currently see.
+
+        Kept permanently. On any later hunt for a fault this answers the
+        first question - whether the dashboards are visible at all. In
+        this table with the others so that every rule the table applies -
+        admin only, response only - reaches it without a second place to
+        remember.
+        """
+        configs = await async_get_all_configs(hass)
+        return {
+            "count": len(configs),
+            "dashboards": {
+                key: {"views": len(config.get("views") or [])}
+                for key, config in sorted(configs.items())
+            },
+        }
 
     async def history(call: ServiceCall) -> dict:
         return await operations.async_history(
@@ -102,6 +131,7 @@ async def async_register(hass: HomeAssistant) -> None:
         )
 
     registrations = [
+        ("debug_snapshot", debug_snapshot, vol.Schema({})),
         ("history", history, DASHBOARD.extend({vol.Optional("limit", default=50): int})),
         ("deleted_since", deleted_since,
          DASHBOARD.extend({vol.Required("revision"): cv.string})),
@@ -136,7 +166,7 @@ async def async_register(hass: HomeAssistant) -> None:
         ("versions", versions, vol.Schema({vol.Optional("dashboard"): cv.string})),
     ]
     for name, handler, schema in registrations:
-        hass.services.async_register(
-            DOMAIN, name, handler, schema=schema,
+        async_register_admin_service(
+            hass, DOMAIN, name, handler, schema=schema,
             supports_response=SupportsResponse.ONLY,
         )

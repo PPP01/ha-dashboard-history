@@ -10,6 +10,7 @@ restoring operation answers with a preview and changes nothing.
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 
@@ -29,35 +30,98 @@ from .snapshot import (
     async_save_config,
 )
 from .store import HistoryStore
-from .yaml_io import dump, load
+from .yaml_io import dump, load_state
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _diff(old: dict, new: dict, name: str) -> str:
-    """A unified diff between two configurations, empty when equal."""
-    return "".join(
+def _preview(old: dict, new: dict, name: str) -> tuple[str, dict, str]:
+    """The diff, the plain words for it, and the text of `old`.
+
+    All real work - two YAML dumps and a difflib pass, then a second
+    card-matching run - and all of it belongs off the event loop, so it
+    is paired here to cost one executor hop. The dump of `old` is handed
+    back because `_keep_the_live_state` needs exactly that text, and
+    dumping twelve hundred cards a second time is not free.
+    """
+    old_text, new_text = dump(old), dump(new)
+    diff = "".join(
         difflib.unified_diff(
-            dump(old).splitlines(keepends=True),
-            dump(new).splitlines(keepends=True),
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
             fromfile=f"live/{name}",
             tofile=f"restored/{name}",
         )
     )
+    return diff, _as_dict(explain_effect(old, new)), old_text
 
 
-def _preview(old: dict, new: dict, name: str) -> tuple[str, dict]:
-    """The diff and the plain words for it, worked out in one place.
+# Every operation below that reads a state, matches cards or renders a
+# diff does so through one of these, in an executor. Found on 2026-09-03:
+# only `async_undo_change` kept that work off the event loop; the other
+# three parsed YAML and matched cards on it, and `async_history` dumped
+# the live dashboard there. Measured at 78 ms per matching pass on twelve
+# hundred cards, that is a stalled Home Assistant on every row expanded.
 
-    Both are real work - two YAML dumps and a difflib pass, then a
-    second card-matching run - and both belong off the event loop. They
-    are paired here so that costs one executor hop rather than two.
+
+def _removed_since(text: str, current: dict) -> list:
+    """What `text` held that `current` no longer does."""
+    return find_removed(load_state(text), current)
+
+
+def _reinsertion(text: str, current: dict, position: int, key: str) -> dict:
+    """Everything `restore_deleted` works out, in one hop.
+
+    Answers with an `error` key when there is nothing to put back or the
+    place it belonged to is gone, and otherwise with the item, the
+    restored configuration and its preview. One shape for both so the
+    caller reads it once.
     """
-    return _diff(old, new, name), _as_dict(explain_effect(old, new))
+    items = _removed_since(text, current)
+    if not items:
+        return {"error": "nothing is missing since that revision"}
+    if not 0 <= position < len(items):
+        return {"error": f"position {position} out of range (0..{len(items) - 1})"}
+    try:
+        restored = reinsert(current, items[position])
+    except LookupError as err:
+        # The place it belonged to is gone. Every other failure here
+        # answers with a message rather than an exception; so does this.
+        return {"error": str(err)}
+    diff, explanation, live_text = _preview(current, restored, key)
+    return {
+        "item": items[position],
+        "restored": restored,
+        "diff": diff,
+        "explanation": explanation,
+        "live_text": live_text,
+    }
+
+
+def _target_and_preview(text: str, current: dict, key: str) -> tuple:
+    """The recorded state as a configuration, and the preview of going there."""
+    target = load_state(text)
+    return (target, *_preview(current, target, key))
+
+
+def _plan_undo(before_text: str, text: str, current: dict):
+    """The undo plan for the change from `before_text` to `text`.
+
+    Answers with the parsed `before` as well: the caller compares the
+    undone state against it, and parsing the same text twice for that
+    was the one piece of double work left on this path.
+    """
+    before = load_state(before_text)
+    return plan_undo(before, load_state(text), current), before
+
+
+def _same_as_live(store: HistoryStore, key: str, revisions: list, live: dict) -> set:
+    """Which of these revisions hold exactly the live configuration."""
+    return store.matching_revisions(key, revisions, dump(live))
 
 
 async def _keep_the_live_state(
-    hass: HomeAssistant, store: HistoryStore, key: str, current: dict
+    hass: HomeAssistant, store: HistoryStore, key: str, current: str | None
 ) -> str | None:
     """Record what is on the dashboard now, before it is overwritten.
 
@@ -91,10 +155,13 @@ async def _keep_the_live_state(
     question that matters, and stays right no matter how the recording
     failed.
     """
-    if not current:
-        # No live configuration at all, so there is nothing to keep and
-        # nothing the recorder could have missed. Saying otherwise here
-        # would put a warning on the one case that is already understood.
+    if current is None:
+        # No live configuration at all - the dashboard was never saved -
+        # so there is nothing to keep and nothing the recorder could have
+        # missed. Saying otherwise here would put a warning on the one
+        # case that is already understood. `None`, not "empty": a saved
+        # `{}` is a state like any other, and Home Assistant does store
+        # one. Found by a second review on 2026-09-04.
         return None
     capture = hass.data.get(DOMAIN, {}).get("capture")
     if capture is not None:
@@ -104,9 +171,15 @@ async def _keep_the_live_state(
             )
         except Exception:  # noqa: BLE001 - a note, never a refusal
             _LOGGER.exception("Could not record %s before restoring it", key)
-    recorded = await hass.async_add_executor_job(store.read_at, key, "HEAD")
-    if recorded == dump(current):
-        return None
+    try:
+        # `current` is the live state as text, dumped once by `_preview`.
+        if await hass.async_add_executor_job(store.read_at, key, "HEAD") == current:
+            return None
+    except Exception:  # noqa: BLE001 - the check itself must not refuse either
+        # A repository that cannot be read is the same disappointment as
+        # one that cannot be written, and the answer is the same: the
+        # restore goes ahead, and the note says what is missing.
+        _LOGGER.exception("Could not check whether %s was recorded", key)
     _LOGGER.warning(
         "The state of %s at the time of the restore is not in the history", key
     )
@@ -166,20 +239,21 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
     A deleted dashboard is listed too, and marked as such. That is not a
     courtesy: it is the one somebody opens this tool to find.
     """
-    tracked = set(await hass.async_add_executor_job(store.list_dashboards))
-    ever = await hass.async_add_executor_job(store.list_all_dashboards)
+    # One executor hop for the store's whole answer: every name, which
+    # are live, and what each was last called. See `HistoryStore.survey`.
+    found = await hass.async_add_executor_job(store.survey)
     known = await async_known_keys(hass)
     meta = await async_get_all_meta(hass)
 
     dashboards = []
-    for key in ever:
-        exists = is_live(key, tracked, known)
+    for key in found.names:
+        exists = is_live(key, found.live, known)
         info = meta.get(key)
         if info is None:
-            # Gone, so Home Assistant can say nothing about it. Its own last
-            # recorded name is better than falling back to the bare key.
-            text = await hass.async_add_executor_job(store.last_known_meta, key)
-            info = (load(text) if text else None) or {}
+            # Gone, or live without a registry entry (the default
+            # dashboard): Home Assistant can say nothing about it, and
+            # its own last recorded name beats the bare key.
+            info = load_state(found.last_meta.get(key))
         dashboards.append(
             {
                 "key": key,
@@ -213,12 +287,15 @@ async def async_history(
     builds its sections from that, so it never has to join two calls
     together - a join in the panel is logic in the panel.
     """
-    changes = await hass.async_add_executor_job(store.list_changes, key, limit)
+    changes, versions = await asyncio.gather(
+        hass.async_add_executor_job(store.list_changes, key, limit),
+        hass.async_add_executor_job(store.list_versions, key),
+    )
     # Which versions sit on which state. Gathered here rather than in the
     # panel: the panel would need a second call and a join, and a join is
     # logic. Two versions on one commit is allowed, so this is a list.
     marks: dict[str, list[dict]] = {}
-    for version in await hass.async_add_executor_job(store.list_versions, key):
+    for version in versions:
         marks.setdefault(version.revision, []).append(
             {
                 "name": version.name,
@@ -230,10 +307,7 @@ async def async_history(
     same: set[str] = set()
     if live is not None and changes:
         same = await hass.async_add_executor_job(
-            store.matching_revisions,
-            key,
-            [c.revision for c in changes],
-            dump(live),
+            _same_as_live, store, key, [c.revision for c in changes], live
         )
     return {
         "changes": [
@@ -258,7 +332,7 @@ async def async_deleted_since(
     if error is not None:
         return {"items": [], "error": error}
     current = await async_get_config(hass, key) or {}
-    items = find_removed(load(text) or {}, current)
+    items = await hass.async_add_executor_job(_removed_since, text, current)
     return {
         "items": [
             {
@@ -284,33 +358,22 @@ async def async_restore_deleted(
     _, text, error = await _state_at(hass, store, key, revision)
     if error is not None:
         return {"applied": False, "error": error}
-    current = await async_get_config(hass, key) or {}
-    items = find_removed(load(text) or {}, current)
-    if not items:
-        return {"applied": False, "error": "nothing is missing since that revision"}
-    if not 0 <= position < len(items):
-        return {
-            "applied": False,
-            "error": f"position {position} out of range (0..{len(items) - 1})",
-        }
-    try:
-        restored = reinsert(current, items[position])
-    except LookupError as err:
-        # The place it belonged to is gone. Every other failure here answers
-        # with a message rather than an exception; this one should too, or
-        # the caller is handed a bare traceback.
-        return {"applied": False, "error": str(err)}
-    diff = _diff(current, restored, key)
-    explanation = _as_dict(explain_effect(current, restored))
+    live = await async_get_config(hass, key)
+    plan = await hass.async_add_executor_job(_reinsertion, text, live or {}, position, key)
+    if "error" in plan:
+        return {"applied": False, "error": plan["error"]}
+    diff, explanation = plan["diff"], plan["explanation"]
     if not confirm:
         return {"applied": False, "preview": diff, "explanation": explanation}
-    lost = await _keep_the_live_state(hass, store, key, current)
-    await async_save_config(hass, key, restored)
+    lost = await _keep_the_live_state(
+        hass, store, key, plan["live_text"] if live is not None else None
+    )
+    await async_save_config(hass, key, plan["restored"])
     result = {
         "applied": True,
         "preview": diff,
         "explanation": explanation,
-        "restored": items[position].label,
+        "restored": plan["item"].label,
     }
     if lost:
         result["note"] = lost
@@ -328,18 +391,17 @@ async def async_restore_state(
     full, text, error = await _state_at(hass, store, key, revision)
     if error is not None:
         return {"applied": False, "error": error}
-    target = load(text) or {}
-
     # A dashboard that is gone entirely is restored, not refused. It is the
     # heaviest loss this tool can witness; refusing exactly there while
     # offering everything for a single card made no sense.
     known = await async_known_keys(hass)
     missing = is_absent(key, known)
-    current = {} if missing else (await async_get_config(hass, key) or {})
-    diff = _diff(current, target, key)
+    live = None if missing else await async_get_config(hass, key)
+    target, diff, explanation, live_text = await hass.async_add_executor_job(
+        _target_and_preview, text, live or {}, key
+    )
     if not diff and not missing:
         return {"applied": False, "preview": "", "note": "already identical"}
-    explanation = _as_dict(explain_effect(current, target))
     if not confirm:
         return {
             "applied": False,
@@ -354,9 +416,11 @@ async def async_restore_state(
         meta_text = await hass.async_add_executor_job(store.read_meta_at, key, full)
         if meta_text is None:
             # Nothing recorded at that exact point; the last name it had is
-            # still much better than falling back to the bare key.
-            meta_text = await hass.async_add_executor_job(store.last_known_meta, key)
-        meta = (load(meta_text) if meta_text else None) or {}
+            # still much better than falling back to the bare key. The same
+            # answer the panel lists it under.
+            found = await hass.async_add_executor_job(store.survey)
+            meta_text = found.last_meta.get(key)
+        meta = load_state(meta_text)
         try:
             note = await async_create_dashboard(hass, key, meta)
         except HomeAssistantError as err:
@@ -370,7 +434,9 @@ async def async_restore_state(
         # Only when there is a live state to keep. A dashboard that is
         # gone has none, and asking for one would record its absence a
         # second time.
-        note = await _keep_the_live_state(hass, store, key, current)
+        note = await _keep_the_live_state(
+            hass, store, key, live_text if live is not None else None
+        )
     await async_save_config(hass, key, target)
     result = {
         "applied": True,
@@ -421,9 +487,10 @@ async def async_undo_change(
         # different operation, and `restore_state` already offers it.
         return {"available": False, "reason": f"{key} does not exist right now"}
 
-    current = await async_get_config(hass, key) or {}
-    plan = await hass.async_add_executor_job(
-        plan_undo, load(before_text) or {}, load(text) or {}, current
+    live = await async_get_config(hass, key)
+    current = live or {}
+    plan, before_state = await hass.async_add_executor_job(
+        _plan_undo, before_text, text, current
     )
     if plan.blocked is not None:
         return {"available": False, "reason": plan.blocked}
@@ -436,7 +503,7 @@ async def async_undo_change(
     # the undo, this runs on every expansion of a change rather than only
     # on a button click - so a dashboard with a few hundred cards would
     # be dumping YAML and matching cards on the event loop each time.
-    diff, explanation = await hass.async_add_executor_job(
+    diff, explanation, live_text = await hass.async_add_executor_job(
         _preview, current, result, key
     )
     if not diff:
@@ -451,7 +518,7 @@ async def async_undo_change(
         # change" button where it would write exactly the same thing.
         # Worked out here because it is a comparison, and a comparison in
         # the panel is logic in the panel.
-        "equals_state_before": result == (load(before_text) or {}),
+        "equals_state_before": result == before_state,
     }
     if not confirm:
         return answer
@@ -459,7 +526,9 @@ async def async_undo_change(
     # other two writing operations got. It answers with a note rather
     # than a refusal: somebody who cannot be given a snapshot still gets
     # their undo, and is told.
-    lost = await _keep_the_live_state(hass, store, key, current)
+    lost = await _keep_the_live_state(
+        hass, store, key, live_text if live is not None else None
+    )
     await async_save_config(hass, key, result)
     answer["applied"] = True
     if lost:
@@ -610,8 +679,12 @@ async def async_explain(
     # be the same class of mistake this project has fixed three times.
     old = await hass.async_add_executor_job(store.read_at, key, before)
     new = await hass.async_add_executor_job(store.read_at, key, full)
-    # yaml_io.load(None) raises; load("") answers None. Measured.
-    return _as_dict(explain_change(load(old or "") or {}, load(new or "") or {}))
+    return await hass.async_add_executor_job(_explain_texts, old, new)
+
+
+def _explain_texts(old: str | None, new: str | None) -> dict:
+    """The change between two recorded texts, in words. Off the loop."""
+    return _as_dict(explain_change(load_state(old), load_state(new)))
 
 
 async def async_forget(
@@ -649,7 +722,7 @@ async def async_forget(
             ),
         }
 
-    changes = await hass.async_add_executor_job(store.list_changes, key, 1000)
+    changes = await hass.async_add_executor_job(store.list_changes, key, None)
     facts = {
         "states": len(changes),
         "described": sum(1 for c in changes if c.description),

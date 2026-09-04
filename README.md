@@ -490,10 +490,12 @@ panel does.
 
 ## If a whole dashboard is deleted
 
-The deletion is recorded the next time Home Assistant starts, as a commit
-saying `<dashboard>: dashboard deleted`. Home Assistant announces a deleted
+The deletion is recorded within about ten seconds, as a commit saying
+`<dashboard>: dashboard deleted`. Home Assistant announces a deleted
 dashboard with no event of its own, so it is noticed by comparison rather
-than as it happens.
+than as it happens: deleting a dashboard moves a sidebar panel, and that
+*is* announced, so the integration takes it as the cue to compare its
+history against what Home Assistant still has. No restart is needed.
 
 **Nothing is lost.** Every earlier state stays readable at its revision:
 

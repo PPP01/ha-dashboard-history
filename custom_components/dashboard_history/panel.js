@@ -72,9 +72,33 @@ class DashboardHistoryPanel extends HTMLElement {
     // very section it was clicked from, the moment _guard's preview
     // fetch triggers the first re-render.
     this._verOpen = new Set();
-    this._busy = false;
+    // A count, not a flag. Two requests can be in flight at once - a row
+    // opened while the previous row's answers are still coming - and a
+    // flag went dark when the *first* of them finished. Measured on
+    // 2026-09-03 in the Node run behind tests/test_panel_behaviour.py.
+    this._busy = 0;
     this._error = null;
     this._loaded = false;
+    // One ticket counter per slot the page can fill - the change list,
+    // the open row's detail. Comparing the selection or the open revision
+    // after an answer is not enough: choose A, then B, then A again, and
+    // the first A's late answer passes that check and overwrites the
+    // second's. See `_claim`.
+    this._tickets = { changes: 0, detail: 0 };
+  }
+
+  /**
+   * Take a slot for one request; answers whether it is still yours.
+   *
+   * Every request that fills a slot claims it first, which invalidates
+   * whoever held it before. The predicate goes to `_guard` so a late
+   * failure stays off the banner, and is asked again before the answer
+   * is written. One mechanism for every place that had grown its own -
+   * `_select` by key, `_expand` by revision, `_refresh` by key alone.
+   */
+  _claim(slot) {
+    const ticket = ++this._tickets[slot];
+    return () => this._tickets[slot] === ticket;
   }
 
   set hass(hass) {
@@ -190,12 +214,13 @@ class DashboardHistoryPanel extends HTMLElement {
     this._dashboards = listed.dashboards || [];
     if (this._selected) {
       const asked = this._selected;
+      const mine = this._claim("changes");
       const history = await this._call("history", { dashboard: asked });
       // Same race as in `_select`, and reachable from further away: this
       // one is started by an event, so it can be in flight at the moment
       // somebody picks another dashboard. Its answer is dropped, but the
       // list read before it is still current and worth drawing.
-      if (this._selected !== asked) {
+      if (!mine()) {
         this._render();
         return;
       }
@@ -205,13 +230,15 @@ class DashboardHistoryPanel extends HTMLElement {
       // out against a dashboard that has moved on.
       const openAt = this._changes.findIndex((c) => c.revision === this._open);
       if (openAt < 0) {
+        this._claim("detail");
         this._open = null;
         this._items = [];
         this._explanation = null;
         this._undo = null;
       } else {
+        const detailMine = this._claim("detail");
         const detail = await this._detailFor(openAt);
-        if (this._selected !== asked) return;
+        if (!detailMine()) return;
         this._take(detail);
       }
     }
@@ -255,17 +282,28 @@ class DashboardHistoryPanel extends HTMLElement {
     return this._hass.callWS({ type: `${DOMAIN}/${type}`, ...extra });
   }
 
-  async _guard(work) {
-    this._busy = true;
+  /**
+   * Run one request with the busy indicator on and its failure shown.
+   *
+   * `stillWanted`, when given, is asked before a failure is shown: a
+   * request whose answer nobody is waiting for any more must not put
+   * its error under the thing that replaced it. Measured on 2026-09-04:
+   * dashboard A chosen, then B; B drawn, then A failed late - and the
+   * banner over B's history said "A failed".
+   */
+  async _guard(work, stillWanted = null) {
+    this._busy += 1;
     this._error = null;
     this._render();
     try {
       return await work();
     } catch (err) {
-      this._error = err?.message || String(err);
+      if (stillWanted === null || stillWanted()) {
+        this._error = err?.message || String(err);
+      }
       return null;
     } finally {
-      this._busy = false;
+      this._busy -= 1;
       this._render();
     }
   }
@@ -283,20 +321,23 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   async _select(key) {
+    const mine = this._claim("changes");
+    this._claim("detail"); // the open row went with the old selection
     this._selected = key;
     this._open = null;
     this._items = [];
     this._explanation = null;
     this._undo = null;
-    const result = await this._guard(() =>
-      this._call("history", { dashboard: key }),
+    const result = await this._guard(
+      () => this._call("history", { dashboard: key }),
+      mine,
     );
     // Click two dashboards quickly and both requests are in flight. The
     // slower answer arriving last would be written into the list under
     // the name of the dashboard the faster one selected - a history
     // shown beside the wrong title, with buttons that act on the title.
-    // Whoever is no longer the selection drops its answer.
-    if (this._selected !== key) return;
+    // Whoever no longer holds the slot drops its answer.
+    if (!mine()) return;
     this._changes = result ? result.changes || [] : [];
     this._render();
   }
@@ -312,15 +353,25 @@ class DashboardHistoryPanel extends HTMLElement {
   async _expand(index) {
     const change = this._changes[index];
     if (this._open === change.revision) {
+      this._claim("detail"); // closing it makes any answer in flight stale
       this._open = null;
       this._render();
       return;
     }
+    const mine = this._claim("detail");
     this._open = change.revision;
     this._items = [];
     this._explanation = null;
     this._undo = null;
-    this._take(await this._guard(() => this._detailFor(index)));
+    const detail = await this._guard(() => this._detailFor(index), mine);
+    // While this row's answers were on their way, somebody opened another
+    // row - or closed this one, or opened it again. Its answers belong to
+    // that later request, and writing these here would put row "a"'s
+    // items under the heading of row "b", or an older answer over a newer
+    // one. Measured on 2026-09-03: the later row's answers arrived first,
+    // then these did, and the page settled on the wrong ones.
+    if (!mine()) return;
+    this._take(detail);
     this._render();
   }
 
@@ -330,9 +381,9 @@ class DashboardHistoryPanel extends HTMLElement {
     return Promise.all([
       before
         ? this._call("deleted_since", {
-            dashboard: this._selected,
-            revision: before,
-          })
+          dashboard: this._selected,
+          revision: before,
+        })
         : Promise.resolve({ items: [] }),
       this._call("explain", {
         dashboard: this._selected,
@@ -383,20 +434,20 @@ class DashboardHistoryPanel extends HTMLElement {
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : renderPlain(preview.explanation, "What applying this does") +
-        // The question this answers came from a person who had to read
-        // the source to find it out: does setting a state back throw the
-        // present one away? It does not, and nothing here said so.
-        // Nothing in this integration rewrites history except `forget`;
-        // a restore writes the live dashboard, and the recorder appends
-        // an entry for what was there. Left out when the dashboard is
-        // being recreated: there is no present state to keep, and the
-        // note beside the buttons already says what happens instead.
-        (preview.creates_dashboard
-          ? ""
-          : `<p class="keeps">What the dashboard holds now is not lost: it
+      // The question this answers came from a person who had to read
+      // the source to find it out: does setting a state back throw the
+      // present one away? It does not, and nothing here said so.
+      // Nothing in this integration rewrites history except `forget`;
+      // a restore writes the live dashboard, and the recorder appends
+      // an entry for what was there. Left out when the dashboard is
+      // being recreated: there is no present state to keep, and the
+      // note beside the buttons already says what happens instead.
+      (preview.creates_dashboard
+        ? ""
+        : `<p class="keeps">What the dashboard holds now is not lost: it
                stays in the history as its own entry, so you can set it
                back the same way.</p>`) +
-        `<details class="raw">
+      `<details class="raw">
            <summary>Show the technical details</summary>
            ${renderDiff(preview.preview)}
          </details>`;
@@ -626,11 +677,10 @@ class DashboardHistoryPanel extends HTMLElement {
          <strong>${escape(dashboard?.title || this._selected)}</strong>.</p>
       <ul class="loss">
         <li>${escape(facts.states)} recorded state${facts.states === 1 ? "" : "s"}${span}</li>
-        ${
-          facts.described
-            ? `<li>${escape(facts.described)} of them carry a description you wrote</li>`
-            : ""
-        }
+        ${facts.described
+        ? `<li>${escape(facts.described)} of them carry a description you wrote</li>`
+        : ""
+      }
       </ul>
       <p>The dashboard itself is already gone; this removes the record of
          what was on it. <strong>It cannot be undone.</strong></p>
@@ -764,12 +814,12 @@ class DashboardHistoryPanel extends HTMLElement {
           is no longer what the dashboard holds.</p>
         <div class="backto">
           ${buttons
-            .map(
-              (b) =>
-                `<button class="act ghost" data-state="${escape(b.revision)}"
+        .map(
+          (b) =>
+            `<button class="act ghost" data-state="${escape(b.revision)}"
                   >${b.label}</button>`,
-            )
-            .join("")}
+        )
+        .join("")}
         </div>${why}
       </details>`;
   }
@@ -1048,13 +1098,12 @@ class DashboardHistoryPanel extends HTMLElement {
         ? `<div class="banner">
              <span class="grow">This dashboard was deleted. Its history is
                still here, and so is everything that was on it.</span>
-             ${
-               this._changes.length > 1
-                 ? `<button class="act" data-state="${escape(this._changes[1].revision)}">
+             ${this._changes.length > 1
+          ? `<button class="act" data-state="${escape(this._changes[1].revision)}">
                       Bring it back
                     </button>`
-                 : ""
-             }
+          : ""
+        }
              <button class="act ghost" data-forget="1">Forget for good</button>
            </div>`
         : "";

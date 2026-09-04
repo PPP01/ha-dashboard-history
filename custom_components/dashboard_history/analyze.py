@@ -35,12 +35,19 @@ class RemovedItem:
 
 @dataclass(frozen=True)
 class Summary:
-    """How many cards were added, removed, edited and moved."""
+    """How many cards were added, removed, edited and moved.
+
+    Whole views are counted apart from cards, and as one each - the same
+    grain the explanation uses, where a view that appears or disappears
+    is one line and not one per card on it.
+    """
 
     added: int = 0
     removed: int = 0
     edited: int = 0
     moved: int = 0
+    views_added: int = 0
+    views_removed: int = 0
 
 
 @dataclass(frozen=True)
@@ -720,28 +727,25 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 def summarize(old: dict, new: dict) -> Summary:
     """Count what changed, for the history display."""
     matching = match_cards(old, new)
-    added = len(matching.added)
-    removed = len(matching.removed)
 
-    # A whole view arriving or leaving is counted by its cards here, while
-    # the explanation reduces it to a single line. Different questions: a
-    # count says how much, a sentence says what.
+    # A whole view arriving or leaving is one view, not the sum of its
+    # cards. It used to be counted by its cards, on the argument that a
+    # count says how much - and the message then contradicted the
+    # explanation of the very same commit: "1 removed, 1 added" beside
+    # 'the whole view "home" was deleted', or "no card changes" for a
+    # renamed view that happened to be empty. One grain for both.
     old_keys = {key for key, _ in _views_by_key(old)}
     new_keys = {key for key, _ in _views_by_key(new)}
-    for key, view in _views_by_key(old):
-        if key not in new_keys:
-            removed += sum(len(cards) for _, cards in card_containers(view))
-    for key, view in _views_by_key(new):
-        if key not in old_keys:
-            added += sum(len(cards) for _, cards in card_containers(view))
 
     # One entry per moved card already, so a swap contributes two.
     # Multiplying would count each of them twice.
     return Summary(
-        added=added,
-        removed=removed,
+        added=len(matching.added),
+        removed=len(matching.removed),
         edited=len(matching.edited),
         moved=len(matching.moved),
+        views_added=len(new_keys - old_keys),
+        views_removed=len(old_keys - new_keys),
     )
 
 
@@ -937,6 +941,13 @@ def _meta_detail(old_meta: dict | None, new_meta: dict | None) -> str:
     return f"{', '.join(fields)} changed" if fields else "metadata recorded"
 
 
+def _views(count: int, verb: str) -> str:
+    """"1 view removed", "2 views added", or nothing."""
+    if not count:
+        return ""
+    return f"{count} view{'s' if count != 1 else ''} {verb}"
+
+
 def change_message(
     name: str,
     old: dict | None,
@@ -970,6 +981,8 @@ def change_message(
         return f"{name}: changed outside Home Assistant"
     counts = summarize(old, new)
     parts = [
+        _views(counts.views_removed, "removed"),
+        _views(counts.views_added, "added"),
         f"{counts.removed} removed" if counts.removed else "",
         f"{counts.added} added" if counts.added else "",
         f"{counts.edited} edited" if counts.edited else "",

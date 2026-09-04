@@ -70,16 +70,34 @@ class HistoryCapture:
         self._writing = asyncio.Lock()
 
     async def async_start(self) -> None:
-        """Reconcile once, then listen."""
-        await self.async_capture(reason="startup")
+        """Listen for saves, reconcile once, then listen for panels too.
+
+        The save listener comes first, and that order is the point. It
+        came after the pass for a long time, and the startup pass over
+        every dashboard takes about twenty seconds on the test bench - a
+        save made in that window was neither in the pass, which had
+        already read the configurations, nor heard by a listener that did
+        not exist yet. Measured on 2026-09-04: the check that drops a card
+        ran while the pass was still writing, and the history never saw
+        the drop. A save heard now waits for the write lock behind the
+        pass and is recorded right after it.
+
+        The panel listener comes after, deliberately: Home Assistant
+        fires `panels_updated` in a burst while it starts, and heard
+        before the pass that burst would queue a second full pass behind
+        the first, for nothing.
+        """
         self._unsubscribe = [
             self._hass.bus.async_listen(EVENT_LOVELACE_UPDATED, self._handle_event),
-            # Home Assistant announces a *saved* dashboard, but says nothing
-            # when one is created, renamed or deleted. All three do move a
-            # panel, though, and that is announced - so this is what tells us
-            # a dashboard is gone or has a new name.
-            self._hass.bus.async_listen(EVENT_PANELS_UPDATED, self._handle_panels),
         ]
+        await self.async_capture(reason="startup")
+        # Home Assistant announces a *saved* dashboard, but says nothing
+        # when one is created, renamed or deleted. All three do move a
+        # panel, though, and that is announced - so this is what tells us
+        # a dashboard is gone or has a new name.
+        self._unsubscribe.append(
+            self._hass.bus.async_listen(EVENT_PANELS_UPDATED, self._handle_panels)
+        )
 
     async def async_stop(self) -> None:
         """Stop listening."""
@@ -208,6 +226,16 @@ class HistoryCapture:
             if revision is not None:
                 touched.append(name)
                 revisions.append(revision)
+        # One line per pass, at debug: which dashboards were looked at and
+        # which were written. When a change does not show up in the
+        # history, this is the line that says whether the recorder saw
+        # the state at all - nothing else in the log does.
+        _LOGGER.debug(
+            "Recording (%s): looked at %s, wrote %s",
+            reason,
+            sorted(configs) if key is None else key,
+            [f"{name}@{revision[:8]}" for name, revision in zip(touched, revisions)],
+        )
         if revisions and announce:
             self._announce(touched, reason)
         return revisions
@@ -261,9 +289,17 @@ class HistoryCapture:
         )
         gone: list[tuple[str, str]] = []
         for name in deletions_to_record(tracked, known):
-            revision = await self._hass.async_add_executor_job(
-                self._store.mark_deleted, name, f"{name}: dashboard deleted"
-            )
+            # One dashboard at a time, like `_async_write` does for the
+            # saves: a failure on the first must not leave the others
+            # unrecorded, and the deletions are the one change this
+            # integration exists to notice.
+            try:
+                revision = await self._hass.async_add_executor_job(
+                    self._store.mark_deleted, name, f"{name}: dashboard deleted"
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not record the deletion of %s", name)
+                continue
             if revision is not None:
                 _LOGGER.info("Dashboard %s is gone; recorded its deletion", name)
                 gone.append((name, revision))

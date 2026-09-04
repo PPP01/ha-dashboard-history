@@ -85,3 +85,12 @@ def test_real_dashboards_survive_the_round_trip(path):
     text = yaml_io.dump(config)
     assert yaml_io.load(text) == config
     assert yaml_io.dump(config) == text
+
+
+def test_load_state_reads_nothing_as_an_empty_configuration():
+    # Every caller used to decide this for itself, as `load(x) or {}` in
+    # several spellings - and `load(None)` raises.
+    assert yaml_io.load_state(None) == {}
+    assert yaml_io.load_state("") == {}
+    assert yaml_io.load_state(yaml_io.dump({})) == {}
+    assert yaml_io.load_state(yaml_io.dump({"views": []})) == {"views": []}

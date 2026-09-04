@@ -234,16 +234,9 @@ def test_list_all_dashboards_ignores_metadata(store):
     assert store.list_all_dashboards() == ["home"]
 
 
-def test_last_known_meta_survives_the_deletion(store):
-    store.write_snapshot("gone", "a: 1\n", "first", meta="title: Gone\n")
-    store.mark_deleted("gone", "gone: dashboard deleted")
-    assert store.read_meta_at("gone", "HEAD") is None
-    assert store.last_known_meta("gone") == "title: Gone\n"
-
-
-def test_last_known_meta_is_none_when_none_was_recorded(store):
+def test_the_survey_has_no_metadata_for_a_dashboard_that_never_recorded_any(store):
     store.write_snapshot("home", "a: 1\n", "first")
-    assert store.last_known_meta("home") is None
+    assert "home" not in store.survey().last_meta
 
 
 def test_list_dashboards_of_an_empty_repository_is_empty(store):
@@ -909,3 +902,213 @@ def test_a_nested_key_stays_readable_and_deletable(store):
     assert store.read_at("energie/x", "HEAD") == "a: 1\n"
     assert store.mark_deleted("energie/x", "energie/x: dashboard deleted") is not None
     assert store.read_at("energie/x", "HEAD") is None
+
+
+# -- a history longer than any cap ---------------------------------------
+#
+# Measured on 2026-09-03: `list_all_dashboards` and `previous_change`
+# stopped after 1000 commits. A dashboard deleted a thousand saves ago
+# vanished from the panel's list and could no longer be forgotten, and
+# undo on an old revision claimed "this is the first recorded state" - an
+# invisible gap, which the docstrings name as the worst possible failure.
+# At one commit per save that is months, not years.
+
+
+def _pad_history(store, count, path=None):
+    """Append `count` commits straight into the object store.
+
+    Through `porcelain.commit` this takes fourteen seconds for a thousand
+    commits (the index is rewritten each time); as raw objects it takes
+    under a second. `path`, when given, changes that one blob in every
+    commit so the walk filtered on it sees every commit too.
+    """
+    from dulwich.objects import Blob, Commit, Tree
+
+    repo = Repo(str(store.path))
+    try:
+        # Whatever branch HEAD points at, not a name: dulwich's default
+        # is "master" today, and a pad on the wrong branch would leave
+        # the noise unreachable and the tests passing for no reason.
+        branch = repo.refs.follow(b"HEAD")[0][-1]
+        head = repo.refs[branch]
+        for number in range(count):
+            parent = repo[head]
+            tree = repo[parent.tree]
+            if path is not None:
+                blob = Blob.from_string(f"noise: {number}\n".encode())
+                repo.object_store.add_object(blob)
+                fresh = Tree()
+                for entry in tree.items():
+                    fresh.add(entry.path, entry.mode, entry.sha)
+                fresh.add(path.encode(), 0o100644, blob.id)
+                repo.object_store.add_object(fresh)
+                tree = fresh
+            commit = Commit()
+            commit.tree = tree.id
+            commit.parents = [head]
+            commit.author = commit.committer = b"noise <noise@localhost>"
+            commit.author_time = commit.commit_time = parent.commit_time + 1 + number
+            commit.author_timezone = commit.commit_timezone = 0
+            commit.message = f"noise {number}".encode()
+            repo.object_store.add_object(commit)
+            head = commit.id
+        repo.refs[branch] = head
+    finally:
+        repo.close()
+
+
+def test_a_dashboard_deleted_a_thousand_saves_ago_is_still_listed(store):
+    store.write_snapshot("gone", "a: 1\n", "gone first")
+    store.mark_deleted("gone", "gone: dashboard deleted")
+    store.write_snapshot("busy", "b: 1\n", "busy first")
+    _pad_history(store, 1005, path="busy.yaml")
+    assert "gone" in store.list_all_dashboards()
+
+
+def test_the_state_before_a_change_is_found_however_old_it_is(store):
+    first = store.write_snapshot("busy", "b: 1\n", "busy first")
+    second = store.write_snapshot("busy", "b: 2\n", "busy second")
+    _pad_history(store, 1005, path="busy.yaml")
+    assert store.previous_change("busy", second) == first
+
+
+# -- a version that vanishes while the list is being read -----------------
+
+
+def test_a_version_gone_between_listing_and_reading_is_skipped(store, monkeypatch):
+    """Measured on 2026-09-04 against the test bench: `forget` deletes
+    every tag and writes it back, and a `history` call that ran at that
+    moment saw `allgemein-strom/v0.56.0` in the list and then found no ref
+    behind it - KeyError, and the whole history answered with an error.
+    dulwich's own `as_dict` skips exactly this; so does this.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "One", "")
+    real_repo = store._repo
+
+    def repo_with_a_phantom():
+        repo = real_repo()
+        listed = repo.refs.as_dict
+
+        def as_dict(base=None):
+            found = listed(base)
+            if base == b"refs/tags":
+                # Listed, but there is no ref behind it any more.
+                found[b"home/v9.9.9"] = found[b"home/v1.0.0"]
+            return found
+
+        monkeypatch.setattr(repo.refs, "as_dict", as_dict)
+        return repo
+
+    monkeypatch.setattr(store, "_repo", repo_with_a_phantom)
+    assert [v.name for v in store.list_versions("home")] == ["home/v1.0.0"]
+
+
+# -- a version belongs to one dashboard, and "foo/" is not "foo/bar/" ------
+#
+# Found by a second review on 2026-09-04: `forget("foo")` deleted
+# `foo/bar/v1.0.0`, the version of a legacy dashboard whose key holds a
+# slash, because "belongs to foo" was tested with startswith("foo/").
+# `list_versions("foo")` listed it for the same reason. A version's name
+# is `<key>/v...`, so what follows the key's own slash is one segment.
+
+
+def test_forgetting_a_dashboard_keeps_the_versions_of_a_nested_legacy_key(store):
+    store.write_snapshot("foo", "a: 1\n", "foo first")
+    store.mark_deleted("foo", "foo gone")
+    store.write_snapshot("foo/bar", "child: yes\n", "child first")
+    store.create_version("foo/bar/v1.0.0", "Child", "")
+    store.forget("foo")
+    assert [v.name for v in store.list_versions()] == ["foo/bar/v1.0.0"]
+
+
+def test_a_nested_legacy_key_s_versions_are_not_listed_under_its_prefix(store):
+    store.write_snapshot("foo", "a: 1\n", "foo first")
+    store.create_version("foo/v1.0.0", "Mine", "")
+    store.write_snapshot("foo/bar", "child: yes\n", "child first")
+    store.create_version("foo/bar/v1.0.0", "Child", "")
+    assert [v.name for v in store.list_versions("foo")] == ["foo/v1.0.0"]
+
+
+# -- every dashboard, with the name each last had, in one walk -------------
+#
+# Why one walk and not one per deleted dashboard: `HistoryStore.survey`.
+
+
+def test_the_survey_names_every_dashboard_and_what_each_was_last_called(store):
+    store.write_snapshot("live", "a: 1\n", "live first", meta="title: Live\n")
+    store.write_snapshot("gone", "b: 1\n", "gone first", meta="title: Old\n")
+    store.write_snapshot("gone", "b: 2\n", "gone renamed", meta="title: Gone\n")
+    store.mark_deleted("gone", "gone deleted")
+    survey = store.survey()
+    assert survey.names == ["gone", "live"]
+    assert survey.live == {"live"}
+    assert survey.last_meta == {"gone": "title: Gone\n", "live": "title: Live\n"}
+
+
+def test_the_survey_follows_head(store):
+    # Cached by HEAD, so every write has to be seen by the next call.
+    store.write_snapshot("one", "a: 1\n", "first")
+    assert store.survey().names == ["one"]
+    store.write_snapshot("two", "b: 1\n", "first")
+    assert store.survey().names == ["one", "two"]
+    store.mark_deleted("one", "gone")
+    assert store.survey().live == {"two"}
+
+
+def test_the_state_before_a_change_of_another_dashboard_is_nothing(store):
+    # `previous_change` walks from the revision it is given, filtered on
+    # the dashboard's own paths. Given a stranger's commit, the first
+    # entry that walk yields is some earlier change of the dashboard -
+    # which is not the predecessor of anything, and must not be reported.
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    other = store.write_snapshot("other", "b: 1\n", "other first")
+    assert store.previous_change("home", other) is None
+
+
+def test_the_survey_finds_metadata_a_deletion_left_in_the_tree(store):
+    # `mark_deleted` removes meta/<key>.yaml only when it is at HEAD; a
+    # meta recorded later than the deletion, or one a deletion missed,
+    # is still in the tree and is still that dashboard's last name.
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.mark_deleted("gone", "gone deleted")
+    store.write_snapshot("other", "c: 1\n", "other first")
+    # Put a meta file for `gone` into the tree by hand, without the dashboard.
+    from dulwich import porcelain
+
+    meta = store.path / "meta" / "gone.yaml"
+    meta.parent.mkdir(exist_ok=True)
+    meta.write_text("title: Left behind\n", encoding="utf-8")
+    porcelain.add(str(store.path), [str(meta)])
+    porcelain.commit(str(store.path), message=b"stray meta", author=b"x <x@x>", committer=b"x <x@x>")
+    assert store.survey().last_meta["gone"] == "title: Left behind\n"
+
+
+def test_the_survey_of_an_empty_repository_is_empty(tmp_path):
+    fresh = HistoryStore(tmp_path / "never")
+    assert fresh.survey().names == []
+    assert fresh.survey().last_meta == {}
+
+
+# -- forgetting reaches the index and the working tree ---------------------
+
+
+def test_forgetting_clears_the_index_and_the_working_tree_too(store):
+    """Found on 2026-09-04 on the test bench: `forget` rewrote the commits
+    and pruned the blobs, but left the dashboard's two files in the index
+    and on disk. The next commit of *any* dashboard built its tree from
+    that index and so referenced blobs that no longer existed - a history
+    every read of that path fell over on, and a dashboard back from the
+    dead in HEAD. It happens whenever `forget` runs before the recorder
+    has marked the deletion, which the operations layer does not wait
+    for.
+    """
+    store.write_snapshot("keep", "k: 1\n", "keep", meta="title: K\n")
+    store.write_snapshot("gone", "g: 1\n", "gone", meta="title: G\n")
+    assert store.forget("gone") == 1
+    store.write_snapshot("keep", "k: 2\n", "keep again", meta="title: K\n")
+    assert store.list_dashboards() == ["keep"]
+    assert not (store.path / "gone.yaml").exists()
+    assert not (store.path / "meta" / "gone.yaml").exists()
+    assert store.survey().names == ["keep"]
