@@ -2513,24 +2513,31 @@ async def run_milestones(access: str) -> None:
             "versions"
         ]
         names = [v["name"].split("/")[-1] for v in found]
-        # Exactly one, on every run: the first setup makes it, and every
-        # later one finds it already there and leaves it alone. That is
-        # the "and none of them twice" half of the promise.
+        # The floor, picked out by name rather than assumed to be the
+        # only version there is. An instance that lives across a
+        # midnight collects a day mark beside it, and a check demanding
+        # exactly one entry would go red every morning because of the
+        # very feature it exists to watch. Measured on 2026-09-05: this
+        # run came back with ['v1.0.1', 'v1.0.0'], v1.0.1 titled after
+        # the day before. What still has to hold is that there is
+        # exactly one floor - that is the "and none of them twice" half
+        # of the promise.
+        floor = next((v for v in found if v["name"].endswith("/v1.0.0")), None)
         check(
             "a dashboard without versions is given v1.0.0 when the integration starts",
-            names == ["v1.0.0"],
+            floor is not None and names.count("v1.0.0") == 1,
             str(names),
         )
         check(
             "and it says that nobody asked for it",
-            bool(found) and found[0].get("automatic") is True,
-            str(found[:1]),
+            floor is not None and floor.get("automatic") is True,
+            str(floor),
         )
         check(
             "and it is called after the day it marks",
-            bool(found)
-            and bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", found[0]["title"])),
-            found[0]["title"] if found else "",
+            floor is not None
+            and bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", floor["title"])),
+            floor["title"] if floor else "",
         )
 
         # The day mark, in the one direction a running instance can be
