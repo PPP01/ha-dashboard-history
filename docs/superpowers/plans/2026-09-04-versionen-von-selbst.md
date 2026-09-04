@@ -1318,9 +1318,11 @@ EOF
 
 **Was hier bewusst nicht passiert** und in die zweite Hälfte gehört: der Moduswechsel und seine Ablage im `localStorage`, die zwei Ansichten, Register, Suchfeld, »Ältere laden« auf `next_cursor`, der Vorgabewert von 50 auf 25, der Rücksprung-Dialog mit der Frage nach einer Version für den jetzigen Stand — und jede Zeile in `panel.js`.
 
-## Zwei benannte Grenzen
+## Drei benannte Grenzen
 
 Damit sie nicht später als Versäumnis gelesen werden:
 
 1. **Der Tageswechsel ist an der laufenden Anlage nur in eine Richtung prüfbar.** Dass eine zweite Änderung desselben Tages keine zweite Marke erzeugt, prüft `run_milestones`. Dass eine Änderung am Folgetag eine erzeugt, prüft nur pytest an `versions.same_day` — keine API kann einen Commit rückdatieren, und ein Prüflauf, der auf Mitternacht wartet, ist keiner. Die Verdrahtung dazwischen ist absichtlich so dünn wie möglich gehalten: zwei Store-Abfragen, ein Vergleich, ein Aufruf.
 2. **Eine Änderung an Home Assistant vorbei markiert ihren Tag nicht.** Sie wird beim Start eingesammelt, und da ist die Markierung noch nicht scharf. Das ist der Preis dafür, dass der Startdurchlauf keine Marken mit falschen Nummern erzeugen kann, und er trifft nur Anlagen, die zwischen zwei Starts von außen bearbeitet werden.
+
+3. **Zwei Speichervorgänge im Millisekundenabstand über einen Tageswechsel können die Marke ganz verlieren.** Gefunden beim Review von Aufgabe 3 am 2026-09-05. `_async_mark_day` fragt beim *Ausführen* die neuesten zwei Einträge ab, nicht die, zu denen sein Ereignis gehörte. Landet zwischen dem Anlegen der Aufgabe für die erste Änderung des neuen Tages und ihrem Lauf bereits eine zweite Änderung desselben Tages, sieht sie nur noch dieses zweite Paar — `same_day` trifft zu, und der letzte Stand des Vortags rutscht aus dem Zwei-Einträge-Fenster, ohne je betrachtet worden zu sein. Die Sperre verhindert das doppelte Markieren desselben Paares, nicht dieses Verschieben. Bewusst stehengelassen: Es braucht zwei echte Speichervorgänge im Abstand weniger Millisekunden genau um Mitternacht, und der Ausweg — das Ereignis seine eigene Revision mittragen zu lassen — verbreitert die Schnittstelle zwischen Rekorder und `milestones.py` für einen Fall, den niemand gemeldet hat.
