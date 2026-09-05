@@ -133,6 +133,12 @@ class DashboardHistoryPanel extends HTMLElement {
     this._moreFound = false;
     this._searching = false;
     this._typing = null;
+    // Whether the search box holds the caret, and where in the word it
+    // sits. A render builds a new box, so both have to live outside it -
+    // see the end of `_render`, which puts the caret back only where it
+    // was.
+    this._inBox = false;
+    this._caret = null;
     // The versions holding exactly what the dashboard holds now, worked
     // out by the server against *every* version. Read rather than
     // recomputed: doing it here means doing it over the loaded window,
@@ -274,6 +280,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // that outlives the element would keep fetching a history nobody is
     // looking at.
     this._unlisten();
+    // And so would a keystroke's 400 ms. Type, then leave the panel,
+    // and the walk over the whole history - about half a second per
+    // thousand commits - runs for a page nobody is on, to write its
+    // answer into an element that is off the screen. Cancelled here for
+    // the same reason `7d37e9c` cancels a mark in flight on unload.
+    clearTimeout(this._typing);
+    this._typing = null;
   }
 
   /**
@@ -1821,6 +1834,11 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     this._renderOwed = false;
+    // Read before the old nodes go, and used at the very end to decide
+    // whether the caret goes back into the search box. Whether removing
+    // a focused element fires `blur` is not the same in every engine,
+    // and this must not depend on the answer.
+    const wasTyping = this._inBox;
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="bar">
@@ -1928,11 +1946,43 @@ class DashboardHistoryPanel extends HTMLElement {
       });
     const find = root.querySelector("input.find");
     if (find) {
-      // Focus survives the re-render this typing causes; without it the
-      // box would lose the caret on every keystroke.
-      if (this._query) find.focus();
-      find.setSelectionRange?.(find.value.length, find.value.length);
+      // The caret goes back where it was - and only if it was here.
+      //
+      // A render replaces the search box along with everything else, so
+      // typing would lose the caret on every keystroke without this.
+      // What it used to follow, though, was the *query* and not the
+      // person: any render with a word in the box pulled the focus in
+      // and pushed the caret to the end of it. Opening a row renders
+      // twice (`_guard` on the way in and on the way out), so a click
+      // in the list took the caret out of the list and put it in the
+      // box; and a save announced from elsewhere jumped a half-typed
+      // correction to the end of the word while somebody stood in the
+      // middle of it.
+      if (wasTyping) {
+        find.focus();
+        // Where the caret was, not the end of the line. The end is
+        // right for the ordinary case - somebody typing forwards is
+        // already there - and wrong for the one that hurt: a correction
+        // made in the middle of a word.
+        const at = this._caret ?? find.value.length;
+        find.setSelectionRange?.(at, at);
+      }
+      // Focus is a fact about the page, so it is read from the page.
+      // Both fire on the new box as well - `find.focus()` above is a
+      // focus - which is what keeps the flag true across a run of
+      // renders while somebody types.
+      find.addEventListener("focus", () => {
+        this._inBox = true;
+      });
+      find.addEventListener("blur", () => {
+        this._inBox = false;
+      });
       find.addEventListener("input", () => {
+        // Set here too, and not only in the listener above: this is the
+        // one event that certainly came from somebody typing, and it is
+        // the moment the caret's position is worth remembering.
+        this._inBox = true;
+        this._caret = find.selectionStart ?? find.value.length;
         clearTimeout(this._typing);
         const text = find.value;
         // 400 ms, and only then. A walk over the whole history costs

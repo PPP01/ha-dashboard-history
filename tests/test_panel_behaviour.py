@@ -2428,3 +2428,121 @@ def test_the_reload_after_a_write_says_it_is_working(reload_fails):
     assert reload_fails["busyWhileReloading"] == 1
     assert reload_fails["afterRestore"]["busy"] == 0
     assert reload_fails["lastFrame"]["busy"] == 0
+
+
+# -- the caret belongs to the person, not to the render ---------------------
+#
+# `_render` replaces the search box along with everything else, so a
+# keystroke needs its focus put back. It used to be put back on *every*
+# render that found a word in the box, which is a different thing: a
+# click in the list, or a save announced from elsewhere, pulled the
+# caret out of wherever it was and dropped it at the end of the query.
+#
+# The real `_render` runs here, against a root that answers `dialog[open]`
+# honestly - the stand-in otherwise hands out a node for every selector,
+# and `_render` would hold every frame back for a dialog nobody opened.
+
+_CARET = """
+const rootFor = () => {
+  const it = node();
+  const base = it.querySelector.bind(it);
+  it.querySelector = (selector) =>
+    selector === "dialog[open]" ? null : base(selector);
+  return it;
+};
+
+const el = new Panel();
+el.shadowRoot = rootFor();
+el._selected = "dash";
+el._mode = "advanced";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._changes = [
+  { revision: "a", message: "1 card added", timestamp: 1, versions: [] },
+];
+let searched = 0;
+el._search = async () => { searched += 1; };
+
+// The first paint, so that the box exists to be patched.
+el._render();
+const find = el.shadowRoot.querySelector("input.find");
+let focused = 0;
+let caret = null;
+find.focus = () => { focused += 1; };
+find.setSelectionRange = (at) => { caret = at; };
+
+// 1. Two renders nobody typed for, with a word standing in the box.
+// Opening a row does exactly this: `_guard` draws on the way in and on
+// the way out.
+el._query = "winter";
+find.value = "winter";
+el._render();
+el._render();
+const afterPlainRenders = { focused, caret };
+
+// 2. Somebody types, in the middle of the word. The box has the focus,
+// so the browser fired one, and the caret sits where they are working.
+find._on.focus();
+find.selectionStart = 3;
+find._on.input();
+el._render();
+const afterTyping = { focused, caret };
+
+// 3. ...and clicks into the list. A render must leave the caret there.
+find._on.blur();
+el._render();
+const afterLeavingTheBox = { focused, caret };
+
+// 4. A keystroke, and then the panel is left. The 400 ms walk over the
+// whole history must not run for a page nobody is on.
+find._on.focus();
+find._on.input();
+el.disconnectedCallback();
+await new Promise((r) => setTimeout(r, 450));
+const searchesAfterLeaving = searched;
+
+// The control: the same keystroke on a panel nobody leaves.
+find._on.input();
+await new Promise((r) => setTimeout(r, 450));
+const searchesAfterWaiting = searched;
+
+console.log(JSON.stringify({
+  afterPlainRenders, afterTyping, afterLeavingTheBox,
+  searchesAfterLeaving, searchesAfterWaiting,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def caret(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "caret", _CARET)
+
+
+def test_a_render_alone_does_not_take_the_caret_into_the_search_box(caret):
+    # The finding: `if (this._query) find.focus()` ran on every render.
+    # Expanding a row renders twice, so a click in the list ended with
+    # the caret in the search box.
+    assert caret["afterPlainRenders"]["focused"] == 0
+    assert caret["afterPlainRenders"]["caret"] is None
+
+
+def test_the_caret_comes_back_where_the_typing_left_it(caret):
+    # Typing still keeps its caret - that is what the focus call is for -
+    # and it comes back to the position it was at, not to the end of the
+    # line. Correcting a word in the middle is the case that hurt: an
+    # event arriving mid-edit jumped the caret to the end.
+    assert caret["afterTyping"]["focused"] == 1
+    assert caret["afterTyping"]["caret"] == 3
+
+
+def test_a_render_after_clicking_away_leaves_the_caret_where_it_went(caret):
+    # Focus is a fact about the page. Once it has left the box, no
+    # render may fetch it back.
+    assert caret["afterLeavingTheBox"]["focused"] == 1
+
+
+def test_leaving_the_panel_cancels_the_keystroke_still_in_flight(caret):
+    # Half a second per thousand commits, for a page nobody is on, to
+    # write its answer into an element off the screen. The control below
+    # is what makes the zero mean something.
+    assert caret["searchesAfterLeaving"] == 0
+    assert caret["searchesAfterWaiting"] == 1
