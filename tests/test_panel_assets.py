@@ -22,8 +22,15 @@ PARTS = sorted((PANEL / "panel").rglob("*.js"))
 
 def test_the_parts_are_found_at_all():
     # Without this the two tests below would pass by having nothing to
-    # look at, which is the one way a guard fails silently.
-    assert [path.name for path in PARTS] == ["render.js", "style.js"]
+    # look at, which is the one way a guard fails silently. Named rather
+    # than counted: a part that quietly disappears is exactly the kind of
+    # loss this list is here to notice.
+    assert [path.name for path in PARTS] == [
+        "dialogs.js",
+        "render.js",
+        "rows.js",
+        "style.js",
+    ]
 
 
 def test_the_style_is_one_unbroken_template_literal():

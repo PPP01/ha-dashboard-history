@@ -40,18 +40,20 @@ const PARTS = new URL(import.meta.url).search;
 // and the shadow root attached, but `set hass` never fired once in
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
-let escape;
-let renderDiff;
-let renderPlain;
-let when;
-let joinNames;
+let escape, renderDiff, renderPlain, when, joinNames;
+let sections, someNames, renderRow, versionHead;
+let DIALOGS;
 
 const partsReady = Promise.all([
   import(`./panel/style.js${PARTS}`),
   import(`./panel/render.js${PARTS}`),
-]).then(([style, render]) => {
+  import(`./panel/rows.js${PARTS}`),
+  import(`./panel/dialogs.js${PARTS}`),
+]).then(([style, render, rows, dialogs]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
+  ({ sections, someNames, renderRow, versionHead } = rows);
+  ({ DIALOGS } = dialogs);
 });
 
 class DashboardHistoryPanel extends HTMLElement {
@@ -935,31 +937,10 @@ class DashboardHistoryPanel extends HTMLElement {
     const change = this._changes[index];
     if (!change) return "";
     const carried = (change.versions || []).map((v) => v.name.split("/").pop());
-    if (carried.length) return `This state already carries ${this._someNames(carried)}.`;
+    if (carried.length) return `This state already carries ${someNames(carried)}.`;
     const alike = this._matchingElsewhere(index);
-    if (alike.length) return `This is the same state as ${this._someNames(alike)}.`;
+    if (alike.length) return `This is the same state as ${someNames(alike)}.`;
     return "";
-  }
-
-  /**
-   * A couple of names, and how many were left out.
-   *
-   * Measured on the test bench: eighteen versions sat on states equal to
-   * the live one, and the chip listed every one of them - a label longer
-   * than the row it labelled. A history that goes back and forth while
-   * versions are made collects these, and the count is unbounded.
-   *
-   * Cut, never silently: the project's own rule for the explanation
-   * lists is that a summary which omits without saying so is worse than
-   * a long one. The tooltip carries all of them.
-   *
-   * The one named is the first, which is the version on the most recent
-   * matching state - not the highest number. Those usually coincide and
-   * need not: a version made today on an old state sorts by that state.
-   */
-  _someNames(names) {
-    if (names.length <= 2) return joinNames(names);
-    return `${names[0]} and ${names.length - 1} more`;
   }
 
   /**
@@ -1022,71 +1003,13 @@ class DashboardHistoryPanel extends HTMLElement {
       .flatMap((change) => change.versions.map((v) => v.name.split("/").pop()));
   }
 
-  /**
-   * The history, cut into sections at the versions.
-   *
-   * A version marks a state, so it marks the *newest* change it contains
-   * - the section it heads runs from that change downwards to the next
-   * version below. Everything above the topmost version is not in a
-   * version yet, and that is the section people work in.
-   */
-  _sections() {
-    const out = [];
-    let head = null;
-    let rows = [];
-    this._changes.forEach((change, index) => {
-      const marks = change.versions || [];
-      if (marks.length) {
-        if (rows.length || head) out.push({ versions: head, rows });
-        head = marks;
-        rows = [index];
-      } else {
-        rows.push(index);
-      }
-    });
-    if (rows.length || head) out.push({ versions: head, rows });
-    return out;
-  }
-
-  /**
-   * A section head. Two versions can sit on the same state; both are
-   * named rather than one of them being silently dropped.
-   *
-   * The button disappears when its target is what the dashboard holds
-   * already - the same rule the row buttons follow, and for the same
-   * reason: offering it there opens a dialog reading "No difference."
-   * above a live Apply button.
-   */
   _renderVersionHead(section) {
-    const [first, ...also] = section.versions;
-    const count = section.rows.length;
-    const extra = also
-      .map((v) => `<span class="also">also ${escape(v.name)} — ${escape(v.title)}</span>`)
-      .join("");
-    // Two different truths, and one wording for both was an overclaim.
-    // A version sitting on the newest entry *is* where the dashboard is.
-    // A version further down whose state matches only holds the same
-    // thing: going back to it wrote a newer entry, and that entry, not
-    // this version, is where you are. Saying "current state" there
-    // invites the reading Decision 9 exists to prevent.
-    //
-    // "same state as now" and not a wording of its own: three places say
-    // this one fact, and they said it in two vocabularies until somebody
-    // read all three together and asked whether they meant the same
-    // thing. They do.
     const top = section.rows[0];
-    const here = this._changes[top]?.same_as_now;
-    const back = here
-      ? `<span class="count">${top === 0 ? "current state" : "same state as now"}</span>`
-      : `<button class="act ghost" data-state="${escape(first.name)}"
-                 >Back to this version</button>`;
-    return `
-      <summary>
-        <span class="name">${escape(first.name.split("/").pop())}</span>
-        <span class="grow">${escape(first.title || first.name)}${extra}</span>
-        <span class="count">${count} change${count === 1 ? "" : "s"}</span>
-        ${back}
-      </summary>`;
+    return versionHead({
+      section,
+      top,
+      here: this._changes[top]?.same_as_now,
+    });
   }
 
   _renderMain() {
@@ -1113,12 +1036,12 @@ class DashboardHistoryPanel extends HTMLElement {
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
     // once, outside the loop, rather than guarded for on every section.
-    const sections = this._sections();
-    const newest = sections.find((s) => s.versions);
+    const cut = sections(this._changes);
+    const newest = cut.find((s) => s.versions);
     const label = newest
       ? `Since ${newest.versions[0].name.split("/").pop()}`
       : "Not in a version yet";
-    const parts = sections.map((section) => {
+    const parts = cut.map((section) => {
       if (!section.versions) return this._renderTopSection(section, label);
       const rows = section.rows
         .map((index, position) =>
@@ -1156,7 +1079,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const sameVer = matching.length
       ? `<span class="why matches" title="${escape(joinNames(matching))}"
            >What the dashboard holds right now is the same state as
-           ${escape(this._someNames(matching))}.</span>`
+           ${escape(someNames(matching))}.</span>`
       : "";
     // Placed by what it describes. Below, the crowned row *is* the
     // current state and the sentence belongs under it. Here nothing is
@@ -1182,60 +1105,13 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _renderRow(change, index, spokenFor = false) {
-    // The word "state" in both chips is load-bearing, and it was missing.
-    //
-    // A row says two things about two different subjects: the message is
-    // about the *change*, the chip about the *state it left behind*. Read
-    // as one sentence, "4 moved · same as now" is a contradiction - four
-    // cards moved, and yet nothing differs? Both halves were true and the
-    // row still misled, because nothing named what each half was about.
-    //
-    // The other difference the chips carry: the top entry is where you
-    // are. A lower entry can hold byte-identical content without being
-    // where you are - move a card up and down and there is a whole run of
-    // them, all worded alike.
-    // `spokenFor` is the first row of a version section, and its head
-    // carries the same chip a few pixels above it. Two identical labels
-    // stacked is not emphasis, it is noise - and it was measurable: the
-    // head read "same content as now" while the row under it read "same
-    // state as now", one fact wearing two coats.
-    const chip =
-      spokenFor || !change.same_as_now
-        ? ""
-        : index === 0
-          ? `<span class="chip now"
-                 title="This is the state the dashboard holds right now."
-                 >current state</span>`
-          : `<span class="chip sameas"
-                   title="The change described here left the dashboard in exactly the state it holds right now."
-                   >same state as now</span>`;
-    // Beside "current state" rather than in a sentence under the card.
-    // Both said the same thing; only one of them sits inside the frame
-    // the eye stops at, and the sentence below was read past. Kept short
-    // for the same reason - a chip is a label, not a statement - with
-    // the part that cannot fit moved into the tooltip, where "a
-    // different entry" is spelled out. It says "identical in content
-    // to", never "is": going back to a version writes a new entry, and
-    // this is that entry, not that version.
-    const matches = index === 0 ? this._matchingElsewhere(index) : [];
-    const named = matches.length
-      ? `<span class="chip ver"
-               title="A different entry that holds exactly what ${escape(joinNames(matches))} holds. Going back to a version writes a new entry; this is that entry."
-               >same state as ${escape(this._someNames(matches))}</span>`
-      : "";
-    return `
-        <div class="card">
-          <div class="change" data-index="${index}">
-            <span class="what">${escape(change.description || change.message)}${chip}${named}
-              ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
-            </span>
-            <span class="when">${escape(when(change.timestamp))}</span>
-            <span class="rev">${escape(change.revision.slice(0, 7))}</span>
-            <button class="pen" data-describe="${index}"
-                    title="Describe this change">\u270e</button>
-          </div>
-          ${this._open === change.revision ? this._renderDetail(index) : ""}
-        </div>`;
+    return renderRow({
+      change,
+      index,
+      spokenFor,
+      matching: index === 0 ? this._matchingElsewhere(index) : [],
+      detail: this._open === change.revision ? this._renderDetail(index) : "",
+    });
   }
 
   _render() {
@@ -1253,65 +1129,7 @@ class DashboardHistoryPanel extends HTMLElement {
         <div class="side">${this._renderSide()}</div>
         <div class="main">${this._renderMain()}</div>
       </div>
-      <dialog class="confirm">
-        <h2></h2>
-        <div class="body"></div>
-        <div class="actions">
-          <span class="note muted" style="margin-right:auto"></span>
-          <button class="act ghost" value="cancel">Cancel</button>
-          <button class="act" value="apply">Apply</button>
-        </div>
-      </dialog>
-      <dialog class="forget">
-        <h2>Forget this dashboard for good</h2>
-        <div class="body"></div>
-        <div class="actions">
-          <button class="act ghost" value="cancel">Cancel</button>
-          <button class="act danger" value="forget">Delete for good</button>
-        </div>
-      </dialog>
-      <dialog class="describe">
-        <h2>Describe this change</h2>
-        <div class="body" style="padding:0 16px 8px">
-          <input class="text" type="text" maxlength="200"
-                 placeholder="Why did you change this?">
-          <p class="muted" style="font-size:13px">
-            This becomes the headline of the entry. The automatic message
-            stays below it. Leave it empty to remove the description.
-          </p>
-        </div>
-        <div class="actions">
-          <button class="act ghost" value="cancel">Cancel</button>
-          <button class="act" value="save">Save</button>
-        </div>
-      </dialog>
-      <dialog class="version">
-        <h2>Create a version</h2>
-        <div class="body" style="padding:0 16px 8px">
-          <p class="muted" style="font-size:13px" data-scope></p>
-          <p class="carries" data-carries hidden></p>
-          <div class="levels">
-            <button type="button" data-level="patch" aria-pressed="true">
-              <strong></strong><span>Patch</span>
-            </button>
-            <button type="button" data-level="minor" aria-pressed="false">
-              <strong></strong><span>Minor</span>
-            </button>
-            <button type="button" data-level="major" aria-pressed="false">
-              <strong></strong><span>Major</span>
-            </button>
-          </div>
-          <input class="text title" type="text" maxlength="200"
-                 placeholder="What is this version?">
-          <input class="text desc" type="text" maxlength="500"
-                 style="margin-top:8px"
-                 placeholder="Anything more worth remembering (optional)">
-        </div>
-        <div class="actions">
-          <button class="act ghost" value="cancel">Cancel</button>
-          <button class="act" value="create">Create</button>
-        </div>
-      </dialog>`;
+      ${DIALOGS}`;
 
     const root = this.shadowRoot;
     const fold = root.querySelector("details.dead");
