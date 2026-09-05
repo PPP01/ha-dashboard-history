@@ -2792,3 +2792,61 @@ def test_an_answer_without_the_day_falls_back_to_the_browser(day_title):
     # dashboard before it carried must not be left standing.
     assert day_title["fallback"] != "1 January 2020"
     assert re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", day_title["fallback"])
+
+
+# -- a double click on "load older" asks once ------------------------------
+#
+# The claim ticket keeps the list right either way: the loser's page is
+# dropped rather than stitched on twice. What it does not do is stop the
+# request, and this is the button that invites the second press - it
+# sits at the bottom of a list, nothing about it changes while it works,
+# and the page it fetches is the slowest read the ordinary path makes.
+
+_OLDER_TWICE = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("dash", [{ revision: "a" }, { revision: "b" }], "b");
+
+const first = el._loadOlder();
+const second = el._loadOlder();
+await settle();
+const asked = calls.filter((c) => c.type === "history").length;
+// Answered as many times as it was asked, so that a second request -
+// the very thing being measured - cannot hang the run instead of
+// failing the assertion.
+while (calls.some((c) => c.type === "history"))
+  reply("history", { changes: [{ revision: "c" }], next_cursor: "c" });
+await first;
+await second;
+const rows = el._changes.map((c) => c.revision);
+
+// The control: pressed again once the first page is in, it fetches.
+const third = el._loadOlder();
+await settle();
+const askedAgain = calls.filter((c) => c.type === "history").length;
+reply("history", { changes: [{ revision: "d" }], next_cursor: null });
+await third;
+
+console.log(JSON.stringify({
+  asked, rows, askedAgain, then: el._changes.map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def older_twice(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "older_twice", _OLDER_TWICE)
+
+
+def test_a_second_press_on_load_older_sends_nothing(older_twice):
+    assert older_twice["asked"] == 1
+    assert older_twice["rows"] == ["a", "b", "c"]
+
+
+def test_the_button_works_again_once_the_page_is_in(older_twice):
+    # The control, and the reason the flag is cleared in a `finally`: a
+    # guard that stuck would leave the rest of the history unreachable
+    # for as long as the page is open.
+    assert older_twice["askedAgain"] == 1
+    assert older_twice["then"] == ["a", "b", "c", "d"]

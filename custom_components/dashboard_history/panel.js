@@ -154,6 +154,9 @@ class DashboardHistoryPanel extends HTMLElement {
     // A commit and not a count: save something while somebody is
     // reading, and every offset below them shifts by one.
     this._cursor = null;
+    // Whether a page below the one on the screen is already on its way.
+    // See `_loadOlder`.
+    this._loadingOlder = false;
     this._selected = null;
     this._open = null; // revision of the expanded change
     this._items = [];
@@ -593,21 +596,39 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   async _loadOlder() {
     if (!this._cursor || !this._selected) return;
+    // A second press while the first page is still on its way asks for
+    // exactly the same page again. Nothing breaks - the claim ticket
+    // drops the loser, so the list is right either way - but the button
+    // invites the double click more than anything else here does: it
+    // sits at the bottom of a list, nothing about it changes while it
+    // works, and the page it fetches is the slowest read the ordinary
+    // path makes. Every other guarded action is one click on one row,
+    // and answering "the others behave like this too" would be
+    // answering about a different button.
+    if (this._loadingOlder) return;
     const mine = this._claim("changes");
     const asked = this._cursor;
-    const result = await this._guard(
-      () =>
-        this._call("history", {
-          dashboard: this._selected,
-          limit: PAGE,
-          before: asked,
-        }),
-      mine,
-    );
-    if (!mine() || !result) return;
-    this._changes = this._changes.concat(result.changes || []);
-    this._cursor = result.next_cursor ?? null;
-    this._render();
+    this._loadingOlder = true;
+    try {
+      const result = await this._guard(
+        () =>
+          this._call("history", {
+            dashboard: this._selected,
+            limit: PAGE,
+            before: asked,
+          }),
+        mine,
+      );
+      if (!mine() || !result) return;
+      this._changes = this._changes.concat(result.changes || []);
+      this._cursor = result.next_cursor ?? null;
+      this._render();
+    } finally {
+      // In a `finally`, so a failure lets the button work again. A flag
+      // that stuck after one refused request would leave the rest of
+      // the history unreachable for as long as the page is open.
+      this._loadingOlder = false;
+    }
   }
 
   /**
