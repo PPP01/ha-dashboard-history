@@ -1274,6 +1274,18 @@ const PREVIEW = {
 };
 const confirming = (type) =>
   sent.filter((c) => c.type === type && c.extra.confirm);
+// `create_version` carries no `confirm` flag - it writes a tag, not a
+// dashboard state, and decision 7 exempts it from the preview - so the
+// writing call is simply the one that goes out.
+const made = () => sent.filter((c) => c.type === "create_version");
+const CANDIDATES = {
+  candidates: {
+    current: "kitchen/v1.0.0",
+    patch: "kitchen/v1.0.1",
+    minor: "kitchen/v1.1.0",
+    major: "kitchen/v2.0.0",
+  },
+};
 // Whether a flow has come to an end - without hanging the run when it
 // has not. A refused dialog has to let its caller go, and a caller left
 // waiting for a `close` that can never come is exactly the shape of
@@ -1322,13 +1334,39 @@ reply("history", { changes: [], next_cursor: null });
 reply("versions", { versions: [] });
 await switching;
 
+// 3. And the same click while the version dialog is fetching the three
+// numbers it offers. `create_version` writes no dashboard state, so it
+// never passes through `_confirm` and needs its own guard.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+// Put back by hand: the two runs above each went through the real
+// `_select`, and that replaces the list with what the reply carried.
+el._changes = [{ revision: "b" }];
+const versioning = el._createVersion("b");
+await settle();
+switching = el._select("garden");
+await settle();
+reply("next_versions", CANDIDATES);
+const versionAfterSwitch = {
+  // Named, because "no dialog" and "nothing written" is also what a
+  // flow that stopped at its first line would report.
+  asked: sent[0].type,
+  settled: await finished(versioning),
+  opened: el.shadowRoot.querySelector("dialog.version").open,
+  created: made().length,
+};
+reply("history", { changes: [], next_cursor: null });
+reply("versions", { versions: [] });
+await switching;
+
 // From here the reload at the end of each flow is out of the way; what
 // is measured is which dashboard the writing call names.
 el._select = async () => {};
 el._refreshQuietly = async () => {};
 el._reloadAfterWrite = async () => null;
 
-// 3. The control: nothing moves, the dialog opens, the write goes out.
+// 4. The control: nothing moves, the dialog opens, the write goes out.
 el._selected = "kitchen";
 el.shadowRoot = node();
 sent.length = 0;
@@ -1343,7 +1381,7 @@ const restoredTo = confirming("restore_state")[0].extra.dashboard;
 reply("restore_state", { applied: true });
 await restoring;
 
-// 4. The selection moves without going through `_select`, so the claim
+// 5. The selection moves without going through `_select`, so the claim
 // ticket still holds: only the captured key can keep this write on the
 // dashboard whose diff was on the screen.
 el._selected = "kitchen";
@@ -1360,7 +1398,7 @@ const carriedTo = confirming("restore_state")[0].extra.dashboard;
 reply("restore_state", { applied: true });
 await restoring;
 
-// 5. And the irreversible one, the same way round.
+// 6. And the irreversible one, the same way round.
 el._selected = "kitchen";
 el.shadowRoot = node();
 sent.length = 0;
@@ -1377,9 +1415,66 @@ const forgotten = confirming("forget")[0].extra.dashboard;
 reply("forget", { forgotten: true });
 await forgetAgain;
 
+// 7. The version, the same way round: the numbers on the three buttons
+// were worked out for one dashboard, and only the captured key can keep
+// the tag on it.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+// Put back by hand: the run above ended in `_forget`, which empties the
+// list along with the dashboard it threw away.
+el._changes = [{ revision: "b" }];
+const versionAgain = el._createVersion("b");
+await settle();
+el._selected = "garden";
+reply("next_versions", CANDIDATES);
+await settle();
+const versionOpened = el.shadowRoot.querySelector("dialog.version").open;
+el.shadowRoot.querySelector("dialog.version").close("create");
+await settle();
+const versionedOn = made()[0].extra.dashboard;
+reply("create_version", { created: "kitchen/v1.0.1" });
+await versionAgain;
+
+// 8. Putting one deleted card back. Its own closure, and it was
+// repaired separately from `restore_state` - so it is measured
+// separately too.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+el._restoreItem(
+  { revision: "b", previous: "c" },
+  { label: "Weather", position: 2 },
+);
+await settle();
+el._selected = "garden";
+reply("restore_deleted", PREVIEW);
+await settle();
+el.shadowRoot.querySelector("dialog.confirm").close("apply");
+await settle();
+const itemWentTo = confirming("restore_deleted")[0].extra.dashboard;
+reply("restore_deleted", { applied: true });
+await settle();
+
+// 9. And taking a change back, the third closure of the same shape.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+el._undoChange("b");
+await settle();
+el._selected = "garden";
+reply("undo_change", PREVIEW);
+await settle();
+el.shadowRoot.querySelector("dialog.confirm").close("apply");
+await settle();
+const undoneOn = confirming("undo_change")[0].extra.dashboard;
+reply("undo_change", { applied: true });
+await settle();
+
 console.log(JSON.stringify({
-  previewFor, restoreAfterSwitch, forgetAfterSwitch,
+  previewFor, restoreAfterSwitch, forgetAfterSwitch, versionAfterSwitch,
   openedNormally, restoredTo, carriedTo,
+  versionOpened, versionedOn, itemWentTo, undoneOn,
   named: dialogSaid.includes("Kitchen"), forgotten,
 }));
 """
@@ -1425,6 +1520,39 @@ def test_forget_deletes_the_history_the_dialog_named(wrong_dashboard):
         "settled": True,
         "opened": False,
         "deleted": 0,
+    }
+
+
+def test_every_flow_that_writes_carries_its_own_dashboard(wrong_dashboard):
+    # Five sites were repaired and two were measured. These are the
+    # other three, each with its own request closure: a fix reaching
+    # four of five is worse than none, because it looks finished - and
+    # so is a measurement reaching two of five.
+    #
+    # Read together with the run above: the selection moves without
+    # going through `_select`, so nothing is invalidated and the only
+    # thing that can keep the write where the diff was is the key taken
+    # before the first await.
+    assert wrong_dashboard["itemWentTo"] == "kitchen"
+    assert wrong_dashboard["undoneOn"] == "kitchen"
+    # And the version, which writes with `create_version` rather than
+    # through `_confirm`, so it is guarded on its own.
+    assert wrong_dashboard["versionOpened"] is True
+    assert wrong_dashboard["versionedOn"] == "kitchen"
+
+
+def test_a_dashboard_picked_while_the_numbers_are_out_cancels_the_version(
+    wrong_dashboard,
+):
+    # The claim ticket again, on the one flow the behaviour tests did
+    # not mention at all. The three buttons carry finished version
+    # numbers worked out for one dashboard; offering them under another
+    # one's name would put a tag somewhere nobody chose.
+    assert wrong_dashboard["versionAfterSwitch"] == {
+        "asked": "next_versions",
+        "settled": True,
+        "opened": False,
+        "created": 0,
     }
 
 
@@ -2000,11 +2128,89 @@ reply("search", {
 });
 await describing;
 
-console.log(JSON.stringify({
-  sent,
+const describeSent = sent.slice();
+const afterDescribe = {
   query: el._query,
   shown: el._shown() && el._shown().map((c) => c.revision),
   described: (el._found || []).map((c) => c.description),
+};
+
+// The reload at the end of a flow, three times over. `_describe` was
+// the only one measured; `_confirm` and `_createVersion` end the same
+// way and end it on the same reasoning, so they are put through the
+// same run rather than trusted.
+const reload = async () => {
+  reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+  await settle();
+  reply("history", {
+    changes: [{ revision: "a", message: "1 card added", versions: [] }],
+    next_cursor: null,
+  });
+  reply("versions", { versions: [] });
+  await settle();
+  reply("search", {
+    changes: [
+      { revision: "deep", message: "winter rework",
+        description: "the winter rework", versions: [] },
+    ],
+    more: false,
+  });
+  await settle();
+};
+
+// The state somebody found is put back, from the search result itself.
+el._recorded = () => Promise.resolve();
+sent.length = 0;
+const confirmBox = el.shadowRoot.querySelector("dialog.confirm");
+const restoring = el._restoreState("deep", "Back to this state");
+await settle();
+reply("restore_state", {
+  applied: false,
+  preview: "-a\\n+b",
+  explanation: { groups: [], note: "one card removed" },
+});
+await settle();
+confirmBox.close("apply");
+await settle();
+reply("restore_state", { applied: true });
+await settle();
+await reload();
+await restoring;
+const afterRestore = {
+  wrote: sent.filter((t) => t === "restore_state").length,
+  query: el._query,
+  shown: el._shown() && el._shown().map((c) => c.revision),
+};
+
+// And a version made on the same found row.
+sent.length = 0;
+const versionBox = el.shadowRoot.querySelector("dialog.version");
+const versioning = el._createVersion("deep");
+await settle();
+reply("next_versions", {
+  candidates: { current: "dash/v1.0.0", patch: "dash/v1.0.1",
+                minor: "dash/v1.1.0", major: "dash/v2.0.0" },
+});
+await settle();
+versionBox.close("create");
+await settle();
+reply("create_version", { created: "dash/v1.0.1" });
+await settle();
+await reload();
+await versioning;
+const afterVersion = {
+  made: sent.filter((t) => t === "create_version").length,
+  query: el._query,
+  shown: el._shown() && el._shown().map((c) => c.revision),
+};
+
+console.log(JSON.stringify({
+  sent: describeSent,
+  query: afterDescribe.query,
+  shown: afterDescribe.shown,
+  described: afterDescribe.described,
+  afterRestore,
+  afterVersion,
 }));
 """
 
@@ -2027,6 +2233,20 @@ def test_describing_a_found_row_leaves_the_search_standing(write_keeps_search):
         "describe", "dashboards", "history", "versions", "search",
     ]
     assert write_keeps_search["described"] == ["the winter rework"]
+
+
+def test_a_restore_and_a_version_leave_the_search_standing(write_keeps_search):
+    # The other two flows that end on a reload. All three were moved off
+    # `_select` for the same reason and only `_describe` was measured -
+    # so these two could be moved back with the whole suite staying
+    # green, and the search would go on being thrown away by the two
+    # actions that cost the most to reach.
+    assert write_keeps_search["afterRestore"]["wrote"] == 2  # preview, write
+    assert write_keeps_search["afterRestore"]["query"] == "winter"
+    assert write_keeps_search["afterRestore"]["shown"] == ["deep"]
+    assert write_keeps_search["afterVersion"]["made"] == 1
+    assert write_keeps_search["afterVersion"]["query"] == "winter"
+    assert write_keeps_search["afterVersion"]["shown"] == ["deep"]
 
 
 # -- a reload that failed after a write is said out loud --------------------
