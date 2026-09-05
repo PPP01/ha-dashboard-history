@@ -375,6 +375,18 @@ class DashboardHistoryPanel extends HTMLElement {
     this._render();
   }
 
+  /**
+   * The same, with its failures swallowed - and the reload every
+   * writing flow ends on.
+   *
+   * `_select` used to do that job, and `_select` clears the query, the
+   * results and the cursor along with everything else. Describing a row
+   * the server had found therefore dropped whoever wrote it back onto
+   * the unfiltered first page with an empty box, to type the search
+   * again for every further hit. The search belongs to the dashboard,
+   * and the dashboard has not changed; so does the open row, which this
+   * one keeps and fetches fresh answers for.
+   */
   async _refreshQuietly() {
     try {
       await this._refresh();
@@ -865,6 +877,11 @@ class DashboardHistoryPanel extends HTMLElement {
       failed && failed !== applied?.note
         ? `the dashboard went back, but no version was made: ${failed}`
         : "";
+    // A write that threw left its message in the banner, and the
+    // reload below clears the banner on its way in. Taken here and put
+    // back with the rest, or the one failure nobody could see coming is
+    // the one that says nothing.
+    const threw = applied === null ? this._error : "";
     const said =
       applied?.error ||
       // And a refusal on the confirming call as well, which is the one
@@ -875,17 +892,21 @@ class DashboardHistoryPanel extends HTMLElement {
         : "") ||
       applied?.note ||
       keptFailed ||
+      threw ||
       "";
-    await this._select(this._selected);
-    await this._loadDashboardsQuietly();
-    // After the reload, not before it. `_select` goes through `_guard`,
-    // and `_guard` clears the banner on its way in - so anything written
-    // here first is wiped by the very refresh that follows it, which is
-    // what happened to every note this dialog has ever tried to leave.
-    if (said) {
-      this._error = said;
-      this._render();
-    }
+    // Reloaded rather than reselected: a restore reached from a search
+    // result used to end on the unfiltered first page. This reads the
+    // dashboard list too, so a recreated dashboard still turns up in
+    // the sidebar.
+    await this._refreshQuietly();
+    // After the reload, not before it. The reload clears the banner on
+    // its way in - so anything written here first is wiped by the very
+    // refresh that follows it, which is what happened to every note
+    // this dialog has ever tried to leave. Cleared where there is
+    // nothing to say, for the same reason it always was: the banner
+    // above belongs to the action that has just finished.
+    this._error = said || null;
+    this._render();
   }
 
   /**
@@ -1003,7 +1024,10 @@ class DashboardHistoryPanel extends HTMLElement {
       this._render();
       return;
     }
-    await this._select(this._selected);
+    // Not `_select`: a description written on a row the server found is
+    // the one place where losing the search costs the most - the next
+    // hit would have to be searched for again.
+    await this._refreshQuietly();
   }
 
   /**
@@ -1117,7 +1141,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // shrink to a single collapsed line, right after the one click the
     // design record advertises.
     if (result?.created) this._verOpen.add(result.created);
-    await this._select(this._selected);
+    await this._refreshQuietly();
   }
 
   /**

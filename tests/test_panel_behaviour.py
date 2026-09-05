@@ -1315,6 +1315,7 @@ await switching;
 // From here the reload at the end of each flow is out of the way; what
 // is measured is which dashboard the writing call names.
 el._select = async () => {};
+el._refreshQuietly = async () => {};
 
 // 3. The control: nothing moves, the dialog opens, the write goes out.
 el._selected = "kitchen";
@@ -1927,3 +1928,90 @@ def test_a_long_list_of_names_is_cut_and_says_so(row_parts):
         "v1.0.0 and v1.1.0",
         "v1.0.0 and 2 more",
     ]
+
+
+# -- writing from a search result keeps the search --------------------------
+
+_WRITE_KEEPS_SEARCH = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [{ revision: "a", message: "1 card added", versions: [] }];
+// A hit four hundred entries below the loaded window, which is the
+// ordinary case: anything nearer would have been found without asking.
+el._query = "winter";
+el._found = [
+  { revision: "deep", message: "winter rework", description: "", versions: [] },
+];
+el.shadowRoot = node();
+
+const sent = [];
+const held = [];
+el._call = (type, extra) => {
+  sent.push(type);
+  return new Promise((resolve) => held.push({ type, extra, resolve }));
+};
+const reply = (type, value) => {
+  const at = held.findIndex((c) => c.type === type);
+  if (at >= 0) held.splice(at, 1)[0].resolve(value);
+};
+
+const box = el.shadowRoot.querySelector("dialog.describe");
+const field = box.querySelector("input.text");
+field.focus = () => {};
+field.select = () => {};
+
+const describing = el._describe("deep");
+await settle();
+field.value = "the winter rework";
+box.close("save");
+await settle();
+reply("describe", { ok: true });
+await settle();
+
+// The reload the flow ends on.
+reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+await settle();
+reply("history", {
+  changes: [{ revision: "a", message: "1 card added", versions: [] }],
+  next_cursor: null,
+});
+reply("versions", { versions: [] });
+await settle();
+reply("search", {
+  changes: [
+    { revision: "deep", message: "winter rework",
+      description: "the winter rework", versions: [] },
+  ],
+  more: false,
+});
+await describing;
+
+console.log(JSON.stringify({
+  sent,
+  query: el._query,
+  shown: el._shown() && el._shown().map((c) => c.revision),
+  described: (el._found || []).map((c) => c.description),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def write_keeps_search(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "write_keeps_search", _WRITE_KEEPS_SEARCH)
+
+
+def test_describing_a_found_row_leaves_the_search_standing(write_keeps_search):
+    # These flows used to end on `_select`, which clears the query, the
+    # results and the cursor - so writing on a row the server had found
+    # dropped whoever wrote it onto the unfiltered first page with an
+    # empty box, to type the search again for every further hit.
+    assert write_keeps_search["query"] == "winter"
+    assert write_keeps_search["shown"] == ["deep"]
+    # And the reload asked again, so the row shows what was just written
+    # on it rather than the answer from before.
+    assert write_keeps_search["sent"] == [
+        "describe", "dashboards", "history", "versions", "search",
+    ]
+    assert write_keeps_search["described"] == ["the winter rework"]
