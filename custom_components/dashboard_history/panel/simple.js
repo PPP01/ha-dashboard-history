@@ -14,6 +14,13 @@
 const PARTS = new URL(import.meta.url).search;
 const { escape, when } = await import(`./render.js${PARTS}`);
 
+// The way over to the other mode. Offered in both of this mode's
+// states - with versions and without - and written once, because two
+// copies of one offer drift until they say different things.
+const HINT = `<p class="why hint">Taking back a single step, or putting back one
+  deleted card, lives in the advanced mode.
+  <button class="linky" data-mode="advanced">Switch to it</button></p>`;
+
 /**
  * `versions` is every version of this dashboard, newest number first
  * and complete. `shown` is the part of it a search has left, and
@@ -50,9 +57,7 @@ export function renderSimple({
       // nor a visible way to the other mode.
       `<p class="empty muted">This dashboard has no versions yet.</p>
          <button class="act ghost" data-version="now">Save this as a version</button>
-         <p class="why hint">Taking back a single step, or putting back one
-           deleted card, lives in the advanced mode.
-           <button class="linky" data-mode="advanced">Switch to it</button></p>`;
+         ${HINT}`;
 
   // Where the dashboard stands, said in the only vocabulary this mode
   // has. `same_as_now` comes from the server and is worked out against
@@ -131,7 +136,5 @@ export function renderSimple({
       <button class="act ghost" data-version="now">Save this as a version</button>
     </div>
     ${rows.join("")}
-    <p class="why hint">Taking back a single step, or putting back one
-      deleted card, lives in the advanced mode.
-      <button class="linky" data-mode="advanced">Switch to it</button></p>`;
+    ${HINT}`;
 }

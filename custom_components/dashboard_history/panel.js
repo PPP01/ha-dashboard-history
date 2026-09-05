@@ -103,6 +103,18 @@ function today() {
   return `${now.getDate()} ${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
 }
 
+/**
+ * `home/v1.2.0` as `v1.2.0`.
+ *
+ * A version's name carries the dashboard's key as a namespace, and
+ * nothing on the screen wants to read that key twice - it is already
+ * the title above the list. Eight places said this in the same two
+ * calls.
+ */
+function shortName(name) {
+  return name.split("/").pop();
+}
+
 class DashboardHistoryPanel extends HTMLElement {
   constructor() {
     super();
@@ -349,9 +361,7 @@ class DashboardHistoryPanel extends HTMLElement {
       if (!open) {
         this._claim("detail");
         this._open = null;
-        this._items = [];
-        this._explanation = null;
-        this._undo = null;
+        this._clearDetail();
       } else {
         const detailMine = this._claim("detail");
         const detail = await this._detailFor(open);
@@ -486,6 +496,18 @@ class DashboardHistoryPanel extends HTMLElement {
     }
   }
 
+  /**
+   * Put one sentence in the banner, and draw it.
+   *
+   * The two lines belong together - a message set without a render is a
+   * message nobody sees - and seven places had written them out one
+   * under the other.
+   */
+  _showError(message) {
+    this._error = message;
+    this._render();
+  }
+
   async _loadDashboards() {
     const result = await this._guard(() => this._call("dashboards"));
     if (!result) return;
@@ -508,9 +530,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._claim("search"); // and any walk over the old dashboard's history
     this._selected = key;
     this._open = null;
-    this._items = [];
-    this._explanation = null;
-    this._undo = null;
+    this._clearDetail();
     this._cursor = null;
     this._versions = [];
     this._matching = [];
@@ -589,9 +609,10 @@ class DashboardHistoryPanel extends HTMLElement {
     this._query = text;
     this._found = null;
     this._moreFound = false;
+    // The empty box needs no test of its own: nobody is asked for
+    // nothing, and nobody is asked for a single letter either.
     if (
       this._mode === "simple" ||
-      !text.trim() ||
       text.trim().length < 2 ||
       this._localMatches().length
     ) {
@@ -634,7 +655,7 @@ class DashboardHistoryPanel extends HTMLElement {
       change.message || "",
       change.description || "",
       ...(change.versions || []).flatMap((v) => [
-        (v.name || "").split("/").pop(),
+        shortName(v.name || ""),
         v.title || "",
         v.description || "",
       ]),
@@ -661,7 +682,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const needle = this._query.trim().toLowerCase();
     if (!needle) return this._versions;
     return this._versions.filter((v) =>
-      [(v.name || "").split("/").pop(), v.title || "", v.description || ""]
+      [shortName(v.name || ""), v.title || "", v.description || ""]
         .join("\n")
         .toLowerCase()
         .includes(needle),
@@ -741,9 +762,7 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     const mine = this._claim("detail");
     this._open = revision;
-    this._items = [];
-    this._explanation = null;
-    this._undo = null;
+    this._clearDetail();
     const detail = await this._guard(() => this._detailFor(change), mine);
     // While this row's answers were on their way, somebody opened another
     // row - or closed this one, or opened it again. Its answers belong to
@@ -774,6 +793,21 @@ class DashboardHistoryPanel extends HTMLElement {
         revision: change.revision,
       }),
     ]);
+  }
+
+  /**
+   * Forget the open row's answers.
+   *
+   * `_open` itself stays with the caller: opening a row puts a revision
+   * there, the two flows that lose a row clear it. What all three share
+   * is the three fields below, and all three named them by hand - so a
+   * fourth answer would have had to be remembered in three places, and
+   * would have been added to two.
+   */
+  _clearDetail() {
+    this._items = [];
+    this._explanation = null;
+    this._undo = null;
   }
 
   _take(answers) {
@@ -819,8 +853,7 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     if (!mine() || !preview) return;
     if (preview.error) {
-      this._error = preview.error;
-      this._render();
+      this._showError(preview.error);
       return;
     }
     // The undo re-proves itself on every call, so a preview can come
@@ -830,8 +863,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // with a live Apply, and the sentence that names the reason and the
     // card was thrown away by the one screen that exists to show it.
     if (preview.available === false) {
-      this._error = preview.reason || "this cannot be taken back exactly";
-      this._render();
+      this._showError(preview.reason || "this cannot be taken back exactly");
       return;
     }
     const dialog = this.shadowRoot.querySelector("dialog.confirm");
@@ -1063,8 +1095,7 @@ class DashboardHistoryPanel extends HTMLElement {
       this._call("describe", { revision: change.revision, text: field.value }),
     );
     if (result?.error) {
-      this._error = result.error;
-      this._render();
+      this._showError(result.error);
       return;
     }
     // Not `_select`: a description written on a row the server found is
@@ -1075,10 +1106,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // the row on the screen still shows the old one, and a page that is
     // wrong without saying so is worse than a banner.
     const stale = await this._reloadAfterWrite("the description was saved");
-    if (stale) {
-      this._error = stale;
-      this._render();
-    }
+    if (stale) this._showError(stale);
   }
 
   /**
@@ -1141,9 +1169,9 @@ class DashboardHistoryPanel extends HTMLElement {
     const buttons = [...dialog.querySelectorAll(".levels button")];
     buttons.forEach((button) => {
       const which = button.dataset.level;
-      button.querySelector("strong").textContent = (
-        candidates[which] || ""
-      ).split("/").pop();
+      button.querySelector("strong").textContent = shortName(
+        candidates[which] || "",
+      );
       button.setAttribute("aria-pressed", String(which === level));
     });
     // One listener on the group rather than three on the buttons. Not
@@ -1174,14 +1202,13 @@ class DashboardHistoryPanel extends HTMLElement {
       this._call("create_version", {
         dashboard: asked,
         level,
-        title: title.value.trim() || candidates[level].split("/").pop(),
+        title: title.value.trim() || shortName(candidates[level]),
         description: description.value.trim(),
         revision: change.revision,
       }),
     );
     if (result?.error) {
-      this._error = result.error;
-      this._render();
+      this._showError(result.error);
       return;
     }
     // Remembered before the reload, or the history folds up the moment it
@@ -1196,10 +1223,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // on the server, and a history that does not show it invites
     // somebody to make it a second time.
     const stale = await this._reloadAfterWrite("the version was made");
-    if (stale) {
-      this._error = stale;
-      this._render();
-    }
+    if (stale) this._showError(stale);
   }
 
   /**
@@ -1224,8 +1248,7 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     if (!mine() || !facts) return;
     if (facts.error) {
-      this._error = facts.error;
-      this._render();
+      this._showError(facts.error);
       return;
     }
     const dialog = this.shadowRoot.querySelector("dialog.forget");
@@ -1357,10 +1380,12 @@ class DashboardHistoryPanel extends HTMLElement {
     const before = change.previous;
     const buttons = [];
     const same = this._undo?.available && this._undo.equals_state_before;
-    // Where the predecessor is outside the loaded window this is
-    // `undefined` and the button stays - exactly what happened before,
-    // when `this._changes[index + 1]` was not there either.
-    if (before && !this._changeAt(before)?.same_as_now && !same)
+    // Where the predecessor is outside the loaded window there is no
+    // row to ask, so this stays false and the button stays - exactly
+    // what happened before, when `this._changes[index + 1]` was not
+    // there either.
+    const beforeIsNow = Boolean(before && this._changeAt(before)?.same_as_now);
+    if (before && !beforeIsNow && !same)
       buttons.push({
         revision: before,
         label: "Back to the state before this change",
@@ -1371,11 +1396,10 @@ class DashboardHistoryPanel extends HTMLElement {
         label: "Back to the state after this change",
       });
 
-    const why =
-      before && this._changeAt(before)?.same_as_now
-        ? `<span class="why">The state before this change is what the
+    const why = beforeIsNow
+      ? `<span class="why">The state before this change is what the
             dashboard holds now — nothing to set back.</span>`
-        : "";
+      : "";
     if (!buttons.length) return why;
     return `<details class="more">
         <summary>Replace the whole dashboard instead</summary>
@@ -1508,7 +1532,7 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _alreadyNamed(change) {
     if (!change) return "";
-    const carried = (change.versions || []).map((v) => v.name.split("/").pop());
+    const carried = (change.versions || []).map((v) => shortName(v.name));
     if (carried.length) return `This state already carries ${someNames(carried)}.`;
     const alike = this._matchingElsewhere(change);
     if (alike.length) return `This is the same state as ${someNames(alike)}.`;
@@ -1529,7 +1553,7 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _matchingElsewhere(change) {
     if (!change || !change.same_as_now) return [];
-    const own = (change.versions || []).map((v) => v.name.split("/").pop());
+    const own = (change.versions || []).map((v) => shortName(v.name));
     return this._versionsMatchingNow().filter((name) => !own.includes(name));
   }
 
@@ -1573,7 +1597,7 @@ class DashboardHistoryPanel extends HTMLElement {
    * answer.
    */
   _versionsMatchingNow() {
-    return this._matching.map((v) => v.name.split("/").pop());
+    return this._matching.map((v) => shortName(v.name));
   }
 
   _renderVersionHead(section) {
@@ -1628,6 +1652,7 @@ class DashboardHistoryPanel extends HTMLElement {
   _renderMain() {
     if (!this._selected)
       return '<p class="empty muted">Pick a dashboard on the left.</p>';
+    const query = this._query.trim();
     const dashboard = this._dashboards.find((d) => d.key === this._selected);
     const banner =
       dashboard && !dashboard.exists
@@ -1653,7 +1678,7 @@ class DashboardHistoryPanel extends HTMLElement {
           versions: this._versions,
           shown: this._matchingVersions(),
           changes: this._changes,
-          searching: Boolean(this._query.trim()),
+          searching: Boolean(query),
         })
       );
     const shown = this._shown();
@@ -1663,17 +1688,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // matches." did, for the seconds a walk over a grown history takes.
     if (shown === null) return banner;
     if (!shown.length)
-      return `${banner}<p class="empty muted">${this._query.trim()
+      return `${banner}<p class="empty muted">${query
         ? "Nothing matches."
         : "No changes recorded for this dashboard."}</p>`;
     // Solely while searching: the list is flat and "Load older" is gone,
     // because a page belongs to a list that goes on, not to one a search
     // just cut down to whatever matched.
-    if (this._query.trim())
-      return (
-        banner +
-        shown.map((change) => this._renderRow(change)).join("")
-      );
+    if (query) return banner + shown.map((c) => this._renderRow(c)).join("");
 
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
@@ -1681,7 +1702,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const cut = sections(this._changes);
     const newest = cut.find((s) => s.versions);
     const label = newest
-      ? `Since ${newest.versions[0].name.split("/").pop()}`
+      ? `Since ${shortName(newest.versions[0].name)}`
       : "Not in a version yet";
     const parts = cut.map((section) => {
       if (!section.versions) return this._renderTopSection(section, label);
@@ -1811,79 +1832,59 @@ class DashboardHistoryPanel extends HTMLElement {
         else this._verOpen.delete(key);
       });
     });
-    root.querySelectorAll(".dash").forEach((element) =>
-      element.addEventListener("click", () =>
-        this._select(element.dataset.key),
-      ),
-    );
-    root.querySelectorAll(".change").forEach((element) =>
-      element.addEventListener("click", () =>
-        this._expand(element.dataset.revision),
-      ),
-    );
-    root.querySelectorAll("[data-restore]").forEach((element) =>
-      element.addEventListener("click", () => {
-        const change = this._changeAt(this._open);
-        const item = this._items.find(
-          (candidate) => candidate.position === Number(element.dataset.restore),
-        );
-        if (change && item) this._restoreItem(change, item);
-      }),
-    );
-    root.querySelectorAll("[data-state]").forEach((element) =>
-      element.addEventListener("click", (event) => {
-        // Inside a <summary> a click would toggle the section as well.
-        event.preventDefault();
-        event.stopPropagation();
-        // The dialog is titled with the button that opened it. With two
-        // of them on a row, a generic heading would leave you guessing
-        // which one you pressed.
-        this._restoreState(element.dataset.state, element.textContent.trim());
-      }),
-    );
-    root.querySelectorAll("[data-undo]").forEach((element) =>
-      element.addEventListener("click", (event) => {
-        event.stopPropagation();
-        this._undoChange(element.dataset.undo);
-      }),
-    );
-    root.querySelectorAll("[data-forget]").forEach((element) =>
-      element.addEventListener("click", () => this._forget()),
-    );
-    root.querySelectorAll("[data-older]").forEach((element) =>
-      element.addEventListener("click", () => this._loadOlder()),
-    );
-    root.querySelectorAll("[data-refresh]").forEach((element) =>
-      // Guarded, unlike the automatic one: somebody who pressed a button
-      // is owed both the "working" state and the failure if there is one.
-      element.addEventListener("click", () => this._guard(() => this._refresh())),
-    );
-    root.querySelectorAll("[data-describe]").forEach((element) =>
-      element.addEventListener("click", (event) => {
-        // Otherwise the click reaches .change underneath and expands the
-        // row at the same time.
-        event.stopPropagation();
-        this._describe(element.dataset.describe);
-      }),
-    );
-    root.querySelectorAll("[data-version]").forEach((element) =>
-      element.addEventListener("click", (event) => {
-        // Otherwise the click reaches the row underneath and collapses it.
-        event.stopPropagation();
-        // "now" is the simple mode's button, which means the newest
-        // recorded state. Everything else names a revision.
-        const which = element.dataset.version;
-        this._createVersion(
-          which === "now" ? this._changes[0]?.revision : which,
-        );
-      }),
-    );
-    root.querySelectorAll("[data-mode]").forEach((element) =>
-      element.addEventListener("click", (event) => {
-        event.stopPropagation();
-        this._setMode(element.dataset.mode);
-      }),
-    );
+    // Every click below is wired the same way, so the wiring is written
+    // once and each line says only the two things that differ: what was
+    // clicked, and what that does. The element comes first because most
+    // of them want nothing but its `dataset`.
+    const onClick = (selector, run) =>
+      root.querySelectorAll(selector).forEach((element) =>
+        element.addEventListener("click", (event) => run(element, event)),
+      );
+    onClick(".dash", (element) => this._select(element.dataset.key));
+    onClick(".change", (element) => this._expand(element.dataset.revision));
+    onClick("[data-restore]", (element) => {
+      const change = this._changeAt(this._open);
+      const item = this._items.find(
+        (candidate) => candidate.position === Number(element.dataset.restore),
+      );
+      if (change && item) this._restoreItem(change, item);
+    });
+    onClick("[data-state]", (element, event) => {
+      // Inside a <summary> a click would toggle the section as well.
+      event.preventDefault();
+      event.stopPropagation();
+      // The dialog is titled with the button that opened it. With two
+      // of them on a row, a generic heading would leave you guessing
+      // which one you pressed.
+      this._restoreState(element.dataset.state, element.textContent.trim());
+    });
+    onClick("[data-undo]", (element, event) => {
+      event.stopPropagation();
+      this._undoChange(element.dataset.undo);
+    });
+    onClick("[data-forget]", () => this._forget());
+    onClick("[data-older]", () => this._loadOlder());
+    // Guarded, unlike the automatic one: somebody who pressed a button
+    // is owed both the "working" state and the failure if there is one.
+    onClick("[data-refresh]", () => this._guard(() => this._refresh()));
+    onClick("[data-describe]", (element, event) => {
+      // Otherwise the click reaches .change underneath and expands the
+      // row at the same time.
+      event.stopPropagation();
+      this._describe(element.dataset.describe);
+    });
+    onClick("[data-version]", (element, event) => {
+      // Otherwise the click reaches the row underneath and collapses it.
+      event.stopPropagation();
+      // "now" is the simple mode's button, which means the newest
+      // recorded state. Everything else names a revision.
+      const which = element.dataset.version;
+      this._createVersion(which === "now" ? this._changes[0]?.revision : which);
+    });
+    onClick("[data-mode]", (element, event) => {
+      event.stopPropagation();
+      this._setMode(element.dataset.mode);
+    });
     root.querySelectorAll("dialog").forEach((element) =>
       element
         .querySelectorAll(".actions button")

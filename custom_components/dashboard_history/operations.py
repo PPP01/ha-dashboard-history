@@ -138,6 +138,19 @@ def _version_dict(version: Version) -> dict:
     }
 
 
+def _marks_by_revision(versions: list) -> dict[str, list[dict]]:
+    """Which versions sit on which state.
+
+    Gathered here rather than in the panel: the panel would need a
+    second call and a join, and a join is logic. Two versions on one
+    commit is allowed, so this is a list.
+    """
+    marks: dict[str, list[dict]] = {}
+    for version in versions:
+        marks.setdefault(version.revision, []).append(_version_dict(version))
+    return marks
+
+
 def _rendered(changes: list, marks: dict, same: set) -> list[dict]:
     """Recorded changes as the rows a panel draws.
 
@@ -343,12 +356,7 @@ async def async_history(
     )
     more = len(changes) > limit
     changes = changes[:limit]
-    # Which versions sit on which state. Gathered here rather than in the
-    # panel: the panel would need a second call and a join, and a join is
-    # logic. Two versions on one commit is allowed, so this is a list.
-    marks: dict[str, list[dict]] = {}
-    for version in versions:
-        marks.setdefault(version.revision, []).append(_version_dict(version))
+    marks = _marks_by_revision(versions)
     live = await async_get_config(hass, key)
     same: set[str] = set()
     if live is not None:
@@ -401,9 +409,7 @@ async def async_search(
     )
     more = len(changes) > limit
     changes = changes[:limit]
-    marks: dict[str, list[dict]] = {}
-    for version in versions:
-        marks.setdefault(version.revision, []).append(_version_dict(version))
+    marks = _marks_by_revision(versions)
     live = await async_get_config(hass, key)
     same: set[str] = set()
     if live is not None and changes:
