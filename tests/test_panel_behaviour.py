@@ -424,6 +424,7 @@ def test_picking_a_dashboard_fetches_its_versions_too(versions_loaded):
     assert versions_loaded["versions"] == ["dash/v1.0.0"]
     assert versions_loaded["changes"] == ["a", "b"]
 
+
 _MATCHING_FROM_SERVER = """
 const el = new Panel();
 el._render = () => {};
@@ -467,3 +468,67 @@ def test_a_matching_version_below_the_window_keeps_its_name(matching_from_server
     assert matching_from_server["loaded"] == ["new"]
     assert matching_from_server["matching"] == ["v1.0.0"]
     assert matching_from_server["chip"] == ["v1.0.0"]
+
+
+_REFRESHED = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("dash", [{ revision: "a" }], "older");
+
+// Load a second page, so a refresh has something it could wrongly keep.
+el._loadOlder();
+await settle();
+reply("history", { changes: [{ revision: "b" }], next_cursor: "deeper" });
+await settle();
+const paged = { rows: el._changes.map((c) => c.revision), cursor: el._cursor };
+
+const again = el._refresh();
+await settle();
+reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+await settle();
+const types = calls.map((c) => c.type).sort();
+reply("history", {
+  changes: [{ revision: "c" }, { revision: "a" }],
+  next_cursor: "older",
+  matching_versions: [{ name: "dash/v2.0.0", revision: "deep" }],
+});
+reply("versions", {
+  versions: [{ name: "dash/v2.0.0", title: "t", revision: "deep" }],
+});
+await again;
+
+console.log(JSON.stringify({
+  paged,
+  types,
+  rows: el._changes.map((c) => c.revision),
+  cursor: el._cursor,
+  matching: el._versionsMatchingNow(),
+  versions: el._versions.map((v) => v.name),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def refreshed(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "refreshed", _REFRESHED)
+
+
+def test_a_refresh_asks_for_both_and_starts_at_the_top(refreshed):
+    # `_refresh` is reached by an event rather than by a click, so no
+    # scenario had ever run it - and it carries the same two answers
+    # `_select` does, plus a decision of its own about paging.
+    assert refreshed["paged"] == {"rows": ["a", "b"], "cursor": "deeper"}
+    # Both answers, not just the history: the simple mode is drawn from
+    # the version list, and a refresh that renewed only one of them would
+    # leave the two modes disagreeing about the same dashboard.
+    assert refreshed["types"] == ["history", "versions"]
+    # Back to the first page on purpose. A refresh happens because the
+    # history grew; stitching a fresh top onto pages fetched before it
+    # grew would show a list that never existed.
+    assert refreshed["rows"] == ["c", "a"]
+    assert refreshed["cursor"] == "older"
+    # And the server's answer is read here too, not worked out again:
+    # `deep` is not among the loaded rows.
+    assert refreshed["matching"] == ["v2.0.0"]
+    assert refreshed["versions"] == ["dash/v2.0.0"]

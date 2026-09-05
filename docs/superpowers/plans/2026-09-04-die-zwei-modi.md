@@ -1684,6 +1684,7 @@ def test_picking_a_dashboard_fetches_its_versions_too(versions_loaded):
     assert versions_loaded["versions"] == ["dash/v1.0.0"]
     assert versions_loaded["changes"] == ["a", "b"]
 
+
 _MATCHING_FROM_SERVER = """
 const el = new Panel();
 el._render = () => {};
@@ -1727,6 +1728,70 @@ def test_a_matching_version_below_the_window_keeps_its_name(matching_from_server
     assert matching_from_server["loaded"] == ["new"]
     assert matching_from_server["matching"] == ["v1.0.0"]
     assert matching_from_server["chip"] == ["v1.0.0"]
+
+
+_REFRESHED = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("dash", [{ revision: "a" }], "older");
+
+// Load a second page, so a refresh has something it could wrongly keep.
+el._loadOlder();
+await settle();
+reply("history", { changes: [{ revision: "b" }], next_cursor: "deeper" });
+await settle();
+const paged = { rows: el._changes.map((c) => c.revision), cursor: el._cursor };
+
+const again = el._refresh();
+await settle();
+reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+await settle();
+const types = calls.map((c) => c.type).sort();
+reply("history", {
+  changes: [{ revision: "c" }, { revision: "a" }],
+  next_cursor: "older",
+  matching_versions: [{ name: "dash/v2.0.0", revision: "deep" }],
+});
+reply("versions", {
+  versions: [{ name: "dash/v2.0.0", title: "t", revision: "deep" }],
+});
+await again;
+
+console.log(JSON.stringify({
+  paged,
+  types,
+  rows: el._changes.map((c) => c.revision),
+  cursor: el._cursor,
+  matching: el._versionsMatchingNow(),
+  versions: el._versions.map((v) => v.name),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def refreshed(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "refreshed", _REFRESHED)
+
+
+def test_a_refresh_asks_for_both_and_starts_at_the_top(refreshed):
+    # `_refresh` is reached by an event rather than by a click, so no
+    # scenario had ever run it - and it carries the same two answers
+    # `_select` does, plus a decision of its own about paging.
+    assert refreshed["paged"] == {"rows": ["a", "b"], "cursor": "deeper"}
+    # Both answers, not just the history: the simple mode is drawn from
+    # the version list, and a refresh that renewed only one of them would
+    # leave the two modes disagreeing about the same dashboard.
+    assert refreshed["types"] == ["history", "versions"]
+    # Back to the first page on purpose. A refresh happens because the
+    # history grew; stitching a fresh top onto pages fetched before it
+    # grew would show a list that never existed.
+    assert refreshed["rows"] == ["c", "a"]
+    assert refreshed["cursor"] == "older"
+    # And the server's answer is read here too, not worked out again:
+    # `deep` is not among the loaded rows.
+    assert refreshed["matching"] == ["v2.0.0"]
+    assert refreshed["versions"] == ["dash/v2.0.0"]
 ```
 
 - [ ] **Schritt 2: Laufen lassen, Fehlschlag prüfen**
@@ -2495,7 +2560,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`302 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
+Erwartet: **`303 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
 
 - Im **einfachen** Modus zurückspringen, das Kästchen angehakt lassen — die neue Version muss danach oben in der Liste stehen, mit dem heutigen Datum als Titel.
 - Im **erweiterten** Modus zurückspringen und es abhaken — es darf keine neue Version geben, und der ersetzte Stand muss als Änderung weiterhin in der Liste stehen. Das ist die Test-Plan-Zeile »Rücksprung mit »verwerfen««, und sie ist nur mit den Augen zu prüfen.
@@ -2982,7 +3047,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`304 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
+Erwartet: **`305 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
 
 - eine Zeile aufklappen, »Undo this change« drücken, den Dialog abbrechen;
 - den Stift drücken, eine Beschreibung speichern — sie muss an *dieser* Zeile erscheinen;
@@ -3427,7 +3492,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`310 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
+Erwartet: **`311 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
 
 Im **einfachen** Modus: dasselbe Feld, aber es filtert die Versionen, es fragt nie nach und der Hinweis zählt »x of y versions«. Danach das Dashboard wechseln: Das Feld muss leer sein.
 
@@ -3466,7 +3531,7 @@ EOF
 
 ## Wenn alle acht stehen
 
-`python3 -m pytest tests/ -v` (`310 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
+`python3 -m pytest tests/ -v` (`311 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
 
 Damit ist Vorhaben H fertig, und mit ihm die beiden GitHub-Issues:
 
