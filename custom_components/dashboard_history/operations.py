@@ -138,6 +138,32 @@ def _version_dict(version: Version) -> dict:
     }
 
 
+def _rendered(changes: list, marks: dict, same: set) -> list[dict]:
+    """Recorded changes as the rows a panel draws.
+
+    One shape for `history` and for `search`. They differ in which
+    changes they hand back and in nothing else, and a row that carried
+    different fields depending on how it was found would be a difference
+    the panel has to know about - which is logic in the panel.
+    """
+    return [
+        {
+            "revision": c.revision,
+            "timestamp": c.timestamp,
+            "message": c.message,
+            "description": c.description,
+            # What this row can be compared against and undone towards.
+            # Said rather than left to be worked out from the row below:
+            # in a page the row below may not exist, and in a search
+            # result it is not the predecessor at all.
+            "previous": c.previous,
+            "same_as_now": c.revision in same,
+            "versions": marks.get(c.revision, []),
+        }
+        for c in changes
+    ]
+
+
 async def _keep_the_live_state(
     hass: HomeAssistant, store: HistoryStore, key: str, current: str | None
 ) -> str | None:
@@ -335,17 +361,7 @@ async def async_history(
             same = await hass.async_add_executor_job(
                 _same_as_live, store, key, wanted, live
             )
-    rendered = [
-        {
-            "revision": c.revision,
-            "timestamp": c.timestamp,
-            "message": c.message,
-            "description": c.description,
-            "same_as_now": c.revision in same,
-            "versions": marks.get(c.revision, []),
-        }
-        for c in changes
-    ]
+    rendered = _rendered(changes, marks, same)
     matching_versions = [
         _version_dict(v)
         for v in versioning.by_number(key, versions)
@@ -359,6 +375,42 @@ async def async_history(
         "next_cursor": rendered[-1]["revision"] if more and rendered else None,
         "matching_versions": matching_versions,
     }
+
+
+async def async_search(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    text: str,
+    limit: int = 50,
+) -> dict:
+    """Recorded changes of one dashboard whose words hold `text`.
+
+    Answers in the same shape as `history`, minus the cursor: a search
+    result is not a page, and offering to page through one would invite
+    a second search with a different answer. `more` says the limit was
+    reached, so the panel can say "the first fifty" rather than "fifty".
+
+    The longest read this integration has - the whole history - so it is
+    a command of its own rather than a flag on `history`. That keeps the
+    ordinary path, which the panel walks on every click, off it.
+    """
+    changes, versions = await asyncio.gather(
+        hass.async_add_executor_job(store.search_changes, key, text, limit + 1),
+        hass.async_add_executor_job(store.list_versions, key),
+    )
+    more = len(changes) > limit
+    changes = changes[:limit]
+    marks: dict[str, list[dict]] = {}
+    for version in versions:
+        marks.setdefault(version.revision, []).append(_version_dict(version))
+    live = await async_get_config(hass, key)
+    same: set[str] = set()
+    if live is not None and changes:
+        same = await hass.async_add_executor_job(
+            _same_as_live, store, key, [c.revision for c in changes], live
+        )
+    return {"changes": _rendered(changes, marks, same), "more": more}
 
 
 async def async_deleted_since(

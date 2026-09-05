@@ -36,6 +36,11 @@ class Change:
     timestamp: int
     message: str
     description: str = ""  # what a person wrote about it, if anyone did
+    # The state of this dashboard just before this change, or None where
+    # there is none. A field rather than a sum: a caller that works it
+    # out from the neighbour in a list is right only while that list is
+    # whole and in order - which a page and a search result are not.
+    previous: str | None = None
 
 
 @dataclass(frozen=True)
@@ -700,7 +705,10 @@ class HistoryStore:
             cursor = resolved.encode()
             walk["include"] = [cursor]
         if limit is not None:
-            walk["max_entries"] = limit + 1 if cursor is not None else limit
+            # One more than asked for, so the last entry handed out knows
+            # its predecessor; two more with a cursor, because the cursor
+            # entry itself is dropped again below.
+            walk["max_entries"] = limit + 2 if cursor is not None else limit + 1
         try:
             entries = list(repo.get_walker(**walk))
         except KeyError:
@@ -708,17 +716,79 @@ class HistoryStore:
             return []
         if cursor is not None and entries and entries[0].commit.id == cursor:
             entries = entries[1:]
-        if limit is not None:
-            entries = entries[:limit]
-        return [
+        found = [
             Change(
                 revision=_as_text(entry.commit.id),
                 timestamp=entry.commit.commit_time,
                 message=entry.commit.message.decode("utf-8").strip(),
                 description=notes.get(_as_text(entry.commit.id), ""),
+                # The next entry of this same walk. The walk is already
+                # filtered on this dashboard's paths, so it is this
+                # dashboard's own predecessor and never the commit's
+                # parent, which may belong to somebody else entirely.
+                previous=(
+                    _as_text(entries[at + 1].commit.id)
+                    if at + 1 < len(entries)
+                    else None
+                ),
             )
-            for entry in entries
+            for at, entry in enumerate(entries)
         ]
+        # Sliced after building, so the extra entry did its one job -
+        # being the predecessor of the last one - and then goes.
+        return found[:limit] if limit is not None else found
+
+    def search_changes(
+        self, key: str, text: str, limit: int = 50
+    ) -> list[Change]:
+        """Recorded states of one dashboard whose words hold `text`.
+
+        The whole history, not the page a caller happens to hold, and
+        that is the entire point. The panel searches what it has loaded
+        first because that answers without a round trip; it asks this
+        only when that found nothing, and at that moment "nothing" has
+        to mean nothing - not "nothing among the newest twenty-five".
+
+        Matched against four things, ignoring case: the generated
+        message, a person's own description, and the title, description
+        and number of every version sitting on that state. One word
+        finds either kind, because somebody searching for words they
+        remember writing does not remember which of the two places they
+        wrote them in.
+
+        Of a version's name only the number counts - `home/v1.0.0` is
+        searched as `v1.0.0`. The namespace is the dashboard's own key,
+        and that is also the word a person uses for the dashboard, so
+        searching it would make every version of it a hit for a word
+        that says nothing.
+
+        An empty search finds nothing rather than everything. It is the
+        state of a search box somebody has just cleared, and answering
+        it with the whole history is the opposite of what that means.
+        """
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        marks: dict[str, list[Version]] = {}
+        for version in self.list_versions(key):
+            marks.setdefault(version.revision, []).append(version)
+        found: list[Change] = []
+        # The unbounded walk is deliberate and is the expensive part:
+        # measured at roughly half a second per thousand commits. It runs
+        # in an executor, and only after a local search found nothing.
+        for change in self.list_changes(key, None):
+            words = [change.message, change.description]
+            for version in marks.get(change.revision, []):
+                words += [
+                    version.name.rsplit("/", 1)[-1],
+                    version.title,
+                    version.description,
+                ]
+            if needle in "\n".join(words).casefold():
+                found.append(change)
+                if len(found) >= limit:
+                    break
+        return found
 
     def descriptions(self) -> dict[str, str]:
         """Every description, by revision.

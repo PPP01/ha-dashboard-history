@@ -1168,3 +1168,139 @@ def test_history_without_a_cursor_is_unchanged(store):
         "home: second",
         "home: first",
     ]
+
+
+# -- what came before this, said by the row itself -------------------------
+
+
+def test_a_change_knows_the_state_before_it(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    newest, older = store.list_changes("home")
+    assert newest.revision == second and newest.previous == first
+    assert older.revision == first
+
+
+def test_the_oldest_change_has_no_state_before_it(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    assert store.list_changes("home")[-1].previous is None
+
+
+def test_the_last_row_of_a_page_knows_its_predecessor_too(store):
+    # The whole reason this is a field. Worked out from the neighbour in
+    # the list, the bottom row of every page answers "there is nothing
+    # before this" - and the panel then offers no deleted cards to put
+    # back, on a row that has a perfectly good predecessor one commit
+    # further down.
+    made = [store.write_snapshot("home", f"a: {i}\n", f"change {i}") for i in range(6)]
+    page = store.list_changes("home", 3)
+    assert [c.revision for c in page] == [made[5], made[4], made[3]]
+    assert page[-1].previous == made[2]
+
+
+def test_the_state_before_is_this_dashboards_own(store):
+    # Never the commit's parent: another dashboard's commit sits in
+    # between all the time, and its state is no state of this one.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("solar", "b: 1\n", "stranger")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    assert store.list_changes("home")[0].previous == first
+    assert store.previous_change("home", second) == first
+
+
+# -- searching the whole history -------------------------------------------
+
+
+def test_a_search_finds_a_change_by_its_message(store):
+    store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.write_snapshot("home", "a: 2\n", "home: 2 views removed")
+    assert [c.message for c in store.search_changes("home", "views")] == [
+        "home: 2 views removed"
+    ]
+
+
+def test_a_search_finds_a_change_by_what_a_person_wrote(store):
+    first = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.write_snapshot("home", "a: 2\n", "home: 1 card added")
+    store.set_description(first, "The heating page rework")
+    assert [c.revision for c in store.search_changes("home", "heating")] == [first]
+
+
+def test_a_search_finds_a_state_by_the_title_of_a_version_on_it(store):
+    store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    marked = store.write_snapshot("home", "a: 2\n", "home: 2 moved")
+    store.create_version("home/v1.0.0", "Before the winter rebuild", "", marked)
+    assert [c.revision for c in store.search_changes("home", "winter")] == [marked]
+
+
+def test_a_search_finds_a_state_by_the_description_of_a_version_on_it(store):
+    marked = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.create_version("home/v1.0.0", "A title", "the notes I left", marked)
+    assert [c.revision for c in store.search_changes("home", "notes")] == [marked]
+
+
+def test_a_search_finds_a_state_by_the_number_of_a_version_on_it(store):
+    marked = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.create_version("home/v1.2.0", "A title", "", marked)
+    assert [c.revision for c in store.search_changes("home", "v1.2")] == [marked]
+
+
+def test_a_search_does_not_match_the_namespace_of_a_version(store):
+    # `home/v1.0.0` is searched as `v1.0.0`. The namespace is the
+    # dashboard's own key, which is also the word a person uses for the
+    # dashboard - so searching it would make every version of it a hit
+    # for a word that says nothing.
+    marked = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.create_version("home/v1.0.0", "A title", "", marked)
+    assert store.search_changes("home", "home/") == []
+
+
+def test_a_search_does_not_care_about_capitals(store):
+    store.write_snapshot("home", "a: 1\n", "home: 1 Card added")
+    assert len(store.search_changes("home", "cARD")) == 1
+
+
+def test_a_search_stays_inside_one_dashboard(store):
+    store.write_snapshot("home", "a: 1\n", "home: rework")
+    store.write_snapshot("solar", "b: 1\n", "solar: rework")
+    assert [c.message for c in store.search_changes("home", "rework")] == [
+        "home: rework"
+    ]
+
+
+def test_a_search_reaches_past_the_window_the_panel_loads(store):
+    # The whole reason this exists. The panel holds twenty-five entries;
+    # the answer to "is that word anywhere" must not be decided by that.
+    for index in range(40):
+        store.write_snapshot("home", f"a: {index}\n", f"home: change {index}")
+    store.write_snapshot("home", "a: last\n", "home: the needle")
+    for index in range(40, 70):
+        store.write_snapshot("home", f"a: {index}\n", f"home: change {index}")
+    assert [c.message for c in store.search_changes("home", "needle")] == [
+        "home: the needle"
+    ]
+
+
+def test_a_hit_carries_the_state_before_it(store):
+    # Hits are not neighbours in the list they are drawn into, so the row
+    # cannot work this out afterwards. It comes out of the same walk.
+    first = store.write_snapshot("home", "a: 1\n", "home: first")
+    found = store.write_snapshot("home", "a: 2\n", "home: the needle")
+    for index in range(5):
+        store.write_snapshot("home", f"a: {index + 3}\n", f"home: change {index}")
+    hit = store.search_changes("home", "needle")[0]
+    assert hit.revision == found and hit.previous == first
+
+
+def test_a_search_answers_newest_first_and_stops_at_the_limit(store):
+    for index in range(5):
+        store.write_snapshot("home", f"a: {index}\n", f"home: match {index}")
+    found = store.search_changes("home", "match", limit=2)
+    assert [c.message for c in found] == ["home: match 4", "home: match 3"]
+
+
+def test_an_empty_search_finds_nothing_rather_than_everything(store):
+    store.write_snapshot("home", "a: 1\n", "home: first")
+    assert store.search_changes("home", "") == []
+    assert store.search_changes("home", "   ") == []

@@ -76,6 +76,20 @@ _COMMANDS = (
         },
     ),
     _command(
+        f"{DOMAIN}/search",
+        {
+            **_DASHBOARD,
+            vol.Required("text"): str,
+            vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1)),
+        },
+        operations.async_search,
+        lambda msg: {
+            "key": msg["dashboard"],
+            "text": msg["text"],
+            "limit": msg["limit"],
+        },
+    ),
+    _command(
         f"{DOMAIN}/deleted_since",
         {**_DASHBOARD, **_REVISION},
         operations.async_deleted_since,

@@ -27,6 +27,35 @@ history:
           max: 500
           mode: box
 
+search:
+  name: Search
+  description: >-
+    Find recorded changes of one dashboard by their words. Searches the
+    whole history, not just the newest entries, and looks at the
+    automatic message, any description you wrote yourself, and the
+    title, description and number of any version sitting on that state.
+  fields:
+    dashboard:
+      required: true
+      description: The dashboard, by its url_path.
+      example: my-dashboard
+      selector:
+        text:
+    text:
+      required: true
+      description: The words to look for. Capitals do not matter.
+      example: heating
+      selector:
+        text:
+    limit:
+      description: How many matches at most. The answer says whether there were more.
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 1000
+          mode: box
+
 deleted_since:
   name: What disappeared
   description: >-

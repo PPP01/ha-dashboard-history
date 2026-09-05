@@ -61,6 +61,12 @@ async def async_register(hass: HomeAssistant) -> None:
             hass, store, call.data["dashboard"], call.data.get("limit", 50)
         )
 
+    async def search(call: ServiceCall) -> dict:
+        return await operations.async_search(
+            hass, store, call.data["dashboard"], call.data["text"],
+            call.data.get("limit", 50),
+        )
+
     async def deleted_since(call: ServiceCall) -> dict:
         return await operations.async_deleted_since(
             hass, store, call.data["dashboard"], call.data["revision"]
@@ -134,6 +140,10 @@ async def async_register(hass: HomeAssistant) -> None:
     registrations = [
         ("debug_snapshot", debug_snapshot, vol.Schema({})),
         ("history", history, DASHBOARD.extend({vol.Optional("limit", default=50): int})),
+        ("search", search, DASHBOARD.extend({
+            vol.Required("text"): cv.string,
+            vol.Optional("limit", default=50): int,
+        })),
         ("deleted_since", deleted_since,
          DASHBOARD.extend({vol.Required("revision"): cv.string})),
         ("restore_deleted", restore_deleted, DASHBOARD.extend({
