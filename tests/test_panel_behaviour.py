@@ -1119,3 +1119,109 @@ def test_picking_another_dashboard_drops_the_search(searching):
     # a query is the same mistake with a different name.
     assert searching["afterSwitch"]["query"] == ""
     assert searching["afterSwitch"]["found"] is None
+
+
+_FOUND_ROW = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+// A hit the server found, four hundred entries below the loaded window.
+// That is the ordinary case for a search: if it were in `_changes` the
+// local pass would have caught it and no request would have gone out.
+el._changes = [{ revision: "a", previous: "b", message: "" }];
+el._query = "winter";
+el._found = [{ revision: "deep", previous: "deeper", message: "" }];
+
+const asked = [];
+el._call = (type, extra) => {
+  asked.push({ type, extra });
+  return Promise.resolve({ items: [], groups: [], available: false });
+};
+
+await el._expand("deep");
+const opened = { open: el._open, shown: el._shown().map((c) => c.revision) };
+const against = asked.find((c) => c.type === "deleted_since")?.extra.revision;
+
+// The same row, described. `_describe` reads the row through the same
+// lookup, so a hit nobody can open is also a hit nobody can annotate.
+// The dialog opening is the tell: on a lookup miss `_describe` returns
+// before it ever gets there.
+el.shadowRoot = node();
+const box = el.shadowRoot.querySelector("dialog.describe");
+const field = box.querySelector("input.text");
+field.focus = () => {};
+field.select = () => {};
+const asking = el._describe("deep");
+await settle();
+const describing = box.open;
+box.close("");
+await asking;
+
+console.log(JSON.stringify({ opened, against, describing }));
+"""
+
+
+@pytest.fixture(scope="session")
+def found_row(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "found_row", _FOUND_ROW)
+
+
+def test_a_row_the_server_found_can_be_opened(found_row):
+    # The whole second stage of the search rests on this. A hit is drawn
+    # from `_found`, never from `_changes` - so a lookup that reads only
+    # the loaded list makes every remote hit inert, and inert without a
+    # word: the row is there, the click does nothing, nothing says why.
+    assert found_row["opened"]["shown"] == ["deep"]
+    assert found_row["opened"]["open"] == "deep"
+    # And it asks against its own predecessor, which came with the hit.
+    assert found_row["against"] == "deeper"
+
+
+def test_a_row_the_server_found_can_be_described(found_row):
+    # Same lookup, second caller. Named separately because a fix that
+    # only reached `_expand` would leave this one silently broken.
+    assert found_row["describing"] is True
+
+
+_TWO_SEARCHES = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [];
+""" + _HELD + """
+// Type, wait, type again: the first answer lands while the second
+// search is still out.
+const first = el._search("winter");
+await settle();
+const second = el._search("summer");
+await settle();
+
+reply("search", { changes: [{ revision: "old" }], more: false });
+await first;
+const whileSecondRuns = el._searching;
+
+reply("search", { changes: [{ revision: "new" }], more: false });
+await second;
+
+console.log(JSON.stringify({
+  whileSecondRuns,
+  after: el._searching,
+  found: (el._found || []).map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def two_searches(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "two_searches", _TWO_SEARCHES)
+
+
+def test_an_older_answer_does_not_blank_the_note(two_searches):
+    # The indicator belongs to the newest run. Cleared by an older one,
+    # the screen says nothing is happening while a search really is.
+    assert two_searches["whileSecondRuns"] is True
+    assert two_searches["after"] is False
+    # And the older answer is dropped rather than drawn, which is the
+    # claim ticket doing its own job.
+    assert two_searches["found"] == ["new"]

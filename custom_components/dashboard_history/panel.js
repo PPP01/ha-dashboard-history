@@ -436,6 +436,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._query = "";
     this._found = null;
     this._moreFound = false;
+    this._searching = false;
     // A keystroke whose 400 ms run out after the switch would send the
     // old word to the new dashboard.
     clearTimeout(this._typing);
@@ -517,6 +518,7 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     const mine = this._claim("changes");
+    const run = (this._searchRuns = (this._searchRuns || 0) + 1);
     this._searching = true;
     this._render();
     const result = await this._guard(
@@ -524,12 +526,16 @@ class DashboardHistoryPanel extends HTMLElement {
         this._call("search", { dashboard: this._selected, text, limit: 100 }),
       mine,
     );
-    // Cleared before the claim is checked, not after: a search that has
-    // been superseded still has to put its own indicator out. The other
-    // way round, a run whose claim was taken by something that is not a
-    // search - `_loadOlder`, say - would leave "Searching the whole
-    // history…" standing for good.
-    this._searching = false;
+    // Cleared before the claim is checked, not after: a run whose claim
+    // was taken by something that is not a search - `_loadOlder`, say -
+    // would otherwise leave "Searching the whole history…" standing for
+    // good.
+    //
+    // But only the newest run may clear it. Type, wait, type again, and
+    // the first answer lands while the second is still out; clearing on
+    // that one blanks the indicator while a search really is running,
+    // and the screen says nothing is happening when something is.
+    if (run === this._searchRuns) this._searching = false;
     if (!mine()) return;
     this._found = result ? result.changes || [] : [];
     this._moreFound = result ? Boolean(result.more) : false;
@@ -597,7 +603,17 @@ class DashboardHistoryPanel extends HTMLElement {
    * rows depending on who is asking.
    */
   _changeAt(revision) {
-    return this._changes.find((c) => c.revision === revision) || null;
+    // Both lists, because there are two. A row the server found is by
+    // definition not among the loaded changes - that is what "search the
+    // whole history" means - so looking only in `this._changes` makes
+    // every remote hit inert: clicking it opens nothing, describing it
+    // writes nothing, and neither says why. The loaded list is asked
+    // first, so the ordinary path is unchanged.
+    return (
+      this._changes.find((c) => c.revision === revision) ||
+      (this._found || []).find((c) => c.revision === revision) ||
+      null
+    );
   }
 
   /**

@@ -2971,7 +2971,17 @@ Der Umbau ist mechanisch und betrifft eine abzählbare Liste von Stellen. Der Re
    * rows depending on who is asking.
    */
   _changeAt(revision) {
-    return this._changes.find((c) => c.revision === revision) || null;
+    // Both lists, because there are two. A row the server found is by
+    // definition not among the loaded changes - that is what "search the
+    // whole history" means - so looking only in `this._changes` makes
+    // every remote hit inert: clicking it opens nothing, describing it
+    // writes nothing, and neither says why. The loaded list is asked
+    // first, so the ordinary path is unchanged.
+    return (
+      this._changes.find((c) => c.revision === revision) ||
+      (this._found || []).find((c) => c.revision === revision) ||
+      null
+    );
   }
 
   /**
@@ -3483,6 +3493,111 @@ def test_picking_another_dashboard_drops_the_search(searching):
     # a query is the same mistake with a different name.
     assert searching["afterSwitch"]["query"] == ""
     assert searching["afterSwitch"]["found"] is None
+
+_FOUND_ROW = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+// A hit the server found, four hundred entries below the loaded window.
+// That is the ordinary case for a search: if it were in `_changes` the
+// local pass would have caught it and no request would have gone out.
+el._changes = [{ revision: "a", previous: "b", message: "" }];
+el._query = "winter";
+el._found = [{ revision: "deep", previous: "deeper", message: "" }];
+
+const asked = [];
+el._call = (type, extra) => {
+  asked.push({ type, extra });
+  return Promise.resolve({ items: [], groups: [], available: false });
+};
+
+await el._expand("deep");
+const opened = { open: el._open, shown: el._shown().map((c) => c.revision) };
+const against = asked.find((c) => c.type === "deleted_since")?.extra.revision;
+
+// The same row, described. `_describe` reads the row through the same
+// lookup, so a hit nobody can open is also a hit nobody can annotate.
+// The dialog opening is the tell: on a lookup miss `_describe` returns
+// before it ever gets there.
+el.shadowRoot = node();
+const box = el.shadowRoot.querySelector("dialog.describe");
+const field = box.querySelector("input.text");
+field.focus = () => {};
+field.select = () => {};
+const asking = el._describe("deep");
+await settle();
+const describing = box.open;
+box.close("");
+await asking;
+
+console.log(JSON.stringify({ opened, against, describing }));
+"""
+
+
+@pytest.fixture(scope="session")
+def found_row(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "found_row", _FOUND_ROW)
+
+
+def test_a_row_the_server_found_can_be_opened(found_row):
+    # The whole second stage of the search rests on this. A hit is drawn
+    # from `_found`, never from `_changes` - so a lookup that reads only
+    # the loaded list makes every remote hit inert, and inert without a
+    # word: the row is there, the click does nothing, nothing says why.
+    assert found_row["opened"]["shown"] == ["deep"]
+    assert found_row["opened"]["open"] == "deep"
+    # And it asks against its own predecessor, which came with the hit.
+    assert found_row["against"] == "deeper"
+
+
+def test_a_row_the_server_found_can_be_described(found_row):
+    # Same lookup, second caller. Named separately because a fix that
+    # only reached `_expand` would leave this one silently broken.
+    assert found_row["describing"] is True
+
+
+_TWO_SEARCHES = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [];
+""" + _HELD + """
+// Type, wait, type again: the first answer lands while the second
+// search is still out.
+const first = el._search("winter");
+await settle();
+const second = el._search("summer");
+await settle();
+
+reply("search", { changes: [{ revision: "old" }], more: false });
+await first;
+const whileSecondRuns = el._searching;
+
+reply("search", { changes: [{ revision: "new" }], more: false });
+await second;
+
+console.log(JSON.stringify({
+  whileSecondRuns,
+  after: el._searching,
+  found: (el._found || []).map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def two_searches(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "two_searches", _TWO_SEARCHES)
+
+
+def test_an_older_answer_does_not_blank_the_note(two_searches):
+    # The indicator belongs to the newest run. Cleared by an older one,
+    # the screen says nothing is happening while a search really is.
+    assert two_searches["whileSecondRuns"] is True
+    assert two_searches["after"] is False
+    # And the older answer is dropped rather than drawn, which is the
+    # claim ticket doing its own job.
+    assert two_searches["found"] == ["new"]
 ```
 
 - [ ] **Schritt 2: Laufen lassen, Fehlschlag prüfen**
@@ -3514,6 +3629,7 @@ In `_select`, neben den anderen Rücksetzungen:
     this._query = "";
     this._found = null;
     this._moreFound = false;
+    this._searching = false;
     // A keystroke whose 400 ms run out after the switch would send the
     // old word to the new dashboard.
     clearTimeout(this._typing);
@@ -3550,6 +3666,7 @@ Die Abläufe, hinter `_loadOlder`:
       return;
     }
     const mine = this._claim("changes");
+    const run = (this._searchRuns = (this._searchRuns || 0) + 1);
     this._searching = true;
     this._render();
     const result = await this._guard(
@@ -3557,12 +3674,16 @@ Die Abläufe, hinter `_loadOlder`:
         this._call("search", { dashboard: this._selected, text, limit: 100 }),
       mine,
     );
-    // Cleared before the claim is checked, not after: a search that has
-    // been superseded still has to put its own indicator out. The other
-    // way round, a run whose claim was taken by something that is not a
-    // search - `_loadOlder`, say - would leave "Searching the whole
-    // history…" standing for good.
-    this._searching = false;
+    // Cleared before the claim is checked, not after: a run whose claim
+    // was taken by something that is not a search - `_loadOlder`, say -
+    // would otherwise leave "Searching the whole history…" standing for
+    // good.
+    //
+    // But only the newest run may clear it. Type, wait, type again, and
+    // the first answer lands while the second is still out; clearing on
+    // that one blanks the indicator while a search really is running,
+    // and the screen says nothing is happening when something is.
+    if (run === this._searchRuns) this._searching = false;
     if (!mine()) return;
     this._found = result ? result.changes || [] : [];
     this._moreFound = result ? Boolean(result.more) : false;
@@ -3751,7 +3872,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`320 passed, 3 skipped`** (sieben mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
+Erwartet: **`323 passed, 3 skipped`** (zehn mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
 
 Im **einfachen** Modus: dasselbe Feld, aber es filtert die Versionen, es fragt nie nach und der Hinweis zählt »x of y versions«. Danach das Dashboard wechseln: Das Feld muss leer sein.
 
@@ -3790,7 +3911,7 @@ EOF
 
 ## Wenn alle acht stehen
 
-`python3 -m pytest tests/ -v` (`320 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
+`python3 -m pytest tests/ -v` (`323 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
 
 Damit ist Vorhaben H fertig, und mit ihm die beiden GitHub-Issues:
 
