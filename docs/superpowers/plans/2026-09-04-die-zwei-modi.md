@@ -804,7 +804,7 @@ git add custom_components/dashboard_history/store.py \
         custom_components/dashboard_history/services.yaml \
         tests/test_store.py
 git commit -m "$(cat <<'EOF'
-Let a row say what came before it, and search it all
+Let a row say what came before, and search it all
 
 A row's predecessor was worked out from the row below it, which is
 right only while the list is whole and in order. A page is not: the

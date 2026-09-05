@@ -705,9 +705,11 @@ class HistoryStore:
             cursor = resolved.encode()
             walk["include"] = [cursor]
         if limit is not None:
-            # One more than asked for, so the last entry handed out knows
-            # its predecessor; two more with a cursor, because the cursor
-            # entry itself is dropped again below.
+            # One more than asked for, so the last entry handed out
+            # knows its predecessor. With a cursor, two more: the cursor
+            # entry is dropped again below, and when the cursor names a
+            # commit of some other dashboard there is nothing to drop -
+            # one entry more than needed is read, never one too few.
             walk["max_entries"] = limit + 2 if cursor is not None else limit + 1
         try:
             entries = list(repo.get_walker(**walk))
