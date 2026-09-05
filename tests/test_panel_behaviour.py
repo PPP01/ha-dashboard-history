@@ -648,6 +648,96 @@ def keeping(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "keeping", _KEEP)
 
 
+_KEEP_FAILED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+el._select = async () => {};
+el._loadDashboardsQuietly = async () => {};
+
+let nextAnswer = {};
+el._call = (type, extra) => {
+  if (type === "restore_state" && !extra.confirm)
+    return Promise.resolve({
+      applied: false,
+      preview: "-a\\n+b",
+      explanation: { groups: [], note: "one card removed" },
+    });
+  if (type === "restore_state") return Promise.resolve(nextAnswer);
+  return Promise.resolve({ applied: true, changes: [], dashboards: [] });
+};
+
+const dialog = () => el.shadowRoot.querySelector("dialog.confirm");
+const press = async () => {
+  el._error = "";
+  const done = el._restoreState("b", "Back to this version");
+  await settle();
+  dialog().close("apply");
+  await done;
+  // No banner at all and an empty one mean the same thing here: `_guard`
+  // clears the field to null on its way in, so only a written one differs.
+  return el._error || "";
+};
+
+// The dashboard went back, but the state it replaced could not be
+// marked. Nothing on the screen would say so otherwise: the restore
+// itself succeeded.
+nextAnswer = {
+  applied: true,
+  kept_as_version: { created: null, error: "the live state is not recorded" },
+};
+const spoken = await press();
+
+// The same failure, reported twice by the server - `operations` hands
+// the one into the other. Said once, or the reader thinks two things
+// went wrong.
+nextAnswer = {
+  applied: true,
+  note: "the live state is not recorded",
+  kept_as_version: { created: null, error: "the live state is not recorded" },
+};
+const once = await press();
+
+// It worked. There is nothing to report, and a banner here would be an
+// alarm about a success.
+nextAnswer = { applied: true, kept_as_version: { created: "dash/v1.0.1" } };
+const quiet = await press();
+
+console.log(JSON.stringify({ spoken, once, quiet }));
+"""
+
+
+@pytest.fixture(scope="session")
+def keep_failed(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "keep_failed", _KEEP_FAILED)
+
+
+def test_a_version_that_could_not_be_kept_is_said_out_loud(keep_failed):
+    # The silent path. The restore worked, so the screen looks right;
+    # only the banner can say the version was not made.
+    assert keep_failed["spoken"] == (
+        "the dashboard went back, but no version was made: "
+        "the live state is not recorded"
+    )
+
+
+def test_the_same_failure_is_not_reported_twice(keep_failed):
+    # `note` and `kept_as_version.error` are the same sentence when the
+    # live state could not be recorded - operations passes one into the
+    # other. Twice reads as two faults.
+    assert keep_failed["once"] == "the live state is not recorded"
+
+
+def test_a_version_that_was_kept_says_nothing(keep_failed):
+    # Success is not news. A banner here would be an alarm about a
+    # thing that went right.
+    assert keep_failed["quiet"] == ""
+
+
 def test_the_preview_is_fetched_before_anything_is_written(keeping):
     # The hard rule: nothing that writes a dashboard state goes without
     # a preview. Asking about a version does not change that.

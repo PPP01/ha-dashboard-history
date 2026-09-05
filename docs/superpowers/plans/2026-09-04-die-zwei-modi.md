@@ -2322,6 +2322,96 @@ def keeping(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "keeping", _KEEP)
 
 
+_KEEP_FAILED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+el._select = async () => {};
+el._loadDashboardsQuietly = async () => {};
+
+let nextAnswer = {};
+el._call = (type, extra) => {
+  if (type === "restore_state" && !extra.confirm)
+    return Promise.resolve({
+      applied: false,
+      preview: "-a\\n+b",
+      explanation: { groups: [], note: "one card removed" },
+    });
+  if (type === "restore_state") return Promise.resolve(nextAnswer);
+  return Promise.resolve({ applied: true, changes: [], dashboards: [] });
+};
+
+const dialog = () => el.shadowRoot.querySelector("dialog.confirm");
+const press = async () => {
+  el._error = "";
+  const done = el._restoreState("b", "Back to this version");
+  await settle();
+  dialog().close("apply");
+  await done;
+  // No banner at all and an empty one mean the same thing here: `_guard`
+  // clears the field to null on its way in, so only a written one differs.
+  return el._error || "";
+};
+
+// The dashboard went back, but the state it replaced could not be
+// marked. Nothing on the screen would say so otherwise: the restore
+// itself succeeded.
+nextAnswer = {
+  applied: true,
+  kept_as_version: { created: null, error: "the live state is not recorded" },
+};
+const spoken = await press();
+
+// The same failure, reported twice by the server - `operations` hands
+// the one into the other. Said once, or the reader thinks two things
+// went wrong.
+nextAnswer = {
+  applied: true,
+  note: "the live state is not recorded",
+  kept_as_version: { created: null, error: "the live state is not recorded" },
+};
+const once = await press();
+
+// It worked. There is nothing to report, and a banner here would be an
+// alarm about a success.
+nextAnswer = { applied: true, kept_as_version: { created: "dash/v1.0.1" } };
+const quiet = await press();
+
+console.log(JSON.stringify({ spoken, once, quiet }));
+"""
+
+
+@pytest.fixture(scope="session")
+def keep_failed(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "keep_failed", _KEEP_FAILED)
+
+
+def test_a_version_that_could_not_be_kept_is_said_out_loud(keep_failed):
+    # The silent path. The restore worked, so the screen looks right;
+    # only the banner can say the version was not made.
+    assert keep_failed["spoken"] == (
+        "the dashboard went back, but no version was made: "
+        "the live state is not recorded"
+    )
+
+
+def test_the_same_failure_is_not_reported_twice(keep_failed):
+    # `note` and `kept_as_version.error` are the same sentence when the
+    # live state could not be recorded - operations passes one into the
+    # other. Twice reads as two faults.
+    assert keep_failed["once"] == "the live state is not recorded"
+
+
+def test_a_version_that_was_kept_says_nothing(keep_failed):
+    # Success is not news. A banner here would be an alarm about a
+    # thing that went right.
+    assert keep_failed["quiet"] == ""
+
+
 def test_the_preview_is_fetched_before_anything_is_written(keeping):
     # The hard rule: nothing that writes a dashboard state goes without
     # a preview. Asking about a version does not change that.
@@ -2455,6 +2545,13 @@ Und den `said`-Block ersetzen:
     // live state could not be recorded - operations hands the one into
     // the other - so it is only worth saying where it says something
     // else.
+    //
+    // The order below does that work, not this test: `note` sits ahead
+    // of `keptFailed`, so wherever there is a note at all it is the note
+    // that gets said. Removing this condition changes no outcome
+    // (measured). It stays as the statement of intent, and the ordering
+    // is what a later edit must not break: put `keptFailed` first and a
+    // note about something else disappears behind it.
     const failed = applied?.kept_as_version?.error;
     const keptFailed =
       failed && failed !== applied?.note
@@ -2560,7 +2657,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`303 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
+Erwartet: **`307 passed, 3 skipped`** (zehn mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
 
 - Im **einfachen** Modus zurückspringen, das Kästchen angehakt lassen — die neue Version muss danach oben in der Liste stehen, mit dem heutigen Datum als Titel.
 - Im **erweiterten** Modus zurückspringen und es abhaken — es darf keine neue Version geben, und der ersetzte Stand muss als Änderung weiterhin in der Liste stehen. Das ist die Test-Plan-Zeile »Rücksprung mit »verwerfen««, und sie ist nur mit den Augen zu prüfen.
@@ -3047,7 +3144,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`305 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
+Erwartet: **`309 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
 
 - eine Zeile aufklappen, »Undo this change« drücken, den Dialog abbrechen;
 - den Stift drücken, eine Beschreibung speichern — sie muss an *dieser* Zeile erscheinen;
@@ -3492,7 +3589,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`311 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
+Erwartet: **`315 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
 
 Im **einfachen** Modus: dasselbe Feld, aber es filtert die Versionen, es fragt nie nach und der Hinweis zählt »x of y versions«. Danach das Dashboard wechseln: Das Feld muss leer sein.
 
@@ -3531,7 +3628,7 @@ EOF
 
 ## Wenn alle acht stehen
 
-`python3 -m pytest tests/ -v` (`311 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
+`python3 -m pytest tests/ -v` (`315 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
 
 Damit ist Vorhaben H fertig, und mit ihm die beiden GitHub-Issues:
 

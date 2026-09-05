@@ -627,6 +627,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // live state could not be recorded - operations hands the one into
     // the other - so it is only worth saying where it says something
     // else.
+    //
+    // The order below does that work, not this test: `note` sits ahead
+    // of `keptFailed`, so wherever there is a note at all it is the note
+    // that gets said. Removing this condition changes no outcome
+    // (measured). It stays as the statement of intent, and the ordering
+    // is what a later edit must not break: put `keptFailed` first and a
+    // note about something else disappears behind it.
     const failed = applied?.kept_as_version?.error;
     const keptFailed =
       failed && failed !== applied?.note
