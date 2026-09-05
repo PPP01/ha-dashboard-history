@@ -130,4 +130,6 @@ differs from the one the re-review read, in its message only.
 Ruling: H1's workspace is kept rather than deleted at this point. Project H2 runs next on the same
 branch, and these rulings have to survive to the handover. Cost if wrong: a directory lingering in
 gitignored scratch.
-H1 COMPLETE — 9 commits, pytest 270 passed 3 skipped.
+H1 COMPLETE — 10 commits (ef652a9..cbd4c07), pytest 270 passed 3 skipped.
+*(Corrected on 2026-09-05: the count said 9 and left out cbd4c07,
+the simplification pass, which is part of the range.)*

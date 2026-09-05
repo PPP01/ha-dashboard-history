@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Dashboard History",
-        "description": "Records every change to your dashboards and lets you put back what disappeared. There is nothing to configure: the history starts with the first save after setup."
+        "description": "Records every change to your dashboards and lets you put back what disappeared. Nothing to fill in here: the history starts with the first save after setup. What it marks by itself can be changed later under Configure."
       }
     },
     "abort": {

@@ -123,10 +123,19 @@ def _same_as_live(store: HistoryStore, key: str, revisions: list, live: dict) ->
 def _version_dict(version: Version) -> dict:
     """One version as plain data, with its marker read rather than shown.
 
-    Every place that hands a version outside goes through here, so the
+    Every version that leaves as a *payload* goes through here, so the
     panel sees one shape - and so `automatic` cannot be present in one
     answer and missing from the next, which is the kind of difference a
     frontend quietly renders as False.
+
+    Not quite every reader: `store.search` calls `read_description`
+    straight, because it wants the words a person wrote and nothing
+    else. That is the one exception, and it is named here because the
+    stronger claim used to stand in its place - and under it `search`
+    matched the marker itself for a while, so a search for `automatic`
+    found every automatically marked change. Anything that hands a
+    version to a caller belongs here; anything that only needs the
+    words may read them itself.
     """
     description, automatic = versioning.read_description(version.description)
     return {

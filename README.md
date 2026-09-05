@@ -379,6 +379,29 @@ selection is not something a version could express.
 Making one writes no commit and changes nothing about the dashboard, so
 it needs no confirmation.
 
+#### Versions you never made
+
+Two kinds appear on their own, so that a dashboard is never a list with
+nothing in it:
+
+- **`v1.0.0`, once per dashboard.** The first time the integration sees a
+  dashboard, it marks the oldest state it has recorded of it — the state
+  to come back to before anything happened. A dashboard you create later
+  gets its own at the next start of Home Assistant.
+- **One per day, on the day's last state.** When the first change of a
+  new day is recorded, the state that was there before it is marked and
+  named after the day it belongs to, such as `5 September 2026`. A day on
+  which nothing changed gets no version, and a day never gets two.
+
+Both say so: they carry `automatic`, and the panel tells them apart from
+the ones you made. Nothing about them is different otherwise — the same
+numbering, the same "Back to this version".
+
+The daily ones can be turned off under *Settings → Devices & services →
+Dashboard History → Configure*. It takes effect at the next change, with
+no restart. The `v1.0.0` is not affected by that switch, and nothing is
+ever deleted either way: every state stays in the history, marked or not.
+
 A version on a dashboard that no longer exists is worth having — "Back to
 this version" brings the whole dashboard back. Mark one of its own states
 though: the change that recorded the *deletion* holds no state at all, so
