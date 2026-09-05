@@ -1579,7 +1579,11 @@ const rootNode = () => {
     get: () => "",
     // Exactly what a browser does to the shadow root's children, the
     // open dialog included. Nothing fires; the nodes are simply gone.
-    set() { it._seen = {}; },
+    //
+    // Kept as well, in `_written`: it is the page a person would be
+    // looking at, and "did the render that was held ever reach the
+    // screen" cannot be asked of a root that only throws things away.
+    set(html) { it._written = html; it._seen = {}; },
   });
   const base = it.querySelector.bind(it);
   // The stand-in answers every selector with a node of its own, which
@@ -1656,16 +1660,63 @@ onScreen.close("apply");
 await settle();
 const written = sent.filter((c) => c.type === "restore_state" && c.extra.confirm);
 reply("restore_state", { applied: true });
+// Drained here rather than in the output below, so that nothing left
+// over from this flow renders into the next one's shadow root.
+const settled = await finished(restoring);
+
+// And the same thing with the dialog refused, which is where the debt
+// really has to be paid. `_confirm` returns at `answer !== "apply"`
+// without rendering again - so do `_describe` and `_createVersion` -
+// so on this path the close handler is the only place left where a
+// page held back while the dialog stood can reach the screen.
+//
+// The advanced view for this half: it lists the changes themselves,
+// and what has to arrive is a page of them.
+el._mode = "advanced";
+el.shadowRoot = rootNode();
+el._changes = [{ revision: "a", message: "1 card added", timestamp: 1 }];
+el._cursor = "older";
+const refusing = el._restoreState("a", "Back to the state after this change");
+await settle();
+reply("restore_state", {
+  applied: false,
+  preview: "-a\\n+b",
+  explanation: { groups: [], note: "one card removed" },
+});
+await settle();
+const refused = el.shadowRoot.querySelector("dialog.confirm");
+const refusedOpened = refused.open;
+
+const olderAgain = el._loadOlder();
+await settle();
+reply("history", {
+  changes: [{ revision: "z", message: "9 cards moved", timestamp: 9 }],
+  next_cursor: null,
+});
+await olderAgain;
+const owedWhileRefusing = el._renderOwed;
+const beforeCancel = el.shadowRoot._written;
+
+refused.close("cancel");
+const refusedSettled = await finished(refusing);
+const afterCancel = el.shadowRoot._written;
 
 console.log(JSON.stringify({
   opened,
   stillThere,
   owed,
-  settled: await finished(restoring),
-  caughtUp: el._renderOwed,
+  settled,
   wrote: written.length,
   keep: written[0] ? written[0].extra.keep_as_version ?? null : null,
   rows: el._changes.map((c) => c.revision),
+  refused: {
+    opened: refusedOpened,
+    owed: owedWhileRefusing,
+    settled: refusedSettled,
+    heldBack: !beforeCancel.includes("9 cards moved"),
+    onScreen: afterCancel.includes("9 cards moved"),
+    caughtUp: el._renderOwed,
+  },
 }));
 """
 
@@ -1686,12 +1737,39 @@ def test_an_open_dialog_survives_a_page_arriving_underneath_it(dialog_survives):
     assert dialog_survives["wrote"] == 1
 
 
+def test_a_page_held_back_reaches_the_screen_when_the_dialog_is_refused(
+    dialog_survives,
+):
+    # The catch-up render in `_answerFrom`, measured where it decides
+    # something. This case used to press Apply, and Apply hides the
+    # line it is meant to test: `_confirm` renders again anyway on its
+    # way out, so deleting the catch-up changed nothing and the case
+    # stayed green over its own missing feature.
+    #
+    # Cancel is the honest path. Every one of the three flows that open
+    # a dialog returns without rendering when the answer is not the one
+    # they wanted, so a page that arrived while the dialog stood would
+    # stay invisible for good - the quieter return of the very fault the
+    # hold was added to fix.
+    held = dialog_survives["refused"]
+    assert held["opened"] is True
+    # Held while the dialog stood: the older page is in the list...
+    assert held["owed"] is True
+    assert held["heldBack"] is True
+    assert dialog_survives["rows"] == ["a", "z"]
+    # ...and on the screen the moment it closes, with nothing else left
+    # in the flow that could have drawn it.
+    assert held["settled"] is True
+    assert held["onScreen"] is True
+    assert held["caughtUp"] is False
+
+
 def test_the_held_render_runs_when_the_dialog_closes(dialog_survives):
-    # Held, not dropped: the older page is in the list, and the render
-    # that was owed has been paid by the time the flow moves on.
+    # The same debt on the path that is written: the render owed while
+    # the confirmation stood has been paid by the time the flow moves
+    # on, and the older page is in the list rather than dropped.
     assert dialog_survives["owed"] is True
-    assert dialog_survives["caughtUp"] is False
-    assert dialog_survives["rows"] == ["a", "b"]
+    assert dialog_survives["settled"] is True
 
 
 def test_the_kept_version_survives_the_render_that_was_held(dialog_survives):
