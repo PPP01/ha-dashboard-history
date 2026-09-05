@@ -83,6 +83,11 @@ export function versionHead({ section, here, top }) {
   // thing: going back to it wrote a newer entry, and that entry, not
   // this version, is where you are. Saying "current state" there
   // invites the reading Decision 9 exists to prevent.
+  //
+  // "same state as now" and not a wording of its own: three places say
+  // this one fact, and they said it in two vocabularies until somebody
+  // read all three together and asked whether they meant the same
+  // thing. They do.
   const back = here
     ? `<span class="count">${top === 0 ? "current state" : "same state as now"}</span>`
     : `<button class="act ghost" data-state="${escape(first.name)}"
@@ -106,9 +111,16 @@ export function versionHead({ section, here, top }) {
  * cards moved, and yet nothing differs? Both halves were true and the
  * row still misled, because nothing named what each half was about.
  *
+ * The other difference the chips carry: the top entry is where you are.
+ * A lower entry can hold byte-identical content without being where you
+ * are - move a card up and down and there is a whole run of them, all
+ * worded alike.
+ *
  * `spokenFor` is the first row of a version section, whose head carries
  * the same chip a few pixels above it. Two identical labels stacked is
- * not emphasis, it is noise.
+ * not emphasis, it is noise - and it was measurable: the head read
+ * "same content as now" while the row under it read "same state as
+ * now", one fact wearing two coats.
  *
  * `matching` are versions holding what this row's state holds without
  * sitting on it; `detail` is the already-built detail block, or "".
@@ -124,8 +136,14 @@ export function renderRow({ change, index, spokenFor = false, matching = [], det
         : `<span class="chip sameas"
                  title="The change described here left the dashboard in exactly the state it holds right now."
                  >same state as now</span>`;
-  // It says "identical in content to", never "is": going back to a
-  // version writes a new entry, and this is that entry, not that version.
+  // Beside "current state" rather than in a sentence under the card.
+  // Both said the same thing; only one of them sits inside the frame
+  // the eye stops at, and the sentence below was read past. Kept short
+  // for the same reason - a chip is a label, not a statement - with the
+  // part that cannot fit moved into the tooltip, where "a different
+  // entry" is spelled out. It says "identical in content to", never
+  // "is": going back to a version writes a new entry, and this is that
+  // entry, not that version.
   const named = matching.length
     ? `<span class="chip ver"
              title="A different entry that holds exactly what ${escape(joinNames(matching))} holds. Going back to a version writes a new entry; this is that entry."
