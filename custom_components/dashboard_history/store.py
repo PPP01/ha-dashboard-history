@@ -19,6 +19,17 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+try:  # Two load paths, and this module has to work under both.
+    # Home Assistant imports this as part of the package; plain pytest
+    # puts the package directory on `sys.path` instead, so that the
+    # Home-Assistant-free modules can be reached without executing the
+    # `__init__` that imports Home Assistant. Neither spelling works in
+    # the other's world. Both modules here are Home-Assistant-free, so
+    # nothing about that rule changes.
+    from . import versions as versioning
+except ImportError:  # pragma: no cover - the flat path, used by pytest
+    import versions as versioning
+
 from dulwich import porcelain
 from dulwich.errors import RefFormatError
 from dulwich.repo import Repo
@@ -781,10 +792,19 @@ class HistoryStore:
         for change in self.list_changes(key, None):
             words = [change.message, change.description]
             for version in marks.get(change.revision, []):
+                # The description as a reader sees it. Stored, it can
+                # carry the marker that says a version was made
+                # automatically, and that marker is words: searching
+                # `automatic`, `history` or `dashboard` would otherwise
+                # return every automatically versioned state, for a
+                # sentence nobody wrote and nobody is shown. Every other
+                # way out of here strips it; this was the one that did
+                # not.
+                said, _ = versioning.read_description(version.description)
                 words += [
                     version.name.rsplit("/", 1)[-1],
                     version.title,
-                    version.description,
+                    said,
                 ]
             if needle in "\n".join(words).casefold():
                 found.append(change)

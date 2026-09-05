@@ -26,7 +26,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
 
 from . import operations
-from .const import DOMAIN
+from .const import DOMAIN, KEEP_AS_VERSION
 from .snapshot import async_get_all_configs
 
 _LOGGER = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ async def async_register(hass: HomeAssistant) -> None:
         ("restore_state", restore_state, DASHBOARD.extend({
             vol.Required("revision"): cv.string,
             vol.Optional("confirm", default=False): bool,
-            vol.Optional("keep_as_version"): vol.Any(None, dict),
+            vol.Optional("keep_as_version"): KEEP_AS_VERSION,
         })),
         ("undo_change", undo_change, DASHBOARD.extend({
             vol.Required("revision"): cv.string,

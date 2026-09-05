@@ -1,6 +1,30 @@
 """Constants for the Dashboard History integration."""
 
+import voluptuous as vol
+
 DOMAIN = "dashboard_history"
+
+# The shape of `keep_as_version`, in one place because it has two doors.
+# The WebSocket command and the service both take it, and while it was
+# written out twice they disagreed: one required a title, the other
+# accepted any dict at all - so `keep_as_version: {}` with `confirm:
+# true` made a real tag with an empty title, and nothing in this
+# integration can delete a version again. A schema stated once cannot
+# drift from itself.
+#
+# Shaped here, never judged: an unknown level is answered by operations
+# with a sentence the panel can show, and a schema that refused first
+# would take that sentence away.
+KEEP_AS_VERSION = vol.Any(
+    None,
+    vol.Schema(
+        {
+            vol.Optional("level", default="patch"): str,
+            vol.Required("title"): str,
+            vol.Optional("description", default=""): str,
+        }
+    ),
+)
 
 # Home Assistant fires this when a dashboard configuration is saved.
 EVENT_LOVELACE_UPDATED = "lovelace_updated"

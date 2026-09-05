@@ -5,6 +5,7 @@ import threading
 import pytest
 from dulwich.repo import Repo
 from store import HistoryStore, _as_text
+import versions
 from versions import candidates
 
 
@@ -1244,6 +1245,29 @@ def test_a_search_finds_a_state_by_the_number_of_a_version_on_it(store):
     marked = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
     store.create_version("home/v1.2.0", "A title", "", marked)
     assert [c.revision for c in store.search_changes("home", "v1.2")] == [marked]
+
+
+def test_a_search_does_not_match_the_marker_of_an_automatic_version(store):
+    # The marker is bookkeeping stored in the description, and it is
+    # made of words: `dashboard-history: automatic`. Searched raw, every
+    # one of those words returns every automatic version - hits for a
+    # sentence nobody wrote and nobody is ever shown. Everywhere else the
+    # marker is read out before the description leaves; the search was
+    # the one exit that had not been given the same treatment.
+    marked = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.create_version(
+        "home/v1.0.0", "A title", versions.automatic_description(), marked
+    )
+    for word in ("automatic", "dashboard", "history", "dash", "auto"):
+        assert store.search_changes("home", word) == [], word
+    # And a person's own words on an automatic version are still found.
+    store.create_version(
+        "home/v1.0.1",
+        "Another",
+        versions.automatic_description("the winter rebuild"),
+        marked,
+    )
+    assert [c.revision for c in store.search_changes("home", "winter")] == [marked]
 
 
 def test_a_search_does_not_match_the_namespace_of_a_version(store):

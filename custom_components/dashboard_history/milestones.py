@@ -32,6 +32,12 @@ from .store import Change, HistoryStore, Version
 
 _LOGGER = logging.getLogger(__name__)
 
+# How far back a day mark looks for the end of the previous day. Two
+# would be enough for one save at a time; a burst of saves needs room,
+# because every one of them is announced and each announcement looks at
+# the newest entries as they are *now*, not as they were when it fired.
+_RECENT = 20
+
 
 class Milestones:
     """Makes the versions nobody asked for."""
@@ -241,15 +247,39 @@ class Milestones:
                 if not self._entry.options.get(OPTION_DAILY_VERSIONS, True):
                     return
                 newest = await self._hass.async_add_executor_job(
-                    self._store.list_changes, key, 2
+                    self._store.list_changes, key, _RECENT
                 )
                 if len(newest) < 2:
                     # The first state this dashboard ever had. There is
                     # nothing before it, so there is no day to close.
                     return
-                current, previous = newest
+                # The last state of the day before, found by walking back
+                # rather than by taking the second entry.
+                #
+                # Two entries were enough only if this runs once per
+                # save, in order. It does not: the announcement is
+                # handled without holding up the bus, so two saves
+                # landing within milliseconds start two marks that both
+                # reach here after both writes. Both would then read
+                # [Tuesday, Tuesday], see one day, and return - and
+                # Monday's last state, one row further down, is never
+                # marked by anything, ever. Silent and permanent, since
+                # no later save can reach back to it.
                 zone = dt_util.DEFAULT_TIME_ZONE
-                if versioning.same_day(previous.timestamp, current.timestamp, zone):
+                current = newest[0]
+                previous = next(
+                    (
+                        c
+                        for c in newest[1:]
+                        if not versioning.same_day(c.timestamp, current.timestamp, zone)
+                    ),
+                    None,
+                )
+                if previous is None:
+                    # Everything in the window belongs to today. Either no
+                    # day ended here, or more than `_RECENT` saves landed
+                    # since one did - and that one is out of reach either
+                    # way, which is the limit this window sets.
                     return
                 found, numbered = await self._async_versions(key)
                 # Already marked, by a person or by an earlier run of
