@@ -113,37 +113,48 @@ class Milestones:
         One dashboard at a time, each in its own guard: the same shape
         `capture._async_write` uses, and for the same reason - a failure
         on the first must not cost the rest.
+
+        Under the same lock a day mark takes, and for the same reason it
+        takes it. Since the marker is armed before the recorder starts
+        (`async_arm`), the opening pass's announcements raise day marks
+        while this pass is still walking, and on a dashboard with no
+        version yet both of them compute `v1.0.0`. The store refuses the
+        second with a `ValueError`, which arrives here as a refusal and
+        would log a warning about a dashboard that is in perfect order.
+        Serialised, the loser instead sees the version the winner made
+        and returns None, which is the truth: it needs no floor any more.
         """
         try:
-            found = await self._async_versions(key)
-            if versioning.latest(key, [v.name for v in found]) is not None:
-                return None
-            # The whole history of this one dashboard, to reach its
-            # oldest entry - the design record calls the floor "the
-            # state to come back to before anything happened", and on a
-            # dashboard that was created while Home Assistant was
-            # running, its newest state is not that. It is what is on
-            # the screen right now, and a floor you can "go back to"
-            # without anything changing is not an offer.
-            #
-            # The full walk is affordable precisely because it happens
-            # once: the check above returns before it on every later
-            # start, so no dashboard pays for this twice.
-            recorded = await self._hass.async_add_executor_job(
-                self._store.list_changes, key, None
-            )
-            if not recorded:
-                # Nothing recorded yet. Nothing to mark, and nothing wrong:
-                # a dashboard that has never been saved has no state.
-                return None
-            made = await self._async_make(key, "major", recorded[-1])
-            if made is None:
-                # Unlike the day mark, this path only ever sees live
-                # dashboards - `list_dashboards` reads the tree at HEAD -
-                # so a refusal here is a real obstacle, and one that
-                # comes back at every start. Worth saying out loud.
-                _LOGGER.warning("Could not give %s a first version", key)
-            return made
+            async with self._marking:
+                found = await self._async_versions(key)
+                if versioning.latest(key, [v.name for v in found]) is not None:
+                    return None
+                # The whole history of this one dashboard, to reach its
+                # oldest entry - the design record calls the floor "the
+                # state to come back to before anything happened", and on a
+                # dashboard that was created while Home Assistant was
+                # running, its newest state is not that. It is what is on
+                # the screen right now, and a floor you can "go back to"
+                # without anything changing is not an offer.
+                #
+                # The full walk is affordable precisely because it happens
+                # once: the check above returns before it on every later
+                # start, so no dashboard pays for this twice.
+                recorded = await self._hass.async_add_executor_job(
+                    self._store.list_changes, key, None
+                )
+                if not recorded:
+                    # Nothing recorded yet. Nothing to mark, and nothing wrong:
+                    # a dashboard that has never been saved has no state.
+                    return None
+                made = await self._async_make(key, "major", recorded[-1])
+                if made is None:
+                    # Unlike the day mark, this path only ever sees live
+                    # dashboards - `list_dashboards` reads the tree at HEAD -
+                    # so a refusal here is a real obstacle, and one that
+                    # comes back at every start. Worth saying out loud.
+                    _LOGGER.warning("Could not give %s a first version", key)
+                return made
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Could not make the first version of %s", key)
             return None
@@ -205,14 +216,37 @@ class Milestones:
     def async_arm(self) -> None:
         """Start marking the end of a day when the history grows.
 
-        Armed *after* the floor is laid, and that order is the whole
-        reason this is a call of its own. `candidates` counts up from the
-        highest version that exists, so on a dashboard with none the
-        first automatic version would be `v0.0.1` rather than `v1.0.1`.
-        The recorder's opening pass has already announced itself by the
-        time `async_start` returns, so nothing it recorded can reach
-        here - the first pass lays the floor, everything after it may
-        raise day marks.
+        Armed *before* the recorder starts, and that order is the whole
+        reason this is a call of its own. `capture.async_start()`
+        announces its opening pass before it returns, so a marker armed
+        afterwards never hears a word of what that pass recorded - and
+        what it records is precisely the changes made while nobody was
+        watching. Home Assistant is down overnight, a storage file is
+        edited by hand or comes back from a backup, Home Assistant starts
+        on Tuesday: the pass commits Monday's change and announces it to
+        an empty room. Monday is then never marked and never can be -
+        Tuesday's later saves look back over a window holding nothing but
+        Tuesday. The same goes for a save made *during* the pass, a
+        window the recorder deliberately keeps its save listener open for
+        (`capture.async_start`).
+
+        The order used to be the other way round, and the reason it gave
+        has since been doubled elsewhere: `candidates` counts up from the
+        highest version there is, so a day mark on a dashboard with no
+        version at all would once have been numbered `v0.0.1`. It is not
+        any more. `_async_mark_day` asks `versions.automatic_level`,
+        which answers `major` exactly when there is no number yet, so
+        such a dashboard gets `v1.0.0` whether a floor was laid first or
+        not.
+
+        What the new order does bring is a floor pass and a day mark in
+        flight at the same time - the first time those two can overlap -
+        both able to work out the same name for the same dashboard, with
+        the loser refused by `store.create_version`. `_async_floor_for`
+        takes `self._marking` for that reason. Whichever gets there first
+        makes the version and the other reads it and stands down, and
+        either outcome is right: what a day mark puts on the last state
+        of the previous day is what a floor is anyway.
 
         `EVENT_HISTORY_UPDATED` rather than `lovelace_updated`: it is
         fired once the commit exists and it names the dashboards that

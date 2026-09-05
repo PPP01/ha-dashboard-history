@@ -40,6 +40,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register(hass)
     await panel.async_register(hass)
 
+    # Armed before the recorder rather than after it, and `async_arm`
+    # carries the whole reason: `capture.async_start()` announces its
+    # opening pass before it returns, so a marker armed afterwards is
+    # deaf to everything that pass recorded. Nothing it can hear exists
+    # until the repository does, so arming ahead of `store.ensure` costs
+    # nothing and is outside the guard for the same reason - subscribing
+    # to a bus cannot fail in a way that matters here.
+    milestones.async_arm()
+
     # Guarded, because the hard rule says so: a repository that cannot be
     # created - a read-only configuration folder, a full disk - costs the
     # history, and nothing else. It must not cost the start.
@@ -53,15 +62,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # could not be created leaves nothing to mark, but a recorder that
     # started perfectly well must not lose its versions because one
     # dashboard's tag failed.
+    #
+    # After the recorder, and that way round for good: a floor marks a
+    # *recorded* state, and on a first start there is nothing in the
+    # repository at all until the opening pass has written it. It may now
+    # run beside a day mark raised by that same pass - `_async_floor_for`
+    # takes the marking lock so the two cannot both claim one name.
     try:
         await milestones.async_lay_the_floor()
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not make its first versions")
-
-    # Only now, and see `async_arm` for why: before the floor is laid,
-    # the first automatic version of a dashboard would be numbered
-    # v0.0.1 instead of v1.0.1.
-    milestones.async_arm()
 
     _LOGGER.debug("Dashboard History set up")
     return True
