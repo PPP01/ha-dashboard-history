@@ -90,6 +90,28 @@ class Milestones:
         is no state there to come back to - `async_create_version`
         refuses it, and not asking saves a warning per deleted dashboard
         on every single start.
+
+        One tag scan per dashboard, deliberately, and not one grouped
+        scan for the whole pass. The grouped form is cheaper and was
+        considered: measured on 2026-09-05 over twelve dashboards
+        carrying 3600 tags between them - a year of daily versions - the
+        twelve narrowed scans this pass makes cost 1530 ms against
+        545 ms for a single `list_versions(None)` sorted by key. It is
+        still the wrong shape. Since the marker is armed before the
+        recorder (`async_arm`), day marks are being made while this pass
+        walks, so a tag list read once at the top is stale by the time
+        the later dashboards are reached - and a stale list says "no
+        version yet" about a dashboard that has just been given one,
+        which is exactly the collision `_async_floor_for` takes the
+        marking lock to avoid. Reading each dashboard's tags freshly,
+        under that lock, is what makes the check mean anything.
+
+        The second-per-start this costs is paid in an executor, beside
+        an opening pass of about twenty seconds, and it grows with the
+        number of dashboards rather than with the history. The scan
+        itself no longer grows with the tags of *other* dashboards -
+        `store._each_tag` narrows before it loads an object, which is
+        where the real cost used to be.
         """
         try:
             live = await self._hass.async_add_executor_job(
@@ -189,6 +211,17 @@ class Milestones:
         a module variable that Home Assistant fills in from the user's
         configuration while it starts; held on to, it would be whatever
         it was when this object was built.
+
+        That operation reads the dashboard's tags again to work the
+        number out, so a version costs one scan more than the caller has
+        already paid for. Left alone on purpose. It is the fence's own
+        reading, and letting a caller hand its list down would let a
+        caller hand down a stale one and get a name that already exists
+        - the numbering is the one calculation here that goes quietly
+        wrong. It is also only paid when a version is actually made:
+        never on the floor pass of a dashboard that already has one,
+        and on the pass that does make one it sits beside a full walk of
+        that dashboard's history, which measured three times as long.
         """
         zone = dt_util.DEFAULT_TIME_ZONE
         answer = await operations.async_create_version(
