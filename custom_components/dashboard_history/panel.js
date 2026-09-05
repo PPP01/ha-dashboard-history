@@ -1565,7 +1565,11 @@ class DashboardHistoryPanel extends HTMLElement {
       return (
         banner +
         renderSimple({
-          versions: this._matchingVersions(),
+          // Both lists. The rows are what the search left; the sentence
+          // at the top of the page is about the dashboard, and a search
+          // says nothing about that.
+          versions: this._versions,
+          shown: this._matchingVersions(),
           changes: this._changes,
           searching: Boolean(this._query.trim()),
         })

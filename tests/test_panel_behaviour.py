@@ -1744,3 +1744,186 @@ def test_a_refresh_during_a_search_asks_the_question_again(search_through_refres
     assert search_through_refresh["rows"] == ["new"]
     assert search_through_refresh["shown"] == ["deep"]
     assert search_through_refresh["note"] == "1 in the whole history."
+
+
+# -- the simple mode, which is the default one and had no test at all ------
+
+_SIMPLE_MODE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._versions = [
+  { name: "dash/v1.2.0", title: "Kitchen rebuild", description: "",
+    revision: "a", same_as_now: true },
+  { name: "dash/v1.0.0", title: "Autumn tidy", description: "",
+    revision: "c", same_as_now: false },
+];
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.2.0" }],
+    timestamp: 1 },
+  { revision: "b", message: "2 cards moved", versions: [], timestamp: 2 },
+  { revision: "c", message: "3 cards removed",
+    versions: [{ name: "dash/v1.0.0" }], timestamp: 3 },
+];
+
+const count = (text, needle) => text.split(needle).length - 1;
+const plain = el._renderMain();
+// The simple mode filters the complete version list and asks nobody,
+// so this needs no server at all.
+await el._search("autumn");
+const filtered = el._renderMain();
+
+console.log(JSON.stringify({
+  plain: {
+    standing: plain.includes("The dashboard is in the state of Kitchen rebuild."),
+    rows: count(plain, "class=\\"vrow\\""),
+    twoChanges: plain.includes("The newest 2 changes in this version"),
+    oneChange: plain.includes("The newest change in this version"),
+  },
+  filtered: {
+    standing: filtered.includes(
+      "The dashboard is in the state of Kitchen rebuild."),
+    drifted: filtered.includes("has changed since the last version"),
+    rows: count(filtered, "class=\\"vrow\\""),
+    autumn: filtered.includes("Autumn tidy"),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def simple_mode(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "simple_mode", _SIMPLE_MODE)
+
+
+def test_the_simple_mode_says_where_the_dashboard_stands(simple_mode):
+    # `same_as_now` comes from the server, worked out against every
+    # version - including one whose commit is below the loaded window.
+    assert simple_mode["plain"]["standing"] is True
+    assert simple_mode["plain"]["rows"] == 2
+
+
+def test_a_search_does_not_change_what_is_said_about_the_dashboard(simple_mode):
+    # Two subjects on one page. The rows answer what was typed; the
+    # sentence at the top is about the dashboard, and typing says
+    # nothing about that. Handed only the filtered list, the page
+    # flipped to "The dashboard has changed since the last version was
+    # saved." the moment a search removed the version it is standing on.
+    assert simple_mode["filtered"]["rows"] == 1
+    assert simple_mode["filtered"]["autumn"] is True
+    assert simple_mode["filtered"]["standing"] is True
+    assert simple_mode["filtered"]["drifted"] is False
+
+
+def test_the_fold_counts_only_what_it_can_show(simple_mode):
+    # The fold holds the loaded changes of that version, cut at the
+    # older end by whatever the window reaches. "2 changes in this
+    # version" was flatly wrong for a version spanning a hundred, and
+    # this mode has no "load older" that could ever make it right.
+    assert simple_mode["plain"]["twoChanges"] is True
+    assert simple_mode["plain"]["oneChange"] is True
+
+
+# -- rows.js, the other half with no behavioural test ----------------------
+
+_ROWS = """
+const rows = await import(new URL("./panel/rows.js", %(url)s).href);
+
+// A version marks a state, so it heads the section running from its own
+// change downwards to the next version below. Everything above the
+// topmost version is not in a version yet.
+const cut = rows.sections([
+  { revision: "a", versions: [] },
+  { revision: "b", versions: [{ name: "dash/v1.0.0", title: "One" }] },
+  { revision: "c", versions: [] },
+]);
+
+const head = (here, top) =>
+  rows.versionHead({
+    section: {
+      versions: [{ name: "dash/v1.0.0", title: "One" }],
+      rows: [top, top + 1],
+    },
+    here,
+    top,
+  });
+
+const row = (change, extra) =>
+  rows.renderRow({ change, ...extra });
+const CHANGE = { revision: "abcdef012345", message: "2 cards moved",
+                 timestamp: 1, same_as_now: true };
+
+console.log(JSON.stringify({
+  sections: cut.map((s) => ({
+    named: s.versions ? s.versions[0].name : null,
+    rows: s.rows,
+  })),
+  crowned: head(true, 0).includes("current state"),
+  sameState: head(true, 2).includes("same state as now"),
+  wayBack: head(false, 2).includes("Back to this version"),
+  noWayBackWhereYouAre: head(true, 0).includes("Back to this version"),
+  names: [
+    rows.someNames(["v1.0.0"]),
+    rows.someNames(["v1.0.0", "v1.1.0"]),
+    rows.someNames(["v1.0.0", "v1.1.0", "v1.2.0"]),
+  ],
+  newestChip: row(CHANGE, { newest: true }).includes("current state"),
+  lowerChip: row(CHANGE, { newest: false }).includes("same state as now"),
+  spokenFor: row(CHANGE, { newest: true, spokenFor: true })
+    .includes("current state"),
+  movedOn: row({ ...CHANGE, same_as_now: false }, { newest: true })
+    .includes("chip"),
+  named: row(CHANGE, { newest: true, matching: ["v1.0.0"] })
+    .includes("same state as v1.0.0"),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def row_parts(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "rows", _ROWS)
+
+
+def test_the_history_is_cut_into_sections_at_the_versions(row_parts):
+    # The first section can be version-less and the later ones cannot -
+    # which is why `_renderMain` handles the unbundled case once,
+    # outside the loop.
+    assert row_parts["sections"] == [
+        {"named": None, "rows": [0]},
+        {"named": "dash/v1.0.0", "rows": [1, 2]},
+    ]
+
+
+def test_a_section_head_offers_the_way_back_only_where_it_leads_somewhere(
+    row_parts,
+):
+    # Offering it on the state the dashboard already holds opens a
+    # dialog reading "No difference." above a live Apply button.
+    assert row_parts["wayBack"] is True
+    assert row_parts["noWayBackWhereYouAre"] is False
+    # Two truths, two wordings: a version on the newest entry is where
+    # the dashboard is; one further down only holds the same thing.
+    assert row_parts["crowned"] is True
+    assert row_parts["sameState"] is True
+
+
+def test_a_chip_says_which_kind_of_sameness_it_means(row_parts):
+    assert row_parts["newestChip"] is True
+    assert row_parts["lowerChip"] is True
+    # The head a few pixels above already carries it; twice is noise.
+    assert row_parts["spokenFor"] is False
+    # And nothing at all where the dashboard has moved on.
+    assert row_parts["movedOn"] is False
+    assert row_parts["named"] is True
+
+
+def test_a_long_list_of_names_is_cut_and_says_so(row_parts):
+    # Measured on the test bench: eighteen versions sat on states equal
+    # to the live one, and the chip listed every one of them.
+    assert row_parts["names"] == [
+        "v1.0.0",
+        "v1.0.0 and v1.1.0",
+        "v1.0.0 and 2 more",
+    ]

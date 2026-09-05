@@ -16,12 +16,28 @@ const { escape, when } = await import(`./render.js${PARTS}`);
 
 /**
  * `versions` is every version of this dashboard, newest number first
- * and complete. `changes` is the loaded window, newest first, and may
- * hold nothing at all for the older versions - which is why the head
- * carries the way back rather than the rows under it.
+ * and complete. `shown` is the part of it a search has left, and
+ * defaults to all of them. `changes` is the loaded window, newest
+ * first, and may hold nothing at all for the older versions - which is
+ * why the head carries the way back rather than the rows under it.
+ *
+ * Both lists, and not one filtered one, because the two halves of this
+ * page have two different subjects. The rows are the answer to what
+ * was typed in the box; the sentence at the top is about the
+ * dashboard, and the dashboard does not change when somebody types.
+ * Given only the filtered list it read "The dashboard has changed since
+ * the last version was saved." the moment a search removed the version
+ * the dashboard is actually standing on - the one place this mode took
+ * a fact the server had answered and quietly recomputed it over a
+ * display list.
  */
-export function renderSimple({ versions, changes, searching = false }) {
-  if (!versions.length)
+export function renderSimple({
+  versions,
+  shown = versions,
+  changes,
+  searching = false,
+}) {
+  if (!shown.length)
     // Two different reasons for an empty list, and each gets its own
     // sentence: while searching, an empty list means "no match" - the
     // button and the way out belong to the other case, where there are
@@ -42,12 +58,13 @@ export function renderSimple({ versions, changes, searching = false }) {
   // has. `same_as_now` comes from the server and is worked out against
   // every version, so it is right whether or not that version's commit
   // is in the loaded window.
+  // Over every version, never over `shown`: see the note above.
   const here = versions.filter((v) => v.same_as_now);
   const standing = here.length
     ? `The dashboard is in the state of ${escape(here[0].title || here[0].name)}.`
     : "The dashboard has changed since the last version was saved.";
 
-  const rows = versions.map((version) => {
+  const rows = shown.map((version) => {
     // Its changes are the loaded ones from this version's own state
     // downwards, stopping at the next version. What has not been loaded
     // is simply not folded in; the head is what somebody goes back to,
@@ -59,10 +76,24 @@ export function renderSimple({ versions, changes, searching = false }) {
         if (i > start && (changes[i].versions || []).length) break;
         inside.push(changes[i]);
       }
+    // "The newest N", not "N": `inside` starts at the version's own
+    // change and walks downwards, so it is cut at the older end
+    // whenever the version spans more than the loaded window holds. A
+    // flat "25 changes in this version" was wrong for a version
+    // spanning a hundred - and this mode has no "load older" that could
+    // ever make it right, so the label carries the limit instead of
+    // waiting for a button that does not exist.
+    //
+    // Where the version's own change is below the window there is no
+    // fold at all, which stays as it is: on a dashboard with many
+    // versions that is most of the rows, and a line on each of them
+    // saying so would be noise. An absent fold claims nothing; a
+    // wrong number claims something false.
     const folded = inside.length
       ? `<details class="steps">
-           <summary>${inside.length} change${inside.length === 1 ? "" : "s"}
-             in this version</summary>
+           <summary>${inside.length === 1
+        ? "The newest change in this version"
+        : `The newest ${inside.length} changes in this version`}</summary>
            ${inside
         .map(
           (c) =>
