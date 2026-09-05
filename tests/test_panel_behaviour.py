@@ -1561,3 +1561,186 @@ def test_the_kept_version_survives_the_render_that_was_held(dialog_survives):
     # somebody asked for is dropped without a word.
     assert dialog_survives["keep"] is not None
     assert dialog_survives["keep"]["level"] == "patch"
+
+
+# -- an unanswered search is not an empty one ------------------------------
+#
+# Four findings of the final review with one root: `_shown()` could not
+# tell "nobody has been asked" from "asked, and nothing there", so the
+# page said "Nothing matches." over questions it had never put.
+
+_UNASKED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._changes = [
+  { revision: "a", message: "1 card added", description: "", versions: [],
+    timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "Winter rebuild", description: "",
+    revision: "z" },
+];
+
+const sent = [];
+const held = [];
+el._call = (type, extra) => {
+  sent.push(type);
+  return new Promise((resolve) => held.push({ type, extra, resolve }));
+};
+const reply = (type, value) => {
+  const at = held.findIndex((c) => c.type === type);
+  if (at >= 0) held.splice(at, 1)[0].resolve(value);
+};
+
+// The simple mode finds the version without asking anybody.
+await el._search("winter");
+const inSimple = {
+  hits: el._matchingVersions().map((v) => v.name),
+  sent: [...sent],
+};
+
+// "Advanced view" is pressed with the word still in the box.
+const switching = el._setMode("advanced");
+await settle();
+const whileWalking = {
+  sent: [...sent],
+  shown: el._shown(),
+  note: el._searchNote(),
+  main: el._renderMain(),
+};
+reply("search", {
+  changes: [{ revision: "deep", message: "winter rework", timestamp: 2 }],
+  more: false,
+});
+await switching;
+const answered = {
+  // Null-safe on purpose: with the switch not asking anybody there is
+  // no answer here at all, and this case has to fail on its assertion
+  // rather than die reading a property of null.
+  shown: el._shown() && el._shown().map((c) => c.revision),
+  note: el._searchNote(),
+};
+
+// A single character, which the second step will not run for.
+await el._search("w");
+const oneLetter = {
+  sent: [...sent],
+  shown: el._shown(),
+  note: el._searchNote(),
+  main: el._renderMain(),
+};
+
+console.log(JSON.stringify({ inSimple, whileWalking, answered, oneLetter }));
+"""
+
+
+@pytest.fixture(scope="session")
+def unasked(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "unasked", _UNASKED)
+
+
+def test_switching_to_the_advanced_view_puts_the_standing_query(unasked):
+    # The simple mode never asks the server, so after the switch the
+    # advanced list had a query, no local hits and `_found === null` -
+    # and answered "Nothing matches." to a question nobody had put. Only
+    # a further keystroke set the search going.
+    assert unasked["inSimple"] == {"hits": ["dash/v1.0.0"], "sent": []}
+    assert unasked["whileWalking"]["sent"] == ["search"]
+    assert unasked["answered"]["shown"] == ["deep"]
+    assert "1 in the whole history." in unasked["answered"]["note"]
+
+
+def test_a_running_search_does_not_also_say_nothing_matches(unasked):
+    # Both sentences stood on the page at once, for the half second per
+    # thousand commits the walk takes.
+    assert unasked["whileWalking"]["note"] == "Searching the whole history…"
+    assert unasked["whileWalking"]["shown"] is None
+    assert "Nothing matches." not in unasked["whileWalking"]["main"]
+
+
+def test_a_query_too_short_to_send_says_so(unasked):
+    # Nobody was asked, and nothing said why. An empty note under
+    # "Nothing matches." reads as a search that ran and failed.
+    assert unasked["oneLetter"]["sent"] == ["search"]  # still only the one
+    assert unasked["oneLetter"]["shown"] is None
+    assert "Type a second character" in unasked["oneLetter"]["note"]
+    assert "Nothing matches." not in unasked["oneLetter"]["main"]
+
+
+_SEARCH_THROUGH_REFRESH = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [{ revision: "a", message: "1 card added", versions: [] }];
+
+const sent = [];
+const held = [];
+el._call = (type, extra) => {
+  sent.push(type);
+  return new Promise((resolve) => held.push({ type, extra, resolve }));
+};
+const reply = (type, value) => {
+  const at = held.findIndex((c) => c.type === type);
+  if (at >= 0) held.splice(at, 1)[0].resolve(value);
+};
+
+// The walk over the whole history is out...
+const searching = el._search("winter");
+await settle();
+const walking = el._searching;
+
+// ...and somebody saves a dashboard, which is what fires the refresh
+// this panel listens for.
+const refreshing = el._refreshQuietly();
+await settle();
+reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+await settle();
+reply("history", {
+  changes: [{ revision: "new", message: "2 moved", versions: [] }],
+  next_cursor: null,
+});
+reply("versions", { versions: [] });
+await settle();
+
+// The first walk answers now, against a list that has been replaced
+// underneath it. Dropped, and the refresh puts the question again.
+reply("search", { changes: [{ revision: "old" }], more: false });
+await searching;
+await settle();
+const asked = sent.filter((t) => t === "search").length;
+reply("search", { changes: [{ revision: "deep" }], more: false });
+await refreshing;
+
+console.log(JSON.stringify({
+  walking,
+  asked,
+  query: el._query,
+  shown: el._shown() && el._shown().map((c) => c.revision),
+  note: el._searchNote(),
+  rows: el._changes.map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def search_through_refresh(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "search_through_refresh", _SEARCH_THROUGH_REFRESH
+    )
+
+
+def test_a_refresh_during_a_search_asks_the_question_again(search_through_refresh):
+    # The search and the change list used to share one claim ticket, so
+    # a refresh took the search's away: its answer was dropped - rightly,
+    # the list it was worked out against is gone - and nobody started it
+    # again. The page then said "Nothing matches." for good over a
+    # history that held thirty.
+    assert search_through_refresh["walking"] is True
+    assert search_through_refresh["asked"] == 2
+    assert search_through_refresh["query"] == "winter"
+    assert search_through_refresh["rows"] == ["new"]
+    assert search_through_refresh["shown"] == ["deep"]
+    assert search_through_refresh["note"] == "1 in the whole history."

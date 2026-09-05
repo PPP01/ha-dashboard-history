@@ -163,7 +163,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // doing it. It exists apart from the other two because a search or
     // an older page must not invalidate a preview, and picking another
     // dashboard must.
-    this._tickets = { changes: 0, detail: 0, write: 0 };
+    this._tickets = { changes: 0, detail: 0, search: 0, write: 0 };
   }
 
   /**
@@ -195,6 +195,15 @@ class DashboardHistoryPanel extends HTMLElement {
     } catch {
       // See `storedMode`. The choice holds for this page and no longer.
     }
+    // The two modes search different things - the simple one filters the
+    // complete version list and needs nobody, the advanced one walks the
+    // whole history over the network - so a query standing at the switch
+    // has to be put again in the new mode's terms. Without this, coming
+    // over to the advanced view with a word in the box answered
+    // "Nothing matches." for a question nobody had asked: the simple
+    // mode never asks, so `_found` was still `null`, and only a further
+    // keystroke set the search going.
+    if (this._query.trim()) return this._search(this._query);
     this._render();
   }
 
@@ -346,8 +355,21 @@ class DashboardHistoryPanel extends HTMLElement {
       } else {
         const detailMine = this._claim("detail");
         const detail = await this._detailFor(open);
-        if (!detailMine()) return;
-        this._take(detail);
+        // Taken only while the slot is still this request's; a newer
+        // one for the same row wins. Not a `return` any more, because
+        // whatever became of the row's detail, the search below still
+        // has to be dealt with.
+        if (detailMine()) this._take(detail);
+      }
+      // A search standing over a history that has just been replaced is
+      // put again. Its hits were worked out against the list this
+      // refresh has just thrown away, so leaving them would show
+      // matches from before the change; and where the refresh landed
+      // *while* the search was out, this is the only thing that starts
+      // it again.
+      if (mine() && this._query.trim()) {
+        await this._search(this._query);
+        return;
       }
     }
     this._render();
@@ -435,6 +457,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // the request that writes used to read `this._selected` a second
     // time, long after the diff somebody approved was built.
     this._claim("write");
+    this._claim("search"); // and any walk over the old dashboard's history
     this._selected = key;
     this._open = null;
     this._items = [];
@@ -527,7 +550,12 @@ class DashboardHistoryPanel extends HTMLElement {
       this._render();
       return;
     }
-    const mine = this._claim("changes");
+    // Its own slot, not the change list's. A refresh - and one runs on
+    // every recorded change of this dashboard - used to take the
+    // search's ticket away: the answer was then dropped, correctly, and
+    // nobody started the search again, so the page said "Nothing
+    // matches." over a history holding thirty of them.
+    const mine = this._claim("search");
     const run = (this._searchRuns = (this._searchRuns || 0) + 1);
     this._searching = true;
     this._render();
@@ -594,14 +622,23 @@ class DashboardHistoryPanel extends HTMLElement {
 
   /**
    * What the advanced list should show: the plain history, the local
-   * hits, or what the server found. One place decides it, so no
-   * renderer has to.
+   * hits, what the server found - or `null`, where nobody has answered
+   * yet. One place decides it, so no renderer has to.
+   *
+   * `null` is the distinction this used to lack, and three findings of
+   * the final review came out of it. An empty list was the answer both
+   * to "nothing matched" and to "nobody has been asked", and
+   * `_renderMain` turned both into "Nothing matches." - a flat sentence
+   * about a question that had not been put. It stood over the note
+   * reading "Searching the whole history…" for as long as the walk took,
+   * and it stood for good after a mode switch or a query too short to
+   * send.
    */
   _shown() {
     if (!this._query.trim()) return this._changes;
     const local = this._localMatches();
     if (local.length) return local;
-    return this._found || [];
+    return this._found;
   }
 
   /**
@@ -1492,6 +1529,13 @@ class DashboardHistoryPanel extends HTMLElement {
     const local = this._localMatches();
     if (local.length)
       return `${local.length} of the ${this._changes.length} loaded entries.`;
+    // Below the length the second step will run at. Said rather than
+    // left blank: an empty note under an empty list reads as a search
+    // that ran and found nothing, and the reason it did not run is not
+    // guessable from anything on the screen.
+    if (this._query.trim().length < 2)
+      return `Nothing in the ${this._changes.length} loaded entries. Type a
+        second character to search the whole history.`.replace(/\s+/g, " ");
     if (this._found === null) return "";
     if (!this._found.length) return "Nothing in the whole history.";
     return this._moreFound
@@ -1527,6 +1571,11 @@ class DashboardHistoryPanel extends HTMLElement {
         })
       );
     const shown = this._shown();
+    // Nobody has answered yet: the walk is out, or the query is too
+    // short to send. The note above the list says which, and a sentence
+    // here would contradict it - which is exactly what "Nothing
+    // matches." did, for the seconds a walk over a grown history takes.
+    if (shown === null) return banner;
     if (!shown.length)
       return `${banner}<p class="empty muted">${this._query.trim()
         ? "Nothing matches."
