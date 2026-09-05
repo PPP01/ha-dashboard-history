@@ -20,7 +20,7 @@ under a second.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import date, datetime, tzinfo
 
 # Deliberately strict: three plain numbers, no leading zeros, no suffix.
@@ -187,3 +187,64 @@ def day_title(timestamp: int, zone: tzinfo) -> str:
     """What an automatic daily version is called: `3 September 2026`."""
     when = datetime.fromtimestamp(timestamp, zone)
     return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
+
+
+def end_of_previous_day(stamps: Sequence[int], zone: tzinfo) -> int | None:
+    """Where in a run of recorded states the day before ends, or None.
+
+    `stamps` is newest first, as `list_changes` hands them over. The
+    answer is the index of the first entry that falls on an earlier day
+    than the newest one - the state that day ended on.
+
+    Walked back rather than read off the second entry, and that is the
+    whole point of this function. A mark is started from an announcement
+    and does its reading when it *runs*, not when it was announced: two
+    saves landing within milliseconds start two marks that both see both
+    writes. Taking the second entry, both would see [today, today], find
+    one day, and stop - and the last state of the day before, one row
+    further down, would never be marked by anything, ever. Silent and
+    permanent, since no later save reaches back to it.
+
+    None has two meanings, and neither is an error: the newest state is
+    the first this dashboard ever had, or every state handed over belongs
+    to the same day. The second is the edge of whatever window the caller
+    read, and the caller is the one that knows how wide it was.
+    """
+    if len(stamps) < 2:
+        return None
+    return next(
+        (at for at in range(1, len(stamps)) if not same_day(stamps[at], stamps[0], zone)),
+        None,
+    )
+
+
+def automatic_level(key: str, names: Iterable[str]) -> str:
+    """The level an automatic version is made at: `major` or `patch`.
+
+    Major when the dashboard carries no *number* yet, so that its first
+    automatic version is `v1.0.0` and not `v0.0.1`. `candidates` counts
+    up from the highest number there is, and with none there the patch
+    candidate is `v0.0.1`; a later pass would then find a version, leave
+    the dashboard alone, and strand it on the v0.0.x track for good.
+
+    Read off `latest` rather than off the list, because the list
+    deliberately carries hand-made and unreadable names too - a
+    dashboard whose only tag is `heizung/wichtig` has no number.
+    """
+    return "patch" if latest(key, names) is not None else "major"
+
+
+def automatic_days(marks: Iterable[tuple[str, str]]) -> set[str]:
+    """Which days already carry an automatic version, by title.
+
+    `marks` are `(title, description)` pairs, as a dashboard's versions
+    hand them over. A day gets at most one automatic version: the simple
+    mode shows a list of nothing but titles, and two rows reading
+    `5 September 2026` with two different buttons under them cannot be
+    told apart by the person that mode exists for.
+
+    Only automatic ones count. What somebody wrote themselves is their
+    own name for a state, even in the unlikely event that it reads like
+    a date.
+    """
+    return {title for title, text in marks if title and read_description(text)[1]}

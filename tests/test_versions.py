@@ -200,3 +200,103 @@ def test_the_marker_is_never_shown_to_anybody():
 
 def test_an_empty_description_is_nobodys_words():
     assert versions.read_description("") == ("", False)
+
+
+def test_a_winter_evening_is_still_one_day():
+    # Berlin is +1 in January, not +2. An implementation that carried a
+    # fixed summer offset would push 23:30 into the following day and
+    # split an evening in two - and it would pass every other case here.
+    assert versions.same_day(_at("2026-01-15T21:00"), _at("2026-01-15T23:30"), BERLIN)
+
+
+# -- the state a day ended on ------------------------------------------
+
+
+def test_the_state_before_the_new_day_is_found():
+    stamps = [_at("2026-09-04T08:00"), _at("2026-09-03T21:00")]
+    assert versions.end_of_previous_day(stamps, BERLIN) == 1
+
+
+def test_a_burst_of_saves_does_not_hide_the_day_before():
+    # Two saves landing in the same moment start two marks, and both read
+    # the newest entries when they run rather than the ones their own
+    # event was about. Walking back rather than taking the second entry
+    # is what keeps yesterday's last state reachable at all.
+    stamps = [
+        _at("2026-09-04T08:00:01"),
+        _at("2026-09-04T08:00:00"),
+        _at("2026-09-03T21:00"),
+    ]
+    assert versions.end_of_previous_day(stamps, BERLIN) == 2
+
+
+def test_a_window_holding_only_today_ends_no_day():
+    stamps = [_at("2026-09-04T08:00"), _at("2026-09-04T07:00")]
+    assert versions.end_of_previous_day(stamps, BERLIN) is None
+
+
+def test_the_first_state_a_dashboard_ever_had_ends_no_day():
+    assert versions.end_of_previous_day([_at("2026-09-04T08:00")], BERLIN) is None
+    assert versions.end_of_previous_day([], BERLIN) is None
+
+
+def test_the_night_the_clocks_go_back_ends_no_day_of_its_own():
+    # Both of these are 25 October in Berlin, but they fall on two
+    # different days in UTC: 01:30 is still CEST and 04:00 is already
+    # CET. Bucketing the epoch by 86400 would report that a day ended
+    # here, and would do it twice a year.
+    stamps = [_at("2026-10-25T04:00"), _at("2026-10-25T01:30")]
+    assert versions.end_of_previous_day(stamps, BERLIN) is None
+
+
+# -- what an automatic version is called, and at what level ------------
+
+
+def test_a_dashboard_without_a_number_starts_at_major():
+    assert versions.automatic_level("heizung", []) == "major"
+
+
+def test_a_hand_made_tag_alone_is_still_no_number():
+    # `candidates` counts up from the highest *number* there is, so a
+    # dashboard whose only tag is hand-made would take v0.0.1 as its
+    # first automatic version and stay on that track for good.
+    assert (
+        versions.automatic_level("heizung", ["heizung/wichtig", "heizung/v2.0.0-beta"])
+        == "major"
+    )
+
+
+def test_a_numbered_dashboard_counts_on_at_patch():
+    assert versions.automatic_level("heizung", ["heizung/v1.0.0"]) == "patch"
+
+
+def test_another_dashboards_number_does_not_count():
+    assert versions.automatic_level("heizung", ["solar/v1.0.0"]) == "major"
+
+
+# -- a day carries at most one automatic version -----------------------
+
+
+def test_a_day_that_already_carries_a_mark_is_named():
+    marks = [("3 September 2026", versions.automatic_description())]
+    assert versions.automatic_days(marks) == {"3 September 2026"}
+
+
+def test_a_version_somebody_made_does_not_claim_a_day():
+    marks = [("Before the rework", "Handed over to the tenant")]
+    assert versions.automatic_days(marks) == set()
+
+
+def test_a_lightweight_tag_claims_no_day_either():
+    # A hand-made lightweight tag has no message at all, so it has
+    # neither a title nor a description to read.
+    assert versions.automatic_days([("", "")]) == set()
+
+
+def test_the_day_a_state_falls_on_is_answered_on_its_own():
+    # `local_day` is part of the interface, not a private step of
+    # `same_day`, and until now only ever reached through it.
+    from datetime import date
+
+    assert versions.local_day(_at("2026-09-03T23:59"), BERLIN) == date(2026, 9, 3)
+    assert versions.local_day(_at("2026-09-04T00:01"), BERLIN) == date(2026, 9, 4)
