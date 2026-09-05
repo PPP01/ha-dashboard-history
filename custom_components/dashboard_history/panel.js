@@ -113,6 +113,14 @@ class DashboardHistoryPanel extends HTMLElement {
     // `change.versions`, so that a version outside the window still
     // appears - which is the whole reason project G came first.
     this._versions = [];
+    // What is in the search box, what the server answered (null while it
+    // was never asked), whether it is being asked right now, and the
+    // pending keystroke timer.
+    this._query = "";
+    this._found = null;
+    this._moreFound = false;
+    this._searching = false;
+    this._typing = null;
     // The versions holding exactly what the dashboard holds now, worked
     // out by the server against *every* version. Read rather than
     // recomputed: doing it here means doing it over the loaded window,
@@ -425,6 +433,13 @@ class DashboardHistoryPanel extends HTMLElement {
     this._cursor = null;
     this._versions = [];
     this._matching = [];
+    this._query = "";
+    this._found = null;
+    this._moreFound = false;
+    // A keystroke whose 400 ms run out after the switch would send the
+    // old word to the new dashboard.
+    clearTimeout(this._typing);
+    this._typing = null;
     const result = await this._guard(
       () =>
         Promise.all([
@@ -473,6 +488,104 @@ class DashboardHistoryPanel extends HTMLElement {
     this._changes = this._changes.concat(result.changes || []);
     this._cursor = result.next_cursor ?? null;
     this._render();
+  }
+
+  /**
+   * Search in two steps: what is loaded, then the whole history.
+   *
+   * The first step answers without a round trip and covers almost every
+   * search, because what somebody looks for is usually what they have
+   * just read. The second exists so that "nothing found" means nothing
+   * found - the panel holds twenty-five entries, and letting that decide
+   * the answer would be the same invisible gap this project has closed
+   * three times elsewhere.
+   *
+   * The simple mode never gets here past the first line: it filters the
+   * complete version list, which needs nobody's help to be complete.
+   */
+  async _search(text) {
+    this._query = text;
+    this._found = null;
+    this._moreFound = false;
+    if (
+      this._mode === "simple" ||
+      !text.trim() ||
+      text.trim().length < 2 ||
+      this._localMatches().length
+    ) {
+      this._render();
+      return;
+    }
+    const mine = this._claim("changes");
+    this._searching = true;
+    this._render();
+    const result = await this._guard(
+      () =>
+        this._call("search", { dashboard: this._selected, text, limit: 100 }),
+      mine,
+    );
+    // Cleared before the claim is checked, not after: a search that has
+    // been superseded still has to put its own indicator out. The other
+    // way round, a run whose claim was taken by something that is not a
+    // search - `_loadOlder`, say - would leave "Searching the whole
+    // history…" standing for good.
+    this._searching = false;
+    if (!mine()) return;
+    this._found = result ? result.changes || [] : [];
+    this._moreFound = result ? Boolean(result.more) : false;
+    this._render();
+  }
+
+  /** The words a row is searched by: its own, and its versions'. */
+  _wordsOf(change) {
+    return [
+      change.message || "",
+      change.description || "",
+      ...(change.versions || []).flatMap((v) => [
+        (v.name || "").split("/").pop(),
+        v.title || "",
+        v.description || "",
+      ]),
+    ]
+      .join("\n")
+      .toLowerCase();
+  }
+
+  /** The loaded changes whose words hold the query. */
+  _localMatches() {
+    const needle = this._query.trim().toLowerCase();
+    if (!needle) return [];
+    return this._changes.filter((c) => this._wordsOf(c).includes(needle));
+  }
+
+  /**
+   * The versions the query matches - the simple mode's whole search.
+   *
+   * Over `_versions`, which is complete, so this needs no second step
+   * and no server: there is no window here that a search could fall out
+   * of.
+   */
+  _matchingVersions() {
+    const needle = this._query.trim().toLowerCase();
+    if (!needle) return this._versions;
+    return this._versions.filter((v) =>
+      [(v.name || "").split("/").pop(), v.title || "", v.description || ""]
+        .join("\n")
+        .toLowerCase()
+        .includes(needle),
+    );
+  }
+
+  /**
+   * What the advanced list should show: the plain history, the local
+   * hits, or what the server found. One place decides it, so no
+   * renderer has to.
+   */
+  _shown() {
+    if (!this._query.trim()) return this._changes;
+    const local = this._localMatches();
+    if (local.length) return local;
+    return this._found || [];
   }
 
   /**
@@ -1253,6 +1366,39 @@ class DashboardHistoryPanel extends HTMLElement {
     });
   }
 
+  _renderSearch() {
+    const said = this._searchNote();
+    return `<div class="search">
+        <input class="text find" type="search" maxlength="100"
+               placeholder="${this._mode === "simple"
+        ? "Search this dashboard's versions"
+        : "Search this dashboard's history"}"
+               value="${escape(this._query)}">
+        ${said ? `<span class="why">${escape(said)}</span>` : ""}
+      </div>`;
+  }
+
+  /**
+   * Which of the two steps answered. Without it an empty result is
+   * ambiguous, and a full one does not say how far it looked.
+   */
+  _searchNote() {
+    if (!this._query.trim()) return "";
+    if (this._mode === "simple") {
+      const hits = this._matchingVersions().length;
+      return `${hits} of ${this._versions.length} versions.`;
+    }
+    if (this._searching) return "Searching the whole history…";
+    const local = this._localMatches();
+    if (local.length)
+      return `${local.length} of the ${this._changes.length} loaded entries.`;
+    if (this._found === null) return "";
+    if (!this._found.length) return "Nothing in the whole history.";
+    return this._moreFound
+      ? `The first ${this._found.length} in the whole history.`
+      : `${this._found.length} in the whole history.`;
+  }
+
   _renderMain() {
     if (!this._selected)
       return '<p class="empty muted">Pick a dashboard on the left.</p>';
@@ -1274,10 +1420,25 @@ class DashboardHistoryPanel extends HTMLElement {
     if (this._mode === "simple")
       return (
         banner +
-        renderSimple({ versions: this._versions, changes: this._changes })
+        renderSimple({
+          versions: this._matchingVersions(),
+          changes: this._changes,
+          searching: Boolean(this._query.trim()),
+        })
       );
-    if (!this._changes.length)
-      return `${banner}<p class="empty muted">No changes recorded for this dashboard.</p>`;
+    const shown = this._shown();
+    if (!shown.length)
+      return `${banner}<p class="empty muted">${this._query.trim()
+        ? "Nothing matches."
+        : "No changes recorded for this dashboard."}</p>`;
+    // Solely while searching: the list is flat and "Load older" is gone,
+    // because a page belongs to a list that goes on, not to one a search
+    // just cut down to whatever matched.
+    if (this._query.trim())
+      return (
+        banner +
+        shown.map((change) => this._renderRow(change)).join("")
+      );
 
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
@@ -1381,7 +1542,10 @@ class DashboardHistoryPanel extends HTMLElement {
       ${this._error ? `<div class="banner"><span class="grow">${escape(this._error)}</span></div>` : ""}
       <div class="layout">
         <div class="side">${this._renderSide()}</div>
-        <div class="main">${this._renderMain()}</div>
+        <div class="main">
+          ${this._selected ? this._renderSearch() : ""}
+          ${this._renderMain()}
+        </div>
       </div>
       ${DIALOGS}`;
 
@@ -1490,6 +1654,21 @@ class DashboardHistoryPanel extends HTMLElement {
           root.querySelector("dialog.describe").close("save");
         }
       });
+    const find = root.querySelector("input.find");
+    if (find) {
+      // Focus survives the re-render this typing causes; without it the
+      // box would lose the caret on every keystroke.
+      if (this._query) find.focus();
+      find.setSelectionRange?.(find.value.length, find.value.length);
+      find.addEventListener("input", () => {
+        clearTimeout(this._typing);
+        const text = find.value;
+        // 400 ms, and only then. A walk over the whole history costs
+        // about half a second per thousand commits, and firing it per
+        // keystroke would spend that eight times for one word.
+        this._typing = setTimeout(() => this._search(text), 400);
+      });
+    }
   }
 }
 

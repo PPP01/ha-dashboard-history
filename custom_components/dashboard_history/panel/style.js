@@ -43,6 +43,8 @@ export const STYLE = `
     background: var(--card-background-color, #fff);
   }
   .main { flex: 1 1 auto; overflow-y: auto; padding: 16px; }
+  .search { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+  .search .find { flex:1; }
   .dash {
     display: flex;
     flex-direction: column;

@@ -20,17 +20,23 @@ const { escape, when } = await import(`./render.js${PARTS}`);
  * hold nothing at all for the older versions - which is why the head
  * carries the way back rather than the rows under it.
  */
-export function renderSimple({ versions, changes }) {
+export function renderSimple({ versions, changes, searching = false }) {
   if (!versions.length)
-    // The button and the way out come *with* the sentence. Behind an
-    // early return they would not exist, and somebody in the default
-    // mode with no versions yet would have neither a way to make one nor
-    // a visible way to the other mode.
-    return `<p class="empty muted">This dashboard has no versions yet.</p>
-       <button class="act ghost" data-version="now">Save this as a version</button>
-       <p class="why hint">Taking back a single step, or putting back one
-         deleted card, lives in the advanced mode.
-         <button class="linky" data-mode="advanced">Switch to it</button></p>`;
+    // Two different reasons for an empty list, and each gets its own
+    // sentence: while searching, an empty list means "no match" - the
+    // button and the way out belong to the other case, where there are
+    // no versions at all yet.
+    return searching
+      ? `<p class="empty muted">No version matches.</p>`
+      : // The button and the way out come *with* the sentence. Behind an
+      // early return they would not exist, and somebody in the default
+      // mode with no versions yet would have neither a way to make one
+      // nor a visible way to the other mode.
+      `<p class="empty muted">This dashboard has no versions yet.</p>
+         <button class="act ghost" data-version="now">Save this as a version</button>
+         <p class="why hint">Taking back a single step, or putting back one
+           deleted card, lives in the advanced mode.
+           <button class="linky" data-mode="advanced">Switch to it</button></p>`;
 
   // Where the dashboard stands, said in the only vocabulary this mode
   // has. `same_as_now` comes from the server and is worked out against

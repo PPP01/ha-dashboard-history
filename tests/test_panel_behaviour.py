@@ -1012,3 +1012,110 @@ def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
     # There genuinely is nothing there, and asking would be asking about
     # a revision that does not exist.
     assert addressing["first"]["types"] == ["explain", "undo_change"]
+
+
+_SEARCH = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [
+  { revision: "a", message: "1 card added", description: "", versions: [] },
+  { revision: "b", message: "2 views removed", description: "the rework",
+    versions: [{ name: "dash/v1.0.0", title: "Winter rebuild" }] },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "Winter rebuild", description: "notes" },
+  { name: "dash/v0.9.0", title: "Autumn", description: "" },
+];
+
+const asked = [];
+el._call = (type, extra) => {
+  asked.push(type);
+  return Promise.resolve({ changes: [{ revision: "z", message: "old rework" }] });
+};
+
+await el._search("views");
+const local = { shown: el._shown().map((c) => c.revision), asked: [...asked] };
+
+await el._search("rework");
+const own = el._shown().map((c) => c.revision);
+
+await el._search("winter");
+const byVersion = el._shown().map((c) => c.revision);
+
+await el._search("needle");
+const remote = { shown: el._shown().map((c) => c.revision), asked: [...asked] };
+
+await el._search("");
+const cleared = { shown: el._shown().map((c) => c.revision), found: el._found };
+
+// The simple mode filters the complete version list, without a server.
+el._mode = "simple";
+asked.length = 0;
+await el._search("autumn");
+const simple = {
+  names: el._matchingVersions().map((v) => v.name),
+  asked: [...asked],
+};
+
+// Picking another dashboard drops the search with everything else.
+el._call = () => Promise.resolve({ changes: [], next_cursor: null, versions: [] });
+await el._select("other");
+const afterSwitch = { query: el._query, found: el._found };
+
+console.log(JSON.stringify({
+  local, own, byVersion, remote, cleared, simple, afterSwitch,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def searching(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "search", _SEARCH)
+
+
+def test_a_hit_in_what_is_loaded_never_reaches_the_server(searching):
+    # The common case, and it must cost nothing: what somebody searches
+    # for is usually what they have just read.
+    assert searching["local"]["shown"] == ["b"]
+    assert searching["local"]["asked"] == []
+
+
+def test_a_persons_own_description_is_searched_too(searching):
+    # Both are what a row shows, and nobody remembers which of the two
+    # they read.
+    assert searching["own"] == ["b"]
+
+
+def test_a_version_sitting_on_a_row_is_searched_too(searching):
+    # The same four things the server looks at. A first step that found
+    # less than the second would escalate for a hit it already had.
+    assert searching["byVersion"] == ["b"]
+
+
+def test_nothing_loaded_matching_asks_the_whole_history(searching):
+    # "Nothing found" has to mean nothing found, not "nothing among the
+    # twenty-five that happen to be loaded".
+    assert searching["remote"]["asked"] == ["search"]
+    assert searching["remote"]["shown"] == ["z"]
+
+
+def test_clearing_the_box_goes_back_to_the_plain_list(searching):
+    # An empty box is not a search for everything; it is no search.
+    assert searching["cleared"]["shown"] == ["a", "b"]
+    assert searching["cleared"]["found"] is None
+
+
+def test_the_simple_mode_filters_versions_without_asking_anybody(searching):
+    # `_versions` is the complete list, so a filter over it is complete
+    # too - which is exactly what project G was for.
+    assert searching["simple"]["names"] == ["dash/v0.9.0"]
+    assert searching["simple"]["asked"] == []
+
+
+def test_picking_another_dashboard_drops_the_search(searching):
+    # A cursor from one dashboard handed to another was already refused;
+    # a query is the same mistake with a different name.
+    assert searching["afterSwitch"]["query"] == ""
+    assert searching["afterSwitch"]["found"] is None
