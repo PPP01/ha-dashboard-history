@@ -841,6 +841,21 @@ class HistoryStore:
         searching it would make every version of it a hit for a word
         that says nothing.
 
+        The panel matches the same four things over what it has already
+        loaded, so that the common search costs no round trip, and asks
+        this only when that found nothing. Two copies of one rule:
+        `tests/test_panel_assets.py` reads both sides and compares the
+        fields, so adding one here alone goes red rather than quiet.
+
+        One difference between the copies is real. Case is folded here
+        and only lowercased there, because JavaScript has no casefold:
+        `strasse` finds a row saying `Straße` in this method and misses
+        it in the panel. That is the harmless direction - a miss up
+        there escalates and arrives here, which then finds it - and it
+        is the only harmless one, because a hit up there that this
+        method would not have made stands as the whole answer with
+        nothing to correct it.
+
         An empty search finds nothing rather than everything. It is the
         state of a search box somebody has just cleared, and answering
         it with the whole history is the opposite of what that means.

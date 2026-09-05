@@ -649,7 +649,32 @@ class DashboardHistoryPanel extends HTMLElement {
     this._render();
   }
 
-  /** The words a row is searched by: its own, and its versions'. */
+  /**
+   * The words a row is searched by: its own, and its versions'.
+   *
+   * The same four kinds `store.search_changes` matches on - the
+   * generated message, a person's own description, and the title,
+   * description and number of every version sitting on that state. One
+   * rule written twice, on purpose: the local step answers the common
+   * search without a round trip, and `_searchNote` says out loud how
+   * far it looked. What keeps the two copies from drifting apart is a
+   * test - `test_the_two_halves_of_the_search_look_at_the_same_fields`
+   * in tests/test_panel_assets.py reads both sides and compares the
+   * fields, the way the event name has been held together since it was
+   * renamed on one side only.
+   *
+   * One difference is real and stays: `toLowerCase()` here against
+   * `casefold()` there. Casefolding is the stronger of the two - it
+   * folds `ß` into `ss`, which lowercasing does not - so searching
+   * `strasse` finds a row saying `Straße` on the server and misses it
+   * here. That is the safe direction, and it is the *only* safe one: a
+   * miss here escalates to the server, which then finds it, while a hit
+   * here that the server would not have made stands as the whole answer
+   * and nothing ever corrects it. So if these two are ever brought
+   * closer together, the local step must not end up the stronger of the
+   * two. JavaScript has no casefold, and the near-equivalents cost more
+   * than the one letter is worth.
+   */
   _wordsOf(change) {
     return [
       change.message || "",
