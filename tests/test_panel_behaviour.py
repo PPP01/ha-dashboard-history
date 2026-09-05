@@ -252,6 +252,19 @@ const between = el._cursor;
 const two = el._select("b-dash");
 await settle();
 const askedFor = waiting("history").extra;
+
+// The switch is still in flight. Ask for an older page now: without the
+// reset in `_select`, `_loadOlder` would still be holding a-dash's
+// cursor while `_selected` already says b-dash, and would ask b-dash for
+// the page before a commit only a-dash ever had. Not awaited - with the
+// reset there is nothing to await, and without it there would be a
+// request nobody answers.
+el._loadOlder();
+await settle();
+const leaked = calls.filter(
+  (c) => c.type === "history" && c.extra && c.extra.before,
+).length;
+
 reply("versions", { versions: [] });
 reply("history", { changes: [{ revision: "y" }], next_cursor: null });
 await two;
@@ -259,6 +272,7 @@ await two;
 console.log(JSON.stringify({
   between,
   askedFor,
+  leaked,
   after: el._changes.map((c) => c.revision),
 }));
 """
@@ -275,3 +289,9 @@ def test_another_dashboard_starts_at_the_top_again(paging_reset):
     assert paging_reset["between"] == "x"
     assert "before" not in paging_reset["askedFor"]
     assert paging_reset["after"] == ["y"]
+    # The one that needs the reset to be there. `_select` never sends a
+    # `before` of its own, so the two lines above hold whether or not the
+    # cursor was cleared; only pressing "load older" mid-switch tells
+    # them apart. Deleting `this._cursor = null` from `_select` turns
+    # this from 0 into 1.
+    assert paging_reset["leaked"] == 0
