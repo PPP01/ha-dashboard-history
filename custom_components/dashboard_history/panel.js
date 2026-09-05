@@ -50,23 +50,63 @@ let STYLE;
 let escape, renderDiff, renderPlain, when, joinNames;
 let sections, someNames, renderRow, versionHead;
 let DIALOGS;
+let renderSimple;
 
 const partsReady = Promise.all([
   import(`./panel/style.js${PARTS}`),
   import(`./panel/render.js${PARTS}`),
   import(`./panel/rows.js${PARTS}`),
   import(`./panel/dialogs.js${PARTS}`),
-]).then(([style, render, rows, dialogs]) => {
+  import(`./panel/simple.js${PARTS}`),
+]).then(([style, render, rows, dialogs, simple]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
   ({ sections, someNames, renderRow, versionHead } = rows);
   ({ DIALOGS } = dialogs);
+  ({ renderSimple } = simple);
 });
+
+// Where the chosen mode is remembered. In the browser and not in the
+// config entry: the design record calls it a setting of the interface,
+// and two admins in one house may reasonably want different ones. It
+// costs no round trip, no reload and no restart.
+const MODE_KEY = "dashboard-history:mode";
+const MODES = ["simple", "advanced"];
+
+/**
+ * The remembered mode, or the simple one.
+ *
+ * Everything can throw here - a private window, site data switched off -
+ * and every failure costs the memory of a choice and never the page.
+ * An unrecognised value falls back too: an older version of this panel
+ * or a hand edit must not be able to leave somebody with a blank page.
+ */
+function storedMode() {
+  try {
+    const found = localStorage.getItem(MODE_KEY);
+    if (MODES.includes(found)) return found;
+  } catch {
+    // Nothing to do and nothing to report: the default is right here.
+  }
+  return "simple";
+}
 
 class DashboardHistoryPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    this._mode = storedMode();
+    // Every version of the selected dashboard, whatever is loaded of its
+    // changes. The simple mode is built from this and not from
+    // `change.versions`, so that a version outside the window still
+    // appears - which is the whole reason project G came first.
+    this._versions = [];
+    // The versions holding exactly what the dashboard holds now, worked
+    // out by the server against *every* version. Read rather than
+    // recomputed: doing it here means doing it over the loaded window,
+    // and a version below that window is precisely the one that must
+    // still be named.
+    this._matching = [];
     this._dashboards = [];
     this._changes = [];
     // Where the next page starts, or null when there is nothing older.
@@ -112,6 +152,24 @@ class DashboardHistoryPanel extends HTMLElement {
   _claim(slot) {
     const ticket = ++this._tickets[slot];
     return () => this._tickets[slot] === ticket;
+  }
+
+  /**
+   * Switch the mode and remember it, in that order.
+   *
+   * The switch itself never depends on the remembering: a browser that
+   * refuses to store still shows the other mode for as long as the page
+   * is open, which is the part somebody just asked for.
+   */
+  _setMode(mode) {
+    if (!MODES.includes(mode)) return;
+    this._mode = mode;
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // See `storedMode`. The choice holds for this page and no longer.
+    }
+    this._render();
   }
 
   set hass(hass) {
@@ -228,10 +286,10 @@ class DashboardHistoryPanel extends HTMLElement {
     if (this._selected) {
       const asked = this._selected;
       const mine = this._claim("changes");
-      const history = await this._call("history", {
-        dashboard: asked,
-        limit: PAGE,
-      });
+      const [history, versions] = await Promise.all([
+        this._call("history", { dashboard: asked, limit: PAGE }),
+        this._call("versions", { dashboard: asked }),
+      ]);
       // Same race as in `_select`, and reachable from further away: this
       // one is started by an event, so it can be in flight at the moment
       // somebody picks another dashboard. Its answer is dropped, but the
@@ -247,6 +305,8 @@ class DashboardHistoryPanel extends HTMLElement {
       // loaded older entries presses the button again - which is honest,
       // and cheap, and the alternative is a list nobody can trust.
       this._cursor = history.next_cursor ?? null;
+      this._matching = history.matching_versions || [];
+      this._versions = versions.versions || [];
       // An expanded row keeps its place, but not its answers: after a
       // change from outside, "Put back" would be offering items worked
       // out against a dashboard that has moved on.
@@ -351,8 +411,14 @@ class DashboardHistoryPanel extends HTMLElement {
     this._explanation = null;
     this._undo = null;
     this._cursor = null;
+    this._versions = [];
+    this._matching = [];
     const result = await this._guard(
-      () => this._call("history", { dashboard: key, limit: PAGE }),
+      () =>
+        Promise.all([
+          this._call("history", { dashboard: key, limit: PAGE }),
+          this._call("versions", { dashboard: key }),
+        ]),
       mine,
     );
     // Click two dashboards quickly and both requests are in flight. The
@@ -361,8 +427,11 @@ class DashboardHistoryPanel extends HTMLElement {
     // shown beside the wrong title, with buttons that act on the title.
     // Whoever no longer holds the slot drops its answer.
     if (!mine()) return;
-    this._changes = result ? result.changes || [] : [];
-    this._cursor = result ? result.next_cursor ?? null : null;
+    const [history, versions] = result || [null, null];
+    this._changes = history ? history.changes || [] : [];
+    this._cursor = history ? history.next_cursor ?? null : null;
+    this._matching = history ? history.matching_versions || [] : [];
+    this._versions = versions ? versions.versions || [] : [];
     this._render();
   }
 
@@ -1042,15 +1111,16 @@ class DashboardHistoryPanel extends HTMLElement {
    * they are *on* v1.0.0 draws wrong conclusions from it. The tooltip
    * spells out what a chip has no room for.
    *
-   * `same_as_now` is computed against the live configuration for every
-   * entry, so an entry carrying a version and matching now is exactly
-   * what is wanted here. Newest-first ordering means these entries are
-   * always below the current one.
+   * `matching_versions` from the server, as the short names a chip
+   * shows. Worked out there against every version of this dashboard,
+   * which is the point: the same sum over `this._changes` would only
+   * ever see the loaded window, and a version below it is exactly the
+   * one that has to keep its name. That gap is what project G existed
+   * to close, and until now the panel closed it again by ignoring the
+   * answer.
    */
   _versionsMatchingNow() {
-    return this._changes
-      .filter((change) => change.same_as_now && (change.versions || []).length)
-      .flatMap((change) => change.versions.map((v) => v.name.split("/").pop()));
+    return this._matching.map((v) => v.name.split("/").pop());
   }
 
   _renderVersionHead(section) {
@@ -1080,6 +1150,11 @@ class DashboardHistoryPanel extends HTMLElement {
              <button class="act ghost" data-forget="1">Forget for good</button>
            </div>`
         : "";
+    if (this._mode === "simple")
+      return (
+        banner +
+        renderSimple({ versions: this._versions, changes: this._changes })
+      );
     if (!this._changes.length)
       return `${banner}<p class="empty muted">No changes recorded for this dashboard.</p>`;
 
@@ -1176,6 +1251,8 @@ class DashboardHistoryPanel extends HTMLElement {
       <div class="bar">
         <span>Dashboard History</span>
         ${this._busy ? '<span class="muted" style="font-size:14px">working…</span>' : ""}
+        <button class="mode" data-mode="${this._mode === "simple" ? "advanced" : "simple"}"
+                >${this._mode === "simple" ? "Advanced view" : "Simple view"}</button>
         <button class="reload" data-refresh="1" title="Reload the history"
                 aria-label="Reload the history">\u21bb</button>
       </div>
@@ -1263,7 +1340,16 @@ class DashboardHistoryPanel extends HTMLElement {
       element.addEventListener("click", (event) => {
         // Otherwise the click reaches the row underneath and collapses it.
         event.stopPropagation();
-        this._createVersion(Number(element.dataset.version));
+        // "now" is the simple mode's button, which means the newest
+        // recorded state - index 0. The advanced mode names a row.
+        const which = element.dataset.version;
+        this._createVersion(which === "now" ? 0 : Number(which));
+      }),
+    );
+    root.querySelectorAll("[data-mode]").forEach((element) =>
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this._setMode(element.dataset.mode);
       }),
     );
     root.querySelectorAll("dialog").forEach((element) =>

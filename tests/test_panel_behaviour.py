@@ -114,6 +114,10 @@ def test_the_page_stays_busy_while_an_earlier_request_is_still_in_flight(outcome
 
 _HARNESS_GENERATIONS = """
 // 1. Dashboard A is chosen, then B. B answers; A fails, late.
+//
+// `_select` asks for both "history" and "versions" at once (task 5), so
+// a fixed position no longer names a single dashboard's call - answered
+// by type and by the dashboard each call named instead.
 const one = new Panel();
 one._render = () => {};
 const calls = [];
@@ -121,9 +125,12 @@ one._call = (type, extra) =>
   new Promise((resolve, reject) => calls.push({ type, extra, resolve, reject }));
 one._select("A");
 one._select("B");
-calls[1].resolve({ changes: [{ revision: "B-new" }] });
+const forDash = (type, dashboard) =>
+  calls.find((c) => c.type === type && c.extra.dashboard === dashboard);
+forDash("history", "B").resolve({ changes: [{ revision: "B-new" }] });
+forDash("versions", "B").resolve({ versions: [] });
 await settle();
-calls[0].reject(new Error("A failed late"));
+forDash("history", "A").reject(new Error("A failed late"));
 await settle();
 const lateFailure = {
   selected: one._selected,
@@ -295,3 +302,124 @@ def test_another_dashboard_starts_at_the_top_again(paging_reset):
     # them apart. Deleting `this._cursor = null` from `_select` turns
     # this from 0 into 1.
     assert paging_reset["leaked"] == 0
+
+
+_MODE = """
+const stored = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in stored ? stored[k] : null),
+  setItem: (k, v) => { stored[k] = String(v); },
+};
+
+const el = new Panel();
+el._render = () => {};
+const fresh = el._mode;
+
+el._setMode("advanced");
+const afterSwitch = el._mode;
+const remembered = stored["dashboard-history:mode"];
+
+const second = new Panel();
+second._render = () => {};
+const carried = second._mode;
+
+// A stored value nobody recognises must not leave the panel blank.
+stored["dashboard-history:mode"] = "sideways";
+const third = new Panel();
+third._render = () => {};
+
+console.log(JSON.stringify({
+  fresh, afterSwitch, remembered, carried, nonsense: third._mode,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def mode(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "mode", _MODE)
+
+
+def test_a_fresh_panel_opens_in_the_simple_mode(mode):
+    # Decision 17 makes it the normal way. Somebody who wants the other
+    # one switches once; somebody who needs this one would never look.
+    assert mode["fresh"] == "simple"
+
+
+def test_the_choice_is_remembered(mode):
+    assert mode["afterSwitch"] == "advanced"
+    assert mode["remembered"] == "advanced"
+    assert mode["carried"] == "advanced"
+
+
+def test_a_stored_value_nobody_recognises_falls_back(mode):
+    # Anything can be in there - an older version of this panel, a hand
+    # edit. A blank page would be the one unrecoverable answer.
+    assert mode["nonsense"] == "simple"
+
+
+_NO_STORAGE = """
+globalThis.localStorage = {
+  getItem() { throw new Error("site data is blocked"); },
+  setItem() { throw new Error("site data is blocked"); },
+};
+const el = new Panel();
+el._render = () => {};
+const fresh = el._mode;
+el._setMode("advanced");
+console.log(JSON.stringify({ fresh, afterSwitch: el._mode }));
+"""
+
+
+@pytest.fixture(scope="session")
+def no_storage(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "no_storage", _NO_STORAGE)
+
+
+def test_a_browser_that_refuses_to_remember_still_shows_the_panel(no_storage):
+    # A private window, or site data switched off. It costs the memory
+    # of the choice and must never cost the page.
+    assert no_storage["fresh"] == "simple"
+    assert no_storage["afterSwitch"] == "advanced"
+
+
+_VERSIONS_LOADED = """
+const el = new Panel();
+el._render = () => {};
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const picked = el._select("dash");
+await settle();
+// Both are asked for at once; the order they answer in must not matter.
+const types = calls.map((c) => c.type).sort();
+calls.find((c) => c.type === "versions").resolve({
+  versions: [{ name: "dash/v1.0.0", title: "1 September 2026", revision: "b" }],
+});
+calls.find((c) => c.type === "history").resolve({
+  changes: [{ revision: "a" }, { revision: "b" }],
+  next_cursor: null,
+});
+await picked;
+
+console.log(JSON.stringify({
+  types,
+  versions: el._versions.map((v) => v.name),
+  changes: el._changes.map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def versions_loaded(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "versions_loaded", _VERSIONS_LOADED)
+
+
+def test_picking_a_dashboard_fetches_its_versions_too(versions_loaded):
+    # The simple mode is built from the complete version list, not from
+    # the versions that happen to sit on a loaded change - which is the
+    # finding project G exists for.
+    assert versions_loaded["types"] == ["history", "versions"]
+    assert versions_loaded["versions"] == ["dash/v1.0.0"]
+    assert versions_loaded["changes"] == ["a", "b"]

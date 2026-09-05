@@ -361,4 +361,20 @@ export const STYLE = `
   }
   details.more > summary:hover { color: var(--primary-text-color, #212121); }
   .older { display:flex; justify-content:center; padding:12px 0 4px; }
+  .mode { background:none; border:1px solid var(--divider-color,#444); color:inherit;
+        border-radius:6px; padding:4px 10px; font-size:13px; cursor:pointer; }
+  .standing { border:1px solid var(--divider-color,#444); border-radius:10px;
+            padding:12px 14px; margin-bottom:14px; }
+  .standing .heading { margin:0 0 4px; font-size:13px; opacity:.7; }
+  .standing p { margin:0 0 10px; }
+  .vrow { border-top:1px solid var(--divider-color,#333); padding:12px 2px; }
+  .vhead { display:flex; align-items:center; gap:10px; }
+  .vhead .auto { margin-left:8px; font-size:12px; opacity:.6; }
+  .steps { margin-top:8px; }
+  .steps summary { font-size:13px; opacity:.7; cursor:pointer; }
+  .step { margin:6px 0 0 14px; font-size:13px; display:flex; gap:10px; }
+  .step .when { margin-left:auto; opacity:.6; }
+  .hint { margin-top:18px; }
+  .linky { background:none; border:none; padding:0; color:inherit;
+         text-decoration:underline; cursor:pointer; font:inherit; }
 `;

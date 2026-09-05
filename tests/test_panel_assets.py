@@ -29,6 +29,7 @@ def test_the_parts_are_found_at_all():
         "dialogs.js",
         "render.js",
         "rows.js",
+        "simple.js",
         "style.js",
     ]
 
