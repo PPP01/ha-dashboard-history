@@ -11,6 +11,7 @@ looks like a pass is how this class of test stops meaning anything.
 """
 
 import json
+import re
 import shutil
 import subprocess
 
@@ -36,6 +37,48 @@ const answer = (call, mark) => {
   else if (call.type === "explain") call.resolve({ groups: [], note: mark });
   else call.resolve({ available: false, reason: mark });
 };
+
+/**
+ * A stand-in for one DOM node, deep enough for a dialog.
+ *
+ * Flat on purpose: every node answers a selector with a node of its
+ * own, remembered per selector, and nothing looks inside anything
+ * else. A scenario therefore has to query along the same path the code
+ * does - `[data-keep]`, then `.keepbox`, never `.keepbox` straight from
+ * the dialog - and that is the feature: a test that found a node the
+ * code never touched would pass while proving nothing.
+ */
+const node = () => {
+  const it = {
+    textContent: "", innerHTML: "", value: "", checked: false,
+    hidden: false, returnValue: "", open: false,
+    _seen: {}, _on: {},
+    querySelector(selector) {
+      return (it._seen[selector] ||= node());
+    },
+    querySelectorAll(selector) { return [it.querySelector(selector)]; },
+    addEventListener(name, run) { it._on[name] = run; },
+    showModal() { it.open = true; },
+    close(value) {
+      it.open = false;
+      // Exactly what a browser does: a value handed over by a button is
+      // remembered, and a dialog dismissed with Escape leaves the last
+      // one standing. That is the whole reason `_confirm` clears it
+      // before opening.
+      if (value !== undefined) it.returnValue = value;
+      it._on.close?.();
+    },
+  };
+  return it;
+};
+
+// One turn before any scenario starts. The parts arrive over dynamic
+// imports, so `renderPlain` and `renderDiff` are still undefined in
+// this module's first synchronous pass - measured on 2026-09-04: a
+// scenario reaching either one dies with "renderPlain is not a
+// function" before its first assertion, and the whole file goes red
+// for a reason that has nothing to do with what it tests.
+await settle();
 """
 
 
@@ -532,3 +575,123 @@ def test_a_refresh_asks_for_both_and_starts_at_the_top(refreshed):
     # `deep` is not among the loaded rows.
     assert refreshed["matching"] == ["v2.0.0"]
     assert refreshed["versions"] == ["dash/v2.0.0"]
+
+
+_KEEP = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el.shadowRoot = node();
+// A timer and a server event, neither of which says anything about
+// what gets sent - and the three-second fallback would say it slowly.
+el._recorded = () => Promise.resolve();
+
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  if (type === "restore_state" && !extra.confirm)
+    return Promise.resolve({
+      applied: false,
+      preview: "-a\\n+b",
+      explanation: { groups: [], note: "one card removed" },
+    });
+  return Promise.resolve({ applied: true, changes: [], dashboards: [] });
+};
+
+const dialog = () => el.shadowRoot.querySelector("dialog.confirm");
+const box = () =>
+  el.shadowRoot.querySelector("[data-keep]").querySelector(".keepbox");
+const press = async (value) => {
+  const done = el._restoreState("b", "Back to this version");
+  await settle();
+  const seen = {
+    body: dialog().querySelector(".body").innerHTML,
+    ticked: box().checked,
+    title: box() && el.shadowRoot
+      .querySelector("[data-keep]").querySelector(".keeptitle").value,
+  };
+  dialog().close(value);
+  await done;
+  return seen;
+};
+
+const simple = await press("apply");
+const kept = sent.filter((c) => c.type === "restore_state" && c.extra.confirm);
+
+el._mode = "advanced";
+const advanced = await press("apply");
+const plain = sent.filter((c) => c.type === "restore_state" && c.extra.confirm);
+
+// Dismissed without pressing anything - Escape. The stand-in still
+// carries "apply" from the run above, exactly as a browser would.
+const before = sent.length;
+await press(undefined);
+
+console.log(JSON.stringify({
+  previewFirst: sent[0].extra.confirm === false,
+  diffShown: simple.body.includes("Show the technical details"),
+  keepsShown: simple.body.includes("is not lost"),
+  tickedInSimple: simple.ticked,
+  offeredTitle: simple.title,
+  clearInAdvanced: advanced.ticked,
+  withKeep: kept[0].extra.keep_as_version ?? null,
+  withoutKeep: plain[1].extra.keep_as_version ?? null,
+  afterEscape: sent.length - before,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def keeping(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "keeping", _KEEP)
+
+
+def test_the_preview_is_fetched_before_anything_is_written(keeping):
+    # The hard rule: nothing that writes a dashboard state goes without
+    # a preview. Asking about a version does not change that.
+    assert keeping["previewFirst"] is True
+
+
+def test_the_dialog_carries_the_technical_diff_and_the_promise(keeping):
+    # Both are load-bearing and both were once lost. The diff is the
+    # exact account and the rule says it is always there; the sentence
+    # about the present state answers the question somebody had to read
+    # the source for.
+    assert keeping["diffShown"] is True
+    assert keeping["keepsShown"] is True
+
+
+def test_the_box_follows_the_mode(keeping):
+    # Simple mode: an unmarked state is invisible, so it is ticked.
+    # Advanced mode: everything shows anyway, and a mark per experiment
+    # would pile up.
+    assert keeping["tickedInSimple"] is True
+    assert keeping["clearInAdvanced"] is False
+
+
+def test_a_name_is_offered_in_the_spelling_the_automatic_ones_use(keeping):
+    # So that a list of versions reads as one list. Built by hand rather
+    # than with toLocaleDateString, which follows the browser's language.
+    assert re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", keeping["offeredTitle"])
+
+
+def test_keeping_the_state_sends_a_version_with_the_restore(keeping):
+    # One call, not two: the only moment the newest recorded state is
+    # the one on the screen sits inside restore_state.
+    assert keeping["withKeep"]["level"] == "patch"
+    assert keeping["withKeep"]["title"] == keeping["offeredTitle"]
+
+
+def test_discarding_sends_no_version_at_all(keeping):
+    # "Discard" means "do not mark", never "delete". Sending nothing is
+    # exactly that, and the state stays in the history either way.
+    assert keeping["withoutKeep"] is None
+
+
+def test_a_dialog_dismissed_without_a_button_writes_nothing(keeping):
+    # Escape leaves the previous returnValue standing, so a dialog that
+    # was confirmed once would confirm itself for ever after. Only the
+    # preview may be fetched here - one call, and no second one.
+    assert keeping["afterEscape"] == 1

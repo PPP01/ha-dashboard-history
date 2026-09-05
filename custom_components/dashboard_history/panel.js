@@ -91,6 +91,18 @@ function storedMode() {
   return "simple";
 }
 
+// The same spelling the automatic versions use, so a list of them reads
+// as one list. Built by hand rather than with toLocaleDateString, which
+// follows the browser's language: two people in one house would
+// otherwise name the same day differently.
+const MONTHS = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+
+function today() {
+  const now = new Date();
+  return `${now.getDate()} ${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
+}
+
 class DashboardHistoryPanel extends HTMLElement {
   constructor() {
     super();
@@ -525,8 +537,8 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /** Show the preview, and write only if the person says so. */
-  async _confirm(title, request) {
-    const preview = await this._guard(() => this._call(...request(false)));
+  async _confirm(title, request, wantsKeep = false) {
+    const preview = await this._guard(() => this._call(...request(false, null)));
     if (!preview) return;
     if (preview.error) {
       this._error = preview.error;
@@ -580,6 +592,15 @@ class DashboardHistoryPanel extends HTMLElement {
       ? "This recreates the dashboard, with its old title and icon."
       : "";
     dialog.querySelector(".note").textContent = note;
+    // Offered only where a whole state is replaced and there is one to
+    // keep. Not while a dashboard is being recreated - there is no live
+    // state then, and the answer for that case is an error; a tick box
+    // whose only possible outcome is a failure is worse than none. Not
+    // where nothing is applied either.
+    const keepable = Boolean(
+      wantsKeep && !nothingToDo && !preview.creates_dashboard,
+    );
+    this._armKeep(keepable);
     dialog.returnValue = "";
     dialog.showModal();
     const answer = await new Promise((resolve) => {
@@ -588,11 +609,12 @@ class DashboardHistoryPanel extends HTMLElement {
       });
     });
     if (answer !== "apply") return;
+    const keep = keepable ? this._keepChoice() : null;
     // Armed before the write: the recorder is quick, and an announcement
     // that arrives first would find nobody waiting.
     const recorded = this._recorded();
     const applied = await this._guard(async () => {
-      const result = await this._call(...request(true));
+      const result = await this._call(...request(true, keep));
       // Still busy until the recorder has it. Reloading in between reads
       // a history whose newest entry is the state just replaced - so
       // nothing matches the live configuration, nothing is crowned, and
@@ -601,6 +623,15 @@ class DashboardHistoryPanel extends HTMLElement {
       await recorded;
       return result;
     });
+    // `kept_as_version.error` repeats `note` word for word where the
+    // live state could not be recorded - operations hands the one into
+    // the other - so it is only worth saying where it says something
+    // else.
+    const failed = applied?.kept_as_version?.error;
+    const keptFailed =
+      failed && failed !== applied?.note
+        ? `the dashboard went back, but no version was made: ${failed}`
+        : "";
     const said =
       applied?.error ||
       // And a refusal on the confirming call as well, which is the one
@@ -610,6 +641,7 @@ class DashboardHistoryPanel extends HTMLElement {
         ? applied.reason || "this cannot be taken back exactly"
         : "") ||
       applied?.note ||
+      keptFailed ||
       "";
     await this._select(this._selected);
     await this._loadDashboardsQuietly();
@@ -621,6 +653,46 @@ class DashboardHistoryPanel extends HTMLElement {
       this._error = said;
       this._render();
     }
+  }
+
+  /**
+   * Show the block that offers to keep the state being replaced, or
+   * hide it again.
+   *
+   * Its own method, and so is `_keepChoice`, for one reason: these two
+   * are the only lines of this flow that touch an element. Everything
+   * else about it - which call goes first, what rides on the confirming
+   * one, whether anything is written at all - is logic, and logic
+   * belongs where tests/test_panel_behaviour.py reaches it.
+   *
+   * Ticked in the simple mode, clear in the advanced one. Somebody in
+   * the simple mode sees nothing but versions, so an unmarked state is
+   * gone as far as they are concerned; somebody in the advanced mode
+   * sees everything anyway and would otherwise collect a mark for every
+   * experiment.
+   */
+  _armKeep(show) {
+    const keep = this.shadowRoot.querySelector("[data-keep]");
+    if (!keep) return;
+    keep.hidden = !show;
+    if (!show) return;
+    keep.querySelector(".keepbox").checked = this._mode === "simple";
+    keep.querySelector(".keeptitle").value = today();
+  }
+
+  /**
+   * The version to make, or null for none.
+   *
+   * Patch, and never a level somebody has to choose: this is a
+   * waypoint, not a milestone, and a three-way choice in front of a
+   * restore is a question nobody came here to answer.
+   */
+  _keepChoice() {
+    const keep = this.shadowRoot.querySelector("[data-keep]");
+    const box = keep?.querySelector(".keepbox");
+    if (!box?.checked) return null;
+    const title = keep.querySelector(".keeptitle").value.trim();
+    return { level: "patch", title: title || today() };
   }
 
   async _loadDashboardsQuietly() {
@@ -839,10 +911,25 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _restoreState(revision, title) {
-    this._confirm(title, (confirm) => [
-      "restore_state",
-      { dashboard: this._selected, revision, confirm },
-    ]);
+    // Returned rather than dropped, unlike its two neighbours: the Node
+    // scenario waits for it, and a flow whose end nobody can wait for
+    // cannot be tested at all.
+    return this._confirm(
+      title,
+      (confirm, keep) => [
+        "restore_state",
+        {
+          dashboard: this._selected,
+          revision,
+          confirm,
+          // Left out entirely when nothing is to be marked. An empty
+          // object would be a request for a version with no name, which
+          // the server would then have to refuse.
+          ...(keep ? { keep_as_version: keep } : {}),
+        },
+      ],
+      true,
+    );
   }
 
   _undoChange(index) {

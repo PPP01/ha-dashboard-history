@@ -377,4 +377,6 @@ export const STYLE = `
   .hint { margin-top:18px; }
   .linky { background:none; border:none; padding:0; color:inherit;
          text-decoration:underline; cursor:pointer; font:inherit; }
+  .keep { padding:0 16px 8px; }
+  .keep label { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
 `;
