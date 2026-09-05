@@ -51,7 +51,7 @@ const answer = (call, mark) => {
 const node = () => {
   const it = {
     textContent: "", innerHTML: "", value: "", checked: false,
-    hidden: false, returnValue: "", open: false,
+    hidden: false, returnValue: "", open: false, dataset: {},
     _seen: {}, _on: {},
     querySelector(selector) {
       return (it._seen[selector] ||= node());
@@ -1422,3 +1422,142 @@ def test_an_undisturbed_restore_still_opens_and_writes(wrong_dashboard):
     # produce either.
     assert wrong_dashboard["openedNormally"] is True
     assert wrong_dashboard["restoredTo"] == "kitchen"
+
+
+# -- a render must not tear an open dialog off the screen -------------------
+#
+# The one finding of the final review the other scenarios structurally
+# cannot reach: they all stub `_render`. This one lets the real one run,
+# against a stand-in root that models the single thing that matters -
+# writing `innerHTML` throws the old nodes away, and a dialog that goes
+# with them is gone from the screen without firing `close`.
+
+_DIALOG_SURVIVES = """
+const rootNode = () => {
+  const it = node();
+  Object.defineProperty(it, "innerHTML", {
+    get: () => "",
+    // Exactly what a browser does to the shadow root's children, the
+    // open dialog included. Nothing fires; the nodes are simply gone.
+    set() { it._seen = {}; },
+  });
+  const base = it.querySelector.bind(it);
+  // The stand-in answers every selector with a node of its own, which
+  // would make `dialog[open]` true for ever. This one selector is
+  // answered honestly, because the whole scenario turns on it.
+  it.querySelector = (selector) =>
+    selector === "dialog[open]"
+      ? (it._seen["dialog.confirm"]?.open ? it._seen["dialog.confirm"] : null)
+      : base(selector);
+  return it;
+};
+
+const finished = async (promise) => {
+  let done = false;
+  promise.then(() => { done = true; });
+  await settle();
+  return done;
+};
+
+const el = new Panel();
+el.shadowRoot = rootNode();
+el._selected = "dash";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._changes = [{ revision: "a", message: "1 card added", timestamp: 1 }];
+el._cursor = "older";
+el._recorded = () => Promise.resolve();
+el._select = async () => {};
+el._refreshQuietly = async () => {};
+el._loadDashboardsQuietly = async () => {};
+
+const sent = [];
+const held = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  return new Promise((resolve) => held.push({ type, extra, resolve }));
+};
+const reply = (type, value) => {
+  const at = held.findIndex((c) => c.type === type);
+  if (at >= 0) held.splice(at, 1)[0].resolve(value);
+};
+
+// The confirmation is up and being read.
+const restoring = el._restoreState("a", "Back to the state after this change");
+await settle();
+reply("restore_state", {
+  applied: false,
+  preview: "-a\\n+b",
+  explanation: { groups: [], note: "one card removed" },
+});
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
+const opened = dialog.open;
+
+// ...and a page of older changes lands underneath it. "Load older
+// changes" is pressed, the old list stays on the screen and stays
+// clickable, and a row above it opens this dialog - so the page
+// arriving here is the ordinary case, not a contrivance.
+const older = el._loadOlder();
+await settle();
+reply("history", {
+  changes: [{ revision: "b", message: "2 moved", timestamp: 2 }],
+  next_cursor: null,
+});
+await older;
+
+const onScreen = el.shadowRoot.querySelector("dialog.confirm");
+const stillThere = onScreen === dialog;
+const owed = el._renderOwed;
+
+// Answered the way a person can answer: through whatever the shadow
+// root is showing. A dialog torn out of the document is not that.
+onScreen.close("apply");
+await settle();
+const written = sent.filter((c) => c.type === "restore_state" && c.extra.confirm);
+reply("restore_state", { applied: true });
+
+console.log(JSON.stringify({
+  opened,
+  stillThere,
+  owed,
+  settled: await finished(restoring),
+  caughtUp: el._renderOwed,
+  wrote: written.length,
+  keep: written[0] ? written[0].extra.keep_as_version ?? null : null,
+  rows: el._changes.map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def dialog_survives(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "dialog_survives", _DIALOG_SURVIVES)
+
+
+def test_an_open_dialog_survives_a_page_arriving_underneath_it(dialog_survives):
+    # Without the hold, `_loadOlder` re-renders, the shadow root hands
+    # out a different dialog, and the one on the screen is detached: no
+    # `close` ever fires, `_confirm` waits for ever, and the
+    # confirmation is simply gone with nothing said.
+    assert dialog_survives["opened"] is True
+    assert dialog_survives["stillThere"] is True
+    assert dialog_survives["settled"] is True
+    assert dialog_survives["wrote"] == 1
+
+
+def test_the_held_render_runs_when_the_dialog_closes(dialog_survives):
+    # Held, not dropped: the older page is in the list, and the render
+    # that was owed has been paid by the time the flow moves on.
+    assert dialog_survives["owed"] is True
+    assert dialog_survives["caughtUp"] is False
+    assert dialog_survives["rows"] == ["a", "b"]
+
+
+def test_the_kept_version_survives_the_render_that_was_held(dialog_survives):
+    # The catch-up render replaces the tick box along with everything
+    # else, and it runs before `_confirm` reads the person's choice. Read
+    # through the reference taken before the dialog opened it is still
+    # ticked; looked up again it is a fresh, empty one and the version
+    # somebody asked for is dropped without a word.
+    assert dialog_survives["keep"] is not None
+    assert dialog_survives["keep"]["level"] == "patch"

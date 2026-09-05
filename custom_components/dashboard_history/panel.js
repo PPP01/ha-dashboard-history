@@ -150,6 +150,8 @@ class DashboardHistoryPanel extends HTMLElement {
     // flag went dark when the *first* of them finished. Measured on
     // 2026-09-03 in the Node run behind tests/test_panel_behaviour.py.
     this._busy = 0;
+    // A render that fell due while a dialog was open. See `_render`.
+    this._renderOwed = false;
     this._error = null;
     this._loaded = false;
     // One ticket counter per slot the page can fill - the change list,
@@ -791,16 +793,12 @@ class DashboardHistoryPanel extends HTMLElement {
     const keepable = Boolean(
       wantsKeep && !nothingToDo && !preview.creates_dashboard,
     );
-    this._armKeep(keepable);
+    const keepBlock = this._armKeep(keepable);
     dialog.returnValue = "";
     dialog.showModal();
-    const answer = await new Promise((resolve) => {
-      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
-        once: true,
-      });
-    });
+    const answer = await this._answerFrom(dialog);
     if (answer !== "apply") return;
-    const keep = keepable ? this._keepChoice() : null;
+    const keep = keepable ? this._keepChoice(keepBlock) : null;
     // Armed before the write: the recorder is quick, and an announcement
     // that arrives first would find nobody waiting.
     const recorded = this._recorded();
@@ -854,8 +852,43 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * Wait for a dialog's answer, and pay back a render held while it
+   * stood.
+   *
+   * `_render` replaces the whole shadow root, an open <dialog>
+   * included - and a <dialog> taken out of the document fires no
+   * `close`. The promise below would then never settle: the
+   * confirmation disappears from the screen in the middle of somebody
+   * deciding, nothing is written, and nothing says why. `_onRecorded`
+   * has stepped around that since it was found there; a page of older
+   * changes and an answer from the whole-history search reach the same
+   * place and did not. So `_render` now steps aside too, and this is
+   * where the render it owes is run.
+   *
+   * Run before the answer is handed on rather than after, which is safe
+   * for one reason worth keeping: every caller reads what it still
+   * needs from the dialog - the tick box, the typed title - through an
+   * element reference taken before the dialog opened, and a reference
+   * survives the shadow root being replaced. A caller that looked its
+   * fields up again here would read fresh, empty ones.
+   */
+  _answerFrom(dialog) {
+    return new Promise((resolve) => {
+      dialog.addEventListener(
+        "close",
+        () => {
+          const answer = dialog.returnValue;
+          if (this._renderOwed) this._render();
+          resolve(answer);
+        },
+        { once: true },
+      );
+    });
+  }
+
+  /**
    * Show the block that offers to keep the state being replaced, or
-   * hide it again.
+   * hide it again. Answers with the block, for `_keepChoice`.
    *
    * Its own method, and so is `_keepChoice`, for one reason: these two
    * are the only lines of this flow that touch an element. Everything
@@ -871,11 +904,12 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _armKeep(show) {
     const keep = this.shadowRoot.querySelector("[data-keep]");
-    if (!keep) return;
+    if (!keep) return null;
     keep.hidden = !show;
-    if (!show) return;
+    if (!show) return null;
     keep.querySelector(".keepbox").checked = this._mode === "simple";
     keep.querySelector(".keeptitle").value = today();
+    return keep;
   }
 
   /**
@@ -884,9 +918,14 @@ class DashboardHistoryPanel extends HTMLElement {
    * Patch, and never a level somebody has to choose: this is a
    * waypoint, not a milestone, and a three-way choice in front of a
    * restore is a question nobody came here to answer.
+   *
+   * The block is handed in rather than looked up again. By the time
+   * this runs the dialog has closed, and closing it is where
+   * `_answerFrom` pays back a render that was held while the dialog
+   * stood - so a fresh lookup finds a new, empty tick box and quietly
+   * drops the version somebody asked for.
    */
-  _keepChoice() {
-    const keep = this.shadowRoot.querySelector("[data-keep]");
+  _keepChoice(keep) {
     const box = keep?.querySelector(".keepbox");
     if (!box?.checked) return null;
     const title = keep.querySelector(".keeptitle").value.trim();
@@ -917,11 +956,7 @@ class DashboardHistoryPanel extends HTMLElement {
     dialog.showModal();
     field.focus();
     field.select();
-    const answer = await new Promise((resolve) => {
-      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
-        once: true,
-      });
-    });
+    const answer = await this._answerFrom(dialog);
     if (answer !== "save") return;
     const result = await this._guard(() =>
       this._call("describe", { revision: change.revision, text: field.value }),
@@ -1021,11 +1056,7 @@ class DashboardHistoryPanel extends HTMLElement {
     dialog.returnValue = "";
     dialog.showModal();
     title.focus();
-    const answer = await new Promise((resolve) => {
-      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
-        once: true,
-      });
-    });
+    const answer = await this._answerFrom(dialog);
     if (answer !== "create") return;
     const result = await this._guard(() =>
       this._call("create_version", {
@@ -1100,11 +1131,7 @@ class DashboardHistoryPanel extends HTMLElement {
          revision you noted down somewhere will no longer resolve.</p>`;
     dialog.returnValue = "";
     dialog.showModal();
-    const answer = await new Promise((resolve) => {
-      dialog.addEventListener("close", () => resolve(dialog.returnValue), {
-        once: true,
-      });
-    });
+    const answer = await this._answerFrom(dialog);
     if (answer !== "forget") return;
     const done = await this._guard(() =>
       this._call("forget", { dashboard: asked, confirm: true }),
@@ -1602,6 +1629,17 @@ class DashboardHistoryPanel extends HTMLElement {
 
   _render() {
     if (!this.shadowRoot) return;
+    // Never while a dialog is open. Everything below replaces the
+    // shadow root wholesale, and a <dialog> that goes with it fires no
+    // `close` - so whoever is waiting for the answer waits for ever
+    // while the confirmation simply vanishes from the screen. Owed
+    // rather than dropped: `_answerFrom` runs it the moment the dialog
+    // closes, which is the first moment it can do no harm.
+    if (this.shadowRoot.querySelector("dialog[open]")) {
+      this._renderOwed = true;
+      return;
+    }
+    this._renderOwed = false;
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="bar">
