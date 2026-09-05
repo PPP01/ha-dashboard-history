@@ -50,3 +50,16 @@ def test_the_switch_says_what_it_does_and_what_it_does_not():
     step = _strings()["options"]["step"]["init"]
     assert step["data"]["daily_versions"]
     assert "deleted" in step["data_description"]["daily_versions"]
+
+
+def test_the_option_the_code_writes_is_the_one_the_words_describe():
+    # The two halves of the switch live in two files that nothing joins:
+    # `const.py` names the key the options flow writes, `strings.json`
+    # names the key the interface puts a label on. Rename one and the
+    # switch appears as a bare `daily_versions` with no test to notice.
+    #
+    # Read as text, not imported: `const.py` pulls in `voluptuous`
+    # through the package, and this suite runs without Home Assistant.
+    source = (PACKAGE / "const.py").read_text(encoding="utf-8")
+    assert 'OPTION_DAILY_VERSIONS = "daily_versions"' in source
+    assert "daily_versions" in _strings()["options"]["step"]["init"]["data"]

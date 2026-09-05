@@ -299,6 +299,52 @@ def entry_id(access: str) -> str:
     return ""
 
 
+def stored_daily_versions(access: str):
+    """What the config entry actually holds for the switch, or None.
+
+    The answer of the options flow says only that the flow finished, and
+    `async_create_entry` storing nothing at all would look exactly the
+    same from outside. So this asks the entry - through the only door
+    there is.
+
+    Read off the form rather than off the entry, because the entry does
+    not offer it: `GET /api/config/config_entries/entry` returns
+    `state`, `supports_options` and fifteen more fields, and no
+    `options` among them. Measured on 2026-09-05, after a check written
+    against the obvious guess reported an empty dict twice while the
+    stored options were right all along. What the form does carry is the
+    `default` of its one field, and `async_step_init` builds that
+    straight from `self.config_entry.options` - so a form showing
+    `False` is an entry holding `False`.
+
+    The flow is opened and thrown away again, never answered: answering
+    would write the value this is trying to observe.
+    """
+    headers = {"Authorization": f"Bearer {access}"}
+    identifier = entry_id(access)
+    if not identifier:
+        return None
+    started = requests.post(
+        f"{BASE}/api/config/config_entries/options/flow",
+        headers=headers,
+        json={"handler": identifier, "show_advanced_options": False},
+        timeout=60,
+    )
+    started.raise_for_status()
+    step = started.json()
+    try:
+        for field in step.get("data_schema") or []:
+            if field.get("name") == "daily_versions":
+                return field.get("default")
+        return None
+    finally:
+        requests.delete(
+            f"{BASE}/api/config/config_entries/options/flow/{step['flow_id']}",
+            headers=headers,
+            timeout=60,
+        )
+
+
 def reload_entry(access: str) -> bool:
     """Set the integration up again, without restarting Home Assistant.
 
@@ -2489,6 +2535,7 @@ async def run_milestones(access: str) -> None:
     added after this one may assume a freshly set-up integration.
     """
     key = "dh-floor-check"
+    aged = "dh-floor-aged"
     async with Socket(access) as socket:
         listed = (await socket.call("lovelace/dashboards/list")) or []
         if not any(entry.get("url_path") == key for entry in listed):
@@ -2502,6 +2549,51 @@ async def run_milestones(access: str) -> None:
             config={"views": [{"path": "p", "title": "Floor", "cards": []}]},
         )
         await _wait_until_recorded(socket, key)
+
+        # A second one, for the single thing the first cannot show.
+        # `dh-floor-check` gets its floor while it holds exactly one
+        # state, so its oldest and its newest are the same entry and a
+        # check on "the floor sits on the oldest" would pass whatever
+        # the code did. This one is wiped back to nothing, then given
+        # three states before the setup runs - only then do the two
+        # answers differ, and only then does the check mean anything.
+        for existing in (await socket.call("lovelace/dashboards/list")) or []:
+            if existing.get("url_path") == aged:
+                try:
+                    await socket.call(
+                        "lovelace/dashboards/delete", dashboard_id=existing["id"]
+                    )
+                except RuntimeError:
+                    pass
+                await _wait_for_newest(
+                    socket, aged, "dashboard deleted", RECORDING_WAIT
+                )
+        # Its history and its versions both, by the exact key and never
+        # by a prefix. Without this the dashboard comes back carrying
+        # the floor of the previous run, `_async_floor_for` leaves it
+        # alone, and the check below goes quietly back to proving
+        # nothing.
+        await socket.call("dashboard_history/forget", dashboard=aged, confirm=True)
+        await socket.call(
+            "lovelace/dashboards/create", url_path=aged, title="DH Aged"
+        )
+        await asyncio.sleep(4)
+        for number in range(3):
+            seen = (await socket.call("dashboard_history/history", dashboard=aged))[
+                "changes"
+            ]
+            await socket.call(
+                "lovelace/config/save",
+                url_path=aged,
+                config={
+                    "views": [
+                        {"path": "p", "title": f"State {number}", "cards": []}
+                    ]
+                },
+            )
+            await _wait_for_history_to_move(
+                socket, aged, seen[0]["revision"] if seen else "", RECORDING_WAIT
+            )
 
     if not check("the integration can be set up again", reload_entry(access)):
         return
@@ -2538,6 +2630,62 @@ async def run_milestones(access: str) -> None:
             floor is not None
             and bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", floor["title"])),
             floor["title"] if floor else "",
+        )
+
+        # And it sits on the *oldest* state this dashboard has, not on
+        # its newest. The design record calls the floor "the state to
+        # come back to before anything happened"; on a dashboard created
+        # while Home Assistant was running - which is exactly what this
+        # check makes - the newest state is what is on the screen right
+        # now, and a floor you can go back to without anything changing
+        # is not an offer. Read through `history` with no cursor and
+        # walked to its end, because that is the only way to name the
+        # oldest entry over the API.
+        recorded = []
+        cursor = None
+        while True:
+            page = await socket.call(
+                "dashboard_history/history", dashboard=key, **(
+                    {"before": cursor} if cursor else {}
+                )
+            )
+            recorded.extend(page["changes"])
+            cursor = page.get("next_cursor")
+            if not cursor or not page["changes"]:
+                break
+        check(
+            "and it sits on the oldest state that dashboard has",
+            floor is not None
+            and bool(recorded)
+            and floor["revision"] == recorded[-1]["revision"],
+            f"{floor['revision'][:8] if floor else '-'} of {len(recorded)} states",
+        )
+
+        # And now the one that can tell the two readings apart: a
+        # dashboard that already held three states when its floor was
+        # laid. On the old rule - the newest state - the floor would sit
+        # on `states[0]`, which is what is on the screen; going back to
+        # it changes nothing, and that is not an offer. The design
+        # record asks for the state "before anything happened".
+        states = (
+            await socket.call(
+                "dashboard_history/history", dashboard=aged, limit=100_000
+            )
+        )["changes"]
+        marks = (await socket.call("dashboard_history/versions", dashboard=aged))[
+            "versions"
+        ]
+        aged_floor = next(
+            (v for v in marks if v["name"].endswith("/v1.0.0")), None
+        )
+        check(
+            "a dashboard with a history behind it gets its floor on its oldest state",
+            aged_floor is not None
+            and len(states) >= 3
+            and aged_floor["revision"] == states[-1]["revision"],
+            f"{len(states)} states, floor on "
+            f"{aged_floor['revision'][:8] if aged_floor else '-'}, "
+            f"oldest {states[-1]['revision'][:8] if states else '-'}",
         )
 
         # The day mark, in the one direction a running instance can be
@@ -2582,9 +2730,21 @@ async def run_daily_switch(access: str) -> None:
           any(field.get("name") == "daily_versions" for field in offered),
           str([field.get("name") for field in offered]))
     check("turning the daily versions off is accepted", off)
+    stored = stored_daily_versions(access)
+    check(
+        "and the answer reaches the config entry",
+        stored is False,
+        f"the form now offers {stored!r}",
+    )
 
     on, _ = daily_versions_switch(access, True)
     check("and turning them back on is accepted", on)
+    stored = stored_daily_versions(access)
+    check(
+        "and that answer reaches it too",
+        stored is True,
+        f"the form now offers {stored!r}",
+    )
 
     # Left switched on, and checked rather than assumed: every later run
     # of this file expects the ordinary behaviour, and a bench left in a
