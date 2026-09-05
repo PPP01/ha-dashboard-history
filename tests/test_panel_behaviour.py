@@ -423,3 +423,47 @@ def test_picking_a_dashboard_fetches_its_versions_too(versions_loaded):
     assert versions_loaded["types"] == ["history", "versions"]
     assert versions_loaded["versions"] == ["dash/v1.0.0"]
     assert versions_loaded["changes"] == ["a", "b"]
+
+_MATCHING_FROM_SERVER = """
+const el = new Panel();
+el._render = () => {};
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const picked = el._select("dash");
+await settle();
+calls.find((c) => c.type === "versions").resolve({ versions: [] });
+// The version sits on `deep`, which the loaded window does not contain.
+// That is the whole point: the server counted it, the panel could not.
+calls.find((c) => c.type === "history").resolve({
+  changes: [{ revision: "new", same_as_now: true, versions: [] }],
+  next_cursor: "older",
+  matching_versions: [{ name: "dash/v1.0.0", revision: "deep" }],
+});
+await picked;
+
+console.log(JSON.stringify({
+  loaded: el._changes.map((c) => c.revision),
+  matching: el._versionsMatchingNow(),
+  chip: el._matchingElsewhere(0),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def matching_from_server(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "matching_from_server", _MATCHING_FROM_SERVER)
+
+
+def test_a_matching_version_below_the_window_keeps_its_name(matching_from_server):
+    # The negative control for reading `matching_versions` instead of
+    # working it out again. `dash/v1.0.0` marks `deep`, and `deep` is not
+    # among the loaded changes - so any answer computed over
+    # `this._changes` is the empty list, and this case goes red. That
+    # recomputation is exactly what the panel did before, and exactly
+    # what project G measured as losing versions below the window.
+    assert matching_from_server["loaded"] == ["new"]
+    assert matching_from_server["matching"] == ["v1.0.0"]
+    assert matching_from_server["chip"] == ["v1.0.0"]

@@ -1683,6 +1683,50 @@ def test_picking_a_dashboard_fetches_its_versions_too(versions_loaded):
     assert versions_loaded["types"] == ["history", "versions"]
     assert versions_loaded["versions"] == ["dash/v1.0.0"]
     assert versions_loaded["changes"] == ["a", "b"]
+
+_MATCHING_FROM_SERVER = """
+const el = new Panel();
+el._render = () => {};
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const picked = el._select("dash");
+await settle();
+calls.find((c) => c.type === "versions").resolve({ versions: [] });
+// The version sits on `deep`, which the loaded window does not contain.
+// That is the whole point: the server counted it, the panel could not.
+calls.find((c) => c.type === "history").resolve({
+  changes: [{ revision: "new", same_as_now: true, versions: [] }],
+  next_cursor: "older",
+  matching_versions: [{ name: "dash/v1.0.0", revision: "deep" }],
+});
+await picked;
+
+console.log(JSON.stringify({
+  loaded: el._changes.map((c) => c.revision),
+  matching: el._versionsMatchingNow(),
+  chip: el._matchingElsewhere(0),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def matching_from_server(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "matching_from_server", _MATCHING_FROM_SERVER)
+
+
+def test_a_matching_version_below_the_window_keeps_its_name(matching_from_server):
+    # The negative control for reading `matching_versions` instead of
+    # working it out again. `dash/v1.0.0` marks `deep`, and `deep` is not
+    # among the loaded changes - so any answer computed over
+    # `this._changes` is the empty list, and this case goes red. That
+    # recomputation is exactly what the panel did before, and exactly
+    # what project G measured as losing versions below the window.
+    assert matching_from_server["loaded"] == ["new"]
+    assert matching_from_server["matching"] == ["v1.0.0"]
+    assert matching_from_server["chip"] == ["v1.0.0"]
 ```
 
 - [ ] **Schritt 2: Laufen lassen, Fehlschlag prüfen**
@@ -2451,7 +2495,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`301 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
+Erwartet: **`302 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
 
 - Im **einfachen** Modus zurückspringen, das Kästchen angehakt lassen — die neue Version muss danach oben in der Liste stehen, mit dem heutigen Datum als Titel.
 - Im **erweiterten** Modus zurückspringen und es abhaken — es darf keine neue Version geben, und der ersetzte Stand muss als Änderung weiterhin in der Liste stehen. Das ist die Test-Plan-Zeile »Rücksprung mit »verwerfen««, und sie ist nur mit den Augen zu prüfen.
@@ -2938,7 +2982,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`303 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
+Erwartet: **`304 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
 
 - eine Zeile aufklappen, »Undo this change« drücken, den Dialog abbrechen;
 - den Stift drücken, eine Beschreibung speichern — sie muss an *dieser* Zeile erscheinen;
@@ -3383,7 +3427,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`309 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
+Erwartet: **`310 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
 
 Im **einfachen** Modus: dasselbe Feld, aber es filtert die Versionen, es fragt nie nach und der Hinweis zählt »x of y versions«. Danach das Dashboard wechseln: Das Feld muss leer sein.
 
@@ -3422,7 +3466,7 @@ EOF
 
 ## Wenn alle acht stehen
 
-`python3 -m pytest tests/ -v` (`309 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
+`python3 -m pytest tests/ -v` (`310 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
 
 Damit ist Vorhaben H fertig, und mit ihm die beiden GitHub-Issues:
 
