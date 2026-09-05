@@ -1634,10 +1634,24 @@ async def run_undo(access: str) -> None:
         return {"views": [{"path": "a", "title": title, "cards": list(cards)}]}
 
     async def save(socket, cards, title="A"):
+        # The revision before the save, and then a wait for a *new* one
+        # that holds what is live - `_wait_for_new_state`, not
+        # `_wait_until_recorded`. On its own the second is true for a
+        # moment after every save, before Home Assistant has applied it,
+        # and this section then reads a revision belonging to the step
+        # before. Measured on 2026-09-05: with a change left in the
+        # recorder's debounce by the run before it, `the_edit` named a
+        # commit of that earlier run and the undo put a card back that
+        # this section never removed. Every state saved here differs
+        # from the one before it, so the wait always has a commit coming.
+        before = await socket.call("dashboard_history/history", dashboard=key, limit=1)
+        rows = before["changes"]
         await socket.call(
             "lovelace/config/save", url_path=key, config=state(cards, title)
         )
-        await _wait_until_recorded(socket, key)
+        await _wait_for_new_state(
+            socket, key, rows[0]["revision"] if rows else "", RECORDING_WAIT
+        )
 
     async def newest(socket):
         answer = await socket.call("dashboard_history/history", dashboard=key)
