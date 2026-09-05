@@ -1488,7 +1488,22 @@ class DashboardHistoryPanel extends HTMLElement {
     // touched reads as one removal plus one addition, and adding the old
     // card back leaves both versions standing. Measured, not feared.
     const undo = this._undo?.available ? this._undo : null;
-    const added = /\d+ added/.test(change.message || "");
+    // Read off the row, not out of its wording. `adds` is worked out by
+    // the module that writes the message, next to the counting that
+    // produces it. This was `/\d+ added/` over `change.message` until
+    // today: a panel reading generated text, which the design record
+    // names by hand as the shape logic here must not take - and wrong
+    // besides, because a dashboard renamed to `3 added` produces
+    // `home: renamed to "3 added"` and read as a trap on a change that
+    // touched no card at all.
+    //
+    // The flag is deliberately wider than the regex was. `2 views
+    // added` counts now, where the word in between used to hide it: a
+    // view that appeared is as much a thing a plain put-back leaves
+    // standing as a card that did. So a few changes that used to offer
+    // the item rows no longer do, and that is the correct reading
+    // rather than a loss.
+    const added = Boolean(change.adds);
     const mine = new Set(
       (this._explanation?.groups || [])
         .flatMap((group) => group.entries)
@@ -1542,8 +1557,19 @@ class DashboardHistoryPanel extends HTMLElement {
            <button class="act" data-undo="${escape(change.revision)}">Undo this change</button>
          </div>
          <p class="why" style="margin-top:8px">Puts this change back${kept}.</p>`
-      : `<p class="why">This change cannot be taken back exactly:
-           ${escape(this._undo?.reason || "no reason given")}.</p>`;
+      : this._undo
+        ? `<p class="why">This change cannot be taken back exactly:
+             ${escape(this._undo.reason || "no reason given")}.</p>`
+        : // Nothing was answered at all - the request for it failed, or
+          // it is still out. The sentence above makes a statement about
+          // the change itself, and this is the one case where the panel
+          // cannot know it: with `_undo` null it said "no reason
+          // given", which turned a network error into a refusal by the
+          // history. The banner above carries the real cause; this says
+          // only that the answer is missing.
+          `<p class="why">Whether this change can be taken back is not
+             known: the answer did not arrive. Any message above says
+             why, and the reload button asks again.</p>`;
 
     return `<div class="detail">
       ${plain}

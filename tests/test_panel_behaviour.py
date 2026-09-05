@@ -2546,3 +2546,114 @@ def test_leaving_the_panel_cancels_the_keystroke_still_in_flight(caret):
     # is what makes the zero mean something.
     assert caret["searchesAfterLeaving"] == 0
     assert caret["searchesAfterWaiting"] == 1
+
+
+# -- what a row says about being taken back --------------------------------
+#
+# Two findings in one place. Whether a plain put-back would be a trap is
+# now read off the row instead of sniffed out of its generated message;
+# and a detail that never arrived says so, rather than reporting a
+# refusal the panel cannot know about.
+
+_TAKING_BACK = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a", previous: "b" }];
+el._explanation = { groups: [{ entries: [
+  { kind: "removed", label: "Weather" },
+  { kind: "removed", label: "Clock" },
+] }] };
+el._items = [
+  { label: "Weather", position: 0, kind: "card" },
+  { label: "Clock", position: 1, kind: "card" },
+];
+el._undo = { available: true, equals_state_before: false };
+
+const row = (adds, message) =>
+  el._renderDetail({ revision: "a", previous: "b", adds, message });
+const offers = (html) => (html.match(/data-restore=/g) || []).length;
+
+// Two cards gone and nothing added: putting one back is unambiguous, so
+// the rows stay beside the undo.
+const removalsOnly = offers(row(false, "2 cards removed"));
+// The same change, but it added something too. A put-back would leave
+// the added card standing next to the one it restores.
+const trap = offers(row(true, "1 card removed, 1 card added"));
+// The live false positive of the regex this replaced: a dashboard
+// renamed to `3 added` touched no card at all.
+const renamed = offers(row(false, 'dash: renamed to "3 added"'));
+// And the case the regex missed, because of the word in between. A view
+// that appeared is as much a thing a put-back leaves standing.
+const views = offers(row(true, "1 card removed, 2 views added"));
+
+// The undo the server said yes to. The control for the two sentences
+// below: without it, "does not claim a refusal" would also be true of a
+// row that offered nothing at all.
+const available = row(false, "2 cards removed");
+
+// The server said no, and why.
+el._undo = { available: false, reason: "the state before it is not recorded" };
+const refused = row(false, "2 cards removed");
+// Nothing was said at all: the request for the detail failed, or it is
+// still out.
+el._undo = null;
+const unknown = row(false, "2 cards removed");
+
+console.log(JSON.stringify({
+  removalsOnly, trap, renamed, views,
+  available: {
+    offers: available.includes("data-undo="),
+    saysNothingCannot: !available.includes("cannot be taken back"),
+  },
+  refused: {
+    said: refused.includes("cannot be taken back exactly"),
+    why: refused.includes("the state before it is not recorded"),
+  },
+  unknown: {
+    claimsRefusal: unknown.includes("cannot be taken back exactly"),
+    saysSo: unknown.includes("is not\\n             known"),
+    blames: unknown.includes("no reason given"),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def taking_back(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "taking_back", _TAKING_BACK)
+
+
+def test_a_trap_is_read_from_the_row_and_not_from_its_wording(taking_back):
+    # `adds` decides, and only `adds`. The four messages here are chosen
+    # so that the regex this replaced gets two of them wrong: it read
+    # `renamed to "3 added"` as a trap, and it missed `2 views added`
+    # because of the word in between.
+    assert taking_back["removalsOnly"] == 2
+    assert taking_back["trap"] == 0
+    assert taking_back["renamed"] == 2
+    assert taking_back["views"] == 0
+
+
+def test_an_undo_the_server_allows_is_offered_as_a_button(taking_back):
+    # The control that makes the two cases below mean something: a row
+    # that rendered nothing at all would also fail to claim a refusal.
+    assert taking_back["available"]["offers"] is True
+    assert taking_back["available"]["saysNothingCannot"] is True
+
+
+def test_a_refusal_the_server_explained_is_passed_on_as_it_stands(taking_back):
+    # The other control: where there *is* an answer and it is a no, the
+    # row still says so, and says why.
+    assert taking_back["refused"]["said"] is True
+    assert taking_back["refused"]["why"] is True
+
+
+def test_a_detail_that_never_arrived_is_not_reported_as_a_refusal(taking_back):
+    # With `_undo` null the row used to read "This change cannot be
+    # taken back exactly: no reason given" - a statement about the
+    # history, made out of a failure to reach the server. The banner
+    # above carries the real cause.
+    assert taking_back["unknown"]["claimsRefusal"] is False
+    assert taking_back["unknown"]["blames"] is False
+    assert taking_back["unknown"]["saysSo"] is True
