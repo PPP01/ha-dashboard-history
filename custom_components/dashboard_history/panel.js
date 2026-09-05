@@ -1240,7 +1240,13 @@ class DashboardHistoryPanel extends HTMLElement {
       this._call("create_version", {
         dashboard: asked,
         level,
-        title: title.value.trim() || shortName(candidates[level]),
+        // `|| ""` like everywhere else in this file: `shortName`
+        // splits the string it is given, so a level the server left
+        // out threw here and took the whole flow with it, after the
+        // dialog had been filled in. An empty title is something the
+        // server already accepts; a TypeError in a click handler is
+        // not.
+        title: title.value.trim() || shortName(candidates[level] || ""),
         description: description.value.trim(),
         revision: change.revision,
       }),

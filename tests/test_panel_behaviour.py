@@ -2657,3 +2657,58 @@ def test_a_detail_that_never_arrived_is_not_reported_as_a_refusal(taking_back):
     assert taking_back["unknown"]["claimsRefusal"] is False
     assert taking_back["unknown"]["blames"] is False
     assert taking_back["unknown"]["saysSo"] is True
+
+
+# -- a level the server left out must not take the flow with it ------------
+
+_MISSING_LEVEL = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a" }];
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  // Patch, minor and major are all missing. Everywhere else in the
+  // panel an answer is read with `?.` or `|| ""`; this one place split
+  // the string it was handed.
+  if (type === "next_versions")
+    return Promise.resolve({ candidates: { current: "dash/v1.0.0" } });
+  return Promise.resolve({ created: "dash/v1.0.1" });
+};
+
+let threw = null;
+const making = el._createVersion("a").catch((err) => { threw = String(err); });
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.version");
+const opened = dialog.open;
+dialog.close("create");
+await making;
+const wrote = sent.filter((c) => c.type === "create_version");
+
+console.log(JSON.stringify({
+  threw,
+  opened,
+  wrote: wrote.length,
+  title: wrote[0] ? wrote[0].extra.title : null,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def missing_level(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "missing_level", _MISSING_LEVEL)
+
+
+def test_a_version_offered_without_its_numbers_still_writes(missing_level):
+    # The dialog is filled in and pressed before anything reads the
+    # level's name, so a throw here loses the whole flow after the
+    # person has done the work. An empty title is a thing the server
+    # already accepts.
+    assert missing_level["threw"] is None
+    assert missing_level["opened"] is True
+    assert missing_level["wrote"] == 1
+    assert missing_level["title"] == ""
