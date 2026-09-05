@@ -171,3 +171,107 @@ def test_a_late_failure_of_a_superseded_request_shows_no_error(generations):
 def test_reopening_the_same_row_keeps_the_newer_answer(generations):
     assert generations["repeat"]["open"] == "a"
     assert generations["repeat"]["items"] == ["A2"]
+
+
+# Answered by *type*, never by position, and tolerantly: task 5 gives
+# `_select` a second call, and a scenario that popped a fixed number of
+# them would go red there for a reason that has nothing to do with
+# paging. This shape survives both.
+_HELD = """
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+const waiting = (type) => calls.find((c) => c.type === type);
+const reply = (type, value) => {
+  const at = calls.findIndex((c) => c.type === type);
+  if (at >= 0) calls.splice(at, 1)[0].resolve(value);
+};
+const openOn = async (key, changes, cursor) => {
+  const done = el._select(key);
+  await settle();
+  reply("versions", { versions: [] });
+  reply("history", { changes, next_cursor: cursor });
+  await done;
+};
+"""
+
+_PAGING = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("dash", [{ revision: "a" }, { revision: "b" }], "b");
+
+const older = el._loadOlder();
+await settle();
+const askedFor = waiting("history").extra;
+reply("history", {
+  changes: [{ revision: "c" }, { revision: "d" }],
+  next_cursor: null,
+});
+await older;
+
+console.log(JSON.stringify({
+  revisions: el._changes.map((c) => c.revision),
+  askedFor,
+  cursor: el._cursor,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def paging(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "paging", _PAGING)
+
+
+def test_older_entries_are_appended_and_not_substituted(paging):
+    # Replacing would lose the page above and leave the list shorter
+    # after pressing a button labelled "load older".
+    assert paging["revisions"] == ["a", "b", "c", "d"]
+
+
+def test_the_next_page_is_asked_for_by_cursor(paging):
+    # By the cursor the server handed out, never by an offset: an offset
+    # drifts when somebody saves while the page is being read.
+    assert paging["askedFor"]["before"] == "b"
+    assert paging["askedFor"]["limit"] == 25
+
+
+def test_the_end_of_the_history_is_remembered(paging):
+    # None means there is nothing older. The button goes away rather
+    # than fetching an empty page for whoever presses it again.
+    assert paging["cursor"] is None
+
+
+_PAGING_RESET = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("a-dash", [{ revision: "x" }], "x");
+const between = el._cursor;
+
+const two = el._select("b-dash");
+await settle();
+const askedFor = waiting("history").extra;
+reply("versions", { versions: [] });
+reply("history", { changes: [{ revision: "y" }], next_cursor: null });
+await two;
+
+console.log(JSON.stringify({
+  between,
+  askedFor,
+  after: el._changes.map((c) => c.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def paging_reset(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "paging_reset", _PAGING_RESET)
+
+
+def test_another_dashboard_starts_at_the_top_again(paging_reset):
+    # A cursor from one dashboard handed to another would ask for the
+    # entries after a commit that dashboard never had.
+    assert paging_reset["between"] == "x"
+    assert "before" not in paging_reset["askedFor"]
+    assert paging_reset["after"] == ["y"]

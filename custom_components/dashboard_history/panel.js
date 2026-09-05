@@ -30,6 +30,13 @@ const EVENT_RECORDED = "dashboard_history_updated";
 // an intermittent failure rather than an obvious one.
 const PARTS = new URL(import.meta.url).search;
 
+// One page of history. Twenty-five and not fifty: a first screen is for
+// finding your bearings, not for holding everything, and the button
+// below it fetches the rest. Fifty stood until there *was* a button -
+// lowering it earlier would have taken thirty entries off the panel and
+// offered nothing to get them back with.
+const PAGE = 25;
+
 // Deliberately `let`, and deliberately no top-level await. The element
 // must be defined in this module's FIRST synchronous pass. Home
 // Assistant creates the panel element as soon as the module is
@@ -62,6 +69,10 @@ class DashboardHistoryPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._dashboards = [];
     this._changes = [];
+    // Where the next page starts, or null when there is nothing older.
+    // A commit and not a count: save something while somebody is
+    // reading, and every offset below them shifts by one.
+    this._cursor = null;
     this._selected = null;
     this._open = null; // revision of the expanded change
     this._items = [];
@@ -217,7 +228,10 @@ class DashboardHistoryPanel extends HTMLElement {
     if (this._selected) {
       const asked = this._selected;
       const mine = this._claim("changes");
-      const history = await this._call("history", { dashboard: asked });
+      const history = await this._call("history", {
+        dashboard: asked,
+        limit: PAGE,
+      });
       // Same race as in `_select`, and reachable from further away: this
       // one is started by an event, so it can be in flight at the moment
       // somebody picks another dashboard. Its answer is dropped, but the
@@ -227,6 +241,12 @@ class DashboardHistoryPanel extends HTMLElement {
         return;
       }
       this._changes = history.changes || [];
+      // Deliberately back to the first page. A refresh happens because
+      // the history grew, and stitching a fresh top onto pages fetched
+      // before it grew would show a list that never existed. Whoever had
+      // loaded older entries presses the button again - which is honest,
+      // and cheap, and the alternative is a list nobody can trust.
+      this._cursor = history.next_cursor ?? null;
       // An expanded row keeps its place, but not its answers: after a
       // change from outside, "Put back" would be offering items worked
       // out against a dashboard that has moved on.
@@ -330,8 +350,9 @@ class DashboardHistoryPanel extends HTMLElement {
     this._items = [];
     this._explanation = null;
     this._undo = null;
+    this._cursor = null;
     const result = await this._guard(
-      () => this._call("history", { dashboard: key }),
+      () => this._call("history", { dashboard: key, limit: PAGE }),
       mine,
     );
     // Click two dashboards quickly and both requests are in flight. The
@@ -341,6 +362,35 @@ class DashboardHistoryPanel extends HTMLElement {
     // Whoever no longer holds the slot drops its answer.
     if (!mine()) return;
     this._changes = result ? result.changes || [] : [];
+    this._cursor = result ? result.next_cursor ?? null : null;
+    this._render();
+  }
+
+  /**
+   * Fetch the page below the one that is showing, and append it.
+   *
+   * Appended, never substituted: the button says "load older", and a
+   * list that got shorter after pressing it would be a lie told by a
+   * label. The claim ticket is the same one `_select` uses, so a page
+   * that arrives after somebody has picked another dashboard is dropped
+   * rather than stitched under a stranger's history.
+   */
+  async _loadOlder() {
+    if (!this._cursor || !this._selected) return;
+    const mine = this._claim("changes");
+    const asked = this._cursor;
+    const result = await this._guard(
+      () =>
+        this._call("history", {
+          dashboard: this._selected,
+          limit: PAGE,
+          before: asked,
+        }),
+      mine,
+    );
+    if (!mine() || !result) return;
+    this._changes = this._changes.concat(result.changes || []);
+    this._cursor = result.next_cursor ?? null;
     this._render();
   }
 
@@ -1055,7 +1105,12 @@ class DashboardHistoryPanel extends HTMLElement {
                 <div class="inner">${rows}</div>
               </details>`;
     });
-    return banner + parts.join("");
+    const older = this._cursor
+      ? `<div class="older">
+           <button class="act ghost" data-older="1">Load older changes</button>
+         </div>`
+      : "";
+    return banner + parts.join("") + older;
   }
 
   /**
@@ -1187,6 +1242,9 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     root.querySelectorAll("[data-forget]").forEach((element) =>
       element.addEventListener("click", () => this._forget()),
+    );
+    root.querySelectorAll("[data-older]").forEach((element) =>
+      element.addEventListener("click", () => this._loadOlder()),
     );
     root.querySelectorAll("[data-refresh]").forEach((element) =>
       // Guarded, unlike the automatic one: somebody who pressed a button

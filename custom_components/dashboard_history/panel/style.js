@@ -360,4 +360,5 @@ export const STYLE = `
     cursor: pointer;
   }
   details.more > summary:hover { color: var(--primary-text-color, #212121); }
+  .older { display:flex; justify-content:center; padding:12px 0 4px; }
 `;
