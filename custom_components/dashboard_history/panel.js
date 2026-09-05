@@ -145,6 +145,9 @@ class DashboardHistoryPanel extends HTMLElement {
     // and a version below that window is precisely the one that must
     // still be named.
     this._matching = [];
+    // What day it is where Home Assistant runs, as `history` answers
+    // it. See `_dayTitle`.
+    this._serverToday = null;
     this._dashboards = [];
     this._changes = [];
     // Where the next page starts, or null when there is nothing older.
@@ -366,6 +369,7 @@ class DashboardHistoryPanel extends HTMLElement {
       // and cheap, and the alternative is a list nobody can trust.
       this._cursor = history.next_cursor ?? null;
       this._matching = history.matching_versions || [];
+      this._serverToday = history.today ?? null;
       this._versions = versions.versions || [];
       // An expanded row keeps its place, but not its answers: after a
       // change from outside, "Put back" would be offering items worked
@@ -573,6 +577,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._changes = history ? history.changes || [] : [];
     this._cursor = history ? history.next_cursor ?? null : null;
     this._matching = history ? history.matching_versions || [] : [];
+    this._serverToday = history ? history.today ?? null : null;
     this._versions = versions ? versions.versions || [] : [];
     this._render();
   }
@@ -1079,8 +1084,28 @@ class DashboardHistoryPanel extends HTMLElement {
     keep.hidden = !show;
     if (!show) return null;
     keep.querySelector(".keepbox").checked = this._mode === "simple";
-    keep.querySelector(".keeptitle").value = today();
+    keep.querySelector(".keeptitle").value = this._dayTitle();
     return keep;
+  }
+
+  /**
+   * Today, spelled the way this installation spells it.
+   *
+   * The string rides in with `history`, worked out on the machine Home
+   * Assistant runs on and through the same function the automatic daily
+   * versions use. Computed here it is the *browser's* today: near
+   * midnight, from a laptop in another time zone, that is a different
+   * day from the one this installation would have written, and two
+   * names for one day in a list that shows nothing but names is exactly
+   * the confusion the simple mode cannot survive.
+   *
+   * `today()` stays as the fallback, for an answer that does not carry
+   * the field - an older integration behind a newer panel, or a history
+   * call that failed. It is what this always did, and a date from the
+   * wrong side of midnight still beats an empty title.
+   */
+  _dayTitle() {
+    return this._serverToday || today();
   }
 
   /**
@@ -1100,7 +1125,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const box = keep?.querySelector(".keepbox");
     if (!box?.checked) return null;
     const title = keep.querySelector(".keeptitle").value.trim();
-    return { level: "patch", title: title || today() };
+    return { level: "patch", title: title || this._dayTitle() };
   }
 
   async _loadDashboardsQuietly() {

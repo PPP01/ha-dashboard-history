@@ -2712,3 +2712,83 @@ def test_a_version_offered_without_its_numbers_still_writes(missing_level):
     assert missing_level["opened"] is True
     assert missing_level["wrote"] == 1
     assert missing_level["title"] == ""
+
+
+# -- today is the installation's day, not the browser's --------------------
+#
+# The restore dialog offers to keep the state it replaces and fills the
+# title in with today's date. Computed in the browser that is the
+# browser's today: near midnight, from a laptop in another time zone, a
+# different day from the one this installation would have written - and
+# two names for one day in a list that shows nothing but names is what
+# the simple mode cannot survive.
+
+_TODAY = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "simple";
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+const reply = (type, value) => {
+  const at = calls.findIndex((c) => c.type === type);
+  if (at >= 0) calls.splice(at, 1)[0].resolve(value);
+};
+const keepBlock = () => el.shadowRoot.querySelector("[data-keep]");
+
+const first = el._select("dash");
+await settle();
+reply("versions", { versions: [] });
+reply("history", {
+  changes: [{ revision: "a" }],
+  next_cursor: null,
+  today: "1 January 2020",
+});
+await first;
+const offered = el._armKeep(true).querySelector(".keeptitle").value;
+
+// An emptied field falls back to the same string, not to the browser's.
+keepBlock().querySelector(".keeptitle").value = "";
+const cleared = el._keepChoice(keepBlock()).title;
+
+// An answer without the field - an older integration behind a newer
+// panel. The browser's own spelling is the fallback, and the string
+// from the dashboard before must not be left standing.
+const second = el._select("other");
+await settle();
+reply("versions", { versions: [] });
+reply("history", { changes: [{ revision: "a" }], next_cursor: null });
+await second;
+const fallback = el._armKeep(true).querySelector(".keeptitle").value;
+
+console.log(JSON.stringify({ offered, cleared, fallback }));
+"""
+
+
+@pytest.fixture(scope="session")
+def day_title(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "today", _TODAY)
+
+
+def test_the_offered_title_is_the_day_the_installation_is_having(day_title):
+    # Spelled by `versions.day_title` on the machine Home Assistant runs
+    # on, which is the same function the automatic daily versions use -
+    # so a title somebody accepts unchanged reads like the ones already
+    # in the list.
+    assert day_title["offered"] == "1 January 2020"
+
+
+def test_an_emptied_title_falls_back_to_the_same_day(day_title):
+    # Two spellings of one day, one from the server and one from the
+    # browser, would be exactly the confusion this closes.
+    assert day_title["cleared"] == "1 January 2020"
+
+
+def test_an_answer_without_the_day_falls_back_to_the_browser(day_title):
+    # An older integration behind a newer panel. A date from the wrong
+    # side of midnight still beats an empty title - and the day the
+    # dashboard before it carried must not be left standing.
+    assert day_title["fallback"] != "1 January 2020"
+    assert re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", day_title["fallback"])
