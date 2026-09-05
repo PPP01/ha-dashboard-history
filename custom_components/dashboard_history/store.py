@@ -567,7 +567,7 @@ class HistoryStore:
         repo.refs[branch] = head
 
     @staticmethod
-    def _each_tag(repo: Repo):
+    def _each_tag(repo: Repo, key: str | None = None):
         """Every tag ref with the object behind it, as `(ref, object)`.
 
         A ref listed a moment ago and gone now is skipped. `forget`
@@ -575,8 +575,21 @@ class HistoryStore:
         while it does; measured on 2026-09-04, a history request in that
         window failed whole on one vanished ref. Skipping it is what
         dulwich's own `as_dict` does with an unresolvable ref.
+
+        `key` narrows it to one dashboard's versions, and it narrows
+        *before* the object is loaded. That order is the whole point:
+        the automatic versions of project H put one tag per dashboard
+        per day into this repository, without a ceiling, and a caller
+        that wanted one dashboard's used to pay for reading every
+        object in the namespace. Measured on 2026-09-05 over ten
+        dashboards: reading one dashboard's versions cost 1.9 ms at ten
+        tags in the repository and 492 ms at 3650 - a year of them -
+        rising in a straight line with tags that have nothing to do
+        with the question.
         """
         for ref in repo.refs.as_dict(b"refs/tags"):
+            if key is not None and not _owns(ref, key):
+                continue
             try:
                 yield ref, repo[repo.refs[b"refs/tags/" + ref]]
             except KeyError:
@@ -1142,10 +1155,8 @@ class HistoryStore:
         if repo is None:
             return []
         found: list[tuple[int, Version]] = []
-        for ref, tag in self._each_tag(repo):
+        for ref, tag in self._each_tag(repo, key):
             name = ref.decode()
-            if key is not None and not _owns(ref, key):
-                continue
             if hasattr(tag, "object"):
                 message = (tag.message or b"").decode("utf-8")
                 title, _, description = message.partition("\n\n")
