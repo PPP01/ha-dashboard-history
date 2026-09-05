@@ -788,7 +788,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`285 passed, 3 skipped`** (fünfzehn mehr), Integrationsprüfungen unverändert grün. Zusätzlich beide Dienste von Hand, in den Entwicklerwerkzeugen unter *Aktionen*:
+Erwartet: **`286 passed, 3 skipped`** (sechzehn mehr), Integrationsprüfungen unverändert grün. Zusätzlich beide Dienste von Hand, in den Entwicklerwerkzeugen unter *Aktionen*:
 
 - `dashboard_history.search` mit einem Wort, das nur weit hinten in der Historie vorkommt.
 - `dashboard_history.search` mit dem Titel einer Version — der Treffer muss die Änderung sein, auf der sie sitzt, und ihr `versions`-Feld muss die Version nennen.
@@ -1167,7 +1167,7 @@ In `_render` ersetzt `${DIALOGS}` die vier gelöschten Blöcke. Dazu zwei Umbene
 python3 -m pytest tests/ -q
 ```
 
-Erwartet: unverändert **`285 passed, 3 skipped`** — diese Aufgabe legt keinen Test dazu. `tests/test_panel_behaviour.py` muss **ohne jede Anpassung** grün sein — das ist der Beweis, dass sich kein Verhalten geändert hat. Wer hier etwas anpassen muss, hat mehr verschoben als vorgesehen.
+Erwartet: unverändert **`286 passed, 3 skipped`** — diese Aufgabe legt keinen Test dazu. `tests/test_panel_behaviour.py` muss **ohne jede Anpassung** grün sein — das ist der Beweis, dass sich kein Verhalten geändert hat. Wer hier etwas anpassen muss, hat mehr verschoben als vorgesehen.
 
 Danach der Augenschein, denn kein Test dieses Projekts zeichnet Markup:
 
@@ -1456,7 +1456,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`289 passed, 3 skipped`** (vier mehr), Integrationsprüfungen grün. Dazu am Panel: ein Dashboard mit mehr als 25 Ständen wählen, den Knopf drücken, und sehen, dass die Liste wächst statt zu springen — und dass der Knopf am Ende der Historie verschwindet.
+Erwartet: **`290 passed, 3 skipped`** (vier mehr), Integrationsprüfungen grün. Dazu am Panel: ein Dashboard mit mehr als 25 Ständen wählen, den Knopf drücken, und sehen, dass die Liste wächst statt zu springen — und dass der Knopf am Ende der Historie verschwindet.
 
 - [ ] **Schritt 5: Committen**
 
@@ -1978,7 +1978,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`294 passed, 3 skipped`** (fünf mehr), Integrationsprüfungen grün. Dann der Augenschein, und zwar zuerst mit geleertem Speicher (privates Fenster oder Website-Daten löschen): Das Panel muss im einfachen Modus öffnen, eine Liste von Versionen zeigen, oben sagen, wo das Dashboard steht, und der Umschalter muss beim Neuladen bei seiner Wahl bleiben. Ein Dashboard mit über fünfzig Ständen und einer alten Version ist die eigentliche Probe: Die alte Version muss dastehen, obwohl ihr Commit nicht geladen ist.
+Erwartet: **`295 passed, 3 skipped`** (fünf mehr), Integrationsprüfungen grün. Dann der Augenschein, und zwar zuerst mit geleertem Speicher (privates Fenster oder Website-Daten löschen): Das Panel muss im einfachen Modus öffnen, eine Liste von Versionen zeigen, oben sagen, wo das Dashboard steht, und der Umschalter muss beim Neuladen bei seiner Wahl bleiben. Ein Dashboard mit über fünfzig Ständen und einer alten Version ist die eigentliche Probe: Die alte Version muss dastehen, obwohl ihr Commit nicht geladen ist.
 
 - [ ] **Schritt 5: Committen**
 
@@ -2409,7 +2409,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`300 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
+Erwartet: **`301 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel beide Wege gehen:
 
 - Im **einfachen** Modus zurückspringen, das Kästchen angehakt lassen — die neue Version muss danach oben in der Liste stehen, mit dem heutigen Datum als Titel.
 - Im **erweiterten** Modus zurückspringen und es abhaken — es darf keine neue Version geben, und der ersetzte Stand muss als Änderung weiterhin in der Liste stehen. Das ist die Test-Plan-Zeile »Rücksprung mit »verwerfen««, und sie ist nur mit den Augen zu prüfen.
@@ -2896,7 +2896,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`302 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
+Erwartet: **`303 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
 
 - eine Zeile aufklappen, »Undo this change« drücken, den Dialog abbrechen;
 - den Stift drücken, eine Beschreibung speichern — sie muss an *dieser* Zeile erscheinen;
@@ -3341,7 +3341,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`308 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
+Erwartet: **`309 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
 
 Im **einfachen** Modus: dasselbe Feld, aber es filtert die Versionen, es fragt nie nach und der Hinweis zählt »x of y versions«. Danach das Dashboard wechseln: Das Feld muss leer sein.
 
@@ -3380,7 +3380,7 @@ EOF
 
 ## Wenn alle acht stehen
 
-`python3 -m pytest tests/ -v` (`308 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
+`python3 -m pytest tests/ -v` (`309 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
 
 Damit ist Vorhaben H fertig, und mit ihm die beiden GitHub-Issues:
 
