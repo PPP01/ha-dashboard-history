@@ -929,6 +929,10 @@ export function sections(changes) {
  * Cut, never silently: the project's own rule for the explanation lists
  * is that a summary which omits without saying so is worse than a long
  * one. The tooltip carries all of them.
+ *
+ * The one named is the first, which is the version on the most recent
+ * matching state - not the highest number. Those usually coincide and
+ * need not: a version made today on an old state sorts by that state.
  */
 export function someNames(names) {
   if (names.length <= 2) return joinNames(names);
