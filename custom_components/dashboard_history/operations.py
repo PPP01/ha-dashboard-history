@@ -460,7 +460,12 @@ async def async_restore_state(
     confirm: bool = False,
     keep_as_version: dict | None = None,
 ) -> dict:
-    """Set a dashboard back to an earlier state, creating it if it is gone."""
+    """Set a dashboard back to an earlier state, creating it if it is gone.
+
+    `keep_as_version` marks the state being replaced, so that going back
+    is not a one-way door. Why it is answered here and not by whoever
+    asked for the restore is argued in `_async_keep_as_version`.
+    """
     full, text, error = await _state_at(hass, store, key, revision)
     if error is not None:
         return {"applied": False, "error": error}
