@@ -49,7 +49,7 @@ search:
         text:
     limit:
       description: How many matches at most. The answer says whether there were more.
-      example: 50
+      default: 50
       selector:
         number:
           min: 1
