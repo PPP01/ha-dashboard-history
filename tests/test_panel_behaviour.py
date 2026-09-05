@@ -2653,6 +2653,11 @@ el._undo = { available: true, equals_state_before: false };
 const row = (adds, message) =>
   el._renderDetail({ revision: "a", previous: "b", adds, message });
 const offers = (html) => (html.match(/data-restore=/g) || []).length;
+// Sentences in this file are written across several lines, indented to
+// sit in their template. A test that searched for one as it stands
+// would go red the next time somebody reflows a paragraph - a cosmetic
+// edit failing a case about meaning.
+const flat = (html) => html.replace(/\s+/g, " ");
 
 // Two cards gone and nothing added: putting one back is unambiguous, so
 // the rows stay beside the undo.
@@ -2684,16 +2689,17 @@ console.log(JSON.stringify({
   removalsOnly, trap, renamed, views,
   available: {
     offers: available.includes("data-undo="),
-    saysNothingCannot: !available.includes("cannot be taken back"),
+    saysNothingCannot: !flat(available).includes("cannot be taken back"),
   },
   refused: {
-    said: refused.includes("cannot be taken back exactly"),
-    why: refused.includes("the state before it is not recorded"),
+    said: flat(refused).includes("This change cannot be taken back exactly"),
+    why: flat(refused).includes("the state before it is not recorded"),
   },
   unknown: {
-    claimsRefusal: unknown.includes("cannot be taken back exactly"),
-    saysSo: unknown.includes("is not\\n             known"),
-    blames: unknown.includes("no reason given"),
+    claimsRefusal: flat(unknown).includes("cannot be taken back exactly"),
+    saysSo: flat(unknown).includes(
+      "Whether this change can be taken back is not known"),
+    blames: flat(unknown).includes("no reason given"),
   },
 }));
 """
