@@ -2674,6 +2674,43 @@ def _drop_first_card(config: dict) -> dict | None:
     return None
 
 
+async def wait_until_settled(access: str, key: str, quiet: int = 6,
+                            seconds: int = 120) -> bool:
+    """Wait until the recorder has stopped writing to this dashboard.
+
+    The same lesson as `wait_for_integration`, one layer further down.
+    Having the services registered is not what these checks depend on:
+    they depend on the *history* standing still. On a cold start the
+    recorder walks every dashboard and writes what it finds, and that
+    pass runs for tens of seconds after setup reports done.
+
+    A run that starts inside it does real damage rather than finding
+    any. Measured, on a freshly recreated container: the drop-a-card
+    check saved its edit, the recorder was still busy elsewhere and did
+    not record it, so the check read the entry before its own save and
+    failed - and then failed to put the card back, leaving the bench one
+    card short for every run after it. Three runs and a hand repair.
+
+    Settled means: the newest revision of the dashboard the checks work
+    against has not moved for `quiet` seconds.
+    """
+    deadline = time.time() + seconds
+    last, since = None, time.time()
+    async with Socket(access) as socket:
+        while time.time() < deadline:
+            answer = await socket.call(
+                "dashboard_history/history", dashboard=key, limit=1
+            )
+            changes = answer.get("changes") or []
+            newest = changes[0]["revision"] if changes else ""
+            if newest != last:
+                last, since = newest, time.time()
+            elif time.time() - since >= quiet:
+                return True
+            await asyncio.sleep(2)
+    return False
+
+
 if __name__ == "__main__":
     if not wait_for_api():
         raise SystemExit(f"No Home Assistant answering at {BASE}")
@@ -2687,6 +2724,8 @@ if __name__ == "__main__":
         if not TARGET:
             raise SystemExit("No live dashboard with a history to check against")
     print(f"Dashboard für die Prüfungen: {TARGET}")
+    if not asyncio.run(wait_until_settled(access, TARGET)):
+        raise SystemExit("The recorder never stopped writing; not starting")
     print(f"Prüfungen gegen {BASE}\n")
     asyncio.run(run(access))
     print("\n  -- Wer darf: nur Administratoren --")

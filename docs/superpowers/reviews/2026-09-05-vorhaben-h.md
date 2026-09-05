@@ -182,3 +182,35 @@ Aufschlussreich ist, was er *nicht* zusammengefasst hat: Die
 aus und ist es nicht — die eine faltet Versions-Revisionen absichtlich in
 den Vergleich, die andere nicht. Zwei Dinge, die einander ähneln, sind
 keine Doppelung.
+
+## Ein Nachtrag vom Abschluss selbst
+
+Nach dem Zusammenführen musste der Testcontainer neu erstellt werden, weil
+er am Pfad des entfernten Worktrees hing. Der Prüflauf danach kam rot
+zurück — vier von 131 —, und der Code war beweisbar byte-identisch mit
+dem Stand, der Minuten vorher `131 von 131` ergeben hatte.
+
+Die Ursache stand in der Zeile *vor* dem ersten Fehlschlag: Der neueste
+Eintrag lautete schon vor dem Prüfschritt `allgemein-strom: 1 added` und
+danach unverändert genauso. Der Speichervorgang der Prüfung war gar nicht
+aufgezeichnet worden. Gestartet worden war der Lauf, sobald Home
+Assistant auf HTTP antwortete — da lief der Eröffnungsdurchgang des
+Rekorders noch.
+
+Der Schaden war echt und nicht bloß eine rote Zeile: Die Prüfung hatte
+eine Karte entfernt und scheiterte, bevor sie sie zurücklegen konnte. Der
+Prüfstand blieb eine Karte ärmer, und die beiden Folgeläufe fanden keine
+Liste mehr mit mehr als einer Karte. Zurückgeholt wurde sie mit dem
+Werkzeug, um das es hier geht: `deleted_since` benannte sie, die Vorschau
+zeigte genau eine additive Einfügung, das Schreiben setzte sie an ihre
+Position.
+
+Interessant ist, wo die Lehre schon stand. Der Docstring von
+`wait_for_integration` in `run_checks.py` formuliert sie wörtlich: »A
+readiness signal has to be the thing the checks depend on, not the
+nearest thing answering.« Genau derselbe Fehler, eine Ebene tiefer —
+registrierte Dienste sind nicht dasselbe wie eine Historie, die
+stillsteht, und die Prüfungen hängen an der Historie. Der Prüflauf wartet
+jetzt darauf, dass sich die neueste Revision des Prüf-Dashboards sechs
+Sekunden lang nicht mehr bewegt. Belegt am Kaltstart: Container
+vollständig neu erstellt, Lauf sofort danach, `131 von 131`.
