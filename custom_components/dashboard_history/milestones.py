@@ -36,6 +36,17 @@ _LOGGER = logging.getLogger(__name__)
 # would be enough for one save at a time; a burst of saves needs room,
 # because every one of them is announced and each announcement looks at
 # the newest entries as they are *now*, not as they were when it fired.
+#
+# Measured on 2026-09-05, since it is not free: dulwich counts
+# `max_entries` in matching commits, so a wider window walks further
+# past other dashboards' commits. On a repository of 965 commits over
+# eight dashboards, one read of a regularly saved dashboard cost 15 ms
+# at two entries and 101 ms at twenty - flat in the size of the history,
+# because the walk stops as soon as it has its matches. A rarely saved
+# dashboard cost 490 ms either way; there the walk runs to the end of
+# the history whatever the window is. It is paid in an executor after
+# the save has been announced, so it delays no save - it holds a thread
+# and the lock below for about a tenth of a second.
 _RECENT = 20
 
 
@@ -104,17 +115,28 @@ class Milestones:
         on the first must not cost the rest.
         """
         try:
-            _, numbered = await self._async_versions(key)
-            if numbered is not None:
+            found = await self._async_versions(key)
+            if versioning.latest(key, [v.name for v in found]) is not None:
                 return None
-            newest = await self._hass.async_add_executor_job(
-                self._store.list_changes, key, 1
+            # The whole history of this one dashboard, to reach its
+            # oldest entry - the design record calls the floor "the
+            # state to come back to before anything happened", and on a
+            # dashboard that was created while Home Assistant was
+            # running, its newest state is not that. It is what is on
+            # the screen right now, and a floor you can "go back to"
+            # without anything changing is not an offer.
+            #
+            # The full walk is affordable precisely because it happens
+            # once: the check above returns before it on every later
+            # start, so no dashboard pays for this twice.
+            recorded = await self._hass.async_add_executor_job(
+                self._store.list_changes, key, None
             )
-            if not newest:
+            if not recorded:
                 # Nothing recorded yet. Nothing to mark, and nothing wrong:
                 # a dashboard that has never been saved has no state.
                 return None
-            made = await self._async_make(key, "major", newest[0])
+            made = await self._async_make(key, "major", recorded[-1])
             if made is None:
                 # Unlike the day mark, this path only ever sees live
                 # dashboards - `list_dashboards` reads the tree at HEAD -
@@ -128,23 +150,18 @@ class Milestones:
 
     # -- making one ----------------------------------------------------
 
-    async def _async_versions(
-        self, key: str
-    ) -> tuple[list[Version], tuple[int, int, int] | None]:
-        """Every tag a dashboard carries, and its highest readable number.
+    async def _async_versions(self, key: str) -> list[Version]:
+        """Every tag a dashboard carries, read in an executor.
 
-        Both callers want a *numbered* version, and neither may read that
-        off the list itself: `list_versions` deliberately carries
-        hand-made and unreadable names too - the design record wants
-        those visible - and `candidates` skips them when counting up. A
-        dashboard whose only tag is `heizung/wichtig` therefore counts as
-        unnumbered here, which is what keeps it from taking `v0.0.1` as
-        its first number and staying on that track for good.
+        Handed over whole rather than answered here. Both callers ask a
+        question of it that `versions.py` settles - "is there a number
+        yet" for the floor, "at what level, and is this day already
+        marked" for the day mark - and those are the questions that go
+        quietly wrong, so they live where plain pytest reaches them.
         """
-        found = await self._hass.async_add_executor_job(
+        return await self._hass.async_add_executor_job(
             self._store.list_versions, key
         )
-        return found, versioning.latest(key, [v.name for v in found])
 
     async def _async_make(
         self, key: str, level: str, change: Change
@@ -229,11 +246,18 @@ class Milestones:
         for key in event.data.get("dashboards") or []:
             # Bound to the config entry and not to `hass`: Home Assistant
             # cancels an entry's background tasks when it unloads, so a
-            # mark in flight cannot outlive the instance whose lock it
+            # mark in flight does not outlive the instance whose lock it
             # holds. Without that, a reload leaves the old task running
             # against the old lock while the new instance holds a new
             # one - and two versions land on one state, which is the
             # very thing the lock is here to prevent.
+            #
+            # It holds for the coroutine, not for the thread underneath
+            # it: cancelled while the tag is being written in an
+            # executor, the future is dropped and the thread finishes
+            # the write regardless. What is left is a much narrower
+            # window than the one this closes, and only on a reload
+            # during a mark.
             self._entry.async_create_background_task(
                 self._hass,
                 self._async_mark_day(key),
@@ -243,9 +267,14 @@ class Milestones:
     async def _async_mark_day(self, key: str) -> None:
         """Mark the state that was there before this new day started."""
         try:
+            # Asked before the lock, not behind it: with the switch off
+            # there is nothing to serialise, and every save would
+            # otherwise queue one task behind another to learn that.
+            # Read off the entry each time, so a change takes effect at
+            # the next save rather than at the next restart.
+            if not self._entry.options.get(OPTION_DAILY_VERSIONS, True):
+                return
             async with self._marking:
-                if not self._entry.options.get(OPTION_DAILY_VERSIONS, True):
-                    return
                 newest = await self._hass.async_add_executor_job(
                     self._store.list_changes, key, _RECENT
                 )
@@ -253,53 +282,59 @@ class Milestones:
                     # The first state this dashboard ever had. There is
                     # nothing before it, so there is no day to close.
                     return
-                # The last state of the day before, found by walking back
-                # rather than by taking the second entry.
-                #
-                # Two entries were enough only if this runs once per
-                # save, in order. It does not: the announcement is
-                # handled without holding up the bus, so two saves
-                # landing within milliseconds start two marks that both
-                # reach here after both writes. Both would then read
-                # [Tuesday, Tuesday], see one day, and return - and
-                # Monday's last state, one row further down, is never
-                # marked by anything, ever. Silent and permanent, since
-                # no later save can reach back to it.
+                # The last state of the day before, found by walking
+                # back over the window rather than by taking the second
+                # entry. The reason it has to be a walk lives with the
+                # calculation, in `versions.end_of_previous_day`.
                 zone = dt_util.DEFAULT_TIME_ZONE
-                current = newest[0]
-                previous = next(
-                    (
-                        c
-                        for c in newest[1:]
-                        if not versioning.same_day(c.timestamp, current.timestamp, zone)
-                    ),
-                    None,
+                at = versioning.end_of_previous_day(
+                    [c.timestamp for c in newest], zone
                 )
-                if previous is None:
-                    # Everything in the window belongs to today. Either no
-                    # day ended here, or more than `_RECENT` saves landed
-                    # since one did - and that one is out of reach either
-                    # way, which is the limit this window sets.
+                if at is None:
+                    # Either no day ended here - the ordinary case, and
+                    # by far the most common - or more than `_RECENT`
+                    # saves landed since one did, and that state is out
+                    # of reach for good. The second is worth a line:
+                    # without one, the only way anybody would ever
+                    # notice is a missing mark found weeks later.
+                    if len(newest) >= _RECENT:
+                        _LOGGER.debug(
+                            "No day ended within the last %s states of %s; "
+                            "if one did, it is out of this window",
+                            _RECENT,
+                            key,
+                        )
                     return
-                found, numbered = await self._async_versions(key)
+                previous = newest[at]
+                found = await self._async_versions(key)
                 # Already marked, by a person or by an earlier run of
                 # this. Without the check a dashboard saved twice across
                 # one midnight would collect a second tag on the same
                 # state, and the numbering would count on regardless.
                 if any(v.revision == previous.revision for v in found):
                     return
-                # A dashboard created while Home Assistant was running
-                # has never had a floor laid - `async_lay_the_floor` ran
-                # at setup, and this one did not exist then. Its first
-                # automatic version is therefore made at major level, so
-                # that it is `v1.0.0` and not `v0.0.1`: `candidates`
-                # counts up from the highest version there is, and with
-                # none there the patch candidate is v0.0.1. A later
-                # start would then find a version, leave the dashboard
-                # alone, and strand it on the v0.0.x track for good.
-                # What is being marked is the last state of the day
-                # before, which is exactly what a floor is anyway.
-                level = "patch" if numbered is not None else "major"
+                title = versioning.day_title(previous.timestamp, zone)
+                # And at most one automatic version per day, which is a
+                # wider rule than the one above and catches what it
+                # cannot see. The floor sits on a dashboard's oldest
+                # state; on an installation set up today that state is
+                # also today's, so the first day mark would land on a
+                # *different* revision of the same day and the simple
+                # mode - which shows nothing but titles - would offer
+                # two rows both reading `5 September 2026`, each with
+                # its own button. Indistinguishable for exactly the
+                # person that mode exists for.
+                if title in versioning.automatic_days(
+                    (v.title, v.description) for v in found
+                ):
+                    return
+                # Major when there is no number yet: a dashboard created
+                # while Home Assistant was running never had a floor
+                # laid, and `candidates` would otherwise start it at
+                # v0.0.1 and strand it on that track for good. What is
+                # being marked - the last state of the day before - is
+                # exactly what a floor is anyway.
+                level = versioning.automatic_level(key, [v.name for v in found])
                 name = await self._async_make(key, level, previous)
                 if name is not None:
                     _LOGGER.info("Marked the end of a day with %s", name)
