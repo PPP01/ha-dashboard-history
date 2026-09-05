@@ -157,7 +157,11 @@ class DashboardHistoryPanel extends HTMLElement {
     // after an answer is not enough: choose A, then B, then A again, and
     // the first A's late answer passes that check and overwrites the
     // second's. See `_claim`.
-    this._tickets = { changes: 0, detail: 0 };
+    // `write` is claimed by everything that previews a write before
+    // doing it. It exists apart from the other two because a search or
+    // an older page must not invalidate a preview, and picking another
+    // dashboard must.
+    this._tickets = { changes: 0, detail: 0, write: 0 };
   }
 
   /**
@@ -425,6 +429,10 @@ class DashboardHistoryPanel extends HTMLElement {
   async _select(key) {
     const mine = this._claim("changes");
     this._claim("detail"); // the open row went with the old selection
+    // And so did any preview that was fetched for it. See `_confirm`:
+    // the request that writes used to read `this._selected` a second
+    // time, long after the diff somebody approved was built.
+    this._claim("write");
     this._selected = key;
     this._open = null;
     this._items = [];
@@ -688,10 +696,41 @@ class DashboardHistoryPanel extends HTMLElement {
     this._undo = undo || null;
   }
 
-  /** Show the preview, and write only if the person says so. */
+  /**
+   * Show the preview, and write only if the person says so.
+   *
+   * `request` is called twice - once to build the preview, once to
+   * write - and gets the dashboard handed to it both times rather than
+   * reading `this._selected` itself. That is not tidiness. Between the
+   * two calls the sidebar is fully live: the dialog appears only once
+   * the preview is back, nothing announces that one is coming, and the
+   * only sign of anything happening is a small "working..." in the bar.
+   * Measured on 2026-09-05: preview a restore on one dashboard, click
+   * another in the sidebar, press Apply - and the write went to the
+   * second dashboard carrying the first one's revision. A state written
+   * with nobody having seen its diff, which is the one rule this panel
+   * exists to keep.
+   */
   async _confirm(title, request, wantsKeep = false) {
-    const preview = await this._guard(() => this._call(...request(false, null)));
-    if (!preview) return;
+    const asked = this._selected;
+    // Claimed as well, so the dialog does not open at all when the
+    // selection moved while the preview was out: a diff for a dashboard
+    // nobody is looking at any more is an invitation to write the wrong
+    // thing, and it carries the wrong title too. Its own slot - a
+    // search or an older page must not invalidate a preview, and
+    // `_select` must.
+    //
+    // Only up to the dialog. Once it is open the selection cannot move
+    // any more (a modal dialog makes the rest of the page inert, and
+    // `_onRecorded` steps aside while one is open), and after Apply the
+    // write must go through: dropping it there would leave somebody who
+    // pressed a button with nothing happening and nothing said.
+    const mine = this._claim("write");
+    const preview = await this._guard(
+      () => this._call(...request(false, null, asked)),
+      mine,
+    );
+    if (!mine() || !preview) return;
     if (preview.error) {
       this._error = preview.error;
       this._render();
@@ -766,7 +805,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // that arrives first would find nobody waiting.
     const recorded = this._recorded();
     const applied = await this._guard(async () => {
-      const result = await this._call(...request(true, keep));
+      const result = await this._call(...request(true, keep, asked));
       // Still busy until the recorder has it. Reloading in between reads
       // a history whose newest entry is the state just replaced - so
       // nothing matches the live configuration, nothing is crowned, and
@@ -909,10 +948,18 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!change) return;
     // Fetched before the dialog is touched: _guard re-renders, and a
     // re-render replaces the dialog element along with everything else.
-    const offered = await this._guard(() =>
-      this._call("next_versions", { dashboard: this._selected }),
+    //
+    // The dashboard is held across it, and the slot claimed, exactly as
+    // in `_confirm`: the numbers on the three buttons are worked out for
+    // one dashboard, and the version used to be written into whichever
+    // one was selected by the time somebody pressed Create.
+    const asked = this._selected;
+    const mine = this._claim("write");
+    const offered = await this._guard(
+      () => this._call("next_versions", { dashboard: asked }),
+      mine,
     );
-    if (!offered) return;
+    if (!mine() || !offered) return;
     const candidates = offered.candidates || {};
     const dialog = this.shadowRoot.querySelector("dialog.version");
     dialog.querySelector("[data-scope]").textContent = candidates.current
@@ -982,7 +1029,7 @@ class DashboardHistoryPanel extends HTMLElement {
     if (answer !== "create") return;
     const result = await this._guard(() =>
       this._call("create_version", {
-        dashboard: this._selected,
+        dashboard: asked,
         level,
         title: title.value.trim() || candidates[level].split("/").pop(),
         description: description.value.trim(),
@@ -1011,11 +1058,21 @@ class DashboardHistoryPanel extends HTMLElement {
    * No diff - a diff of this would be the whole history.
    */
   async _forget() {
-    const dashboard = this._dashboards.find((d) => d.key === this._selected);
-    const facts = await this._guard(() =>
-      this._call("forget", { dashboard: this._selected }),
+    // Held and claimed before the first await, for the reason spelled
+    // out in `_confirm` - and here it is the expensive one. The dialog
+    // names a dashboard and counts what is about to be lost; the
+    // confirming call read `this._selected` again, so a click in the
+    // sidebar while those counts were being fetched threw away the
+    // whole history of a dashboard the dialog never mentioned, under a
+    // sentence saying in bold that it cannot be undone.
+    const asked = this._selected;
+    const mine = this._claim("write");
+    const dashboard = this._dashboards.find((d) => d.key === asked);
+    const facts = await this._guard(
+      () => this._call("forget", { dashboard: asked }),
+      mine,
     );
-    if (!facts) return;
+    if (!mine() || !facts) return;
     if (facts.error) {
       this._error = facts.error;
       this._render();
@@ -1028,7 +1085,7 @@ class DashboardHistoryPanel extends HTMLElement {
         : "";
     dialog.querySelector(".body").innerHTML = `
       <p>This throws away the recorded history of
-         <strong>${escape(dashboard?.title || this._selected)}</strong>.</p>
+         <strong>${escape(dashboard?.title || asked)}</strong>.</p>
       <ul class="loss">
         <li>${escape(facts.states)} recorded state${facts.states === 1 ? "" : "s"}${span}</li>
         ${facts.described
@@ -1050,7 +1107,7 @@ class DashboardHistoryPanel extends HTMLElement {
     });
     if (answer !== "forget") return;
     const done = await this._guard(() =>
-      this._call("forget", { dashboard: this._selected, confirm: true }),
+      this._call("forget", { dashboard: asked, confirm: true }),
     );
     if (done?.error) this._error = done.error;
     this._selected = null;
@@ -1059,10 +1116,10 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _restoreItem(change, item) {
-    this._confirm(`Put back: ${item.label}`, (confirm) => [
+    this._confirm(`Put back: ${item.label}`, (confirm, keep, dashboard) => [
       "restore_deleted",
       {
-        dashboard: this._selected,
+        dashboard,
         revision: change.previous,
         position: item.position,
         confirm,
@@ -1076,10 +1133,10 @@ class DashboardHistoryPanel extends HTMLElement {
     // cannot be tested at all.
     return this._confirm(
       title,
-      (confirm, keep) => [
+      (confirm, keep, dashboard) => [
         "restore_state",
         {
-          dashboard: this._selected,
+          dashboard,
           revision,
           confirm,
           // Left out entirely when nothing is to be marked. An empty
@@ -1093,9 +1150,9 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _undoChange(revision) {
-    this._confirm("Undo this change", (confirm) => [
+    this._confirm("Undo this change", (confirm, keep, dashboard) => [
       "undo_change",
-      { dashboard: this._selected, revision, confirm },
+      { dashboard, revision, confirm },
     ]);
   }
 

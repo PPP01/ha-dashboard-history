@@ -1225,3 +1225,200 @@ def test_an_older_answer_does_not_blank_the_note(two_searches):
     # And the older answer is dropped rather than drawn, which is the
     # claim ticket doing its own job.
     assert two_searches["found"] == ["new"]
+
+
+# -- a preview belongs to the dashboard it was fetched for -----------------
+#
+# Found by the final review on 2026-09-05, and verified by running it:
+# the request closures read `this._selected` when they were *called*, and
+# they are called twice - once for the preview, once for the write. The
+# dialog appears only after the preview is back, so the sidebar is live
+# in between.
+
+_WRONG_DASHBOARD = """
+const el = new Panel();
+el._render = () => {};
+el._recorded = () => Promise.resolve();
+el._loadDashboardsQuietly = async () => {};
+el._loadDashboards = async () => {};
+el._dashboards = [
+  { key: "kitchen", title: "Kitchen", exists: false },
+  { key: "garden", title: "Garden", exists: false },
+];
+el._changes = [{ revision: "b" }];
+
+const sent = [];
+const held = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  return new Promise((resolve) => held.push({ type, extra, resolve }));
+};
+const reply = (type, value) => {
+  const at = held.findIndex((c) => c.type === type);
+  if (at >= 0) held.splice(at, 1)[0].resolve(value);
+};
+const PREVIEW = {
+  applied: false,
+  preview: "-a\\n+b",
+  explanation: { groups: [], note: "one card removed" },
+};
+const confirming = (type) =>
+  sent.filter((c) => c.type === type && c.extra.confirm);
+// Whether a flow has come to an end - without hanging the run when it
+// has not. A refused dialog has to let its caller go, and a caller left
+// waiting for a `close` that can never come is exactly the shape of
+// failure this file exists to catch, so it is measured rather than
+// waited for.
+const finished = async (promise) => {
+  let done = false;
+  promise.then(() => { done = true; });
+  await settle();
+  return done;
+};
+
+// 1. Another dashboard is picked while the restore's preview is out.
+el._selected = "kitchen";
+el.shadowRoot = node();
+let restoring = el._restoreState("b", "Back to the state after this change");
+await settle();
+const previewFor = sent[0].extra.dashboard;
+let switching = el._select("garden");
+await settle();
+reply("restore_state", PREVIEW);
+const restoreAfterSwitch = {
+  settled: await finished(restoring),
+  opened: el.shadowRoot.querySelector("dialog.confirm").open,
+  wrote: confirming("restore_state").length,
+};
+reply("history", { changes: [], next_cursor: null });
+reply("versions", { versions: [] });
+await switching;
+
+// 2. The same click while `forget` is counting what it would destroy.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+const forgetting = el._forget();
+await settle();
+switching = el._select("garden");
+await settle();
+reply("forget", { states: 3, described: 0, first: 1000, last: 2000 });
+const forgetAfterSwitch = {
+  settled: await finished(forgetting),
+  opened: el.shadowRoot.querySelector("dialog.forget").open,
+  deleted: confirming("forget").length,
+};
+reply("history", { changes: [], next_cursor: null });
+reply("versions", { versions: [] });
+await switching;
+
+// From here the reload at the end of each flow is out of the way; what
+// is measured is which dashboard the writing call names.
+el._select = async () => {};
+
+// 3. The control: nothing moves, the dialog opens, the write goes out.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+restoring = el._restoreState("b", "Back to the state after this change");
+await settle();
+reply("restore_state", PREVIEW);
+await settle();
+const openedNormally = el.shadowRoot.querySelector("dialog.confirm").open;
+el.shadowRoot.querySelector("dialog.confirm").close("apply");
+await settle();
+const restoredTo = confirming("restore_state")[0].extra.dashboard;
+reply("restore_state", { applied: true });
+await restoring;
+
+// 4. The selection moves without going through `_select`, so the claim
+// ticket still holds: only the captured key can keep this write on the
+// dashboard whose diff was on the screen.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+restoring = el._restoreState("b", "Back to the state after this change");
+await settle();
+el._selected = "garden";
+reply("restore_state", PREVIEW);
+await settle();
+el.shadowRoot.querySelector("dialog.confirm").close("apply");
+await settle();
+const carriedTo = confirming("restore_state")[0].extra.dashboard;
+reply("restore_state", { applied: true });
+await restoring;
+
+// 5. And the irreversible one, the same way round.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+const forgetAgain = el._forget();
+await settle();
+el._selected = "garden";
+reply("forget", { states: 3, described: 0, first: 1000, last: 2000 });
+await settle();
+const dialogSaid = el.shadowRoot
+  .querySelector("dialog.forget").querySelector(".body").innerHTML;
+el.shadowRoot.querySelector("dialog.forget").close("forget");
+await settle();
+const forgotten = confirming("forget")[0].extra.dashboard;
+reply("forget", { forgotten: true });
+await forgetAgain;
+
+console.log(JSON.stringify({
+  previewFor, restoreAfterSwitch, forgetAfterSwitch,
+  openedNormally, restoredTo, carriedTo,
+  named: dialogSaid.includes("Kitchen"), forgotten,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def wrong_dashboard(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "wrong_dashboard", _WRONG_DASHBOARD)
+
+
+def test_a_preview_is_written_to_the_dashboard_it_was_fetched_for(wrong_dashboard):
+    # The capture, on its own: the selection moved without invalidating
+    # anything, and the write still names the dashboard whose diff was
+    # shown. Reading `this._selected` in the closure again puts "garden"
+    # here - a state written with nobody having seen its diff.
+    assert wrong_dashboard["previewFor"] == "kitchen"
+    assert wrong_dashboard["carriedTo"] == "kitchen"
+
+
+def test_a_dashboard_picked_while_the_preview_is_out_cancels_the_dialog(
+    wrong_dashboard,
+):
+    # The claim ticket, on its own: a diff for a dashboard nobody is
+    # looking at any more must not be offered at all - it carries the
+    # wrong title as well as the wrong content.
+    # And it lets go of whoever was waiting for it, rather than sitting
+    # on a `close` that can never arrive.
+    assert wrong_dashboard["restoreAfterSwitch"] == {
+        "settled": True,
+        "opened": False,
+        "wrote": 0,
+    }
+
+
+def test_forget_deletes_the_history_the_dialog_named(wrong_dashboard):
+    # The expensive one. The dialog counts what is about to be lost and
+    # says in bold that it cannot be undone; the confirming call used to
+    # read the selection again, so the history that went was another
+    # dashboard's.
+    assert wrong_dashboard["named"] is True
+    assert wrong_dashboard["forgotten"] == "kitchen"
+    assert wrong_dashboard["forgetAfterSwitch"] == {
+        "settled": True,
+        "opened": False,
+        "deleted": 0,
+    }
+
+
+def test_an_undisturbed_restore_still_opens_and_writes(wrong_dashboard):
+    # The control for the two above. Without it, "no dialog" and "no
+    # write" would also be the answer if this harness could never
+    # produce either.
+    assert wrong_dashboard["openedNormally"] is True
+    assert wrong_dashboard["restoredTo"] == "kitchen"
