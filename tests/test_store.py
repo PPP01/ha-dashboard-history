@@ -4,7 +4,8 @@ import threading
 
 import pytest
 from dulwich.repo import Repo
-from store import HistoryStore, _as_text
+import store as store_module
+from store import HistoryStore, Version, _as_text
 import versions
 from versions import candidates
 
@@ -1322,6 +1323,58 @@ def test_a_search_answers_newest_first_and_stops_at_the_limit(store):
         store.write_snapshot("home", f"a: {index}\n", f"home: match {index}")
     found = store.search_changes("home", "match", limit=2)
     assert [c.message for c in found] == ["home: match 4", "home: match 3"]
+
+
+def test_a_search_stops_reading_when_it_has_enough(store, monkeypatch):
+    # The limit has to bound the work, not only the answer. Built as a
+    # list first, the search materialised a `Change` for every commit
+    # this dashboard ever touched - and, on a shared repository, walked
+    # past every other dashboard's as well - before a single comparison
+    # was made. The `break` then stopped the reading of something that
+    # was already in memory.
+    #
+    # Counted where the objects are made: two hits, two `Change`
+    # objects. The generator hands one out only once it has seen the
+    # entry behind it - that entry is its `previous` - so the walk reads
+    # three commits of the thirty and the third is never built.
+    for index in range(30):
+        store.write_snapshot("home", f"a: {index}\n", f"home: match {index}")
+    built = []
+    real = store_module._change
+
+    def counting(entry, notes, previous):
+        built.append(entry)
+        return real(entry, notes, previous)
+
+    monkeypatch.setattr(store_module, "_change", counting)
+    found = store.search_changes("home", "match", limit=2)
+    assert [c.message for c in found] == ["home: match 29", "home: match 28"]
+    assert len(built) == 2, len(built)
+
+
+def test_a_search_searches_the_tag_list_it_is_handed(store):
+    # `operations.async_search` reads this dashboard's versions to say
+    # which of them sit on the rows it hands back, and this method reads
+    # the same tags to search their titles. Two scans of one namespace
+    # for one answer; handed the list, this one does not scan at all.
+    marked = store.write_snapshot("home", "a: 1\n", "home: 1 card added")
+    store.create_version("home/v1.0.0", "Before the winter rebuild", "", marked)
+    # Handed an empty list, the tag that is really there is not read.
+    assert store.search_changes("home", "winter", versions=[]) == []
+    # And what is handed in is what is searched.
+    invented = Version(
+        name="home/v9.9.9",
+        revision=marked,
+        title="The spring plan",
+        description="",
+    )
+    assert [
+        c.revision
+        for c in store.search_changes("home", "spring", versions=[invented])
+    ] == [marked]
+    # Left out, it reads them itself, which is what every other caller
+    # relies on.
+    assert [c.revision for c in store.search_changes("home", "winter")] == [marked]
 
 
 def test_an_empty_search_finds_nothing_rather_than_everything(store):

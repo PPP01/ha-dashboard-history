@@ -411,10 +411,19 @@ async def async_search(
     The longest read this integration has - the whole history - so it is
     a command of its own rather than a flag on `history`. That keeps the
     ordinary path, which the panel walks on every click, off it.
+
+    One tag scan, not two, and that is why this does not gather the way
+    `history` does. The search matches a version's title, its description
+    and its number, so it wants exactly the list this wants to say which
+    versions sit on the rows it hands back - and run side by side, the
+    two read every tag of the dashboard twice for one answer. Read once
+    here and handed down, the second scan is gone; what is left is one
+    executor hop after another instead of two at once, and the walk was
+    always the expensive half of the pair.
     """
-    changes, versions = await asyncio.gather(
-        hass.async_add_executor_job(store.search_changes, key, text, limit + 1),
-        hass.async_add_executor_job(store.list_versions, key),
+    versions = await hass.async_add_executor_job(store.list_versions, key)
+    changes = await hass.async_add_executor_job(
+        store.search_changes, key, text, limit + 1, versions
     )
     more = len(changes) > limit
     changes = changes[:limit]
