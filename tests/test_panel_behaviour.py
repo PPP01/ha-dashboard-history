@@ -58,6 +58,16 @@ const node = () => {
     },
     querySelectorAll(selector) { return [it.querySelector(selector)]; },
     addEventListener(name, run) { it._on[name] = run; },
+    // Three no-ops rather than three more properties: the version
+    // dialog presses its level buttons into shape with `setAttribute`
+    // and puts the cursor in the title field, and the description
+    // dialog selects the text it prefilled. A stand-in that cannot be
+    // told any of it makes those flows untestable for a reason that
+    // has nothing to do with what they do. (Scenarios older than this
+    // hand their own in; those still work, and are left alone.)
+    setAttribute() {},
+    focus() {},
+    select() {},
     showModal() { it.open = true; },
     close(value) {
       it.open = false;
@@ -1316,6 +1326,7 @@ await switching;
 // is measured is which dashboard the writing call names.
 el._select = async () => {};
 el._refreshQuietly = async () => {};
+el._reloadAfterWrite = async () => null;
 
 // 3. The control: nothing moves, the dialog opens, the write goes out.
 el._selected = "kitchen";
@@ -1469,6 +1480,7 @@ el._cursor = "older";
 el._recorded = () => Promise.resolve();
 el._select = async () => {};
 el._refreshQuietly = async () => {};
+el._reloadAfterWrite = async () => null;
 el._loadDashboardsQuietly = async () => {};
 
 const sent = [];
@@ -2015,3 +2027,106 @@ def test_describing_a_found_row_leaves_the_search_standing(write_keeps_search):
         "describe", "dashboards", "history", "versions", "search",
     ]
     assert write_keeps_search["described"] == ["the winter rework"]
+
+
+# -- a reload that failed after a write is said out loud --------------------
+#
+# The flows used to end on `_select`, which runs through `_guard` and
+# left a failure in the banner. Moved to a quiet refresh they swallowed
+# it, and the line after cleared whatever else stood there: the write
+# landed, the page went on showing the state from before it, and nothing
+# said why.
+
+_RELOAD_FAILS = """
+const el = new Panel();
+const drawn = [];
+el._render = () => { drawn.push({ busy: el._busy, error: el._error }); };
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [{ revision: "a", message: "1 card added", versions: [] }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+
+// Everything answers except the first call of the reload.
+let busyWhileReloading = null;
+el._call = (type, extra) => {
+  if (type === "dashboards") {
+    busyWhileReloading = el._busy;
+    return Promise.reject(new Error("connection lost"));
+  }
+  if (type === "restore_state")
+    return Promise.resolve(
+      extra.confirm
+        ? { applied: true }
+        : { applied: false, preview: "-a\\n+b",
+            explanation: { groups: [], note: "one card removed" } },
+    );
+  if (type === "next_versions")
+    return Promise.resolve({ candidates: { patch: "dash/v1.0.1" } });
+  if (type === "create_version")
+    return Promise.resolve({ created: "dash/v1.0.1" });
+  return Promise.resolve({});
+};
+
+const confirmBox = el.shadowRoot.querySelector("dialog.confirm");
+const restoring = el._restoreState("a", "Back to this state");
+await settle();
+confirmBox.close("apply");
+await restoring;
+const afterRestore = { error: el._error, busy: el._busy };
+const lastFrame = drawn[drawn.length - 1];
+
+const describeBox = el.shadowRoot.querySelector("dialog.describe");
+const describing = el._describe("a");
+await settle();
+describeBox.close("save");
+await describing;
+const afterDescribe = el._error;
+
+const versionBox = el.shadowRoot.querySelector("dialog.version");
+const versioning = el._createVersion("a");
+await settle();
+versionBox.close("create");
+await versioning;
+const afterVersion = el._error;
+
+console.log(JSON.stringify({
+  afterRestore, lastFrame, busyWhileReloading, afterDescribe, afterVersion,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def reload_fails(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "reload_fails", _RELOAD_FAILS)
+
+
+def test_a_reload_that_failed_after_a_write_says_so(reload_fails):
+    # Both halves in one sentence: what did happen, and why the page
+    # below does not show it. Swallowed, this is the worst outcome this
+    # integration knows - a screen that is wrong and quiet about it,
+    # with a reload button nothing tells you to press.
+    assert reload_fails["afterRestore"]["error"] == (
+        "the change was made, but the page could not be reloaded: "
+        "connection lost"
+    )
+    # Every flow that writes, not just the one that was measured.
+    assert reload_fails["afterDescribe"] == (
+        "the description was saved, but the page could not be reloaded: "
+        "connection lost"
+    )
+    assert reload_fails["afterVersion"] == (
+        "the version was made, but the page could not be reloaded: "
+        "connection lost"
+    )
+
+
+def test_the_reload_after_a_write_says_it_is_working(reload_fails):
+    # `_refresh` draws no "working..." of its own, so the window between
+    # Apply and a reloaded page was silent as well as still. And the
+    # indicator has to come down again: the last thing drawn is the
+    # banner, and it must not be drawn under a spinner that has nothing
+    # left to do.
+    assert reload_fails["busyWhileReloading"] == 1
+    assert reload_fails["afterRestore"]["busy"] == 0
+    assert reload_fails["lastFrame"]["busy"] == 0

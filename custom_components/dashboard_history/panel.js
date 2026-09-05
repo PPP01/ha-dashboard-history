@@ -376,16 +376,12 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The same, with its failures swallowed - and the reload every
-   * writing flow ends on.
+   * The same, with its failures swallowed.
    *
-   * `_select` used to do that job, and `_select` clears the query, the
-   * results and the cursor along with everything else. Describing a row
-   * the server had found therefore dropped whoever wrote it back onto
-   * the unfiltered first page with an empty box, to type the search
-   * again for every further hit. The search belongs to the dashboard,
-   * and the dashboard has not changed; so does the open row, which this
-   * one keeps and fetches fresh answers for.
+   * For the refresh nobody asked for - a save somewhere else in Home
+   * Assistant announcing itself - and for that one only. The reload a
+   * writing flow ends on is `_reloadAfterWrite`, which says when it
+   * fails.
    */
   async _refreshQuietly() {
     try {
@@ -394,6 +390,46 @@ class DashboardHistoryPanel extends HTMLElement {
       // Nobody asked for this one. An error banner arriving from nowhere
       // is worse than a page that is briefly out of date; the button
       // reports its own failures.
+    }
+  }
+
+  /**
+   * The reload every writing flow ends on. Answers with a sentence
+   * where it failed, and null where it came through.
+   *
+   * `_select` used to do that job, and `_select` clears the query, the
+   * results and the cursor along with everything else. Describing a row
+   * the server had found therefore dropped whoever wrote it back onto
+   * the unfiltered first page with an empty box, to type the search
+   * again for every further hit. The search belongs to the dashboard,
+   * and the dashboard has not changed; so does the open row, which
+   * `_refresh` keeps and fetches fresh answers for.
+   *
+   * Not `_refreshQuietly`, though, and this is the whole point of the
+   * method: the deliberate quiet there is for a refresh nobody asked
+   * for. This one follows a write somebody just made. Swallow its
+   * failure and the write lands, the page goes on showing the state
+   * from before it, and nothing on the screen says why - the worst
+   * outcome this integration knows. `done` names what did succeed, so
+   * the sentence can carry both halves at once.
+   *
+   * Busy while it runs, for the same reason: it is part of the action
+   * somebody started, and `_refresh` on its own draws no "working..."
+   * at all. Rendered in the `finally` as well, or the indicator raised
+   * here would stay up on the last frame `_refresh` drew.
+   */
+  async _reloadAfterWrite(done) {
+    this._busy += 1;
+    this._render();
+    try {
+      await this._refresh();
+      return null;
+    } catch (err) {
+      const why = err?.message || String(err);
+      return `${done}, but the page could not be reloaded: ${why}`;
+    } finally {
+      this._busy -= 1;
+      this._render();
     }
   }
 
@@ -898,14 +934,21 @@ class DashboardHistoryPanel extends HTMLElement {
     // result used to end on the unfiltered first page. This reads the
     // dashboard list too, so a recreated dashboard still turns up in
     // the sidebar.
-    await this._refreshQuietly();
+    const stale = await this._reloadAfterWrite("the change was made");
     // After the reload, not before it. The reload clears the banner on
     // its way in - so anything written here first is wiped by the very
     // refresh that follows it, which is what happened to every note
     // this dialog has ever tried to leave. Cleared where there is
     // nothing to say, for the same reason it always was: the banner
     // above belongs to the action that has just finished.
-    this._error = said || null;
+    //
+    // Both halves, and `said` first. A reload that failed used to be
+    // swallowed and then wiped by this very line: the write went
+    // through, the page went on showing the state from before it, and
+    // the only thing that could have said so was cleared here. What
+    // the write itself answered is still the more important half; the
+    // second sentence explains why the page below has not caught up.
+    this._error = [said, stale].filter(Boolean).join("; ") || null;
     this._render();
   }
 
@@ -1027,7 +1070,15 @@ class DashboardHistoryPanel extends HTMLElement {
     // Not `_select`: a description written on a row the server found is
     // the one place where losing the search costs the most - the next
     // hit would have to be searched for again.
-    await this._refreshQuietly();
+    //
+    // And not `_refreshQuietly` either: the description is stored, but
+    // the row on the screen still shows the old one, and a page that is
+    // wrong without saying so is worse than a banner.
+    const stale = await this._reloadAfterWrite("the description was saved");
+    if (stale) {
+      this._error = stale;
+      this._render();
+    }
   }
 
   /**
@@ -1141,7 +1192,14 @@ class DashboardHistoryPanel extends HTMLElement {
     // shrink to a single collapsed line, right after the one click the
     // design record advertises.
     if (result?.created) this._verOpen.add(result.created);
-    await this._refreshQuietly();
+    // Said rather than swallowed, as in `_confirm`: the version exists
+    // on the server, and a history that does not show it invites
+    // somebody to make it a second time.
+    const stale = await this._reloadAfterWrite("the version was made");
+    if (stale) {
+      this._error = stale;
+      this._render();
+    }
   }
 
   /**
