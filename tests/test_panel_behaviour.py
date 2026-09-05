@@ -738,6 +738,99 @@ def test_a_version_that_was_kept_says_nothing(keep_failed):
     assert keep_failed["quiet"] == ""
 
 
+_KEEP_SUPPRESSED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el._recorded = () => Promise.resolve();
+el._select = async () => {};
+el._loadDashboardsQuietly = async () => {};
+
+let preview = {};
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  if (type === "restore_state" && !extra.confirm) return Promise.resolve(preview);
+  return Promise.resolve({ applied: true, changes: [], dashboards: [] });
+};
+
+// A fresh stand-in per attempt: `querySelector` remembers what it
+// handed out, so a box ticked in one case would still be ticked in the
+// next and the answer would be about the wrong run.
+const attempt = async (shape) => {
+  preview = shape;
+  el.shadowRoot = node();
+  const at = sent.length;
+  const done = el._restoreState("b", "Back to this version");
+  await settle();
+  const offered = !el.shadowRoot.querySelector("[data-keep]").hidden;
+  el.shadowRoot.querySelector("dialog.confirm").close("apply");
+  await done;
+  const confirming = sent
+    .slice(at)
+    .find((c) => c.type === "restore_state" && c.extra.confirm);
+  return {
+    offered,
+    sentKeep: confirming ? confirming.extra.keep_as_version ?? null : null,
+  };
+};
+
+// The state is already the live one. There is nothing to apply, so
+// there is nothing being replaced that could be worth keeping.
+const nothing = await attempt({
+  applied: false,
+  preview: "",
+  note: "This state is what the dashboard holds right now",
+});
+
+// The dashboard is gone and this restore recreates it. There is no
+// live state to keep, and a tick box whose only outcome is a failure
+// is worse than none.
+const recreating = await attempt({
+  applied: false,
+  preview: "-a\\n+b",
+  creates_dashboard: true,
+  explanation: { groups: [], note: "" },
+});
+
+// The ordinary case, in the same harness, so that "not offered" above
+// means the offer was withheld rather than never reachable.
+const ordinary = await attempt({
+  applied: false,
+  preview: "-a\\n+b",
+  explanation: { groups: [], note: "one card removed" },
+});
+
+console.log(JSON.stringify({ nothing, recreating, ordinary }));
+"""
+
+
+@pytest.fixture(scope="session")
+def keep_suppressed(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "keep_suppressed", _KEEP_SUPPRESSED)
+
+
+def test_nothing_to_apply_offers_nothing_to_keep(keep_suppressed):
+    assert keep_suppressed["nothing"]["offered"] is False
+    # And the offer being hidden is not enough on its own: a suppressed
+    # offer must not send a version either, however the dialog is closed.
+    assert keep_suppressed["nothing"]["sentKeep"] is None
+
+
+def test_recreating_a_dashboard_offers_nothing_to_keep(keep_suppressed):
+    assert keep_suppressed["recreating"]["offered"] is False
+    assert keep_suppressed["recreating"]["sentKeep"] is None
+
+
+def test_an_ordinary_restore_still_offers_to_keep(keep_suppressed):
+    # The control for the two above. Without it, "not offered" would
+    # also be the answer if the harness could never show an offer at all.
+    assert keep_suppressed["ordinary"]["offered"] is True
+    assert keep_suppressed["ordinary"]["sentKeep"]["level"] == "patch"
+
+
 def test_the_preview_is_fetched_before_anything_is_written(keeping):
     # The hard rule: nothing that writes a dashboard state goes without
     # a preview. Asking about a version does not change that.
