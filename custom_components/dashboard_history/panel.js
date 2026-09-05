@@ -322,8 +322,8 @@ class DashboardHistoryPanel extends HTMLElement {
       // An expanded row keeps its place, but not its answers: after a
       // change from outside, "Put back" would be offering items worked
       // out against a dashboard that has moved on.
-      const openAt = this._changes.findIndex((c) => c.revision === this._open);
-      if (openAt < 0) {
+      const open = this._changeAt(this._open);
+      if (!open) {
         this._claim("detail");
         this._open = null;
         this._items = [];
@@ -331,7 +331,7 @@ class DashboardHistoryPanel extends HTMLElement {
         this._undo = null;
       } else {
         const detailMine = this._claim("detail");
-        const detail = await this._detailFor(openAt);
+        const detail = await this._detailFor(open);
         if (!detailMine()) return;
         this._take(detail);
       }
@@ -476,27 +476,51 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The state *before* a change - which is what "undo this" means.
-   * The list runs newest first, so the state before entry i is entry i+1.
+   * The loaded change with this revision, or null.
+   *
+   * A row addresses itself by revision and not by its place in a list.
+   * The place was a fine address while there was exactly one list; the
+   * search box makes a second one, and then "row 3" means two different
+   * rows depending on who is asking.
    */
-  _before(index) {
-    return this._changes[index + 1]?.revision ?? null;
+  _changeAt(revision) {
+    return this._changes.find((c) => c.revision === revision) || null;
   }
 
-  async _expand(index) {
-    const change = this._changes[index];
-    if (this._open === change.revision) {
+  /**
+   * How many loaded changes are newer than this one, or null when it is
+   * not in the loaded window at all.
+   *
+   * A count over the history, never over whatever list is on screen. It
+   * carries the half-sentence "and keeps the 3 changes made since", and
+   * where the number is not known the half-sentence goes rather than
+   * being guessed.
+   */
+  _madeSince(change) {
+    const at = this._changes.findIndex((c) => c.revision === change.revision);
+    return at < 0 ? null : at;
+  }
+
+  /** Whether this is the newest recorded state of this dashboard. */
+  _isNewest(change) {
+    return Boolean(change) && change.revision === this._changes[0]?.revision;
+  }
+
+  async _expand(revision) {
+    const change = this._changeAt(revision);
+    if (!change) return;
+    if (this._open === revision) {
       this._claim("detail"); // closing it makes any answer in flight stale
       this._open = null;
       this._render();
       return;
     }
     const mine = this._claim("detail");
-    this._open = change.revision;
+    this._open = revision;
     this._items = [];
     this._explanation = null;
     this._undo = null;
-    const detail = await this._guard(() => this._detailFor(index), mine);
+    const detail = await this._guard(() => this._detailFor(change), mine);
     // While this row's answers were on their way, somebody opened another
     // row - or closed this one, or opened it again. Its answers belong to
     // that later request, and writing these here would put row "a"'s
@@ -509,22 +533,21 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /** The three answers a row's detail is built from. */
-  _detailFor(index) {
-    const before = this._before(index);
+  _detailFor(change) {
     return Promise.all([
-      before
+      change.previous
         ? this._call("deleted_since", {
           dashboard: this._selected,
-          revision: before,
+          revision: change.previous,
         })
         : Promise.resolve({ items: [] }),
       this._call("explain", {
         dashboard: this._selected,
-        revision: this._changes[index].revision,
+        revision: change.revision,
       }),
       this._call("undo_change", {
         dashboard: this._selected,
-        revision: this._changes[index].revision,
+        revision: change.revision,
       }),
     ]);
   }
@@ -716,8 +739,9 @@ class DashboardHistoryPanel extends HTMLElement {
    * One field, prefilled, Save or Cancel. Nothing more is wanted here -
    * the same shape as Home Assistant's own "rename" on an integration.
    */
-  async _describe(index) {
-    const change = this._changes[index];
+  async _describe(revision) {
+    const change = this._changeAt(revision);
+    if (!change) return;
     const dialog = this.shadowRoot.querySelector("dialog.describe");
     const field = dialog.querySelector("input.text");
     field.value = change.description || "";
@@ -751,8 +775,9 @@ class DashboardHistoryPanel extends HTMLElement {
    * minor and major carries a statement instead: was this a correction or
    * a rebuild?
    */
-  async _createVersion(index) {
-    const change = this._changes[index];
+  async _createVersion(revision) {
+    const change = this._changeAt(revision);
+    if (!change) return;
     // Fetched before the dialog is touched: _guard re-renders, and a
     // re-render replaces the dialog element along with everything else.
     const offered = await this._guard(() =>
@@ -777,7 +802,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // configuration, so it can answer "is this entry what a version
     // holds" only where "this entry" is the current one. Claiming it
     // anywhere else would need a comparison the panel does not have.
-    const already = this._alreadyNamed(index);
+    const already = this._alreadyNamed(change);
     const carries = dialog.querySelector("[data-carries]");
     // Bold, and not because emphasis is decoration. This sentence was
     // plain text under a muted line and got read straight past - the one
@@ -904,13 +929,12 @@ class DashboardHistoryPanel extends HTMLElement {
     await this._loadDashboards();
   }
 
-  _restoreItem(index, item) {
-    const before = this._before(index);
+  _restoreItem(change, item) {
     this._confirm(`Put back: ${item.label}`, (confirm) => [
       "restore_deleted",
       {
         dashboard: this._selected,
-        revision: before,
+        revision: change.previous,
         position: item.position,
         confirm,
       },
@@ -939,14 +963,10 @@ class DashboardHistoryPanel extends HTMLElement {
     );
   }
 
-  _undoChange(index) {
+  _undoChange(revision) {
     this._confirm("Undo this change", (confirm) => [
       "undo_change",
-      {
-        dashboard: this._selected,
-        revision: this._changes[index].revision,
-        confirm,
-      },
+      { dashboard: this._selected, revision, confirm },
     ]);
   }
 
@@ -1001,23 +1021,26 @@ class DashboardHistoryPanel extends HTMLElement {
    * panel does not compare states, because a comparison here is logic
    * here.
    */
-  _renderSetBack(index) {
-    const before = this._before(index);
+  _renderSetBack(change) {
+    const before = change.previous;
     const buttons = [];
     const same = this._undo?.available && this._undo.equals_state_before;
-    if (before && !this._changes[index + 1]?.same_as_now && !same)
+    // Where the predecessor is outside the loaded window this is
+    // `undefined` and the button stays - exactly what happened before,
+    // when `this._changes[index + 1]` was not there either.
+    if (before && !this._changeAt(before)?.same_as_now && !same)
       buttons.push({
         revision: before,
         label: "Back to the state before this change",
       });
-    if (!this._changes[index]?.same_as_now)
+    if (!change.same_as_now)
       buttons.push({
-        revision: this._changes[index].revision,
+        revision: change.revision,
         label: "Back to the state after this change",
       });
 
     const why =
-      before && this._changes[index + 1]?.same_as_now
+      before && this._changeAt(before)?.same_as_now
         ? `<span class="why">The state before this change is what the
             dashboard holds now — nothing to set back.</span>`
         : "";
@@ -1039,7 +1062,7 @@ class DashboardHistoryPanel extends HTMLElement {
       </details>`;
   }
 
-  _renderDetail(index) {
+  _renderDetail(change) {
     // Where there is room, both subjects get a full sentence instead of a
     // chip - the explanation says what the change did, this says where it
     // left the dashboard. "again" carries the case the short form cannot:
@@ -1047,17 +1070,17 @@ class DashboardHistoryPanel extends HTMLElement {
     // Not on the top row: the section heading and its chip already say it
     // there, and "again" would be wrong for the state you are simply in.
     const here =
-      index > 0 && this._changes[index]?.same_as_now
+      !this._isNewest(change) && change.same_as_now
         ? `<p class="why" style="margin-top:0">The dashboard holds exactly this
              state again right now.</p>`
         : "";
     const plain =
       here + renderPlain(this._explanation, "What this change did");
-    const before = this._before(index);
+    const before = change.previous;
     if (!before)
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
-        ${this._renderMakeVersion(index)}</div>`;
+        ${this._renderMakeVersion(change)}</div>`;
     // Which of the missing items the undo takes care of. Two reasons,
     // and only these two - decision 15:
     //
@@ -1071,7 +1094,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // touched reads as one removal plus one addition, and adding the old
     // card back leaves both versions standing. Measured, not feared.
     const undo = this._undo?.available ? this._undo : null;
-    const added = /\d+ added/.test(this._changes[index]?.message || "");
+    const added = /\d+ added/.test(change.message || "");
     const mine = new Set(
       (this._explanation?.groups || [])
         .flatMap((group) => group.entries)
@@ -1114,10 +1137,15 @@ class DashboardHistoryPanel extends HTMLElement {
         ? ""
         : `<p class="muted">Nothing from before this change is missing today.</p>`;
 
-    const kept = index === 0 ? "" : ` and keeps the ${index} change${index === 1 ? "" : "s"} made since`;
+    // Left out where the number is not known - a row from outside the
+    // loaded window has no place in it to count from, and a guessed
+    // number in a sentence about what is kept would be the worst kind.
+    const made = this._madeSince(change);
+    const kept =
+      made ? ` and keeps the ${made} change${made === 1 ? "" : "s"} made since` : "";
     const offer = undo
       ? `<div class="backto">
-           <button class="act" data-undo="${index}">Undo this change</button>
+           <button class="act" data-undo="${escape(change.revision)}">Undo this change</button>
          </div>
          <p class="why" style="margin-top:8px">Puts this change back${kept}.</p>`
       : `<p class="why">This change cannot be taken back exactly:
@@ -1127,8 +1155,8 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${offer}
       ${list}
-      ${this._renderSetBack(index)}
-      ${this._renderMakeVersion(index)}
+      ${this._renderSetBack(change)}
+      ${this._renderMakeVersion(change)}
     </div>`;
   }
 
@@ -1146,12 +1174,11 @@ class DashboardHistoryPanel extends HTMLElement {
    * entry" is the current one. Claiming it anywhere else would need a
    * comparison the panel does not have.
    */
-  _alreadyNamed(index) {
-    const change = this._changes[index];
+  _alreadyNamed(change) {
     if (!change) return "";
     const carried = (change.versions || []).map((v) => v.name.split("/").pop());
     if (carried.length) return `This state already carries ${someNames(carried)}.`;
-    const alike = this._matchingElsewhere(index);
+    const alike = this._matchingElsewhere(change);
     if (alike.length) return `This is the same state as ${someNames(alike)}.`;
     return "";
   }
@@ -1168,8 +1195,7 @@ class DashboardHistoryPanel extends HTMLElement {
    * everywhere else the answer is either circular or two lines away in
    * the section head.
    */
-  _matchingElsewhere(index) {
-    const change = this._changes[index];
+  _matchingElsewhere(change) {
     if (!change || !change.same_as_now) return [];
     const own = (change.versions || []).map((v) => v.name.split("/").pop());
     return this._versionsMatchingNow().filter((name) => !own.includes(name));
@@ -1186,10 +1212,11 @@ class DashboardHistoryPanel extends HTMLElement {
    * what somebody means ("we went back to the old layout, and that is
    * v1.0.0 now"). The design record allows two versions on one state.
    */
-  _renderMakeVersion(index) {
-    const named = this._alreadyNamed(index);
+  _renderMakeVersion(change) {
+    const named = this._alreadyNamed(change);
     return `<div class="mkver">
-        <button class="act ghost" data-version="${index}">Version up to here</button>
+        <button class="act ghost" data-version="${escape(change.revision)}"
+                >Version up to here</button>
         ${named ? `<span class="named">${escape(named)}</span>` : ""}
       </div>`;
   }
@@ -1264,7 +1291,7 @@ class DashboardHistoryPanel extends HTMLElement {
       if (!section.versions) return this._renderTopSection(section, label);
       const rows = section.rows
         .map((index, position) =>
-          this._renderRow(this._changes[index], index, position === 0),
+          this._renderRow(this._changes[index], position === 0),
         )
         .join("");
       const key = section.versions[0].name;
@@ -1289,7 +1316,7 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _renderTopSection(section, label) {
     const rows = section.rows.map((index) =>
-      this._renderRow(this._changes[index], index),
+      this._renderRow(this._changes[index]),
     );
     // The panel knew this and kept it to itself: the head of the
     // version's own section reads "same state as now", the row up here
@@ -1328,13 +1355,14 @@ class DashboardHistoryPanel extends HTMLElement {
             </div>${rest}`;
   }
 
-  _renderRow(change, index, spokenFor = false) {
+  _renderRow(change, spokenFor = false) {
+    const newest = this._isNewest(change);
     return renderRow({
       change,
-      index,
+      newest,
       spokenFor,
-      matching: index === 0 ? this._matchingElsewhere(index) : [],
-      detail: this._open === change.revision ? this._renderDetail(index) : "",
+      matching: newest ? this._matchingElsewhere(change) : [],
+      detail: this._open === change.revision ? this._renderDetail(change) : "",
     });
   }
 
@@ -1380,18 +1408,16 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     root.querySelectorAll(".change").forEach((element) =>
       element.addEventListener("click", () =>
-        this._expand(Number(element.dataset.index)),
+        this._expand(element.dataset.revision),
       ),
     );
     root.querySelectorAll("[data-restore]").forEach((element) =>
       element.addEventListener("click", () => {
-        const index = this._changes.findIndex(
-          (change) => change.revision === this._open,
-        );
+        const change = this._changeAt(this._open);
         const item = this._items.find(
           (candidate) => candidate.position === Number(element.dataset.restore),
         );
-        this._restoreItem(index, item);
+        if (change && item) this._restoreItem(change, item);
       }),
     );
     root.querySelectorAll("[data-state]").forEach((element) =>
@@ -1408,7 +1434,7 @@ class DashboardHistoryPanel extends HTMLElement {
     root.querySelectorAll("[data-undo]").forEach((element) =>
       element.addEventListener("click", (event) => {
         event.stopPropagation();
-        this._undoChange(Number(element.dataset.undo));
+        this._undoChange(element.dataset.undo);
       }),
     );
     root.querySelectorAll("[data-forget]").forEach((element) =>
@@ -1427,7 +1453,7 @@ class DashboardHistoryPanel extends HTMLElement {
         // Otherwise the click reaches .change underneath and expands the
         // row at the same time.
         event.stopPropagation();
-        this._describe(Number(element.dataset.describe));
+        this._describe(element.dataset.describe);
       }),
     );
     root.querySelectorAll("[data-version]").forEach((element) =>
@@ -1435,9 +1461,11 @@ class DashboardHistoryPanel extends HTMLElement {
         // Otherwise the click reaches the row underneath and collapses it.
         event.stopPropagation();
         // "now" is the simple mode's button, which means the newest
-        // recorded state - index 0. The advanced mode names a row.
+        // recorded state. Everything else names a revision.
         const which = element.dataset.version;
-        this._createVersion(which === "now" ? 0 : Number(which));
+        this._createVersion(
+          which === "now" ? this._changes[0]?.revision : which,
+        );
       }),
     );
     root.querySelectorAll("[data-mode]").forEach((element) =>

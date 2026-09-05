@@ -102,7 +102,11 @@ _HARNESS = """
 const el = new Panel();
 el._render = () => {};
 el._selected = "dash";
-el._changes = [{ revision: "a" }, { revision: "b" }, { revision: "c" }];
+el._changes = [
+  { revision: "a", previous: "b" },
+  { revision: "b", previous: "c" },
+  { revision: "c", previous: null },
+];
 
 // Every WebSocket call is held until the test lets it go.
 const calls = [];
@@ -110,8 +114,8 @@ el._call = (type, extra) =>
   new Promise((resolve) => calls.push({ type, extra, resolve }));
 
 // Row "a" is opened, then row "b" before "a" has answered.
-el._expand(0);
-el._expand(1);
+el._expand("a");
+el._expand("b");
 const forA = calls.slice(0, 3);
 const forB = calls.slice(3, 6);
 
@@ -186,13 +190,17 @@ const lateFailure = {
 const two = new Panel();
 two._render = () => {};
 two._selected = "dash";
-two._changes = [{ revision: "a" }, { revision: "b" }, { revision: "c" }];
+two._changes = [
+  { revision: "a", previous: "b" },
+  { revision: "b", previous: "c" },
+  { revision: "c", previous: null },
+];
 const opened = [];
 two._call = (type, extra) =>
   new Promise((resolve) => opened.push({ type, extra, resolve }));
-two._expand(0);
-two._expand(1);
-two._expand(0);
+two._expand("a");
+two._expand("b");
+two._expand("a");
 const firstA = opened.slice(0, 3);
 const forB = opened.slice(3, 6);
 const secondA = opened.slice(6, 9);
@@ -491,7 +499,7 @@ await picked;
 console.log(JSON.stringify({
   loaded: el._changes.map((c) => c.revision),
   matching: el._versionsMatchingNow(),
-  chip: el._matchingElsewhere(0),
+  chip: el._matchingElsewhere(el._changes[0]),
 }));
 """
 
@@ -878,3 +886,60 @@ def test_a_dialog_dismissed_without_a_button_writes_nothing(keeping):
     # was confirmed once would confirm itself for ever after. Only the
     # preview may be fetched here - one call, and no second one.
     assert keeping["afterEscape"] == 1
+
+
+_ADDRESSING = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+// The bottom row of a page: its predecessor is a revision the panel has
+// never loaded, which is the ordinary case as soon as anybody pages.
+el._changes = [
+  { revision: "a", previous: "b", message: "" },
+  { revision: "b", previous: "c", message: "" },
+];
+
+const asked = [];
+el._call = (type, extra) => {
+  asked.push({ type, extra });
+  return Promise.resolve({ items: [], groups: [], available: false });
+};
+
+await el._expand("b");
+const bottom = {
+  types: asked.map((c) => c.type).sort(),
+  against: asked.find((c) => c.type === "deleted_since")?.extra.revision,
+  open: el._open,
+};
+
+// And the very first recorded state, which has nothing before it.
+asked.length = 0;
+el._changes = [{ revision: "z", previous: null, message: "" }];
+el._open = null;
+await el._expand("z");
+const first = { types: asked.map((c) => c.type).sort() };
+
+console.log(JSON.stringify({ bottom, first }));
+"""
+
+
+@pytest.fixture(scope="session")
+def addressing(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "addressing", _ADDRESSING)
+
+
+def test_a_row_is_opened_by_its_revision_and_asks_against_its_own_predecessor(
+    addressing,
+):
+    # Worked out from the row below, the bottom row of every page said
+    # "there is nothing before this" and offered no deleted cards to put
+    # back. The predecessor is in the row now, so it asks against it.
+    assert addressing["bottom"]["open"] == "b"
+    assert addressing["bottom"]["against"] == "c"
+    assert addressing["bottom"]["types"] == ["deleted_since", "explain", "undo_change"]
+
+
+def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
+    # There genuinely is nothing there, and asking would be asking about
+    # a revision that does not exist.
+    assert addressing["first"]["types"] == ["explain", "undo_change"]

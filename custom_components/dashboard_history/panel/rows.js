@@ -125,11 +125,11 @@ export function versionHead({ section, here, top }) {
  * `matching` are versions holding what this row's state holds without
  * sitting on it; `detail` is the already-built detail block, or "".
  */
-export function renderRow({ change, index, spokenFor = false, matching = [], detail = "" }) {
+export function renderRow({ change, newest = false, spokenFor = false, matching = [], detail = "" }) {
   const chip =
     spokenFor || !change.same_as_now
       ? ""
-      : index === 0
+      : newest
         ? `<span class="chip now"
                title="This is the state the dashboard holds right now."
                >current state</span>`
@@ -151,13 +151,13 @@ export function renderRow({ change, index, spokenFor = false, matching = [], det
     : "";
   return `
       <div class="card">
-        <div class="change" data-index="${index}">
+        <div class="change" data-revision="${escape(change.revision)}">
           <span class="what">${escape(change.description || change.message)}${chip}${named}
             ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
           </span>
           <span class="when">${escape(when(change.timestamp))}</span>
           <span class="rev">${escape(change.revision.slice(0, 7))}</span>
-          <button class="pen" data-describe="${index}"
+          <button class="pen" data-describe="${escape(change.revision)}"
                   title="Describe this change">✎</button>
         </div>
         ${detail}
