@@ -219,6 +219,62 @@ def test_metadata_recorded_for_the_first_time_says_just_that():
     )
 
 
+def test_a_message_says_whether_the_change_added_something():
+    # The panel needs this to know that offering a plain put-back would
+    # be a trap: put the removed card back and the added one is still
+    # there, so the dashboard ends up with both. It used to read the
+    # message with a regular expression of its own, which is logic in
+    # the panel and is forbidden; this is the same question asked where
+    # the wording is written.
+    assert analyze.message_adds("home: 3 added")
+    assert analyze.message_adds("home: 2 removed, 3 added")
+    assert analyze.message_adds("home: 2 removed, 3 added, 1 moved")
+    assert not analyze.message_adds("home: 2 removed")
+    assert not analyze.message_adds("home: 1 edited, 2 moved")
+    assert not analyze.message_adds("home: no card changes")
+    assert not analyze.message_adds("home: first recorded state")
+    assert not analyze.message_adds("home: changed outside Home Assistant")
+
+
+def test_a_view_that_appeared_counts_as_an_addition():
+    # The panel's regular expression looked for a number followed
+    # straight by "added" and so missed "2 views added" - the word in
+    # between. A view that appeared is as much a thing a put-back leaves
+    # standing as a card that did.
+    old = {"views": [{"path": "home", "cards": [A]}]}
+    new = {"views": [{"path": "home", "cards": [A]}, {"path": "new", "cards": [B]}]}
+    assert analyze.change_message("dash", old, new, "save") == "dash: 1 view added"
+    assert analyze.message_adds("dash: 1 view added")
+    assert analyze.message_adds("dash: 2 views added")
+    assert not analyze.message_adds("dash: 2 views removed")
+
+
+def test_a_dashboard_named_like_a_count_does_not_fake_an_addition():
+    # The live false positive, and the reason this is read as a shape
+    # rather than searched for as a substring. Rename a dashboard to
+    # "3 added" and every message about it carries those words, on
+    # changes that touched no card at all.
+    config = _config([A])
+    renamed = analyze.change_message(
+        "home", config, config, "reconcile", {"title": "Home"}, {"title": "3 added"}
+    )
+    assert renamed == 'home: renamed to "3 added"'
+    assert not analyze.message_adds(renamed)
+    assert not analyze.message_adds("3 added: metadata recorded")
+    assert not analyze.message_adds("3 added: first recorded state")
+    # And the same dashboard really adding a card still says so.
+    assert analyze.message_adds("3 added: 1 added")
+
+
+def test_a_dashboard_whose_name_holds_a_colon_still_reads():
+    # "Home: ground floor" is a title somebody will write, and it puts a
+    # second ": " in front of the counts. The lead-in is peeled off one
+    # at a time until what is left is nothing but counts.
+    assert analyze.message_adds("Home: ground floor: 1 added")
+    assert not analyze.message_adds("Home: ground floor: 1 removed")
+    assert not analyze.message_adds("Home: ground floor: icon, title changed")
+
+
 def test_view_removed_is_found():
     old = {"views": [{"path": "home", "cards": [A]}, {"path": "gone", "cards": [B]}]}
     new = {"views": [{"path": "home", "cards": [A]}]}

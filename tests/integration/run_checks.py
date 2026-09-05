@@ -923,6 +923,33 @@ async def _wait_for_history_to_move(socket, key: str, seen: str, seconds: float)
     return await _wait_for(fetch, lambda c: bool(c) and c[0]["revision"] != seen, seconds)
 
 
+async def _wait_for_new_state(socket, key: str, seen: str, seconds: float) -> list:
+    """The history of `key`, once a *new* entry holds what is live.
+
+    Both halves are needed and each one alone has been measured wrong.
+    `same_as_now` on its own is true for a moment after every save,
+    before Home Assistant has applied it - the previous entry still
+    matches - so a wait built on it ends early and the next save lands
+    inside the recorder's debounce, where the pair cancels out and no
+    commit is written at all. A moved revision on its own is satisfied
+    by a commit still pending from an earlier save, which is a different
+    state entirely; measured on 2026-09-05, a section that waited that
+    way read a row belonging to the step before it.
+
+    Together they pin one state: an entry that is not the one we started
+    from, and that holds exactly what the dashboard holds now.
+    """
+
+    async def fetch():
+        return (await socket.call("dashboard_history/history", dashboard=key))["changes"]
+
+    return await _wait_for(
+        fetch,
+        lambda c: bool(c) and c[0]["revision"] != seen and c[0].get("same_as_now"),
+        seconds,
+    )
+
+
 async def _versions_settled(socket, key: str, seconds: float = 20) -> list:
     """The versions of `key`, once two reads in a row agree.
 
@@ -2824,6 +2851,138 @@ async def run_keep_as_version(access: str) -> None:
         )
 
 
+async def run_panel_fields(access: str) -> None:
+    """The two things the panel must be told rather than work out.
+
+    Both are the same kind of finding: the panel had grown a small piece
+    of reasoning of its own, and reasoning in the panel is what the
+    design record rules out. One read the generated message with a
+    regular expression to learn whether a change also added something;
+    the other named today's date in the browser's time zone while every
+    automatic version names it in the installation's.
+
+    pytest settles both calculations. What it cannot reach is the answer
+    a person actually receives, and that answer is built in
+    `operations.py`, which imports Home Assistant.
+    """
+    key = "dh-fields-check"
+    one = {"type": "markdown", "content": "The card that stays"}
+    two = {"type": "markdown", "content": "The card that comes and goes"}
+
+    def state(cards):
+        return {"views": [{"path": "a", "title": "A", "cards": list(cards)}]}
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        # The exact key, never a prefix - the same rule the other
+        # sections follow, and for the same reason.
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Fields"
+            )
+            await asyncio.sleep(4)
+
+        # The starting state, and then `_wait_for_new_state` for every
+        # step - see its docstring for why neither half of that wait is
+        # enough alone. Measured on 2026-09-05 with the weaker waits:
+        # once, three saves left one row in the history; once, the row
+        # this section checked belonged to the step before it.
+        await socket.call("lovelace/config/save", url_path=key, config=state([one]))
+        settled = await _wait_until_recorded(socket, key)
+        seen = settled[0]["revision"] if settled else ""
+
+        await socket.call(
+            "lovelace/config/save", url_path=key, config=state([one, two])
+        )
+        changes = await _wait_for_new_state(socket, key, seen, RECORDING_WAIT)
+        added_row = changes[0]
+        check(
+            "a change that added a card says so in the row itself",
+            added_row.get("adds") is True,
+            f"{added_row['message']!r} -> adds={added_row.get('adds')!r}",
+        )
+
+        await socket.call("lovelace/config/save", url_path=key, config=state([one]))
+        changes = await _wait_for_new_state(
+            socket, key, added_row["revision"], RECORDING_WAIT
+        )
+        removed_row = changes[0]
+        # The control. Without it the field could be hard-wired to True
+        # and this section would not notice.
+        check(
+            "and a change that only removed one says the opposite",
+            removed_row.get("adds") is False,
+            f"{removed_row['message']!r} -> adds={removed_row.get('adds')!r}",
+        )
+        check(
+            "every row carries the field, not only the newest",
+            all(isinstance(row.get("adds"), bool) for row in changes),
+            f"{len(changes)} rows",
+        )
+
+        # The same row shape reaches the panel two ways, and a field
+        # present in one answer and missing from the other is exactly
+        # what a frontend renders as False without saying anything.
+        found = await socket.call(
+            "dashboard_history/search", dashboard=key, text="added"
+        )
+        check(
+            "and so does every row a search hands back",
+            bool(found["changes"])
+            and all(isinstance(row.get("adds"), bool) for row in found["changes"]),
+            f"{len(found['changes'])} rows",
+        )
+
+        # The whole reply this time: the waits above hand back the rows
+        # alone, and `today` is a field of the reply beside them.
+        answer = await socket.call("dashboard_history/history", dashboard=key)
+        zone = (await socket.call("get_config"))["time_zone"]
+        expected = _day_title_now(zone)
+        check(
+            "the history says what day it is where the installation is",
+            answer.get("today") == expected,
+            f"{answer.get('today')!r} against {expected!r} in {zone}",
+        )
+        # Spelled the way an automatic version spells it, because that
+        # is the list the title lands in: a day written two ways in a
+        # list that shows nothing but titles is the confusion the simple
+        # mode cannot survive. Checked as a shape as well as against the
+        # expected string, so an ISO date or a locale-formatted one
+        # would be caught even on a bench where both agree.
+        check(
+            "and spells it the way the automatic versions do",
+            bool(re.fullmatch(r"\d{1,2} [A-Z][a-z]+ \d{4}", answer.get("today") or "")),
+            f"{answer.get('today')!r}; in UTC that day is {_day_title_now('UTC')!r}",
+        )
+
+
+def _day_title_now(zone_name: str) -> str:
+    """Today, in that time zone, spelled by the integration's own code.
+
+    Loaded from the file rather than copied here. `versions.py` is one of
+    the four modules that import no Home Assistant, so it can be read on
+    this side of the wire - and a second copy of the month names would
+    be a second thing to forget. Loaded by path rather than by putting
+    the package directory on `sys.path`, which would make `versions` a
+    name any other import could collide with.
+    """
+    import importlib.util
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    source = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "custom_components"
+        / "dashboard_history"
+        / "versions.py"
+    )
+    spec = importlib.util.spec_from_file_location("dh_versions", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    now = int(datetime.now(timezone.utc).timestamp())
+    return module.day_title(now, ZoneInfo(zone_name))
+
+
 def _drop_first_card(config: dict) -> dict | None:
     """Remove the first card of the first list that has more than one."""
     for view in config.get("views") or []:
@@ -2920,6 +3079,8 @@ if __name__ == "__main__":
     asyncio.run(run_daily_switch(access))
     print("\n  -- Den Stand sichern, bevor er ersetzt wird --")
     asyncio.run(run_keep_as_version(access))
+    print("\n  -- Was die Seite nicht selbst ausrechnen darf --")
+    asyncio.run(run_panel_fields(access))
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))

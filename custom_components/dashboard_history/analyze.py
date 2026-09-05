@@ -15,6 +15,7 @@ something that is still there.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -1100,3 +1101,59 @@ def change_message(
         f"{counts.moved} moved" if counts.moved else "",
     ]
     return f"{name}: " + (", ".join(part for part in parts if part) or "no card changes")
+
+
+# One count part of a generated message, as a whole part rather than as
+# something found inside one. The vocabulary is the one `change_message`
+# writes just above and `_views` beside it; the two live next to each
+# other on purpose, because a word added there and not here would read
+# as "this is not a generated message at all".
+_COUNT = re.compile(r"^\d+ (?:views? (?:added|removed)|added|removed|edited|moved)$")
+
+
+def _counts(message: str) -> list[str] | None:
+    """The count parts of a generated message, or None if it is not one.
+
+    A generated count line is made *entirely* of counts, which is what
+    makes this a structural reading rather than a search for words. The
+    dashboard's own name sits in front of them behind a `": "`, and a
+    name may hold one of those itself - "Home: ground floor" is a title
+    somebody will write - so the lead-in is peeled off one `": "` at a
+    time until what is left parses whole. Nothing parses whole by
+    accident: `renamed to "3 added"` does not, because of the quotes;
+    "icon, title changed" does not, because "icon" is not a count.
+    """
+    rest = message
+    while True:
+        parts = [part.strip() for part in rest.split(",")]
+        if parts and all(_COUNT.match(part) for part in parts):
+            return parts
+        _, found, rest = rest.partition(": ")
+        if not found:
+            return None
+
+
+def message_adds(message: str) -> bool:
+    r"""Whether the change behind this message added something.
+
+    Read here, where the wording is written, and read as a shape rather
+    than sniffed for a substring. The panel used to run
+    `/\d+ added/` over the message to decide whether offering a plain
+    put-back would be a trap - a change that removed *and* added
+    something cannot be undone by putting the removed thing back,
+    because the added one stays. That is logic in the panel, which the
+    design record rules out; worse, it is wrong on a real message. A
+    dashboard renamed to `3 added` produces `home: renamed to "3 added"`
+    and reads as a trap, on a change that touched no card at all.
+
+    Views count as well as cards, and that is deliberate: the panel's
+    regex missed `2 views added`, because of the word in between, and a
+    view that appeared is as much a thing a put-back leaves standing as
+    a card that did. The wider reading is the true one.
+
+    False for every message that is not a count line - the first
+    recorded state, a rename, a change found by comparison. None of
+    those added anything the caller can put back.
+    """
+    parts = _counts(message)
+    return any(part.endswith(" added") for part in parts or [])

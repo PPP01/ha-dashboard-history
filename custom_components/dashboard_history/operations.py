@@ -16,8 +16,15 @@ import logging
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util import dt as dt_util
 
-from .analyze import explain_change, explain_effect, find_removed, plan_undo
+from .analyze import (
+    explain_change,
+    explain_effect,
+    find_removed,
+    message_adds,
+    plan_undo,
+)
 from . import versions as versioning
 from .const import DOMAIN
 from .keys import is_absent, is_live
@@ -195,6 +202,16 @@ def _rendered(changes: list, marks: dict, same: set) -> list[dict]:
             # in a page the row below may not exist, and in a search
             # result it is not the predecessor at all.
             "previous": c.previous,
+            # Whether this change also *added* something, worked out
+            # from the wording by the module that writes the wording.
+            # The panel needs it to know that offering a plain put-back
+            # would be a trap - put one removed card back and the added
+            # one stays - and it used to run a regular expression over
+            # the message to find out. The design record forbids exactly
+            # that (a panel that reads generated text is a panel with
+            # logic in it), and it was wrong besides: a dashboard
+            # renamed to `3 added` read as a trap.
+            "adds": message_adds(c.message),
             "same_as_now": c.revision in same,
             "versions": marks.get(c.revision, []),
         }
@@ -372,6 +389,23 @@ async def async_history(
     Each entry also names the versions that sit on it, if any. The panel
     builds its sections from that, so it never has to join two calls
     together - a join in the panel is logic in the panel.
+
+    It also says what day it is here, spelled the way an automatic
+    version spells it. The dialog in front of a restore offers to keep
+    the state being replaced and fills the title in with today's date;
+    computed in the browser that is the *browser's* today, and near
+    midnight from a laptop in another time zone it is a different day
+    from the one this installation would have written. Two names for one
+    day in a list that shows nothing but names is precisely the
+    confusion the simple mode cannot survive.
+
+    Carried here rather than anywhere else because the panel already has
+    this answer in its hand at the moment it needs the string: the
+    restore dialog is opened from a history row. `next_versions` is the
+    other candidate and would be fresher still, but the keep block of
+    the restore dialog does not call it - it needs no numbering, only a
+    title. And `history` is re-read whenever the dashboard changes or is
+    switched, so the string cannot age past a panel nobody is touching.
     """
     # One more than asked for: its presence answers "is there anything
     # older?", and it costs one commit rather than a second query.
@@ -407,6 +441,13 @@ async def async_history(
         # button out rather than fetching an empty page.
         "next_cursor": rendered[-1]["revision"] if more and rendered else None,
         "matching_versions": matching_versions,
+        # The installation's own today, not the browser's. Read at the
+        # moment of answering and through the same function the
+        # automatic versions use, so a title somebody accepts unchanged
+        # is spelled exactly like the ones already in the list.
+        "today": versioning.day_title(
+            int(dt_util.utcnow().timestamp()), dt_util.DEFAULT_TIME_ZONE
+        ),
     }
 
 
