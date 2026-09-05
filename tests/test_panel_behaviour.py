@@ -585,6 +585,75 @@ def test_a_refresh_asks_for_both_and_starts_at_the_top(refreshed):
     assert refreshed["versions"] == ["dash/v2.0.0"]
 
 
+_REFRESH_OPEN = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("dash", [{ revision: "a", previous: "b" }], null);
+
+// A row is open, and the history then grows behind it. The row keeps
+// its place only if the panel can find it again by revision - by index
+// it would now be one further down.
+el._open = "a";
+el._items = ["stale"];
+
+const again = el._refresh();
+await settle();
+reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+await settle();
+reply("history", {
+  changes: [
+    { revision: "new", previous: "a" },
+    { revision: "a", previous: "b" },
+  ],
+  next_cursor: null,
+});
+reply("versions", { versions: [] });
+await settle();
+// The detail is fetched again. Two different questions about two
+// different revisions: what was deleted asks against the row's
+// predecessor, what happened asks about the row itself.
+const deletedSince = calls.find((c) => c.type === "deleted_since")?.extra.revision;
+const explained = calls.find((c) => c.type === "explain")?.extra.revision;
+reply("deleted_since", { items: ["fresh"], available: true });
+reply("explain", { groups: [] });
+reply("undo_change", { available: false });
+await again;
+
+console.log(JSON.stringify({
+  open: el._open,
+  rows: el._changes.map((c) => c.revision),
+  deletedSince,
+  explained,
+  items: el._items,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def refresh_open(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "refresh_open", _REFRESH_OPEN)
+
+
+def test_an_open_row_survives_a_refresh_that_moved_it(refresh_open):
+    # The row was first and is now second. Found by revision it is the
+    # same row; found by index it would be the new one above it.
+    assert refresh_open["rows"] == ["new", "a"]
+    assert refresh_open["open"] == "a"
+    # And its answers are fetched again rather than kept: after a change
+    # from outside, "Put back" would offer items worked out against a
+    # dashboard that has moved on.
+    #
+    # Two questions, two revisions, and this is where addressing by
+    # position used to go wrong. What was deleted is asked against the
+    # row's own predecessor `b`; what happened is asked about the row
+    # itself. By index after the refresh, `a` sits at 1 and the row
+    # below it at 2 - neither of which is `b`.
+    assert refresh_open["deletedSince"] == "b"
+    assert refresh_open["explained"] == "a"
+    assert refresh_open["items"] == ["fresh"]
+
+
 _KEEP = """
 const el = new Panel();
 el._render = () => {};

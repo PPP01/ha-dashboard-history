@@ -1792,6 +1792,75 @@ def test_a_refresh_asks_for_both_and_starts_at_the_top(refreshed):
     # `deep` is not among the loaded rows.
     assert refreshed["matching"] == ["v2.0.0"]
     assert refreshed["versions"] == ["dash/v2.0.0"]
+
+
+_REFRESH_OPEN = """
+const el = new Panel();
+el._render = () => {};
+""" + _HELD + """
+await openOn("dash", [{ revision: "a", previous: "b" }], null);
+
+// A row is open, and the history then grows behind it. The row keeps
+// its place only if the panel can find it again by revision - by index
+// it would now be one further down.
+el._open = "a";
+el._items = ["stale"];
+
+const again = el._refresh();
+await settle();
+reply("dashboards", { dashboards: [{ key: "dash", exists: true }] });
+await settle();
+reply("history", {
+  changes: [
+    { revision: "new", previous: "a" },
+    { revision: "a", previous: "b" },
+  ],
+  next_cursor: null,
+});
+reply("versions", { versions: [] });
+await settle();
+// The detail is fetched again. Two different questions about two
+// different revisions: what was deleted asks against the row's
+// predecessor, what happened asks about the row itself.
+const deletedSince = calls.find((c) => c.type === "deleted_since")?.extra.revision;
+const explained = calls.find((c) => c.type === "explain")?.extra.revision;
+reply("deleted_since", { items: ["fresh"], available: true });
+reply("explain", { groups: [] });
+reply("undo_change", { available: false });
+await again;
+
+console.log(JSON.stringify({
+  open: el._open,
+  rows: el._changes.map((c) => c.revision),
+  deletedSince,
+  explained,
+  items: el._items,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def refresh_open(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "refresh_open", _REFRESH_OPEN)
+
+
+def test_an_open_row_survives_a_refresh_that_moved_it(refresh_open):
+    # The row was first and is now second. Found by revision it is the
+    # same row; found by index it would be the new one above it.
+    assert refresh_open["rows"] == ["new", "a"]
+    assert refresh_open["open"] == "a"
+    # And its answers are fetched again rather than kept: after a change
+    # from outside, "Put back" would offer items worked out against a
+    # dashboard that has moved on.
+    #
+    # Two questions, two revisions, and this is where addressing by
+    # position used to go wrong. What was deleted is asked against the
+    # row's own predecessor `b`; what happened is asked about the row
+    # itself. By index after the refresh, `a` sits at 1 and the row
+    # below it at 2 - neither of which is `b`.
+    assert refresh_open["deletedSince"] == "b"
+    assert refresh_open["explained"] == "a"
+    assert refresh_open["items"] == ["fresh"]
 ```
 
 - [ ] **Schritt 2: Laufen lassen, Fehlschlag prüfen**
@@ -3237,7 +3306,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`312 passed, 3 skipped`** (zwei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
+Erwartet: **`313 passed, 3 skipped`** (drei mehr), alle Integrationsprüfungen grün. Und dann der Augenschein, denn diese Aufgabe verspricht Gleichheit und kein Test zeichnet Markup — ein Dashboard mit mehr als 25 Ständen wählen und:
 
 - eine Zeile aufklappen, »Undo this change« drücken, den Dialog abbrechen;
 - den Stift drücken, eine Beschreibung speichern — sie muss an *dieser* Zeile erscheinen;
@@ -3682,7 +3751,7 @@ docker compose -f docker/compose.yaml restart homeassistant
 python3 tests/integration/run_checks.py
 ```
 
-Erwartet: **`318 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
+Erwartet: **`319 passed, 3 skipped`** (sechs mehr), Integrationsprüfungen grün. Am Panel, im **erweiterten** Modus: ein Wort aus einer sichtbaren Zeile eingeben — die Liste engt sich sofort ein und der Hinweis nennt »of the … loaded entries«. Dann ein Wort, das nur weit hinten vorkommt — nach kurzer Pause muss der Hinweis auf »in the whole history« wechseln und der Treffer erscheinen. Dann der Titel einer alten Version: Der Treffer muss die Änderung sein, auf der sie sitzt, und ihre Plakette tragen. Ein Unsinnswort muss »Nothing in the whole history« ergeben, nicht bloß eine leere Liste. Und ein aufgeklappter Treffer muss seinen Vergleich haben — das ist Aufgabe 7, hier zum ersten Mal an einer Zeile aus dem Nichts.
 
 Im **einfachen** Modus: dasselbe Feld, aber es filtert die Versionen, es fragt nie nach und der Hinweis zählt »x of y versions«. Danach das Dashboard wechseln: Das Feld muss leer sein.
 
@@ -3721,7 +3790,7 @@ EOF
 
 ## Wenn alle acht stehen
 
-`python3 -m pytest tests/ -v` (`318 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
+`python3 -m pytest tests/ -v` (`319 passed, 3 skipped` ohne echte Ablage — siehe die Vorbemerkung zur Testzahl) und `python3 tests/integration/run_checks.py` müssen beide vollständig grün sein. Dazu der Augenschein, denn kein Test dieses Projekts zeichnet Markup — die Liste steht in den Schritten 4 der Aufgaben 3, 5, 6, 7 und 8.
 
 Damit ist Vorhaben H fertig, und mit ihm die beiden GitHub-Issues:
 
