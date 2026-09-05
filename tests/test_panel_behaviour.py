@@ -789,12 +789,24 @@ nextAnswer = {
 };
 const once = await press();
 
+// A note about something else entirely, with a failed version beside
+// it. Two different things went wrong, and the order decides which one
+// is said: `note` is what the write itself answered, and it sits ahead
+// of the version failure. Put the version failure first and this
+// sentence disappears behind it.
+nextAnswer = {
+  applied: true,
+  note: "the dashboard was recreated",
+  kept_as_version: { created: null, error: "the live state is not recorded" },
+};
+const ordered = await press();
+
 // It worked. There is nothing to report, and a banner here would be an
 // alarm about a success.
 nextAnswer = { applied: true, kept_as_version: { created: "dash/v1.0.1" } };
 const quiet = await press();
 
-console.log(JSON.stringify({ spoken, once, quiet }));
+console.log(JSON.stringify({ spoken, once, ordered, quiet }));
 """
 
 
@@ -812,11 +824,27 @@ def test_a_version_that_could_not_be_kept_is_said_out_loud(keep_failed):
     )
 
 
-def test_the_same_failure_is_not_reported_twice(keep_failed):
-    # `note` and `kept_as_version.error` are the same sentence when the
-    # live state could not be recorded - operations passes one into the
-    # other. Twice reads as two faults.
+def test_the_note_from_the_write_is_said_ahead_of_a_failed_version(keep_failed):
+    """The `||` order, which is the thing that decides anything here.
+
+    This case used to be called `…the_same_failure_is_not_reported_twice`
+    and asserted only the first line below. It could fail - but not for
+    what its name promised: the condition `failed !== applied?.note` in
+    `panel.js` decides no outcome at all, which the code says of itself
+    ("Removing this condition changes no outcome (measured)"). What
+    keeps the same sentence from being printed twice is the ordering,
+    and the ordering is what a later edit has to leave alone.
+
+    So both halves of it are held here. First: where the two are the
+    same sentence - `operations` hands the one into the other when the
+    live state could not be recorded - it is said once, because `note`
+    comes first and nothing appends to it. Second, and this is the half
+    the old name hid: where they are *different* sentences, the note
+    still wins. Put `keptFailed` ahead of `note` and a dashboard that
+    was recreated stops saying so.
+    """
     assert keep_failed["once"] == "the live state is not recorded"
+    assert keep_failed["ordered"] == "the dashboard was recreated"
 
 
 def test_a_version_that_was_kept_says_nothing(keep_failed):
@@ -1471,7 +1499,46 @@ const undoneOn = confirming("undo_change")[0].extra.dashboard;
 reply("undo_change", { applied: true });
 await settle();
 
+// 10. And the sentence that reports a write, which is not itself a
+// write. Apply is pressed on Kitchen; the write runs, the recorder is
+// waited for and the page is reloaded, and the sidebar is live for all
+// of it. The note about Kitchen used to land over Garden's history.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+const noting = el._restoreState("b", "Back to the state after this change");
+await settle();
+reply("restore_state", PREVIEW);
+await settle();
+el.shadowRoot.querySelector("dialog.confirm").close("apply");
+await settle();
+el._selected = "garden";
+reply("restore_state", {
+  applied: true,
+  note: "the live state could not be recorded",
+});
+await noting;
+const bannerElsewhere = el._error;
+
+// The control: nobody moves, and the same sentence is said.
+el._selected = "kitchen";
+el.shadowRoot = node();
+sent.length = 0;
+const staying = el._restoreState("b", "Back to the state after this change");
+await settle();
+reply("restore_state", PREVIEW);
+await settle();
+el.shadowRoot.querySelector("dialog.confirm").close("apply");
+await settle();
+reply("restore_state", {
+  applied: true,
+  note: "the live state could not be recorded",
+});
+await staying;
+const bannerHere = el._error;
+
 console.log(JSON.stringify({
+  bannerElsewhere, bannerHere,
   previewFor, restoreAfterSwitch, forgetAfterSwitch, versionAfterSwitch,
   openedNormally, restoredTo, carriedTo,
   versionOpened, versionedOn, itemWentTo, undoneOn,
@@ -1483,6 +1550,19 @@ console.log(JSON.stringify({
 @pytest.fixture(scope="session")
 def wrong_dashboard(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "wrong_dashboard", _WRONG_DASHBOARD)
+
+
+def test_a_note_about_a_write_lands_on_the_dashboard_it_was_about(
+    wrong_dashboard,
+):
+    # The write has been pinned to the dashboard whose diff was approved
+    # since the flows learned to hold the key; the sentence reporting it
+    # was not. Dropped rather than kept for later: the person watched
+    # this action start, and showing it over the page they moved on to
+    # would be a second wrong place. The reloaded history says what
+    # happened, and it is there when they come back.
+    assert wrong_dashboard["bannerElsewhere"] is None
+    assert wrong_dashboard["bannerHere"] == "the live state could not be recorded"
 
 
 def test_a_preview_is_written_to_the_dashboard_it_was_fetched_for(wrong_dashboard):

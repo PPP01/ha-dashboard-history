@@ -528,6 +528,37 @@ class DashboardHistoryPanel extends HTMLElement {
     this._render();
   }
 
+  /**
+   * The banner for an action that has finished, over the dashboard the
+   * action was about and over no other.
+   *
+   * The write itself has been pinned to the dashboard somebody approved
+   * it for since `_confirm` learned to hold the key across the dialog.
+   * The sentence reporting it was not. Between Apply and the banner the
+   * write runs, the recorder is waited for - up to three seconds - and
+   * the page is reloaded, and the sidebar is live throughout: pick
+   * another dashboard in that window and a sentence about the first one
+   * lands over the second one's history. A message in the wrong place
+   * rather than a write in the wrong place, but the same fault, and the
+   * same answer `_guard` already gives it with `stillWanted`.
+   *
+   * Dropped rather than kept for later. The sentence belongs to an
+   * action somebody watched start; showing it over a page they have
+   * moved on to would be a second wrong place, not the right one. What
+   * the write did is on the screen either way - the history below has
+   * been reloaded - and the person can come back to the dashboard and
+   * read it there.
+   *
+   * The render is not conditional. Whatever the banner does, the page
+   * behind this call has just changed.
+   */
+  _sayAbout(asked, message) {
+    // Cleared where there is nothing to say: the banner above belongs
+    // to the action that has just finished.
+    if (this._selected === asked) this._error = message || null;
+    this._render();
+  }
+
   async _loadDashboards() {
     const result = await this._guard(() => this._call("dashboards"));
     if (!result) return;
@@ -992,7 +1023,7 @@ class DashboardHistoryPanel extends HTMLElement {
       // that.
       await recorded;
       return result;
-    });
+    }, mine);
     // `kept_as_version.error` repeats `note` word for word where the
     // live state could not be recorded - operations hands the one into
     // the other - so it is only worth saying where it says something
@@ -1044,8 +1075,12 @@ class DashboardHistoryPanel extends HTMLElement {
     // the only thing that could have said so was cleared here. What
     // the write itself answered is still the more important half; the
     // second sentence explains why the page below has not caught up.
-    this._error = [said, stale].filter(Boolean).join("; ") || null;
-    this._render();
+    //
+    // Through `_sayAbout` and not straight into the field, so the
+    // sentence lands on the dashboard it is about: everything from
+    // Apply to here runs with a live sidebar, and the write is pinned
+    // to `asked` while the message was not.
+    this._sayAbout(asked, [said, stale].filter(Boolean).join("; "));
   }
 
   /**
@@ -1166,6 +1201,11 @@ class DashboardHistoryPanel extends HTMLElement {
   async _describe(revision) {
     const change = this._changeAt(revision);
     if (!change) return;
+    // A description is written by revision rather than by dashboard, so
+    // nothing here can go to the wrong one - but the sentence about it
+    // can still land over a history somebody switched to while the note
+    // was being saved and the page reloaded. Same window, same answer.
+    const asked = this._selected;
     const dialog = this.shadowRoot.querySelector("dialog.describe");
     const field = dialog.querySelector("input.text");
     field.value = change.description || "";
@@ -1175,11 +1215,13 @@ class DashboardHistoryPanel extends HTMLElement {
     field.select();
     const answer = await this._answerFrom(dialog);
     if (answer !== "save") return;
-    const result = await this._guard(() =>
-      this._call("describe", { revision: change.revision, text: field.value }),
+    const result = await this._guard(
+      () =>
+        this._call("describe", { revision: change.revision, text: field.value }),
+      () => this._selected === asked,
     );
     if (result?.error) {
-      this._showError(result.error);
+      this._sayAbout(asked, result.error);
       return;
     }
     // Not `_select`: a description written on a row the server found is
@@ -1190,7 +1232,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // the row on the screen still shows the old one, and a page that is
     // wrong without saying so is worse than a banner.
     const stale = await this._reloadAfterWrite("the description was saved");
-    if (stale) this._showError(stale);
+    if (stale) this._sayAbout(asked, stale);
   }
 
   /**
@@ -1282,23 +1324,28 @@ class DashboardHistoryPanel extends HTMLElement {
     title.focus();
     const answer = await this._answerFrom(dialog);
     if (answer !== "create") return;
-    const result = await this._guard(() =>
-      this._call("create_version", {
-        dashboard: asked,
-        level,
-        // `|| ""` like everywhere else in this file: `shortName`
-        // splits the string it is given, so a level the server left
-        // out threw here and took the whole flow with it, after the
-        // dialog had been filled in. An empty title is something the
-        // server already accepts; a TypeError in a click handler is
-        // not.
-        title: title.value.trim() || shortName(candidates[level] || ""),
-        description: description.value.trim(),
-        revision: change.revision,
-      }),
+    const result = await this._guard(
+      () =>
+        this._call("create_version", {
+          dashboard: asked,
+          level,
+          // `|| ""` like everywhere else in this file: `shortName`
+          // splits the string it is given, so a level the server left
+          // out threw here and took the whole flow with it, after the
+          // dialog had been filled in. An empty title is something the
+          // server already accepts; a TypeError in a click handler is
+          // not.
+          title: title.value.trim() || shortName(candidates[level] || ""),
+          description: description.value.trim(),
+          revision: change.revision,
+        }),
+      // As in `_confirm`: the dialog stood in front of the write, and
+      // the moment it closes the sidebar is live again. A failure of
+      // this write is news about `asked` and about nothing else.
+      mine,
     );
     if (result?.error) {
-      this._showError(result.error);
+      this._sayAbout(asked, result.error);
       return;
     }
     // Remembered before the reload, or the history folds up the moment it
@@ -1313,7 +1360,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // on the server, and a history that does not show it invites
     // somebody to make it a second time.
     const stale = await this._reloadAfterWrite("the version was made");
-    if (stale) this._showError(stale);
+    if (stale) this._sayAbout(asked, stale);
   }
 
   /**
