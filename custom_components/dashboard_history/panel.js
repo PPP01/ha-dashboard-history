@@ -600,11 +600,15 @@ class DashboardHistoryPanel extends HTMLElement {
     ]);
     if (!result) return;
     this._dashboards = result.dashboards || [];
-    // A live one. This used to open on a deleted dashboard, on the
-    // reasoning that a loss is what people come here for - but with a
-    // dozen deleted ones it picks an arbitrary gravestone, and they are
-    // behind a fold now anyway.
-    const first = this._dashboards.find((d) => d.exists) || this._dashboards[0];
+    // The first row of the list on the left, which is not the first
+    // dashboard the server named: see `_orderedDashboards`.
+    //
+    // A live one, because the order puts the deleted ones last. This
+    // used to open on a deleted dashboard, on the reasoning that a loss
+    // is what people come here for - but with a dozen deleted ones it
+    // picks an arbitrary gravestone, and they are behind a fold now
+    // anyway.
+    const [first] = this._orderedDashboards().listed;
     if (first) await this._select(first.key);
   }
 
@@ -1609,25 +1613,46 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The sidebar's dashboards in the sidebar's order, then the two folds.
+   * The recorded dashboards grouped as the list on the left groups them
+   * - the sidebar's own, then the ones outside it, then the gone ones -
+   * and `listed`, those same three read as one list.
    *
-   * People know a dashboard by where it sits in the sidebar, so the
-   * list they are handed here is that list - see `panel/sidebar.js` for
-   * whose order it is and why the browser has to work it out.
+   * Read by the renderer and by the opening choice, and that is why it
+   * is here rather than inside `_renderSide`. This order used to exist
+   * only for as long as the markup was being built, so the one place
+   * that also needs it - `_loadDashboards`, choosing what to open on -
+   * had nothing to read but the server's list, and the panel opened on
+   * a dashboard nobody's eye starts at.
    *
    * When the browser can say nothing about the sidebar, the order the
-   * server gave stands and no second fold appears. That case is not
+   * server gave stands and nothing is set apart. That case is not
    * exotic: it is every render before the first answer arrives.
    */
-  _renderSide() {
-    if (!this._dashboards.length)
-      return '<p class="empty muted">Nothing recorded yet.</p>';
+  _orderedDashboards() {
     const live = this._dashboards.filter((d) => d.exists);
     const dead = this._dashboards.filter((d) => !d.exists);
     const view = this._sidebarView();
     const { sidebar, apart } = view
       ? splitBySidebar(live, view)
       : { sidebar: live, apart: [] };
+    // Flattened here and nowhere else. A caller wanting the first row
+    // would otherwise have to name the three groups in the order the
+    // renderer happens to draw them, which is the coupling that opened
+    // the panel on the wrong dashboard in the first place.
+    return { sidebar, apart, dead, listed: [...sidebar, ...apart, ...dead] };
+  }
+
+  /**
+   * The list on the left as markup.
+   *
+   * People know a dashboard by where it sits in the sidebar, so the
+   * list they are handed here is that list - see `panel/sidebar.js` for
+   * whose order it is and why the browser has to work it out.
+   */
+  _renderSide() {
+    if (!this._dashboards.length)
+      return '<p class="empty muted">Nothing recorded yet.</p>';
+    const { sidebar, apart, dead } = this._orderedDashboards();
     return (
       sidebar.map((d) => this._renderDashboard(d)).join("") +
       this._fold("apart", "Not in the sidebar", apart) +

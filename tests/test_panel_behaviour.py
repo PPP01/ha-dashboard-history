@@ -3348,6 +3348,17 @@ def test_any_other_key_is_still_only_typing(entering):
     assert entering["andItsWait"] == ["winter", "winter"]
 
 
+# One panel as `hass.panels` hands it over. Shared by the scenarios
+# below rather than written out in each: the shape belongs to Home
+# Assistant, and hand-written copies of somebody else's shape drift
+# apart without anything going red.
+_PANEL_SHAPE = """
+const panel = (url_path, title, extra) => ({
+  url_path, title, component_name: "lovelace",
+  show_in_sidebar: true, default_visible: true, ...extra,
+});
+"""
+
 # The sidebar's order is not a property of the server: it lives in each
 # user's own frontend data. So the split runs in the panel, and this is
 # where it is checked - against `hass.panels` the way Home Assistant
@@ -3356,11 +3367,7 @@ _SIDEBAR = """
 const { splitBySidebar } = await import(
   new URL("./panel/sidebar.js", %(url)s).href
 );
-
-const panel = (url_path, title, extra) => ({
-  url_path, title, component_name: "lovelace",
-  show_in_sidebar: true, default_visible: true, ...extra,
-});
+""" + _PANEL_SHAPE + """
 const panels = {
   lovelace: panel("lovelace", "\\u00dcbersicht"),
   "a-kitchen": panel("a-kitchen", "Kitchen"),
@@ -3547,3 +3554,96 @@ def test_switching_dashboards_also_rewinds_a_scrolled_main_column(after_a_switch
     # get a height of its own, the column scrolls instead of the page,
     # and its offset outlives the switch just the same.
     assert after_a_switch["mainScrollTop"] == 0
+
+
+# -- the dashboard the panel opens on ------------------------------------
+
+# Which dashboard is showing when the panel is opened. The list beside
+# it is in the sidebar's order (see `_SIDEBAR` above), and the opening
+# choice has to be read off *that* list: reported from a real
+# installation, where the panel always opened on the alphabetically
+# first dashboard rather than on the one at the top of the sidebar.
+_OPENING = _PANEL_SHAPE + """
+const panels = {
+  "a-hurz": panel("a-hurz", "Hurz"),
+  "b-garden": panel("b-garden", "Garden"),
+  "c-test": panel("c-test", "Test", { show_in_sidebar: false }),
+};
+// This user dragged Garden above Hurz. Everything the panel needs to
+// know that comes from the browser, so both halves are answered here:
+// `hass.panels` and this user's own arrangement.
+const seeing = () => ({
+  panels,
+  locale: { language: "en" },
+  callWS: async () => ({ value: { panelOrder: ["b-garden"], hiddenPanels: [] } }),
+});
+
+const opened = async (dashboards, hass) => {
+  const el = new Panel();
+  el._render = () => {};
+  el._hass = hass;
+  el._call = async (type) => (type === "dashboards" ? { dashboards } : {});
+  const picked = [];
+  el._select = async (key) => { picked.push(key); };
+  await el._loadDashboards();
+  return picked;
+};
+
+// As the server lists them: sorted by key, because that is all a server
+// can do. The deleted one leads, so that a run which stopped filtering
+// them out would answer "gone" and be caught.
+const live = [
+  { key: "gone", title: "Gone", exists: false },
+  { key: "a-hurz", title: "Hurz", exists: true },
+  { key: "b-garden", title: "Garden", exists: true },
+];
+
+const arranged = await opened(live, seeing());
+const noSidebar = await opened(live, {});
+const apartOnly = await opened(
+  [
+    { key: "gone", title: "Gone", exists: false },
+    { key: "c-test", title: "Test", exists: true },
+  ],
+  seeing(),
+);
+const deadOnly = await opened(
+  [{ key: "gone", title: "Gone", exists: false }],
+  seeing(),
+);
+
+console.log(JSON.stringify({ arranged, noSidebar, apartOnly, deadOnly }));
+"""
+
+
+@pytest.fixture(scope="module")
+def opening(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "opening", _OPENING)
+
+
+def test_the_panel_opens_on_the_first_dashboard_in_its_own_list(opening):
+    # Not "a-hurz", which is what the server listed first and what the
+    # panel used to open on. The list on the left starts with the one
+    # this user dragged to the top of their sidebar, and a panel showing
+    # a history belonging to the second row is a panel that ignored it.
+    assert opening["arranged"] == ["b-garden"]
+
+
+def test_without_a_readable_sidebar_it_opens_on_the_first_the_server_gave(opening):
+    # No `hass.panels`, so there is no order to read - every render
+    # before the first answer arrives is this case. The server's own
+    # order stands, and a live dashboard still beats a deleted one.
+    assert opening["noSidebar"] == ["a-hurz"]
+
+
+def test_one_that_is_not_in_the_sidebar_is_still_opened_on(opening):
+    # Nothing is in this user's sidebar, so the fold below it is where
+    # the only live dashboard is. Opening on the deleted one instead
+    # would show a gravestone to somebody who has a dashboard.
+    assert opening["apartOnly"] == ["c-test"]
+
+
+def test_with_nothing_but_deleted_dashboards_one_of_those_is_opened(opening):
+    # A history full of gravestones is exactly the history somebody
+    # opens this tool with. An empty page would be the wrong answer.
+    assert opening["deadOnly"] == ["gone"]
