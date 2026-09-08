@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!--
+    Brand icon for the dashboard_history integration.
+
+    The glyph is a commit strand: two nodes on a line, each connected to a
+    dashboard tile on the right. White is the current state, the muted tone
+    is the past — so the strand's turn back at the bottom reads as "return
+    to what was there before" without competing with the tiles for
+    attention. Which is honest about the internals: underneath this is a
+    real git repository, written with dulwich.
+
+    Everything is a solid fill. No opacity, no gradients: PNG rasterisers
+    disagree about alpha compositing (ImageMagick's built-in SVG renderer
+    ignores the attribute outright), and an icon that renders differently
+    depending on the tool is a bug waiting to happen.
+
+    #5A4FCF  ground      deliberately not Home Assistant's own blue, so the
+                         integration stays findable in a long list
+    #FFFFFF  present     the newest captured state
+    #A49EE5  past        #5A4FCF mixed 45% toward white
+  -->
+  <rect x="0" y="0" width="256" height="256" rx="58" fill="#5A4FCF"/>
+
+  <!-- Strand: down past both nodes, then a U-turn pointing back up -->
+  <path d="M 76 86 V 170 A 17 17 0 0 1 42 170 V 152"
+        fill="none" stroke="#A49EE5" stroke-width="12" stroke-linecap="round"/>
+  <polygon points="42,128 29,152 55,152" fill="#A49EE5"/>
+
+  <!-- Older state -->
+  <path d="M 98 150 H 112"
+        fill="none" stroke="#A49EE5" stroke-width="10" stroke-linecap="round"/>
+  <rect x="112" y="126" width="104" height="48" rx="12" fill="#A49EE5"/>
+  <circle cx="76" cy="150" r="18" fill="#A49EE5"/>
+
+  <!-- Current state -->
+  <path d="M 98 86 H 112"
+        fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round"/>
+  <rect x="112" y="62" width="104" height="48" rx="12" fill="#FFFFFF"/>
+  <circle cx="76" cy="86" r="18" fill="#FFFFFF"/>
+</svg>
