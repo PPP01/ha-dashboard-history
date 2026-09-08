@@ -293,6 +293,15 @@ export const STYLE = `
     opacity: 1;
     pointer-events: auto;
   }
+  /* The bin borrows the pen's shape and reveal - see bin() in
+     rows.js - and differs only where it is about to take something
+     away: on hover it says so in the warning colour rather than
+     staying grey like the pen beside it. Not red in its resting
+     state, because it sits on every version row and a row of red
+     glyphs reads as a list of problems. */
+  .bin:hover, .bin:focus {
+    color: var(--error-color, #db4437);
+  }
   /* Where there is no pointer there is no hover, and a control that
      only appears on hover is a control that does not exist. Since the
      simple mode is the one opened on a phone, and renaming a version is

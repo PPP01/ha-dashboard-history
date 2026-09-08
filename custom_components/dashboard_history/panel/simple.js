@@ -26,7 +26,7 @@ const { escape, when } = await import(`./render.js${PARTS}`);
 // says both modes build from exactly those; for these two that is now
 // true. The pen especially: one control renaming a version, drawn the
 // same way wherever a version is shown.
-const { NOW_CHIP, pen } = await import(`./rows.js${PARTS}`);
+const { NOW_CHIP, pen, bin } = await import(`./rows.js${PARTS}`);
 
 // The way over to the other mode. Offered in both of this mode's
 // states - with versions and without - and written once, because two
@@ -280,6 +280,7 @@ export function renderSimple({
                 ${made}
                 ${back}
                 ${pen(version)}
+                ${bin(version)}
               </span>
               ${version.description
         ? `<p class="why">${escape(version.description)}</p>`

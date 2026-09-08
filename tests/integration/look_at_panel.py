@@ -875,6 +875,70 @@ async def main():
                 )
                 await page.cancel_dialog()
 
+            print("\n-- The bin on a version section head --")
+            # The fourth place the comment in `style.js` warns about.
+            # The reveal is a class on whatever holds the control, so a
+            # new button that forgot to carry it is invisible while
+            # passing every node test in `test_panel_behaviour.py` -
+            # which is why this reads the computed opacity rather than
+            # clicking and calling that proof.
+            #
+            # Found on *any* version, unlike the pen: `bin()` is offered
+            # on a lightweight tag too, so a dashboard whose only version
+            # somebody made by hand still exercises this.
+            head_bin = await page.js(
+                "(() => { const p = " + PANEL
+                + '; const mark = p.querySelector('
+                '"details.ver > summary [data-remove]");'
+                " if (!mark) return null;"
+                ' const section = mark.closest("details.ver");'
+                " const rect = mark.getBoundingClientRect();"
+                " return {name: mark.dataset.remove, open: section.open,"
+                "         x: rect.x + rect.width / 2,"
+                "         y: rect.y + rect.height / 2}; })()"
+            )
+            if not head_bin:
+                print("    no version section carries a bin")
+            else:
+                print(f"    trying it on {head_bin['name']}")
+                shown = await page.opacity_at(
+                    head_bin["x"],
+                    head_bin["y"],
+                    "details.ver > summary [data-remove]",
+                )
+                print(f"    bin opacity while hovering the head: {shown}")
+                await page.shot("13c-version-head-bin.png")
+                await page.click_at(head_bin["x"], head_bin["y"])
+                asked = await page.settle(
+                    f'!!{PANEL}.querySelector("dialog.remove[open]")', 15
+                )
+                print(f"    the bin opens the removal dialog: {asked}")
+                # The words come from the server. An empty body means the
+                # preview never arrived - and that looks exactly like a
+                # working dialog on a screenshot.
+                said = await page.js(
+                    "(() => { const d = " + PANEL
+                    + '.querySelector("dialog.remove");'
+                    ' return d ? d.querySelector(".body").textContent.trim()'
+                    "        : null; })()"
+                )
+                print(f"    and it says something: {bool(said)}")
+                # The same collision the pen beside it has: this sits in
+                # a <summary>, and a summary toggles on any click it sees.
+                after = await page.js(
+                    "(() => { const s = " + PANEL
+                    + '.querySelector("details.ver > summary [data-remove]")'
+                    '?.closest("details.ver"); return s ? s.open : null; })()'
+                )
+                print(
+                    f"    and leaves the section as it was: "
+                    f"{after == head_bin['open']}"
+                )
+                # Cancelled, never confirmed - nothing on the bench is
+                # written by a check that is only looking. The preview
+                # alone writes nothing; `confirm` is what would.
+                await page.cancel_dialog()
+
             print("\n-- The button on a row --")
             await page.js(f'{PANEL}.querySelector(".change").click()')
             # Wait for the row's own explain/deleted_since fetch to settle,

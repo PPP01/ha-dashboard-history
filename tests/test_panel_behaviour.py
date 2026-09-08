@@ -3881,3 +3881,185 @@ def test_with_nothing_but_deleted_dashboards_one_of_those_is_opened(opening):
     # A history full of gravestones is exactly the history somebody
     # opens this tool with. An empty page would be the wrong answer.
     assert opening["deadOnly"] == ["gone"]
+
+
+_CONTROLS = """
+const rows = await import(%(rows)s);
+const annotated = { name: "dash/v1.0.0", title: "First", annotated: true };
+const byHand = { name: "dash/v2.0.0", title: "", annotated: false };
+console.log(JSON.stringify({
+  penOnAnnotated: rows.pen(annotated).includes("data-retitle"),
+  penOnByHand: rows.pen(byHand),
+  binOnAnnotated: rows.bin(annotated).includes("data-remove"),
+  binOnByHand: rows.bin(byHand).includes("data-remove"),
+  binCarriesTheName: rows.bin(annotated).includes('data-remove="dash/v1.0.0"'),
+  binIsRevealedLikeThePen: rows.bin(annotated).includes('class="pen bin"'),
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def controls(tmp_path_factory):
+    """The two controls a version row carries, imported as a module.
+
+    `rows.js` is pure - data in, markup out, no `this` - so it needs no
+    stand-in for the browser at all. Imported rather than read with a
+    regex, because what is being checked is a rule with a branch in it.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the panel's logic cannot be run here")
+    harness = tmp_path_factory.mktemp("panel") / "controls.mjs"
+    rows = PANEL.parent / "panel" / "rows.js"
+    harness.write_text(
+        _CONTROLS % {"rows": json.dumps(rows.as_uri())}, encoding="utf-8"
+    )
+    run = subprocess.run(
+        [node, str(harness)], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout.strip().splitlines()[-1])
+
+
+def test_the_pen_stays_off_a_version_made_by_hand(controls):
+    # Unchanged, and here as the control for the test below it: the two
+    # rules differ, and a change that quietly aligned them would be
+    # caught by nothing else.
+    assert controls["penOnAnnotated"] is True
+    assert controls["penOnByHand"] == ""
+
+
+def test_the_bin_is_offered_on_a_version_made_by_hand_too(controls):
+    # The one place the two controls part company. Renaming a
+    # lightweight tag is refused by the server, so a pen there could only
+    # ever produce that sentence; removing one is allowed, and has to be
+    # offered, or a hand-made tag would hold its number for ever.
+    assert controls["binOnAnnotated"] is True
+    assert controls["binOnByHand"] is True
+
+
+def test_the_bin_names_the_version_it_would_remove(controls):
+    assert controls["binCarriesTheName"] is True
+
+
+def test_the_bin_is_revealed_by_the_same_class_as_the_pen(controls):
+    # The stylesheet reveals `.pen` from a class on whatever holds it,
+    # rather than from a list of the buttons that exist - the comment
+    # there says why, and the failure mode of a fourth place forgetting
+    # itself is silent invisibility. So the bin carries that class too
+    # instead of earning a fifth selector.
+    assert controls["binIsRevealedLikeThePen"] is True
+
+
+_REMOVE_VERSION = """
+const el = new Panel();
+// Handed in, because `attachShadow()` in the prelude answers `{}` and
+// panel.js throws that answer away - so `this.shadowRoot` is undefined
+// in Node. Every scenario in this file that touches a dialog does this;
+// without it the run dies at the first `querySelector` with a TypeError,
+// and all four tests below fail at the fixture instead of at what they
+// are about.
+el.shadowRoot = node();
+el._render = () => {};
+el._selected = "dash";
+el._versions = [
+  { name: "dash/v1.0.2", title: "Third", description: "a note",
+    revision: "c", annotated: true, automatic: false },
+];
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+el._refresh = async () => {};
+
+const dialog = el.shadowRoot.querySelector("dialog.remove");
+// Answered the way a person would: the dialog is closed with the value
+// the button carries, once the preview has been put into it.
+let bodyWhenOpened = null;
+const opening = el._removeVersion("dash/v1.0.2");
+await settle();
+const asked = { ...calls[0] };
+calls[0].resolve({
+  applied: false, name: "dash/v1.0.2", title: "Third", description: "a note",
+  revision: "c", automatic: false, highest: true,
+});
+await settle();
+bodyWhenOpened = dialog.querySelector(".body").innerHTML;
+dialog.returnValue = "remove";
+dialog.close();
+await settle();
+const confirmed = calls[1] ? { ...calls[1] } : null;
+if (calls[1]) calls[1].resolve({ applied: true, name: "dash/v1.0.2" });
+await opening;
+
+// And the second run, cancelled.
+const two = new Panel();
+two.shadowRoot = node();
+two._render = () => {};
+two._selected = "dash";
+two._versions = el._versions;
+const twoCalls = [];
+two._call = (type, extra) =>
+  new Promise((resolve) => twoCalls.push({ type, extra, resolve }));
+two._refresh = async () => {};
+const cancelling = two._removeVersion("dash/v1.0.2");
+await settle();
+twoCalls[0].resolve({
+  applied: false, name: "dash/v1.0.2", title: "Third", description: "",
+  revision: "c", automatic: false, highest: false,
+});
+await settle();
+const cancelDialog = two.shadowRoot.querySelector("dialog.remove");
+cancelDialog.returnValue = "cancel";
+cancelDialog.close();
+await settle();
+await cancelling;
+
+console.log(JSON.stringify({
+  asked: { type: asked.type, extra: asked.extra },
+  confirmed: confirmed && { type: confirmed.type, extra: confirmed.extra },
+  saysTheNumberComesFree: bodyWhenOpened.includes("becomes free"),
+  saysTheStateStays: bodyWhenOpened.includes("stays in the history"),
+  namesTheVersion: bodyWhenOpened.includes("Third"),
+  callsAfterCancel: twoCalls.length,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def removing(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "removing", _REMOVE_VERSION)
+
+
+def test_the_dialog_is_filled_from_a_preview_the_server_answered(removing):
+    # Asked without confirm first, exactly as `_forget` does: the panel
+    # must not word the loss itself, and the words it shows are the ones
+    # the server read off the tag a moment ago.
+    assert removing["asked"]["type"] == "remove_version"
+    assert removing["asked"]["extra"] == {
+        "dashboard": "dash",
+        "name": "dash/v1.0.2",
+    }
+    assert removing["namesTheVersion"] is True
+    assert removing["saysTheStateStays"] is True
+
+
+def test_the_dialog_says_the_number_comes_free_where_it_does(removing):
+    # The one sentence in this dialog somebody acts on. It comes from the
+    # server's `highest`, never from the panel comparing numbers - that
+    # calculation lives in versions.py by decision 13.
+    assert removing["saysTheNumberComesFree"] is True
+
+
+def test_confirming_sends_confirm_and_nothing_else_changes_hands(removing):
+    assert removing["confirmed"]["type"] == "remove_version"
+    assert removing["confirmed"]["extra"] == {
+        "dashboard": "dash",
+        "name": "dash/v1.0.2",
+        "confirm": True,
+    }
+
+
+def test_cancelling_sends_no_second_call(removing):
+    # The preview is a read, so it happens either way; what must not
+    # happen is the write. One call, not two.
+    assert removing["callsAfterCancel"] == 1

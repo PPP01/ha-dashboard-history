@@ -1477,6 +1477,88 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * Taking a version's mark away: asked twice, like forgetting.
+   *
+   * Once by the button, once by a dialog carrying the words that are
+   * about to go. Those words come from the server rather than from
+   * `this._versions`, and that is the same choice `_forget` makes: what
+   * the dialog says has to be what the store reads off the tag now, not
+   * what a list loaded some time ago still remembers. `highest` is the
+   * other half of it - whether the number comes free cannot be worked
+   * out here, because the numbering lives in versions.py by decision 13.
+   *
+   * `asked` and `_claim` are held before the first await, and they do
+   * two different jobs. `asked` addresses both calls, so neither can
+   * land on a dashboard the dialog never mentioned - that is the reason
+   * spelled out in `_confirm`. `mine` decides only whether this attempt
+   * is still the current one: a click in the sidebar during the preview
+   * makes it stale, and a stale preview must not open a dialog on top of
+   * another history. The confirming call is guarded by `asked` instead,
+   * exactly as in `_retitleVersion` - by then a dialog has been
+   * answered, and the answer belongs to the version it named.
+   */
+  async _removeVersion(name) {
+    const asked = this._selected;
+    const mine = this._claim("write");
+    const facts = await this._guard(
+      () => this._call("remove_version", { dashboard: asked, name }),
+      mine,
+    );
+    if (!mine() || !facts) return;
+    if (facts.error) {
+      this._sayAbout(asked, facts.error);
+      return;
+    }
+    const dialog = this.shadowRoot.querySelector("dialog.remove");
+    // Three sentences, and each is a different thing to say. The first
+    // is what stays - it comes first because it is the reassurance the
+    // whole design rests on. The second is what goes, and it is the only
+    // loss there is. The third and fourth appear where they apply.
+    const words = facts.title
+      ? `<strong>${escape(facts.title)}</strong>`
+      : "this version";
+    dialog.querySelector(".body").innerHTML = `
+      <p>${escape(shortName(name))} — ${words}</p>
+      <p>The state it marks <strong>stays in the history</strong> and
+         remains findable in the advanced view. Only the mark goes.</p>
+      <p>The title and description go with it, and they cannot be
+         written back.</p>
+      ${facts.automatic
+        ? `<p class="muted" style="font-size:13px">Made automatically for
+             the end of a day. If that day is recent enough to still be in
+             reach, the next save will mark it again. The switch in the
+             integration's options is the way to stop that for good.</p>`
+        : ""
+      }
+      ${facts.highest
+        ? `<p class="muted" style="font-size:13px">It carries the highest
+             number, so that number becomes free again — the next version
+             you create will use it.</p>`
+        : ""
+      }`;
+    dialog.returnValue = "";
+    dialog.showModal();
+    const answer = await this._answerFrom(dialog);
+    if (answer !== "remove") return;
+    const done = await this._guard(
+      () => this._call("remove_version", { dashboard: asked, name, confirm: true }),
+      () => this._selected === asked,
+    );
+    if (done?.error) {
+      this._sayAbout(asked, done.error);
+      return;
+    }
+    // Taken out of the set of open sections on the way, or a name that
+    // no longer exists would sit in it for the life of the page. Harmless
+    // today and the kind of thing that stops being harmless the moment a
+    // number is handed out a second time - which is exactly what this
+    // operation makes possible.
+    this._verOpen.delete(name);
+    const stale = await this._reloadAfterWrite("the version was removed");
+    if (stale) this._sayAbout(asked, stale);
+  }
+
+  /**
    * Three buttons carrying the finished numbers, patch preselected.
    *
    * The number is never typed. A tag name has ref rules - no spaces, no
@@ -2425,6 +2507,12 @@ class DashboardHistoryPanel extends HTMLElement {
       // the dialog. The summary's own toggle is dealt with in `onClick`.
       event.stopPropagation();
       this._retitleVersion(element.dataset.retitle);
+    });
+    onClick("[data-remove]", (element, event) => {
+      // As with the pen beside it: without this the click reaches the
+      // row underneath and folds it on the way to the dialog.
+      event.stopPropagation();
+      this._removeVersion(element.dataset.remove);
     });
     onClick("[data-version]", (element, event) => {
       // Otherwise the click reaches the row underneath and collapses it.

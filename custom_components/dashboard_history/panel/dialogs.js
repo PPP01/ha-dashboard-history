@@ -104,4 +104,12 @@ export const DIALOGS = `
       <button class="act ghost" value="cancel">Cancel</button>
       <button class="act" value="save">Save</button>
     </div>
+  </dialog>
+  <dialog class="remove">
+    <h2>Remove this version</h2>
+    <div class="body"></div>
+    <div class="actions">
+      <button class="act ghost" value="cancel">Cancel</button>
+      <button class="act" value="remove">Remove version</button>
+    </div>
   </dialog>`;

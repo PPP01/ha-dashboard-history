@@ -91,7 +91,7 @@ export function versionHead({ section, here, top }) {
   const extra = also
     .map(
       (v) =>
-        `<span class="also">also ${escape(v.name)} — ${escape(v.title)}${pen(v)}</span>`,
+        `<span class="also">also ${escape(v.name)} — ${escape(v.title)}${pen(v)}${bin(v)}</span>`,
     )
     .join("");
   // Two different truths, and one wording for both was an overclaim.
@@ -116,6 +116,7 @@ export function versionHead({ section, here, top }) {
       <span class="count">${count} change${count === 1 ? "" : "s"}</span>
       ${back}
       ${pen(first)}
+      ${bin(first)}
     </summary>`;
 }
 
@@ -140,6 +141,27 @@ export function pen(version) {
   if (!version.annotated) return "";
   return `<button class="pen" data-retitle="${escape(version.name)}"
                title="Rename this version">✎</button>`;
+}
+
+/**
+ * The way to take one version's mark away. Exported beside `pen` so
+ * that both modes draw the same control rather than two that drift.
+ *
+ * Offered on **every** version, which is where it parts company with
+ * the pen - and the difference is the point rather than an oversight. A
+ * lightweight tag cannot be renamed, so a pen on one could only ever
+ * produce the server's refusal; it can be removed, and it has to be,
+ * because it counts when the next number is worked out.
+ *
+ * It carries the pen's class as well as its own. The stylesheet reveals
+ * `.pen` from a class on whatever holds the control, not from a list of
+ * the controls that exist - the comment there says why, and the failure
+ * mode of a fourth place forgetting itself is silent invisibility. So
+ * this earns no fifth selector; `.bin` adds only what differs.
+ */
+export function bin(version) {
+  return `<button class="pen bin" data-remove="${escape(version.name)}"
+               title="Remove this version">🗑</button>`;
 }
 
 /**
