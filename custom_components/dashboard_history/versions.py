@@ -80,6 +80,23 @@ def by_number(key: str, versions: Iterable) -> list:
     )
 
 
+def highest(key: str, versions: Iterable) -> object | None:
+    """The version carrying the highest number, or None if none does.
+
+    Not `by_number(...)[0]`, and the difference is the whole reason this
+    exists. That list keeps hand-made and other dashboards' tags in it,
+    sorted last - so on a dashboard whose only tag is `heizung/wichtig`
+    its first entry is that tag, which says nothing about order. A caller
+    asking *which version do I compare against* has to hear None there
+    rather than be handed a name that cannot answer.
+
+    The same question `latest` answers, one step further: `latest` gives
+    the three numbers, this gives the thing that carries them.
+    """
+    numbered = [v for v in versions if parse(key, v.name) is not None]
+    return by_number(key, numbered)[0] if numbered else None
+
+
 def bump(parts: tuple[int, int, int], level: str) -> tuple[int, int, int]:
     """The next version at one level. Everything below it resets to zero."""
     major, minor, patch = parts

@@ -116,6 +116,24 @@ def test_ordering_an_empty_list_is_not_an_error():
     assert versions.by_number("heizung", []) == []
 
 
+def test_the_highest_numbered_version_is_picked_out():
+    marks = [_Named(f"heizung/v{n}") for n in ("1.9.0", "1.10.0", "1.2.0")]
+    assert versions.highest("heizung", marks).name == "heizung/v1.10.0"
+
+
+def test_a_hand_made_tag_is_never_the_highest():
+    # `by_number` sorts those last but still hands them back, so the top
+    # of that list is a hand-made tag on a dashboard that has no number
+    # at all. A caller asking "which version do I compare against" must
+    # get None there, not a tag whose name says nothing about order.
+    marks = [_Named("heizung/hand-made"), _Named("solar/v9.9.9")]
+    assert versions.highest("heizung", marks) is None
+
+
+def test_a_dashboard_without_versions_has_no_highest():
+    assert versions.highest("heizung", []) is None
+
+
 # -- the day a state belongs to ----------------------------------------
 
 BERLIN = ZoneInfo("Europe/Berlin")

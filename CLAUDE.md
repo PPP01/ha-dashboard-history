@@ -63,6 +63,20 @@ erreicht damit die Module, die `pytest` strukturell nicht erreicht — dort lag
 jeder bisher gefundene Fehler. Aufbau und die zwei Fallen dabei:
 `docker/README.md`. Konfiguration und Token liegen **außerhalb** des Repos.
 
+Ein dritter Weg, für das Wenige, das zwischen den beiden anderen liegt:
+
+```bash
+docker exec -i dashboard-history-test python3 - < tests/integration/run_day_marks.py
+```
+
+Er läuft **im** Container, wo `homeassistant` existiert, aber **ohne** laufende
+Instanz — für Code, den `pytest` nicht importieren kann und den `run_checks.py`
+nicht auslösen kann, weil kein API einen Commit rückdatiert. Er baut ein echtes
+Repository und verstellt allein die Uhr an der Stelle, an der die
+Kalenderrechnung sie liest. Nur so weit tragfähig, wie das gefälschte Stück
+klein bleibt; wächst es, ist der Fall bei `run_checks.py` besser aufgehoben.
+Über `stdin`, weil nur `custom_components/` in den Container gemountet ist.
+
 ⚠️ **Eine Anlage, an der etwas hängt, ist kein Testgerät.** Zwei Regeln daraus, beide teuer gelernt: **niemals während eines HA-Neustarts anpollen** — HAs IP-Ban-System sperrt sonst den eigenen Zugang — und **kein Test darf über ein Präfix löschen**, sondern nur über den genau benannten eigenen Schlüssel. Was dabei einmal schiefging, steht im Nachtrag vom 2026-09-01 im Plan.
 
 Umgebung: HA 2026.8.3, Container-Python 3.14.6, Entwicklungsrechner Python 3.12.3.

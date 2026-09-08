@@ -475,6 +475,66 @@ def test_matching_against_an_empty_repository_is_empty(tmp_path):
     assert fresh.matching_revisions("home", ["abc"], "a: 1\n") == set()
 
 
+# -- whether two recorded states are the same state ---------------------
+#
+# Asked when an automatic version is about to be made: the day mark is
+# worked out from the calendar, so a dashboard that was changed and
+# changed back collects one mark per day all sitting on the same content.
+# Those rows offer nothing - the panel leaves the button off them - so the
+# mark is not made in the first place.
+
+
+def test_two_revisions_holding_one_state_are_the_same_state(store):
+    up = store.write_snapshot("home", "a: 1\n", "up")
+    store.write_snapshot("home", "a: 2\n", "down")
+    up_again = store.write_snapshot("home", "a: 1\n", "up again")
+    assert store.same_state("home", up_again, up) is True
+
+
+def test_two_revisions_holding_different_states_are_not(store):
+    up = store.write_snapshot("home", "a: 1\n", "up")
+    down = store.write_snapshot("home", "a: 2\n", "down")
+    assert store.same_state("home", down, up) is False
+
+
+def test_a_state_is_the_same_as_itself(store):
+    only = store.write_snapshot("home", "a: 1\n", "only")
+    assert store.same_state("home", only, only) is True
+
+
+def test_an_unknown_revision_is_never_the_same_state(store):
+    # Never an error, and never True: a revision nothing can be read at
+    # must not make a caller think it has compared anything.
+    only = store.write_snapshot("home", "a: 1\n", "only")
+    assert store.same_state("home", "f" * 40, only) is False
+    assert store.same_state("home", only, "f" * 40) is False
+
+
+def test_a_revision_from_before_this_dashboard_existed_is_not_the_same(store):
+    other = store.write_snapshot("other", "b: 1\n", "other")
+    home = store.write_snapshot("home", "a: 1\n", "home")
+    # home.yaml is not in the tree at `other` at all. Answering True there
+    # would read "nothing changed" out of "there was nothing".
+    assert store.same_state("home", home, other) is False
+
+
+def test_only_the_dashboard_s_own_file_decides(store):
+    # A commit that carries only a metadata change - a dashboard renamed
+    # while its cards stay put - holds the same *state* of this dashboard.
+    # It is the case the day mark must not spend a version on, because a
+    # restore of an existing dashboard writes the configuration and not
+    # the metadata.
+    named = store.write_snapshot("home", "a: 1\n", "named", "title: Heizung\n")
+    renamed = store.write_snapshot("home", "a: 1\n", "renamed", "title: Warmth\n")
+    assert renamed is not None
+    assert store.same_state("home", renamed, named) is True
+
+
+def test_comparing_in_an_empty_repository_is_not_the_same(tmp_path):
+    fresh = HistoryStore(tmp_path / "nothing")
+    assert fresh.same_state("home", "abc", "def") is False
+
+
 # -- forgetting a dashboard for good -----------------------------------
 #
 # The one irreversible operation in this project, in a tool built to stop

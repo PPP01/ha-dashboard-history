@@ -395,6 +395,47 @@ class Milestones:
                     (v.title, v.description) for v in found
                 ):
                     return
+                # And not where the state being marked is the one the
+                # highest numbered version already holds. The two above look
+                # at revisions and at days; this one looks at what is
+                # actually on the dashboard, which is what a version is
+                # for. A day mark is worked out from the calendar, so a
+                # dashboard that is changed and changed back - a card
+                # moved out and moved home again, a routine that rewrites
+                # the same file every night - ends every day on the state
+                # it started from, and collects one version per day all
+                # holding the same thing. The panel cannot even offer a
+                # button on those rows: going back to them would change
+                # nothing, so it says "same state as now" instead
+                # (`simple.js`). A list of dated rows that do nothing is
+                # exactly the wall the simple mode exists to avoid.
+                #
+                # Compared against the *highest numbered* version, not
+                # against every version there is. That is the one the rest
+                # of this reckons from - `candidates` counts up from it,
+                # and the simple mode's sentence names it - so it is the
+                # one a new mark would be redundant beside. It also keeps
+                # a rollback honest: after going back to an old state the
+                # newest version holds something else, so the day that
+                # move belongs to still gets its mark, even though an
+                # older version holds that content too. Against all of
+                # them, that mark would be dropped and the day it
+                # happened would show nothing.
+                top = versioning.highest(key, found)
+                if top is not None and await self._hass.async_add_executor_job(
+                    self._store.same_state, key, previous.revision, top.revision
+                ):
+                    # Worth a line, at debug. This is the one reason a day
+                    # can go unmarked that is invisible from the outside:
+                    # the change is in the history, the day ended, and
+                    # there is still no new version. Without it the only
+                    # way to tell this rule from a fault is to read it.
+                    _LOGGER.debug(
+                        "No day mark for %s: %s already holds that state",
+                        key,
+                        top.name,
+                    )
+                    return
                 # Major when there is no number yet: a dashboard created
                 # while Home Assistant was running never had a floor
                 # laid, and `candidates` would otherwise start it at

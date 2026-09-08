@@ -1367,15 +1367,34 @@ class HistoryStore:
         Opening one costs a file handle and a pack index; comparing fifty
         revisions is a normal thing for the panel to ask.
         """
+        blob_id = cls._blob_at(repo, path.encode(), revision)
+        if blob_id is None:
+            return None
+        return repo[blob_id].data.decode("utf-8")
+
+    @classmethod
+    def _blob_at(cls, repo: Repo, path: bytes, revision: str) -> bytes | None:
+        """The id of the blob one path holds at one revision, or None.
+
+        The id, not the content. git names a blob by its bytes, so two
+        revisions hold the same file exactly when this answers the same
+        id twice - and that is one tree lookup against reading, decoding
+        and comparing two whole dashboards.
+
+        None has three meanings and none of them is an error: the
+        revision is unknown, it is not a commit, or the path is not in
+        its tree. The last is the ordinary case for a dashboard that did
+        not exist yet.
+        """
         resolved = cls._resolve(repo, revision)
         if resolved is None:
             return None
         try:
             tree = repo[repo[resolved.encode()].tree]
-            _, blob_id = tree.lookup_path(repo.get_object, path.encode())
+            _, blob_id = tree.lookup_path(repo.get_object, path)
         except KeyError:
             return None
-        return repo[blob_id].data.decode("utf-8")
+        return blob_id
 
     def matching_revisions(
         self, key: str, revisions: Iterable[str], text: str
@@ -1412,17 +1431,36 @@ class HistoryStore:
         # rather than `set` because it keeps the caller's order, and an
         # answer that depends on dict ordering is a bad answer to debug.
         for revision in dict.fromkeys(revisions):
-            resolved = self._resolve(repo, revision)
-            if resolved is None:
-                continue
-            try:
-                tree = repo[repo[resolved.encode()].tree]
-                _, blob_id = tree.lookup_path(repo.get_object, path)
-            except KeyError:
-                continue
-            if blob_id == wanted:
+            if self._blob_at(repo, path, revision) == wanted:
                 same.add(revision)
         return same
+
+    def same_state(self, key: str, one: str, other: str) -> bool:
+        """Whether two revisions hold exactly the same state of a dashboard.
+
+        Asked before an automatic version is made. A day mark is worked
+        out from the calendar, so a dashboard that is changed and changed
+        back collects one mark per day all sitting on the same content -
+        rows the panel cannot even offer a button on, because going back
+        to them would change nothing.
+
+        This dashboard's configuration decides and nothing else. The
+        metadata travels in the same commit, so a dashboard renamed with
+        its cards left alone is the *same state* by this answer - which
+        is right for the caller it has: restoring an existing dashboard
+        writes the configuration and never the metadata, so a version
+        marking such a commit could not put the old name back either.
+
+        False where either revision cannot be read, and deliberately so.
+        An unknown revision has nothing to compare, and "nothing to
+        compare" must not arrive at a caller as "nothing changed".
+        """
+        repo = self._repo()
+        if repo is None:
+            return False
+        path = f"{key}.yaml".encode()
+        first = self._blob_at(repo, path, one)
+        return first is not None and first == self._blob_at(repo, path, other)
 
     def list_dashboards(self) -> list[str]:
         """Every dashboard the history currently tracks."""
