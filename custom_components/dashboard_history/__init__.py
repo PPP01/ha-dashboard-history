@@ -41,12 +41,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await panel.async_register(hass)
 
     # Armed before the recorder rather than after it, and `async_arm`
-    # carries the whole reason: `capture.async_start()` announces its
-    # opening pass before it returns, so a marker armed afterwards is
-    # deaf to everything that pass recorded. Nothing it can hear exists
-    # until the repository does, so arming ahead of `store.ensure` costs
-    # nothing and is outside the guard for the same reason - subscribing
-    # to a bus cannot fail in a way that matters here.
+    # carries the whole reason: the opening pass announces what it
+    # records, so a marker armed after it is deaf to all of it. Nothing
+    # it can hear exists until the repository does, so arming ahead of
+    # `store.ensure` costs nothing and is outside the guard for the same
+    # reason - subscribing to a bus cannot fail in a way that matters
+    # here.
     milestones.async_arm()
 
     # Guarded, because the hard rule says so: a repository that cannot be
@@ -54,7 +54,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # history, and nothing else. It must not cost the start.
     try:
         await hass.async_add_executor_job(store.ensure)
-        await capture.async_start()
+        # Subscribing only, and that is the whole of what is awaited
+        # here: it closes the window the opening pass opens, and it
+        # costs nothing.
+        capture.async_start()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Dashboard History could not start recording")
+
+    # The slow half, off the start. Measured on the test bench on
+    # 2026-09-07 over 45 dashboards and 4454 commits: the opening pass
+    # took 6.2 s of a 7.3 s setup, and Home Assistant said so in the log
+    # - "Waiting for integrations to complete setup: dashboard_history".
+    # The hard rule is that nothing here blocks the start, and awaiting
+    # this broke it: a history is worth waiting for, a start is not.
+    #
+    # A background task of the config entry rather than a loose one, so
+    # that unloading the entry cancels it. Half a recorded pass is not a
+    # problem - the next start records what this one did not reach, and
+    # `write_snapshot` compares against HEAD rather than against the
+    # working tree exactly so that an interrupted run repairs itself.
+    entry.async_create_background_task(
+        hass, _async_open(hass, capture, milestones), f"{DOMAIN} opening pass"
+    )
+
+    _LOGGER.debug("Dashboard History set up")
+    return True
+
+
+async def _async_open(
+    hass: HomeAssistant, capture: HistoryCapture, milestones: Milestones
+) -> None:
+    """The opening pass and the first versions, off the start.
+
+    Each half keeps the guard it had when this ran inside
+    `async_setup_entry`, and for the same reasons. `CancelledError` is
+    not among what they catch - it inherits from `BaseException`, so an
+    entry unloaded mid-pass ends the task rather than being logged as a
+    failure of it.
+    """
+    try:
+        await capture.async_opening_pass()
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not start recording")
 
@@ -73,8 +112,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not make its first versions")
 
-    _LOGGER.debug("Dashboard History set up")
-    return True
+    _LOGGER.debug("Dashboard History finished its opening pass")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

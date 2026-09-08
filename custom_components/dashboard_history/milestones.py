@@ -250,18 +250,18 @@ class Milestones:
         """Start marking the end of a day when the history grows.
 
         Armed *before* the recorder starts, and that order is the whole
-        reason this is a call of its own. `capture.async_start()`
-        announces its opening pass before it returns, so a marker armed
-        afterwards never hears a word of what that pass recorded - and
-        what it records is precisely the changes made while nobody was
-        watching. Home Assistant is down overnight, a storage file is
-        edited by hand or comes back from a backup, Home Assistant starts
-        on Tuesday: the pass commits Monday's change and announces it to
+        reason this is a call of its own. `capture.async_opening_pass()`
+        announces what it records, so a marker armed after it never
+        hears a word of that - and what it records is precisely the
+        changes made while nobody was watching. Home Assistant is down
+        overnight, a storage file is edited by hand or comes back from a
+        backup, Home Assistant starts on Tuesday: the pass commits
+        Monday's change and announces it to
         an empty room. Monday is then never marked and never can be -
         Tuesday's later saves look back over a window holding nothing but
         Tuesday. The same goes for a save made *during* the pass, a
-        window the recorder deliberately keeps its save listener open for
-        (`capture.async_start`).
+        window the recorder deliberately opens its save listener before
+        (`capture.async_start`, which now does nothing else).
 
         The order used to be the other way round, and the reason it gave
         has since been doubled elsewhere: `candidates` counts up from the

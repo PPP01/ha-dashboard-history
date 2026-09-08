@@ -69,8 +69,9 @@ class HistoryCapture:
         self._reading = asyncio.Lock()
         self._writing = asyncio.Lock()
 
-    async def async_start(self) -> None:
-        """Listen for saves, reconcile once, then listen for panels too.
+    @callback
+    def async_start(self) -> None:
+        """Listen for saves. Cheap, and nothing waits behind it.
 
         The save listener comes first, and that order is the point. It
         came after the pass for a long time, and the startup pass over
@@ -82,14 +83,27 @@ class HistoryCapture:
         the drop. A save heard now waits for the write lock behind the
         pass and is recorded right after it.
 
-        The panel listener comes after, deliberately: Home Assistant
-        fires `panels_updated` in a burst while it starts, and heard
-        before the pass that burst would queue a second full pass behind
-        the first, for nothing.
+        Which is why this is where the split runs. `async_opening_pass`
+        is the slow half and is left to a background task; subscribing
+        is the fast half and stays in `async_setup_entry`, because the
+        window this closes is exactly the one the pass opens.
         """
         self._unsubscribe = [
             self._hass.bus.async_listen(EVENT_LOVELACE_UPDATED, self._handle_event),
         ]
+
+    async def async_opening_pass(self) -> None:
+        """Record what is there now, then listen for panels too.
+
+        The slow half of starting up: every dashboard read, rendered and
+        compared against the history. Not awaited by
+        `async_setup_entry` - see the hard rule about the start.
+
+        The panel listener comes after the pass, deliberately: Home
+        Assistant fires `panels_updated` in a burst while it starts, and
+        heard before the pass that burst would queue a second full pass
+        behind the first, for nothing.
+        """
         await self.async_capture(reason="startup")
         # Home Assistant announces a *saved* dashboard, but says nothing
         # when one is created, renamed or deleted. All three do move a
