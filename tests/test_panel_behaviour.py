@@ -2053,12 +2053,25 @@ el._render = () => {};
 el._selected = "dash";
 el._mode = "simple";
 el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+// Two of them alike on purpose: same title, same state, one commit.
+// That is what an installation looks like where a routine makes the
+// versions - on the bench a whole screen of rows read the same, and
+// only the number and the time told them apart.
 el._versions = [
   { name: "dash/v1.2.0", title: "Kitchen rebuild", description: "",
-    revision: "a", same_as_now: true },
+    revision: "a", same_as_now: true, timestamp: 1757246400 },
+  { name: "dash/v1.1.0", title: "Kitchen rebuild", description: "",
+    revision: "a", same_as_now: true, timestamp: 1757246300 },
   { name: "dash/v1.0.0", title: "Autumn tidy", description: "",
-    revision: "c", same_as_now: false },
+    revision: "c", same_as_now: false, timestamp: 0 },
+  // Its commit is below the loaded window, so there is nothing under
+  // this one to open - the usual case on a dashboard with hundreds.
+  { name: "dash/v0.9.0", title: "Older still", description: "",
+    revision: "z", same_as_now: false, timestamp: 1757100000 },
 ];
+// The row somebody has open, remembered across renders the way the
+// advanced mode remembers its sections.
+el._verOpen = new Set(["dash/v1.0.0"]);
 el._changes = [
   { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.2.0" }],
     timestamp: 1 },
@@ -2076,14 +2089,24 @@ const filtered = el._renderMain();
 
 console.log(JSON.stringify({
   plain: {
-    standing: plain.includes("The dashboard is in the state of Kitchen rebuild."),
+    standing: plain.includes("in the state of v1.2.0"),
     rows: count(plain, "class=\\"vrow\\""),
     twoChanges: plain.includes("The newest 2 changes in this version"),
     oneChange: plain.includes("The newest change in this version"),
+    numbers: count(plain, "class=\\"name\\""),
+    middle: plain.includes(">v1.1.0<"),
+    here: count(plain, "where you are"),
+    alike: count(plain, "same state as now"),
+    dated: count(plain, "class=\\"made\\""),
+    opens: count(plain, "<details class=\\"vrow\\""),
+    flat: count(plain, "<div class=\\"vrow\\""),
+    remembered: /data-key="dash\\/v1\\.0\\.0"\\s+open/.test(plain),
+    shut: /data-key="dash\\/v1\\.2\\.0"\\s+open/.test(plain),
+    badge: count(plain, "class=\\"chip now\\""),
+    undo: count(plain, "Undo / Go back"),
   },
   filtered: {
-    standing: filtered.includes(
-      "The dashboard is in the state of Kitchen rebuild."),
+    standing: filtered.includes("in the state of v1.2.0"),
     drifted: filtered.includes("has changed since the last version"),
     rows: count(filtered, "class=\\"vrow\\""),
     autumn: filtered.includes("Autumn tidy"),
@@ -2101,7 +2124,53 @@ def test_the_simple_mode_says_where_the_dashboard_stands(simple_mode):
     # `same_as_now` comes from the server, worked out against every
     # version - including one whose commit is below the loaded window.
     assert simple_mode["plain"]["standing"] is True
-    assert simple_mode["plain"]["rows"] == 2
+    assert simple_mode["plain"]["rows"] == 4
+
+
+def test_every_row_carries_the_number_it_is_known_by(simple_mode):
+    # The mark that is unique and ordered whatever anybody called the
+    # version. Left out, this mode showed three rows reading "Kitchen
+    # rebuild" with nothing to choose between them - which is what an
+    # installation with automatic versions actually looks like.
+    assert simple_mode["plain"]["numbers"] == 4
+    assert simple_mode["plain"]["middle"] is True
+
+
+def test_a_version_is_dated_where_the_date_is_known(simple_mode):
+    # The second mark. A tag made by hand has no time of its own, and
+    # then the row says nothing rather than showing a date of 1970 -
+    # this is a list people read down, and one wrong date in it puts
+    # every other one in doubt.
+    assert simple_mode["plain"]["dated"] == 3
+
+
+def test_only_one_row_is_where_you_are(simple_mode):
+    # Three versions can hold what the dashboard holds; you still stand
+    # in one place. Saying it on each of them was the whole confusion of
+    # this mode - a screen on which the answer to "where am I" appeared
+    # six times. The others say what is true of them: they hold the same
+    # state. No button there, because going back would write nothing.
+    assert simple_mode["plain"]["here"] == 1
+    assert simple_mode["plain"]["alike"] == 1
+
+
+def test_a_row_with_nothing_under_it_does_not_pretend_to_open(simple_mode):
+    # The whole row is the way in to its changes, so it may only look
+    # like one where there are changes to show. A version whose commit
+    # is below the loaded window has none - which on a dashboard with
+    # hundreds is most of them - and stays a plain row.
+    assert simple_mode["plain"]["opens"] == 3
+    assert simple_mode["plain"]["flat"] == 1
+
+
+def test_an_opened_row_survives_a_render(simple_mode):
+    # The lesson the advanced mode's sections paid for: a render builds
+    # new <details>, so native state alone shuts the row somebody is
+    # working in. Here it would shut on the way to the confirm dialog -
+    # _guard fetches the preview, which renders, and the row the button
+    # was clicked in folds up under the hand that clicked it.
+    assert simple_mode["plain"]["remembered"] is True
+    assert simple_mode["plain"]["shut"] is False
 
 
 def test_a_search_does_not_change_what_is_said_about_the_dashboard(simple_mode):
@@ -2123,6 +2192,156 @@ def test_the_fold_counts_only_what_it_can_show(simple_mode):
     # this mode has no "load older" that could ever make it right.
     assert simple_mode["plain"]["twoChanges"] is True
     assert simple_mode["plain"]["oneChange"] is True
+
+
+def test_the_current_state_carries_the_badge_the_other_mode_carries(simple_mode):
+    # One chip, and the advanced mode's chip word for word. What it
+    # labels here is the box and not a recorded row, which is why it
+    # needs no proof: "right now" is the live state by definition.
+    assert simple_mode["plain"]["badge"] == 1
+
+
+def test_no_way_back_is_offered_from_a_state_that_is_a_version(simple_mode):
+    # The dashboard holds v1.2.0's state, so there is nothing to undo.
+    # Offering it would open the confirm dialog on an empty diff with a
+    # live Apply - the same reason the rows leave their button out.
+    assert simple_mode["plain"]["undo"] == 0
+
+
+# -- the current-state block, once the dashboard has drifted from every ----
+# -- version: the badge, the way back, and the changes folded under it -----
+
+_SIMPLE_NOW = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+// Nothing the dashboard holds is any version's state: somebody has been
+// editing since the last one was saved. That is the case the
+// current-state block exists for, and the only one offering a way back.
+el._versions = [
+  { name: "dash/v1.2.0", title: "Kitchen rebuild", description: "",
+    revision: "c", same_as_now: false, timestamp: 1757246400 },
+  { name: "dash/v1.0.0", title: "Autumn tidy", description: "",
+    revision: "e", same_as_now: false, timestamp: 1757100000 },
+];
+// The box's own fold, remembered where the panel remembers folds that
+// are not versions - the sidebar's two groups keep their state in the
+// same object.
+el._foldOpen.now = true;
+const since = [
+  { revision: "a", message: "1 card added", versions: [], timestamp: 1 },
+  { revision: "b", message: "2 cards moved", versions: [], timestamp: 2 },
+];
+const marked = { revision: "c", message: "3 cards removed",
+                 versions: [{ name: "dash/v1.2.0" }], timestamp: 3 };
+
+const count = (text, needle) => text.split(needle).length - 1;
+// Inside the current-state block and nothing else. Counted over the
+// whole page, the lines of the version row below get mixed in - and the
+// question here is what *this* block folded.
+const inside = (text) =>
+  text.split("<details class=\\"standing\\"")[1]?.split("</details>")[0] || "";
+
+// The version bounding the changes sits in the window, so the count is
+// the whole truth.
+el._changes = since.concat([marked]);
+const drifted = el._renderMain();
+
+// It does not, so the count is whatever the window reached - and says so.
+el._changes = since;
+const cut = el._renderMain();
+
+// Nothing recorded since the last version, and yet the dashboard holds
+// something else: a change made at Home Assistant's back. Nothing to
+// fold, and the way back is the one thing that matters.
+el._changes = [marked];
+const behind = el._renderMain();
+
+console.log(JSON.stringify({
+  drifted: {
+    opens: count(drifted, "<details class=\\"standing\\""),
+    flat: count(drifted, "<div class=\\"standing\\""),
+    exact: drifted.includes("The 2 changes since the last version"),
+    steps: count(inside(drifted), "class=\\"step\\""),
+    ownStep: inside(drifted).includes("3 cards removed"),
+    badge: count(drifted, "class=\\"chip now\\""),
+    undo: drifted.includes(">Undo / Go back to v1.2.0<"),
+    target: /data-state="dash\\/v1\\.2\\.0"[^>]*>Undo/.test(drifted),
+    remembered: /data-fold="now"\\s+open/.test(drifted),
+  },
+  cut: {
+    hedged: cut.includes("The newest 2 changes since the last version"),
+    exact: cut.includes("The 2 changes since the last version"),
+    undo: cut.includes(">Undo / Go back to v1.2.0<"),
+  },
+  behind: {
+    opens: count(behind, "<details class=\\"standing\\""),
+    flat: count(behind, "<div class=\\"standing\\""),
+    undo: behind.includes(">Undo / Go back to v1.2.0<"),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def simple_now(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "simple_now", _SIMPLE_NOW)
+
+
+def test_the_current_state_offers_one_way_back_to_the_last_version(simple_now):
+    # The whole point of the button: one press, and everything since the
+    # last saved state is off the dashboard. It is the version rows'
+    # "Go back to this" aimed at the top row, so it goes through
+    # `restore_state` and shows its diff first like everything else.
+    assert simple_now["drifted"]["undo"] is True
+    assert simple_now["drifted"]["target"] is True
+    assert simple_now["behind"]["undo"] is True
+    assert simple_now["cut"]["undo"] is True
+
+
+def test_the_current_state_opens_onto_the_changes_it_holds(simple_now):
+    # Two changes since v1.2.0, and the third is the version's own - it
+    # belongs to the row below, not in here.
+    assert simple_now["drifted"]["opens"] == 1
+    assert simple_now["drifted"]["flat"] == 0
+    assert simple_now["drifted"]["steps"] == 2
+    # And not the version's own change: that one is the state v1.2.0
+    # marks, so it belongs to the row below rather than to the changes
+    # made since it.
+    assert simple_now["drifted"]["ownStep"] is False
+
+
+def test_the_current_state_counts_exactly_where_it_can(simple_now):
+    # The version bounding the fold is in the window, so nothing is cut
+    # at the older end and the count needs no hedge. This is the one
+    # place in this mode that can say so - a version row never knows
+    # where its own span ends.
+    assert simple_now["drifted"]["exact"] is True
+    assert simple_now["cut"]["exact"] is False
+    assert simple_now["cut"]["hedged"] is True
+
+
+def test_the_current_state_does_not_open_onto_nothing(simple_now):
+    # Same rule as the version rows: a fold with nothing behind it is a
+    # promise broken as soon as it is taken up. Here it happens when the
+    # dashboard was changed at Home Assistant's back - no change was
+    # recorded since the version, and yet the state differs.
+    assert simple_now["behind"]["opens"] == 0
+    assert simple_now["behind"]["flat"] == 1
+
+
+def test_the_opened_current_state_survives_a_render(simple_now):
+    # The lesson the version rows paid for, and this block needs it
+    # more: its own button re-renders the page on the way to the confirm
+    # dialog, so without this the box folds up under the hand that
+    # clicked it.
+    assert simple_now["drifted"]["remembered"] is True
+
+
+def test_the_drifted_current_state_still_carries_the_badge(simple_now):
+    assert simple_now["drifted"]["badge"] == 1
 
 
 # -- rows.js, the other half with no behavioural test ----------------------
@@ -2936,3 +3155,395 @@ def test_the_button_works_again_once_the_page_is_in(older_twice):
     # for as long as the page is open.
     assert older_twice["askedAgain"] == 1
     assert older_twice["then"] == ["a", "b", "c", "d"]
+
+
+# A local hit ended the search, and "Load older" is gone while a query
+# stands - so the rest of the history was out of reach for that word.
+# The way on is offered rather than taken automatically: the common
+# search still costs no round trip.
+
+_WIDER = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._cursor = "older";
+el._changes = [
+  { revision: "a", message: "1 card added", description: "", versions: [] },
+  { revision: "b", message: "2 views removed", description: "the rework",
+    versions: [] },
+];
+el._versions = [];
+
+const asked = [];
+el._call = (type) => {
+  asked.push(type);
+  return Promise.resolve({
+    changes: [
+      { revision: "b", message: "2 views removed" },
+      { revision: "z", message: "an older rework" },
+    ],
+  });
+};
+
+// 1. A word that is in the loaded page still answers without the server.
+await el._search("rework");
+const local = {
+  shown: el._shown().map((c) => c.revision),
+  asked: [...asked],
+  note: el._searchNote(),
+  offered: el._offersWider(),
+};
+
+// 2. Somebody takes the offer.
+await el._searchWider();
+const wider = {
+  shown: el._shown().map((c) => c.revision),
+  asked: [...asked],
+  note: el._searchNote(),
+  offered: el._offersWider(),
+};
+
+// 3. A refresh runs `_search` again with the same word. What somebody
+// asked for must survive it.
+await el._search("rework");
+const afterRefresh = {
+  shown: el._shown().map((c) => c.revision),
+  asked: [...asked],
+};
+
+// 4. A new word is a new question, and the cheap step answers it again.
+await el._search("card");
+const afterNewWord = { asked: [...asked], shown: el._shown().map((c) => c.revision) };
+
+// 5. The simple mode has no second step to offer: it filters the whole
+// version list already.
+el._mode = "simple";
+await el._search("rework");
+const inSimple = el._offersWider();
+
+console.log(JSON.stringify({ local, wider, afterRefresh, afterNewWord, inSimple }));
+"""
+
+
+@pytest.fixture(scope="session")
+def wider(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "wider", _WIDER)
+
+
+def test_a_local_hit_still_answers_without_the_server(wider):
+    # Unchanged, and it must stay so: the common search costs nothing.
+    assert wider["local"]["shown"] == ["b"]
+    assert wider["local"]["asked"] == []
+
+
+def test_the_note_offers_the_rest_of_the_history(wider):
+    # The finding: the note said "1 of the 2 loaded entries" and stopped
+    # there, while "Load older" is hidden for as long as a query stands.
+    # True, and no way onwards from it.
+    assert wider["local"]["offered"] is True
+    assert "loaded entries" in wider["local"]["note"]
+
+
+def test_taking_the_offer_asks_the_whole_history(wider):
+    assert wider["wider"]["asked"] == ["search"]
+    assert wider["wider"]["shown"] == ["b", "z"]
+    assert wider["wider"]["offered"] is False
+    assert "whole history" in wider["wider"]["note"]
+
+
+def test_a_refresh_keeps_the_wider_answer(wider):
+    # `_search` runs again on every recorded change of this dashboard.
+    # Falling back to the loaded page there would take away what
+    # somebody asked for, seconds after they asked.
+    assert wider["afterRefresh"]["asked"] == ["search", "search"]
+    assert wider["afterRefresh"]["shown"] == ["b", "z"]
+
+
+def test_a_new_word_asks_the_cheap_question_again(wider):
+    # The wider search belongs to the word it was asked about.
+    assert wider["afterNewWord"]["asked"] == ["search", "search"]
+    assert wider["afterNewWord"]["shown"] == ["a"]
+
+
+def test_the_simple_mode_offers_no_second_step(wider):
+    # It filters the complete version list; there is no window to fall
+    # out of, so there is nothing to widen.
+    assert wider["inSimple"] is False
+
+
+# The 400 ms wait is right for typing and wrong for somebody who has
+# finished. A single field with one thing to do should behave like a
+# form, the way the description dialog already does.
+
+_ENTER = """
+const rootFor = () => {
+  const it = node();
+  const base = it.querySelector.bind(it);
+  it.querySelector = (selector) =>
+    selector === "dialog[open]" ? null : base(selector);
+  return it;
+};
+
+const el = new Panel();
+el.shadowRoot = rootFor();
+el._selected = "dash";
+el._mode = "advanced";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._changes = [
+  { revision: "a", message: "1 card added", timestamp: 1, versions: [] },
+];
+const searched = [];
+el._search = async (text) => { searched.push(text); };
+
+el._render();
+const find = el.shadowRoot.querySelector("input.find");
+find.value = "winter";
+
+// 1. Typing alone waits the debounce out.
+find._on.input();
+const whileTyping = [...searched];
+
+// 2. Enter does not wait.
+let prevented = 0;
+find._on.keydown({ key: "Enter", preventDefault: () => { prevented += 1; } });
+const afterEnter = [...searched];
+
+// 3. And the wait it skipped must not then fire a second search.
+await new Promise((r) => setTimeout(r, 450));
+const afterTheWait = [...searched];
+
+// 4. Any other key is still just typing.
+find._on.input();
+find._on.keydown({ key: "r", preventDefault: () => {} });
+const afterAnotherKey = [...searched];
+await new Promise((r) => setTimeout(r, 450));
+const andItsWait = [...searched];
+
+console.log(JSON.stringify({
+  whileTyping, afterEnter, afterTheWait, afterAnotherKey, andItsWait, prevented,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def entering(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "enter", _ENTER)
+
+
+def test_enter_searches_without_waiting_out_the_debounce(entering):
+    assert entering["whileTyping"] == []
+    assert entering["afterEnter"] == ["winter"]
+    assert entering["prevented"] == 1
+
+
+def test_enter_does_not_leave_a_second_search_behind(entering):
+    # The timer it overtook has to go, or the same word is walked twice
+    # over the whole history for one keypress.
+    assert entering["afterTheWait"] == ["winter"]
+
+
+def test_any_other_key_is_still_only_typing(entering):
+    assert entering["afterAnotherKey"] == ["winter"]
+    assert entering["andItsWait"] == ["winter", "winter"]
+
+
+# The sidebar's order is not a property of the server: it lives in each
+# user's own frontend data. So the split runs in the panel, and this is
+# where it is checked - against `hass.panels` the way Home Assistant
+# hands it over, not against a shape invented here.
+_SIDEBAR = """
+const { splitBySidebar } = await import(
+  new URL("./panel/sidebar.js", %(url)s).href
+);
+
+const panel = (url_path, title, extra) => ({
+  url_path, title, component_name: "lovelace",
+  show_in_sidebar: true, default_visible: true, ...extra,
+});
+const panels = {
+  lovelace: panel("lovelace", "\\u00dcbersicht"),
+  "a-kitchen": panel("a-kitchen", "Kitchen"),
+  "b-garden": panel("b-garden", "Garden"),
+  "c-test": panel("c-test", "Test", { show_in_sidebar: false }),
+  "d-mine": panel("d-mine", "Mine"),
+};
+// Deliberately in no order at all: whatever the server listed is what
+// the panel used to show, and what it must now stop showing.
+const dashboards = [
+  { key: "c-test", title: "Test", exists: true },
+  { key: "b-garden", title: "Garden", exists: true },
+  { key: "_default", title: "\\u00dcbersicht", exists: true },
+  { key: "a-kitchen", title: "Kitchen", exists: true },
+  { key: "d-mine", title: "Mine", exists: true },
+];
+const view = (extra) => ({
+  panels, defaultPanel: "home", order: [], hidden: [], language: "en", ...extra,
+});
+const keys = (split) => ({
+  sidebar: split.sidebar.map((d) => d.key),
+  apart: split.apart.map((d) => d.key),
+});
+
+const plain = keys(splitBySidebar(dashboards, view()));
+const arranged = keys(splitBySidebar(dashboards, view({
+  order: ["d-mine", "b-garden"],
+})));
+const userHid = keys(splitBySidebar(dashboards, view({
+  hidden: ["a-kitchen"],
+})));
+const defaulted = keys(splitBySidebar(dashboards, view({
+  defaultPanel: "d-mine",
+})));
+const noPanel = keys(splitBySidebar(
+  [...dashboards, { key: "e-ghost", title: "Ghost", exists: true }], view(),
+));
+
+console.log(JSON.stringify({ plain, arranged, userHid, defaulted, noPanel }));
+"""
+
+
+@pytest.fixture(scope="session")
+def sidebar(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "sidebar", _SIDEBAR)
+
+
+def test_an_unarranged_sidebar_is_ordered_the_way_home_assistant_orders_it(sidebar):
+    # Nobody has dragged anything, so Home Assistant sorts by title with
+    # a collator - which puts "Ubersicht" after "Mine" and not before
+    # "Garden", where a byte comparison would have put it.
+    assert sidebar["plain"]["sidebar"] == ["b-garden", "a-kitchen", "d-mine", "_default"]
+
+
+def test_a_dashboard_that_is_not_in_the_sidebar_is_set_apart(sidebar):
+    assert sidebar["plain"]["apart"] == ["c-test"]
+
+
+def test_an_arranged_sidebar_keeps_the_arrangement(sidebar):
+    # The two that were dragged come first, in the order they were
+    # dragged into; everything else keeps falling back to the title.
+    assert sidebar["arranged"]["sidebar"] == [
+        "d-mine", "b-garden", "a-kitchen", "_default",
+    ]
+
+
+def test_one_this_user_hid_joins_the_ones_nobody_sees(sidebar):
+    # Hidden by this user and hidden for everyone are different causes
+    # with one consequence: it is not in the sidebar in front of them.
+    assert sidebar["userHid"]["sidebar"] == ["b-garden", "d-mine", "_default"]
+    assert sidebar["userHid"]["apart"] == ["a-kitchen", "c-test"]
+
+
+def test_the_default_dashboard_leads(sidebar):
+    assert sidebar["defaulted"]["sidebar"] == [
+        "d-mine", "b-garden", "a-kitchen", "_default",
+    ]
+
+
+def test_a_recorded_dashboard_home_assistant_has_no_panel_for_is_set_apart(sidebar):
+    # It cannot be in a sidebar it is not registered in, and guessing a
+    # position for it would put it somewhere it is not. Set apart, and
+    # sorted by title with the rest of them: "Ghost" before "Test".
+    assert sidebar["noPanel"]["apart"] == ["e-ghost", "c-test"]
+
+
+# What the list looks like when the browser can say nothing about the
+# sidebar - an old Home Assistant, a call that failed. The order the
+# server gave has to survive that untouched, and no empty fold may
+# appear beside it.
+_SIDEBAR_SIDE = """
+const el = new Panel();
+el._dashboards = [
+  { key: "b-garden", title: "Garden", exists: true },
+  { key: "a-kitchen", title: "Kitchen", exists: true },
+  { key: "gone", title: "Gone", exists: false },
+];
+const withoutHass = el._renderSide();
+
+el._hass = {
+  panels: {
+    "a-kitchen": {
+      url_path: "a-kitchen", title: "Kitchen", component_name: "lovelace",
+      show_in_sidebar: true, default_visible: true,
+    },
+    "b-garden": {
+      url_path: "b-garden", title: "Garden", component_name: "lovelace",
+      show_in_sidebar: false, default_visible: true,
+    },
+  },
+  locale: { language: "en" },
+};
+const withHass = el._renderSide();
+
+const order = (markup) =>
+  [...markup.matchAll(/data-key="([^"]+)"/g)].map((m) => m[1]);
+const folds = (markup) =>
+  [...markup.matchAll(/<summary>([^<]+)<\\/summary>/g)].map((m) => m[1].trim());
+
+console.log(JSON.stringify({
+  withoutHass: { order: order(withoutHass), folds: folds(withoutHass) },
+  withHass: { order: order(withHass), folds: folds(withHass) },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def sidebar_side(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "sidebar_side", _SIDEBAR_SIDE)
+
+
+def test_without_a_readable_sidebar_the_list_is_left_as_the_server_gave_it(
+    sidebar_side,
+):
+    assert sidebar_side["withoutHass"]["order"] == ["b-garden", "a-kitchen", "gone"]
+    assert sidebar_side["withoutHass"]["folds"] == ["Deleted (1)"]
+
+
+def test_the_two_folds_stand_in_their_order_below_the_sidebar_ones(sidebar_side):
+    assert sidebar_side["withHass"]["order"] == ["a-kitchen", "b-garden", "gone"]
+    assert sidebar_side["withHass"]["folds"] == [
+        "Not in the sidebar (1)", "Deleted (1)",
+    ]
+
+
+# -- the view after a switch --------------------------------------------
+
+_TOP_HARNESS = """
+const el = new Panel();
+el._render = () => {};
+el._call = () => new Promise(() => {});   // never answers; the switch is what matters
+
+// The panel sits in Home Assistant's own page, and that page is what
+// scrolls when the panel is taller than the window. Both are recorded:
+// whichever one the panel reaches for, the test sees it.
+let broughtIntoView = 0;
+el.scrollIntoView = () => { broughtIntoView += 1; };
+const main = { scrollTop: 400 };
+el.shadowRoot = { querySelector: (s) => (s === ".main" ? main : null) };
+
+el._select("other");
+await settle();
+
+console.log(JSON.stringify({ broughtIntoView, mainScrollTop: main.scrollTop }));
+"""
+
+
+@pytest.fixture(scope="module")
+def after_a_switch(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "back-to-the-top", _TOP_HARNESS)
+
+
+def test_switching_dashboards_brings_the_view_back_to_the_top(after_a_switch):
+    # Reported from a real installation: with enough dashboards the
+    # sidebar is longer than the window, so the row somebody clicks sits
+    # far down the page - and the history they asked for is drawn at the
+    # top of a column they are no longer looking at. What they see is
+    # the grey below it.
+    assert after_a_switch["broughtIntoView"] == 1
+
+
+def test_switching_dashboards_also_rewinds_a_scrolled_main_column(after_a_switch):
+    # The other way the same page can be scrolled: where the panel does
+    # get a height of its own, the column scrolls instead of the page,
+    # and its offset outlives the switch just the same.
+    assert after_a_switch["mainScrollTop"] == 0

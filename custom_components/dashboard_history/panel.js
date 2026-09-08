@@ -51,6 +51,7 @@ let escape, renderDiff, renderPlain, when, joinNames;
 let sections, someNames, renderRow, versionHead;
 let DIALOGS;
 let renderSimple;
+let splitBySidebar, defaultPanelPath, arrangementFrom;
 
 const partsReady = Promise.all([
   import(`./panel/style.js${PARTS}`),
@@ -58,12 +59,14 @@ const partsReady = Promise.all([
   import(`./panel/rows.js${PARTS}`),
   import(`./panel/dialogs.js${PARTS}`),
   import(`./panel/simple.js${PARTS}`),
-]).then(([style, render, rows, dialogs, simple]) => {
+  import(`./panel/sidebar.js${PARTS}`),
+]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
   ({ sections, someNames, renderRow, versionHead } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple } = simple);
+  ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
 });
 
 // Where the chosen mode is remembered. In the browser and not in the
@@ -72,6 +75,18 @@ const partsReady = Promise.all([
 // costs no round trip, no reload and no restart.
 const MODE_KEY = "dashboard-history:mode";
 const MODES = ["simple", "advanced"];
+
+// Shown over the main column while anything is in flight, on the same
+// `_busy` the bar's "working..." reads. The bar alone was easy to miss:
+// it says the page is doing something in the one corner nobody is
+// looking at while they wait for the middle of the screen.
+//
+// `role="status"` with a text label rather than a bare spinning box, so
+// a screen reader is told the same thing the animation says; `aria-live`
+// polite, because it is not worth interrupting anyone over.
+const SPINNER =
+  '<div class="spin" role="status" aria-live="polite">'
+  + '<span class="ring"></span><span class="sr">Loading</span></div>';
 
 /**
  * The remembered mode, or the simple one.
@@ -129,6 +144,10 @@ class DashboardHistoryPanel extends HTMLElement {
     // was never asked), whether it is being asked right now, and the
     // pending keystroke timer.
     this._query = "";
+    // Whether somebody has asked for the whole history for this
+    // word. It belongs to the word, so it is cleared wherever the
+    // query is.
+    this._wide = false;
     this._found = null;
     this._moreFound = false;
     this._searching = false;
@@ -161,7 +180,19 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = null; // revision of the expanded change
     this._items = [];
     this._explanation = null;
-    this._deadOpen = false;
+    // How this user has arranged their sidebar, as `frontend/get_user_data`
+    // answers it, or null while it has not been read or could not be.
+    // See `_loadSidebar`.
+    this._sidebar = null;
+    // Which folds outside the version list are open: the two groups
+    // below the sidebar's dashboards, and the simple mode's
+    // current-state box. Kept out here for the same reason as
+    // `_verOpen`: a re-render builds new <details> elements, and without
+    // this the fold somebody is working in shuts itself the moment
+    // anything else on the page changes. The box is here rather than in
+    // that set because the set is keyed by version name and the box is
+    // not a version.
+    this._foldOpen = { apart: false, dead: false, now: false };
     // Which version sections are expanded, keyed by the name of the
     // section's first version. Native <details> state alone does not
     // survive a re-render - _render() replaces the whole shadow DOM, so
@@ -347,7 +378,10 @@ class DashboardHistoryPanel extends HTMLElement {
 
   /** Read everything again, keeping the row that is open if it survives. */
   async _refresh() {
-    const listed = await this._call("dashboards");
+    const [listed] = await Promise.all([
+      this._call("dashboards"),
+      this._loadSidebar(),
+    ]);
     this._dashboards = listed.dashboards || [];
     if (this._selected) {
       const asked = this._selected;
@@ -560,7 +594,10 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   async _loadDashboards() {
-    const result = await this._guard(() => this._call("dashboards"));
+    const [result] = await Promise.all([
+      this._guard(() => this._call("dashboards")),
+      this._loadSidebar(),
+    ]);
     if (!result) return;
     this._dashboards = result.dashboards || [];
     // A live one. This used to open on a deleted dashboard, on the
@@ -569,6 +606,37 @@ class DashboardHistoryPanel extends HTMLElement {
     // behind a fold now anyway.
     const first = this._dashboards.find((d) => d.exists) || this._dashboards[0];
     if (first) await this._select(first.key);
+  }
+
+  /**
+   * Put the top of the panel back in front of whoever just clicked.
+   *
+   * With enough dashboards the sidebar is longer than the window, so the
+   * row somebody picks sits far down the page - and the history they
+   * asked for is drawn at the top of a column they have scrolled past.
+   * What they get is the grey underneath it, which reads as a dashboard
+   * with no history rather than as a page that needs scrolling.
+   *
+   * Both ways this page can be scrolled, because which one applies is
+   * not this panel's to know: `.main` scrolls where the panel is given a
+   * height of its own, and Home Assistant's page scrolls where it is
+   * not - measured in Chrome on 2026-09-07, where the document had moved
+   * 600px and the column none.
+   *
+   * Guarded, like every other reach for the platform in here. `pytest`
+   * runs this module in Node against a two-line stand-in for the DOM,
+   * and a panel that cannot be loaded without a browser is a panel with
+   * no tests.
+   */
+  _backToTheTop() {
+    try {
+      const main = this.shadowRoot?.querySelector(".main");
+      if (main) main.scrollTop = 0;
+      this.scrollIntoView?.({ block: "start" });
+    } catch {
+      // A view that stays where it was is a poor answer; a switch that
+      // throws is a worse one.
+    }
   }
 
   async _select(key) {
@@ -580,12 +648,20 @@ class DashboardHistoryPanel extends HTMLElement {
     this._claim("write");
     this._claim("search"); // and any walk over the old dashboard's history
     this._selected = key;
+    // Before the history is asked for, not after it arrives: the point
+    // is that the answer is drawn where somebody is looking, and by the
+    // time it lands they have been staring at grey for a second.
+    this._backToTheTop();
     this._open = null;
     this._clearDetail();
     this._cursor = null;
     this._versions = [];
     this._matching = [];
     this._query = "";
+    // Whether somebody has asked for the whole history for this
+    // word. It belongs to the word, so it is cleared wherever the
+    // query is.
+    this._wide = false;
     this._found = null;
     this._moreFound = false;
     this._searching = false;
@@ -676,6 +752,11 @@ class DashboardHistoryPanel extends HTMLElement {
    * complete version list, which needs nobody's help to be complete.
    */
   async _search(text) {
+    // A new word is a new question. `_search` runs again on every
+    // recorded change of this dashboard, with the same word, and that
+    // must not take back what somebody asked for - so the flag is
+    // dropped on a change of word, not on every call.
+    if (text.trim() !== this._query.trim()) this._wide = false;
     this._query = text;
     this._found = null;
     this._moreFound = false;
@@ -684,7 +765,7 @@ class DashboardHistoryPanel extends HTMLElement {
     if (
       this._mode === "simple" ||
       text.trim().length < 2 ||
-      this._localMatches().length
+      (!this._wide && this._localMatches().length)
     ) {
       this._render();
       return;
@@ -800,9 +881,43 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _shown() {
     if (!this._query.trim()) return this._changes;
+    // An answer from the whole history outranks the loaded page it
+    // contains. The server matches with `casefold` where the panel uses
+    // `toLowerCase`, so what it found is the wider set of the two -
+    // never the smaller one, which is why this can simply take over.
+    if (this._found !== null) return this._found;
     const local = this._localMatches();
     if (local.length) return local;
     return this._found;
+  }
+
+  /**
+   * Whether there is a wider search left to offer.
+   *
+   * Only where a step was skipped: the loaded page answered, and the
+   * server was therefore never asked. The note says how far that step
+   * looked, which is true and was, until this, the end of the road -
+   * "Load older" is hidden for as long as a query stands, so a word
+   * with one hit on the page and forty behind it showed the one and no
+   * way to the rest.
+   *
+   * Offered rather than taken: what somebody searches for is usually
+   * what they have just read, and that case must keep costing nothing.
+   */
+  _offersWider() {
+    return (
+      this._mode !== "simple" &&
+      !this._searching &&
+      this._found === null &&
+      this._query.trim().length >= 2 &&
+      this._localMatches().length > 0
+    );
+  }
+
+  /** Ask the whole history for the word that is already in the box. */
+  async _searchWider() {
+    this._wide = true;
+    await this._search(this._query);
   }
 
   /**
@@ -1472,29 +1587,94 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * Live dashboards, then the deleted ones behind a fold.
+   * One group of dashboards behind a fold, or nothing when it is empty.
    *
-   * A deleted dashboard has to stay findable - it is the one somebody
-   * opens this tool for - but it stays findable forever, and that is the
-   * problem. Delete a dashboard every few months and the list is mostly
-   * gravestones. So they are counted and folded away, not hidden: one
-   * click, and the fold stays open while you work.
+   * Counted and folded away, not hidden: what is in here still has to
+   * be findable - a deleted dashboard is the one somebody opens this
+   * tool for - but it stays findable forever, and that is the problem.
+   * Delete a dashboard every few months and an unfolded list is mostly
+   * gravestones.
+   *
+   * A fold whose dashboard is the one on screen opens itself, or the
+   * page would show a history belonging to nothing visible.
+   */
+  _fold(kind, label, dashboards) {
+    if (!dashboards.length) return "";
+    const open =
+      this._foldOpen[kind] || dashboards.some((d) => d.key === this._selected);
+    return `<details class="fold ${kind}" data-fold="${kind}" ${open ? "open" : ""}>
+         <summary>${label} (${dashboards.length})</summary>
+         ${dashboards.map((d) => this._renderDashboard(d)).join("")}
+       </details>`;
+  }
+
+  /**
+   * The sidebar's dashboards in the sidebar's order, then the two folds.
+   *
+   * People know a dashboard by where it sits in the sidebar, so the
+   * list they are handed here is that list - see `panel/sidebar.js` for
+   * whose order it is and why the browser has to work it out.
+   *
+   * When the browser can say nothing about the sidebar, the order the
+   * server gave stands and no second fold appears. That case is not
+   * exotic: it is every render before the first answer arrives.
    */
   _renderSide() {
     if (!this._dashboards.length)
       return '<p class="empty muted">Nothing recorded yet.</p>';
     const live = this._dashboards.filter((d) => d.exists);
     const dead = this._dashboards.filter((d) => !d.exists);
-    const rows = live.map((d) => this._renderDashboard(d)).join("");
-    if (!dead.length) return rows;
-    const openDead = this._deadOpen || dead.some((d) => d.key === this._selected);
+    const view = this._sidebarView();
+    const { sidebar, apart } = view
+      ? splitBySidebar(live, view)
+      : { sidebar: live, apart: [] };
     return (
-      rows +
-      `<details class="dead" ${openDead ? "open" : ""}>
-         <summary>Deleted (${dead.length})</summary>
-         ${dead.map((d) => this._renderDashboard(d)).join("")}
-       </details>`
+      sidebar.map((d) => this._renderDashboard(d)).join("") +
+      this._fold("apart", "Not in the sidebar", apart) +
+      this._fold("dead", "Deleted", dead)
     );
+  }
+
+  /**
+   * Everything the split needs, or null when the browser cannot tell.
+   *
+   * `_sidebar` being null is not an error worth reporting: a user who
+   * has never touched their sidebar has no such record, and the
+   * fallbacks below are where Home Assistant itself looks next - the
+   * two keys it wrote before this moved into user data. Somebody who
+   * arranged their sidebar years ago is exactly the person who would
+   * notice the arrangement missing.
+   */
+  _sidebarView() {
+    const panels = this._hass?.panels;
+    if (!panels) return null;
+    return {
+      panels,
+      defaultPanel: defaultPanelPath(this._hass),
+      language: this._hass.locale?.language,
+      ...arrangementFrom(this._sidebar),
+    };
+  }
+
+  /**
+   * Read this user's sidebar arrangement, once per load.
+   *
+   * Failure costs the order and nothing else, so it is swallowed rather
+   * than shown: a banner over a dashboard list because a sort key could
+   * not be read would be louder than what it reports. Re-read by the
+   * reload button, which is the answer for somebody who rearranged
+   * their sidebar in another tab.
+   */
+  async _loadSidebar() {
+    try {
+      const answer = await this._hass.callWS({
+        type: "frontend/get_user_data",
+        key: "sidebar",
+      });
+      this._sidebar = answer?.value || null;
+    } catch {
+      this._sidebar = null;
+    }
   }
 
   /**
@@ -1781,6 +1961,9 @@ class DashboardHistoryPanel extends HTMLElement {
         : "Search this dashboard's history"}"
                value="${escape(this._query)}">
         ${said ? `<span class="why">${escape(said)}</span>` : ""}
+        ${this._offersWider()
+        ? `<button class="act ghost wider" data-wider="1">Search the whole history</button>`
+        : ""}
       </div>`;
   }
 
@@ -1796,7 +1979,10 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     if (this._searching) return "Searching the whole history…";
     const local = this._localMatches();
-    if (local.length)
+    // Only while that is still the whole answer. Once somebody has
+    // asked the whole history, saying how far the cheap step looked
+    // would describe a question that has been superseded.
+    if (local.length && this._found === null)
       return `${local.length} of the ${this._changes.length} loaded entries.`;
     // Below the length the second step will run at. Said rather than
     // left blank: an empty note under an empty list reads as a search
@@ -1810,6 +1996,24 @@ class DashboardHistoryPanel extends HTMLElement {
     return this._moreFound
       ? `The first ${this._found.length} in the whole history.`
       : `${this._found.length} in the whole history.`;
+  }
+
+  /**
+   * What the bar calls the dashboard being looked at.
+   *
+   * The recorded title, and the key when there is none - the same
+   * fallback the sidebar makes, so the heading and the row it was
+   * picked from cannot disagree. Empty while nothing is selected, which
+   * leaves the bar exactly as it was before there was a heading in it.
+   *
+   * Deliberately not the panel title Home Assistant holds: a deleted
+   * dashboard has no panel and is precisely the one somebody opens this
+   * tool to look at.
+   */
+  _selectedTitle() {
+    if (!this._selected) return "";
+    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    return dashboard?.title || this._selected;
   }
 
   _renderMain() {
@@ -1842,6 +2046,12 @@ class DashboardHistoryPanel extends HTMLElement {
           shown: this._matchingVersions(),
           changes: this._changes,
           searching: Boolean(query),
+          // The same set the advanced mode's sections use, keyed the
+          // same way. A version opened in one mode is open in the
+          // other, which is right: it is one fact about one version,
+          // not two pieces of furniture that happen to look alike.
+          open: this._verOpen,
+          nowOpen: this._foldOpen.now,
         })
       );
     const shown = this._shown();
@@ -1968,32 +2178,40 @@ class DashboardHistoryPanel extends HTMLElement {
       <style>${STYLE}</style>
       <div class="bar">
         <span>Dashboard History</span>
-        ${this._busy ? '<span class="muted" style="font-size:14px">working…</span>' : ""}
         <button class="mode" data-mode="${this._mode === "simple" ? "advanced" : "simple"}"
                 >${this._mode === "simple" ? "Advanced view" : "Simple view"}</button>
+        <span class="which">${escape(this._selectedTitle())}</span>
+        ${this._busy ? '<span class="muted" style="font-size:14px">working\u2026</span>' : ""}
         <button class="reload" data-refresh="1" title="Reload the history"
                 aria-label="Reload the history">\u21bb</button>
       </div>
       ${this._error ? `<div class="banner"><span class="grow">${escape(this._error)}</span></div>` : ""}
       <div class="layout">
         <div class="side">${this._renderSide()}</div>
-        <div class="main">
-          ${this._selected ? this._renderSearch() : ""}
-          ${this._renderMain()}
+        <div class="mainwrap">
+          <div class="main">
+            ${this._selected ? this._renderSearch() : ""}
+            ${this._renderMain()}
+          </div>
+          ${this._busy ? SPINNER : ""}
         </div>
       </div>
       ${DIALOGS}`;
 
     const root = this.shadowRoot;
-    const fold = root.querySelector("details.dead");
-    if (fold)
-      fold.addEventListener("toggle", () => {
-        this._deadOpen = fold.open;
+    root.querySelectorAll("details[data-fold]").forEach((element) => {
+      element.addEventListener("toggle", () => {
+        this._foldOpen[element.dataset.fold] = element.open;
       });
-    // Mirrors the fold above: without this, "Back to this version"
+    });
+    // Mirrors the folds above: without this, "Back to this version"
     // would appear to collapse its own section, because _guard's
     // preview fetch re-renders before the confirm dialog even opens.
-    root.querySelectorAll("details.ver").forEach((element) => {
+    //
+    // By the attribute rather than by the class, so that the simple
+    // mode's rows - which are the same thing under a different skin -
+    // are wired by the same three lines instead of a copy of them.
+    root.querySelectorAll("details[data-key]").forEach((element) => {
       const key = element.dataset.key;
       element.addEventListener("toggle", () => {
         if (element.open) this._verOpen.add(key);
@@ -2006,7 +2224,19 @@ class DashboardHistoryPanel extends HTMLElement {
     // of them want nothing but its `dataset`.
     const onClick = (selector, run) =>
       root.querySelectorAll(selector).forEach((element) =>
-        element.addEventListener("click", (event) => run(element, event)),
+        element.addEventListener("click", (event) => {
+          // A control drawn inside a <summary> must not toggle it, and
+          // that is a fact about where it was drawn rather than about
+          // what it does - so it is said here once, not by each handler
+          // that happens to land in one. Only `preventDefault` reaches
+          // it: the toggle is the summary's own default behaviour, not a
+          // listener, so stopping the propagation leaves it standing.
+          // Written out twice by hand before a third control moved into
+          // a summary, and the failure is quiet - the fold shuts under
+          // the hand that clicked, on its way to a dialog.
+          if (element.closest("summary")) event.preventDefault();
+          run(element, event);
+        }),
       );
     onClick(".dash", (element) => this._select(element.dataset.key));
     onClick(".change", (element) => this._expand(element.dataset.revision));
@@ -2018,8 +2248,8 @@ class DashboardHistoryPanel extends HTMLElement {
       if (change && item) this._restoreItem(change, item);
     });
     onClick("[data-state]", (element, event) => {
-      // Inside a <summary> a click would toggle the section as well.
-      event.preventDefault();
+      // Or the click reaches the row underneath and collapses it. The
+      // summary's own toggle is dealt with in `onClick` above.
       event.stopPropagation();
       // The dialog is titled with the button that opened it. With two
       // of them on a row, a generic heading would leave you guessing
@@ -2032,6 +2262,7 @@ class DashboardHistoryPanel extends HTMLElement {
     });
     onClick("[data-forget]", () => this._forget());
     onClick("[data-older]", () => this._loadOlder());
+    onClick("[data-wider]", () => this._searchWider());
     // Guarded, unlike the automatic one: somebody who pressed a button
     // is owed both the "working" state and the failure if there is one.
     onClick("[data-refresh]", () => this._guard(() => this._refresh()));
@@ -2101,6 +2332,19 @@ class DashboardHistoryPanel extends HTMLElement {
       });
       find.addEventListener("blur", () => {
         this._inBox = false;
+      });
+      find.addEventListener("keydown", (event) => {
+        // Somebody who has pressed Enter has finished the word, and the
+        // 400 ms below are there for somebody who has not. The same
+        // shape the description dialog uses: one field with one thing
+        // to do behaves like a form.
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        // The overtaken timer goes, or the same word is walked over the
+        // whole history twice for one keypress.
+        clearTimeout(this._typing);
+        this._typing = null;
+        this._search(find.value);
       });
       find.addEventListener("input", () => {
         // Set here too, and not only in the listener above: this is the

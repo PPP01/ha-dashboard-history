@@ -29,6 +29,7 @@ def test_the_parts_are_found_at_all():
         "dialogs.js",
         "render.js",
         "rows.js",
+        "sidebar.js",
         "simple.js",
         "style.js",
     ]
@@ -78,6 +79,31 @@ def test_the_panel_listens_for_the_event_the_recorder_fires():
     )
     assert fired and heard, "one of the two declarations was not found at all"
     assert fired.group(1) == heard.group(1)
+
+
+def test_the_panel_spells_the_default_dashboard_the_way_the_store_does():
+    """The third name written twice, and the quietest of them.
+
+    The store files the default dashboard under a key of its own, and
+    `panel/sidebar.js` has to turn that key back into the url_path Home
+    Assistant registered its panel under - there is no other way to find
+    it among `hass.panels`. Change the key in const.py alone and nothing
+    raises: the default dashboard simply stops being in the sidebar and
+    drops into the fold below it, which reads like a decision somebody
+    made rather than a name that drifted.
+    """
+    filed = re.search(
+        r'^DEFAULT_DASHBOARD_KEY = "([^"]+)"',
+        (PANEL / "const.py").read_text(encoding="utf-8"),
+        re.M,
+    )
+    looked = re.search(
+        r'^const DEFAULT_KEY = "([^"]+)";',
+        (PANEL / "panel" / "sidebar.js").read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert filed and looked, "one of the two declarations was not found at all"
+    assert filed.group(1) == looked.group(1)
 
 
 def test_the_two_halves_of_the_search_look_at_the_same_fields():

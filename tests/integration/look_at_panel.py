@@ -100,7 +100,13 @@ class Session:
             {"expression": expression, "returnByValue": True, "awaitPromise": True},
         )
         if "exceptionDetails" in result:
-            raise RuntimeError(result["exceptionDetails"]["text"])
+            details = result["exceptionDetails"]
+            # The message lives under `exception.description`, not under
+            # `text` - `text` is the bare word "Uncaught". Reported for a
+            # while as exactly that, which turned every failure in here
+            # into a traceback saying nothing at all.
+            said = (details.get("exception") or {}).get("description")
+            raise RuntimeError(said or details.get("text") or "unknown")
         return result["result"].get("value")
 
     async def settle(self, expression, seconds=20):
@@ -235,6 +241,14 @@ async def main():
 
             print("\n-- The history --")
             await page.send("Page.navigate", {"url": f"{BASE}/dashboard-history"})
+            # Everything from here to the simple-mode section reads the
+            # advanced mode's rows, and which mode the panel opens in is
+            # whatever this browser profile last stored - on a fresh one,
+            # the simple mode, which has no .change at all. Said rather
+            # than assumed: this script sat in "The panel showed no
+            # changes" for a profile whose only fault was being new.
+            await page.settle(f"!!{PANEL}")
+            await page.js(f'{ELEMENT}._setMode("advanced")')
             ok = await page.settle(f'{PANEL}?.querySelectorAll(".change").length')
             if not ok:
                 await page.shot("0-stuck.png")
@@ -632,18 +646,53 @@ async def main():
             for name, value in chips.items():
                 print(f"    {name}: {value!r}")
 
-            print("\n-- The sidebar: deleted dashboards folded away --")
+            print("\n-- The sidebar: two groups folded away --")
             side = await page.js(
                 "(() => { const p = " + PANEL + "; return {"
                 '  live: p.querySelectorAll(".side > .dash").length,'
                 '  fold: p.querySelector("details.dead summary")?.innerText ?? null,'
                 '  foldedAway: p.querySelectorAll("details.dead .dash").length,'
                 '  openByDefault: p.querySelector("details.dead")?.open ?? null,'
+                '  apartFold: p.querySelector("details.apart summary")?.innerText ?? null,'
+                '  apartAway: p.querySelectorAll("details.apart .dash").length,'
                 " }; })()"
             )
             for name, value in side.items():
                 print(f"    {name}: {value!r}")
             await page.shot("10-sidebar-folded.png")
+
+            print("\n-- That order, against Home Assistant's own sidebar --")
+            # The claim is that the list *is* the sidebar's order, and the
+            # only place that can be checked is a browser holding both.
+            # The panel rebuilds the order from `hass.panels` and this
+            # user's frontend data; Home Assistant's `ha-sidebar` builds
+            # it from the same two, with its own code. Agreeing here is
+            # the whole feature; disagreeing is a defect the unit tests
+            # cannot see, because they carry the copy of the rules that
+            # would be wrong.
+            order = await page.js(
+                "(() => { const walk = (root, sel) => {"
+                " const hit = root.querySelector(sel); if (hit) return hit;"
+                " for (const n of root.querySelectorAll('*')) if (n.shadowRoot) {"
+                " const f = walk(n.shadowRoot, sel); if (f) return f; }"
+                " return null; };"
+                " const bar = walk(document, 'ha-sidebar');"
+                " const hrefs = bar"
+                "   ? [...bar.shadowRoot.querySelectorAll('a[href^=\"/\"]')]"
+                "       .map((a) => a.getAttribute('href').slice(1).split('/')[0])"
+                "   : [];"
+                " const p = " + PANEL + ";"
+                " const path = (k) => (k === '_default' ? 'lovelace' : k);"
+                " const listed = [...p.querySelectorAll('.side > .dash')]"
+                "   .map((b) => path(b.dataset.key));"
+                " const shown = hrefs.filter((h) => listed.includes(h));"
+                " return { sidebar: shown, panel: listed,"
+                "   agree: JSON.stringify(shown) === JSON.stringify(listed) };"
+                " })()"
+            )
+            print(f"    sidebar: {order['sidebar']}")
+            print(f"    panel:   {order['panel']}")
+            print(f"    same order: {order['agree']}")
 
             print("\n-- The forget dialog on a deleted dashboard --")
             await page.js(
@@ -1039,6 +1088,149 @@ async def main():
                     f'{PANEL}.querySelectorAll(".change").length'
                 )
                 print(f"    rows after pressing it: {alive}")
+
+            print("\n-- The simple mode: the row is the way in --")
+            # The mode is set rather than clicked for: which way the bar
+            # button points depends on what this profile last stored, and
+            # a check that only runs half the time is worse than none.
+            await page.js(f'{ELEMENT}._setMode("simple")')
+            listed = await page.settle(
+                f'{PANEL}.querySelectorAll("details.vrow").length'
+            )
+            print(f"    rows that open: {listed}")
+            if listed:
+                # A row that has both: something to open, and a button to
+                # go back with. Those are the two things that collide.
+                where = await page.js(
+                    "(() => { const rows = [..." + PANEL
+                    + '.querySelectorAll("details.vrow")];'
+                    ' const row = rows.find((r) => r.querySelector("[data-state]"));'
+                    " if (!row) return null;"
+                    ' const head = row.querySelector(".vhead")'
+                    ".getBoundingClientRect();"
+                    ' const button = row.querySelector("[data-state]")'
+                    ".getBoundingClientRect();"
+                    " return {key: row.dataset.key,"
+                    "         headX: head.x + 60, headY: head.y + head.height / 2,"
+                    "         buttonX: button.x + button.width / 2,"
+                    "         buttonY: button.y + button.height / 2}; })()"
+                )
+                print(f"    trying it on {where and where['key']}")
+            else:
+                where = None
+            if where:
+                state = (
+                    "(() => { const r = " + PANEL
+                    + ".querySelector('details.vrow[data-key=\"'"
+                    + f" + {json.dumps(where['key'])} + '\"]');"
+                    " return r ? r.open : null; })()"
+                )
+                await page.click_at(where["headX"], where["headY"])
+                await asyncio.sleep(0.4)
+                print(f"    a click on the row opens it: {await page.js(state)}")
+                await page.click_at(where["headX"], where["headY"])
+                await asyncio.sleep(0.4)
+                print(f"    and a second click shuts it: {not await page.js(state)}")
+                await page.shot("21-simple-row.png")
+
+                # The collision this section exists for. A button inside a
+                # <summary> toggles it as well unless the click is stopped,
+                # and the row would fold up under the hand that clicked -
+                # the same fault the pencil had in the advanced mode.
+                await page.click_at(where["headX"], where["headY"])
+                await asyncio.sleep(0.4)
+                await page.click_at(where["buttonX"], where["buttonY"])
+                asked = await page.settle(f'!!{PANEL}.querySelector("dialog[open]")', 15)
+                print(f"    the button opens the dialog: {asked}")
+                print(f"    and leaves the row open: {await page.js(state)}")
+                await page.shot("22-simple-row-and-dialog.png")
+                # Cancelled, always. Nothing on the bench is written by a
+                # check that is only looking.
+                await page.js(
+                    "(() => { const d = " + PANEL + '.querySelector("dialog[open]");'
+                    ' if (d) d.querySelector(".actions [value=\'cancel\']").click();'
+                    " return true; })()"
+                )
+                await asyncio.sleep(0.5)
+            print("\n-- The simple mode: the current state is a way in too --")
+            # One cancel for both dialogs below, through the dialog's own
+            # button rather than close(): the same wiring a person uses.
+            cancel = (
+                f'{PANEL}.querySelector("dialog[open] .actions'
+                ' button[value=cancel]")?.click()'
+            )
+            badge = await page.js(f'!!{PANEL}.querySelector(".standing .chip.now")')
+            print(f"    the box carries the badge: {badge}")
+            box = await page.js(
+                "(() => { const b = " + PANEL
+                + '.querySelector("details.standing");'
+                " if (!b) return null;"
+                ' const head = b.querySelector(".heading").getBoundingClientRect();'
+                ' const save = b.querySelector("[data-version]")'
+                ".getBoundingClientRect();"
+                ' const back = b.querySelector("[data-state]");'
+                " const rect = back && back.getBoundingClientRect();"
+                " return {headX: head.x + 40, headY: head.y + head.height / 2,"
+                "         saveX: save.x + save.width / 2,"
+                "         saveY: save.y + save.height / 2,"
+                "         backX: rect ? rect.x + rect.width / 2 : null,"
+                "         backY: rect ? rect.y + rect.height / 2 : null,"
+                # textContent, never innerText: the box is still shut at
+                # this point, and innerText is worked out from the layout -
+                # so a hidden line reads as the empty string and the check
+                # reports a heading that is plainly there as missing.
+                "         says: b.querySelector('.stephead')"
+                "?.textContent.trim() ?? null}; })()"
+            )
+            if not box:
+                # Nothing recorded since the last version, so by design it
+                # does not open onto anything. Said rather than passed
+                # over: a check that reports nothing when it found nothing
+                # to check is how this file stops meaning anything.
+                flat = await page.js(f'!!{PANEL}.querySelector("div.standing")')
+                print(f"    nothing recorded since the last version: {flat}")
+            else:
+                opened = (
+                    "(() => { const b = " + PANEL
+                    + '.querySelector("details.standing");'
+                    " return b ? b.open : null; })()"
+                )
+                print(f"    it folds: {box['says']!r}")
+                await page.click_at(box["headX"], box["headY"])
+                await asyncio.sleep(0.4)
+                print(f"    a click on the head opens it: {await page.js(opened)}")
+                await page.shot("23-simple-current-state.png")
+                # The collision, and this block has it twice: both buttons
+                # sit inside the <summary>, and a summary toggles on a
+                # click it was never meant to see. Stopping the propagation
+                # is not enough - the toggle is its default behaviour, not
+                # a listener, so only preventDefault reaches it.
+                await page.click_at(box["saveX"], box["saveY"])
+                asked = await page.settle(f'!!{PANEL}.querySelector("dialog[open]")', 15)
+                print(f"    saving a version opens its dialog: {asked}")
+                print(f"    and leaves the box open: {await page.js(opened)}")
+                await page.shot("24-simple-save-keeps-it-open.png")
+                await page.js(cancel)
+                await asyncio.sleep(0.5)
+                if box["backX"] is None:
+                    print("    the dashboard is in a version's state, so no way back")
+                else:
+                    await page.click_at(box["backX"], box["backY"])
+                    asked = await page.settle(
+                        f'!!{PANEL}.querySelector("dialog[open]")', 15
+                    )
+                    print(f"    the way back opens its preview: {asked}")
+                    print(f"    and leaves the box open: {await page.js(opened)}")
+                    await page.shot("25-simple-way-back-dialog.png")
+                    # Cancelled, always. Nothing on the bench is written by
+                    # a check that is only looking.
+                    await page.js(cancel)
+                    await asyncio.sleep(0.5)
+
+            # Left as it was found: the mode is stored per browser, and a
+            # check that changes what somebody sees next time is a check
+            # with a side effect.
+            await page.js(f'{ELEMENT}._setMode("advanced")')
 
             print("\nconsole:", page.console or "no errors, no warnings")
     finally:

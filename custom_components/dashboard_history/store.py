@@ -63,6 +63,11 @@ class Version:
     revision: str
     title: str
     description: str
+    # When the tag was made - the time `list_versions` already orders by,
+    # now carried rather than dropped. A panel listing nothing but
+    # versions needs it: titles repeat, times do not. Zero where there is
+    # none to have, and a reader shows nothing rather than 1970.
+    timestamp: int = 0
 
 
 @dataclass(frozen=True)
@@ -1264,6 +1269,7 @@ class HistoryStore:
                         revision=_as_text(marked),
                         title=title.strip(),
                         description=description.strip(),
+                        timestamp=made,
                     ),
                 )
             )

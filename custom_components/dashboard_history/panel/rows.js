@@ -37,6 +37,20 @@ export function sections(changes) {
 }
 
 /**
+ * The label for the state the dashboard holds right now.
+ *
+ * Exported because two modes draw it: the advanced one hangs it on the
+ * crowned row, the simple one on its current-state box. It was written
+ * out in both for a while, held equal by a comment in each place saying
+ * it matched the other - which is the invariant a copy breaks first.
+ * The word "state" is load-bearing (see `renderRow` below), and so is
+ * the tooltip; neither belongs to whichever mode happens to draw it.
+ */
+export const NOW_CHIP = `<span class="chip now"
+       title="This is the state the dashboard holds right now."
+       >current state</span>`;
+
+/**
  * A couple of names, and how many were left out.
  *
  * Measured on the test bench: eighteen versions sat on states equal to
@@ -130,9 +144,7 @@ export function renderRow({ change, newest = false, spokenFor = false, matching 
     spokenFor || !change.same_as_now
       ? ""
       : newest
-        ? `<span class="chip now"
-               title="This is the state the dashboard holds right now."
-               >current state</span>`
+        ? NOW_CHIP
         : `<span class="chip sameas"
                  title="The change described here left the dashboard in exactly the state it holds right now."
                  >same state as now</span>`;

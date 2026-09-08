@@ -889,6 +889,33 @@ async def _wait_for_newest(socket, key: str, phrase: str, seconds: float) -> str
     )
 
 
+async def _wait_for_floor(socket, key: str, seconds: float = RECORDING_WAIT) -> list:
+    """The versions of `key`, once its floor is among them.
+
+    An integration that answers used to be an integration that had
+    finished starting: `async_setup_entry` awaited the opening pass and
+    the floor behind it, so `wait_for_integration` covered both. Since
+    2026-09-07 both are a background task of the config entry - the pass
+    took 6.2 s of a 7.3 s setup on this bench and Home Assistant said so
+    in the log - and the floor now lands some seconds after the entry is
+    up. Which is the whole point, and the reason a check that looks for
+    it has to wait for it rather than assume it.
+
+    Waits for a floor, not for silence: the floor is what the checks
+    below read, and `v1.0.0` is the one version whose name says so.
+    """
+
+    async def fetch():
+        answer = await socket.call("dashboard_history/versions", dashboard=key)
+        return answer["versions"]
+
+    return await _wait_for(
+        fetch,
+        lambda versions: any(v["name"].endswith("/v1.0.0") for v in versions),
+        seconds,
+    )
+
+
 async def _wait_until_recorded(socket, key: str, seconds: float = RECORDING_WAIT):
     """Wait until the newest recorded state is the one the dashboard holds.
 
@@ -2642,9 +2669,10 @@ async def run_milestones(access: str) -> None:
         return
 
     async with Socket(access) as socket:
-        found = (await socket.call("dashboard_history/versions", dashboard=key))[
-            "versions"
-        ]
+        # Waited for rather than read straight: the floor arrives with
+        # the background task now, not with the entry. See
+        # `_wait_for_floor`.
+        found = await _wait_for_floor(socket, key)
         names = [v["name"].split("/")[-1] for v in found]
         # The floor, picked out by name rather than assumed to be the
         # only version there is. An instance that lives across a
@@ -2708,14 +2736,16 @@ async def run_milestones(access: str) -> None:
         # on `states[0]`, which is what is on the screen; going back to
         # it changes nothing, and that is not an offer. The design
         # record asks for the state "before anything happened".
+        # This dashboard's floor is laid by the same background task, and
+        # it is laid last - one dashboard at a time. Waited for on its
+        # own name rather than trusting the wait above to have covered
+        # it.
+        marks = await _wait_for_floor(socket, aged)
         states = (
             await socket.call(
                 "dashboard_history/history", dashboard=aged, limit=100_000
             )
         )["changes"]
-        marks = (await socket.call("dashboard_history/versions", dashboard=aged))[
-            "versions"
-        ]
         aged_floor = next(
             (v for v in marks if v["name"].endswith("/v1.0.0")), None
         )
@@ -2862,6 +2892,32 @@ async def run_keep_as_version(access: str) -> None:
             "and it is not marked as one nobody asked for",
             bool(mine) and mine[0].get("automatic") is False,
             str(mine[:1]),
+        )
+
+        # A version with no name at all, asked for the only way it can
+        # be: through the service, where nobody types. The panel falls
+        # back on the day's own date, so this is unreachable from the
+        # interface - but a tag once made is a tag for good, and the
+        # schema deliberately shapes without judging, so the refusal has
+        # to sit at the fence both ways in pass through.
+        before = (await socket.call("dashboard_history/versions", dashboard=key))[
+            "versions"
+        ]
+        blank = await socket.call(
+            "dashboard_history/create_version", dashboard=key, title="   "
+        )
+        check(
+            "a version with no name is refused rather than made",
+            blank.get("created") is None and bool(blank.get("error")),
+            str(blank),
+        )
+        after = (await socket.call("dashboard_history/versions", dashboard=key))[
+            "versions"
+        ]
+        check(
+            "and nothing was written while refusing it",
+            len(after) == len(before),
+            f"{len(before)} -> {len(after)}",
         )
 
 
