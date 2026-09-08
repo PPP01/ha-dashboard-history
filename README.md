@@ -420,6 +420,14 @@ back under the name it had rather than the name it started with.
   lists every one of those cases.
 - **It does not edit your dashboards behind your back.** Nothing is ever
   written without a preview you confirmed.
+- **It sees what Home Assistant sees, and nothing more.** Edit
+  `.storage/lovelace.<key>` by hand and no entry appears — until the next
+  restart. That is not a gap in the recorder: Home Assistant reads that
+  file once and serves its own dashboard from memory afterwards, so the
+  change is invisible on the dashboard too, and the next save overwrites
+  it. [Part 2 has the detail](#a-change-written-straight-to-storage).
+  Changes that arrive through Home Assistant — the UI, a service, the
+  API, an automation — are recorded in the same moment they happen.
 
 One thing worth knowing in plain terms: **the further back and the finer
 the operation, the more the tool has to recognise things by their
@@ -526,6 +534,67 @@ gone, for one of two reasons and no others:
 
 What is missing because of *later* changes keeps its button, under a line
 saying where it comes from.
+
+### When a change is recorded
+
+Three triggers, and no others:
+
+- **A save.** Home Assistant fires `lovelace_updated`; the recorder hears
+  it and commits that one dashboard within milliseconds. The listener is
+  subscribed *before* the opening pass begins, because the pass takes
+  about twenty seconds on the test bench and a save made in that window
+  was neither in the pass nor heard by a listener that did not exist yet.
+- **A dashboard created, renamed or deleted.** None of those is a save,
+  but all three move a panel, and `panels_updated` is fired. It arrives
+  in bursts, so the events are collapsed into one reconciliation ten
+  seconds later.
+- **Startup.** Every dashboard is read and compared against the history.
+
+Everything that reaches a dashboard through Home Assistant is covered by
+the first trigger — the UI, a service call, the WebSocket API, an
+automation, an MCP server that goes through `lovelace/config/save`. There
+is no separate path for any of them.
+
+#### A change written straight to `.storage`
+
+Edit `.storage/lovelace.<key>` by hand and the history will not see it —
+until the next restart of Home Assistant. Neither will Home Assistant.
+Its own dashboard object reads the file exactly once (verified in HA
+2026.8.3, `homeassistant/components/lovelace/dashboard.py`):
+
+```python
+# LovelaceStorage — the object behind a storage-mode dashboard
+async def async_json(self, force: bool) -> json_fragment:
+    if self._data is None:
+        await self._load()
+    return self._json_config or self._async_build_json()
+```
+
+Three things follow from that, and all three matter more than the
+missing history entry:
+
+- **The dashboard in your browser keeps showing the old state.** This is
+  the code path the frontend itself uses for `lovelace/config`.
+- **`force` does not help.** The parameter exists for YAML dashboards,
+  which pass it on; in the storage path it is never read. Reloading the
+  page returns the same cache, and there is no reload service for
+  dashboards — `lovelace.reload_resources` covers resources only.
+- **The next save overwrites your edit.** `async_save` assigns the cached
+  configuration and writes the file from it, so anything you put there by
+  hand is gone the moment somebody presses Save — or restores a state
+  through this integration.
+
+So editing those files is not a way to change a storage-mode dashboard,
+independently of this integration. The way in from outside is the API,
+and a change made that way is in the history in the same moment it is on
+the dashboard.
+
+One consequence worth naming, because this integration causes it: the
+opening pass reads every storage-mode dashboard, which fills Home
+Assistant's cache for all of them. Without it, a dashboard that had not
+been opened since the last restart would still have `_data is None`, and
+a hand-edited file would be picked up on first view. With it, that window
+is closed a few seconds after startup.
 
 ### Known limits, measured
 
