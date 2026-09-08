@@ -1410,16 +1410,20 @@ async def run_remove_version(access: str) -> None:
             done.get("applied") is True and done.get("name") == name,
             str(done),
         )
+        # `_versions_settled` answers bare names, not the dicts `listed`
+        # gives - it maps `v["name"]` internally and returns the strings.
+        # Indexing them again raises `TypeError: string indices must be
+        # integers`, which is where the first draft of this block went.
         after = await _versions_settled(socket, key)
         check(
             "the list no longer holds it",
-            name not in {v["name"] for v in after},
+            name not in after,
             name,
         )
         check(
             "and the bench is as it was found",
-            {v["name"] for v in after} == before,
-            f"{sorted({v['name'] for v in after})} vs {sorted(before)}",
+            set(after) == before,
+            f"{sorted(after)} vs {sorted(before)}",
         )
         # The state is the whole point: the mark went, the history did
         # not. Read back by revision, which is how going back to it works.
