@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - the flat path, used by pytest
     import versions as versioning
 
 from dulwich import porcelain
-from dulwich.errors import RefFormatError
+from dulwich.errors import MissingCommitError, RefFormatError
 from dulwich.repo import Repo
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,24 +85,124 @@ class Survey:
     last_meta: dict[str, str]
 
 
+@dataclass(frozen=True)
+class RevisionIndex:
+    """Which commits touched which dashboard, taken at one HEAD.
+
+    `by_key` holds each dashboard's own revisions, newest first - the
+    same entries, in the same order, that a walk filtered on its two
+    paths would hand back. `order` places every commit in that one walk,
+    which is what a cursor needs: `before` may name a commit of some
+    other dashboard, and "everything older than it" only means anything
+    against the whole order.
+
+    Taken at `head`, and worthless at any other: a rewrite moves every
+    revision from the first affected commit onwards.
+    """
+
+    head: str
+    by_key: dict[str, list[str]]
+    order: dict[str, int]
+    # What `survey` used to walk the history for a second time to learn:
+    # every name the history has ever held, and the blob of the
+    # `meta/<key>.yaml` a deletion removed - the newest such removal,
+    # which is the name and icon a gone dashboard last had.
+    names: set[str]
+    removed_meta: dict[str, bytes]
+
+
 def _as_text(value) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
-def _change(entry, notes: dict, previous: str | None) -> Change:
-    """One walk entry as a `Change`, with the predecessor handed in.
+def _change(commit, notes: dict, previous: str | None) -> Change:
+    """One commit as a `Change`, with the predecessor handed in.
 
     A function rather than a method: it knows nothing about the store,
-    and the entry it is given is the only thing it reads.
+    and the commit it is given is the only thing it reads. The commit
+    and not the walk entry it came in, because the index hands over
+    commits it looked up by id and never walked to.
     """
-    revision = _as_text(entry.commit.id)
+    revision = _as_text(commit.id)
     return Change(
         revision=revision,
-        timestamp=entry.commit.commit_time,
-        message=entry.commit.message.decode("utf-8").strip(),
+        timestamp=commit.commit_time,
+        message=commit.message.decode("utf-8").strip(),
         description=notes.get(revision, ""),
         previous=previous,
     )
+
+
+def _key_of(path: bytes) -> str | None:
+    """The dashboard a recorded path belongs to, or None.
+
+    The exact inverse of the two paths `_each_change` asks for, and it
+    has to stay that way: a key the index spells differently is a
+    dashboard whose history silently ends at the last read that walked.
+    `meta/` first, so `meta/home.yaml` is home's name and not a
+    dashboard of its own - and the rest untouched, so a legacy key with
+    a slash in it (see `_owns`) keeps the history it already has.
+    """
+    if not path.endswith(b".yaml"):
+        return None
+    if path.startswith(b"meta/"):
+        return path[len(b"meta/") : -len(b".yaml")].decode()
+    return path[: -len(b".yaml")].decode()
+
+
+@dataclass(frozen=True)
+class _Touched:
+    """What one walk entry says about the dashboards it changed."""
+
+    # Every dashboard the entry changed, by either of its two paths -
+    # what a walk filtered on those paths would have handed back.
+    keys: set[str]
+    # Names as `survey` counts them: top level only, so `meta/home.yaml`
+    # is home's name and never a dashboard called `meta/home`.
+    names: set[str]
+    # Where a deletion took `meta/<key>.yaml` away, the blob it took.
+    removed_meta: dict[str, bytes]
+
+
+def _touched(entry) -> _Touched:
+    """Read one walk entry once, for everything the index wants.
+
+    Both sides of every change, so a deletion counts as much as a write
+    - the removal of `home.yaml` is the most important thing that ever
+    happens to home. A merge hands its changes over as a list per
+    parent, which is the one shape that has to be unwrapped.
+
+    Three answers out of one pass because the pass is the expensive
+    part: `entry.changes()` diffs the commit against its parent, and
+    without dulwich's C extensions - which the Home Assistant container
+    has never had, see `_revision_index` - that is the whole cost of
+    reading this history.
+    """
+    keys: set[str] = set()
+    names: set[str] = set()
+    removed_meta: dict[str, bytes] = {}
+    for change in entry.changes():
+        for one in change if isinstance(change, list) else [change]:
+            for side in (one.old, one.new):
+                path = getattr(side, "path", None)
+                if not path or not path.endswith(b".yaml"):
+                    continue
+                key = _key_of(path)
+                if key is not None:
+                    keys.add(key)
+                # Top level only: meta/<key>.yaml is not a dashboard.
+                if b"/" not in path:
+                    names.add(path.decode()[: -len(".yaml")])
+            old_path = getattr(one.old, "path", None)
+            if (
+                old_path
+                and old_path.startswith(b"meta/")
+                and old_path.endswith(b".yaml")
+                and getattr(one.new, "path", None) is None
+            ):
+                gone = old_path[len("meta/") : -len(".yaml")].decode()
+                removed_meta.setdefault(gone, one.old.sha)
+    return _Touched(keys, names, removed_meta)
 
 
 def _owns(ref: bytes, key: str) -> bool:
@@ -137,6 +237,10 @@ class HistoryStore:
         # the survey on every recorded change, and each one is a walk over
         # the whole history.
         self._survey: tuple[str, Survey] | None = None
+        # Which commits touched which dashboard, and where each commit
+        # sits in the one order the walk hands them back. See
+        # `_revision_index` for why this exists at all.
+        self._index: RevisionIndex | None = None
 
     # -- writing -------------------------------------------------------
 
@@ -453,6 +557,15 @@ class HistoryStore:
                 return 0
             if key not in set(self.list_all_dashboards()):
                 return 0
+            # Every revision from the first affected commit onwards is
+            # about to change, so what was read at the old ones is worth
+            # nothing. The survey would notice by itself - it is keyed by
+            # HEAD and rebuilt whole - but the index carries itself
+            # forward from the HEAD it knows, and forward is exactly what
+            # a rewrite is not. Dropped before the rewrite, not after: a
+            # failure halfway through must not leave one behind either.
+            self._index = None
+            self._survey = None
             return self._forget(repo, key)
 
     def _forget(self, repo: Repo, key: str) -> int:
@@ -771,6 +884,34 @@ class HistoryStore:
         if repo is None:
             return
         notes = self.descriptions()
+        revisions = self._indexed_revisions(repo, key, before)
+        if revisions is not None:
+            for position, revision in enumerate(revisions):
+                following = (
+                    revisions[position + 1]
+                    if position + 1 < len(revisions)
+                    else None
+                )
+                yield _change(repo[revision.encode()], notes, following)
+            return
+        yield from self._walked_changes(repo, key, notes, limit, before)
+
+    def _walked_changes(
+        self,
+        repo: Repo,
+        key: str,
+        notes: dict,
+        limit: int | None,
+        before: str | None,
+    ) -> Iterator[Change]:
+        """`_each_change` the long way, by walking the history itself.
+
+        What this class did everywhere until the index arrived, kept for
+        the one question the index cannot answer: a `before` naming a
+        commit that is not in the walk at all. A cursor from a history
+        that has since been rewritten is such a commit - it still
+        resolves, and the walk from it still has ancestors to hand back.
+        """
         # Both paths: a rename touches only the metadata, and a change
         # that is recorded but never shown is the worst of both.
         paths = [f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()]
@@ -813,10 +954,168 @@ class HistoryStore:
                 # filtered on this dashboard's paths, so it is this
                 # dashboard's own predecessor and never the commit's
                 # parent, which may belong to somebody else entirely.
-                yield _change(held, notes, _as_text(entry.commit.id))
+                yield _change(held.commit, notes, _as_text(entry.commit.id))
             held = entry
         if held is not None:
-            yield _change(held, notes, None)
+            yield _change(held.commit, notes, None)
+
+    def _revision_index(self, repo: Repo) -> RevisionIndex | None:
+        """Which commits touched which dashboard, built once per HEAD.
+
+        The reason this exists: every dashboard shares one repository,
+        so a walk filtered on one dashboard's paths still steps over
+        every commit the others made, diffing each against its parent
+        to find out. The filter stops the entries coming out, never the
+        work going in. A dashboard with fewer changes than the page asks
+        for never reaches `max_entries` either, so it reads the history
+        to its very first commit to hand back four rows.
+
+        That cost is the *other* dashboards', and it grows as they are
+        added. Measured on the test bench on 2026-09-07, 45 dashboards
+        over 4454 commits: one page of `dh-probe` cost 7.2 s inside the
+        Home Assistant container, and the panel asks for a page and a
+        survey on every switch.
+
+        One walk answers it for every dashboard at once, and the answer
+        holds until HEAD moves. Keyed by HEAD like `_survey` and for the
+        same reason - a rewrite moves every revision from the first
+        affected commit onwards, and a stale index would hand back
+        revisions that no longer exist.
+        """
+        head = self._resolve(repo, "HEAD")
+        if head is None:
+            return None
+        cached = self._index
+        if cached is not None and cached.head == head:
+            return cached
+        found = None
+        if cached is not None:
+            found = self._extended_index(repo, cached, head)
+        if found is None:
+            found = self._built_index(repo, head)
+        self._index = found
+        return found
+
+    @staticmethod
+    def _built_index(repo: Repo, head: str) -> RevisionIndex:
+        """The index from nothing: one walk over the whole history.
+
+        The whole history, not the newest thousand commits. Capped, a
+        dashboard deleted a thousand saves ago would leave the panel's
+        list and could no longer be forgotten, silently - the invisible
+        gap this module exists to prevent.
+        """
+        by_key: dict[str, list[str]] = {}
+        order: dict[str, int] = {}
+        names: set[str] = set()
+        removed_meta: dict[str, bytes] = {}
+        for position, entry in enumerate(repo.get_walker()):
+            revision = _as_text(entry.commit.id)
+            order[revision] = position
+            touched = _touched(entry)
+            for key in touched.keys:
+                by_key.setdefault(key, []).append(revision)
+            names |= touched.names
+            # Newest first, so the first removal seen of a key is the
+            # last one that happened - which is the one wanted.
+            for key, blob in touched.removed_meta.items():
+                removed_meta.setdefault(key, blob)
+        return RevisionIndex(head, by_key, order, names, removed_meta)
+
+    @staticmethod
+    def _extended_index(
+        repo: Repo, cached: RevisionIndex, head: str
+    ) -> RevisionIndex | None:
+        """The cached index carried forward to `head`, or None.
+
+        None means "cannot be carried forward, build it again". Every
+        save moves HEAD, so without this the index would be rebuilt on
+        every recording and cost more than the walk it replaced.
+
+        Two ways to end up with None, and both have to stay: the old
+        HEAD may be gone entirely, and it may still be there without
+        being an ancestor - `forget` rewrites history, and then what is
+        cached describes commits that no longer exist. The second is
+        caught by the commit that arrives already known, because
+        `exclude` prunes nothing on a branch it is not on.
+        """
+        fresh: list[tuple[str, _Touched]] = []
+        try:
+            walker = repo.get_walker(
+                include=[head.encode()], exclude=[cached.head.encode()]
+            )
+            for entry in walker:
+                revision = _as_text(entry.commit.id)
+                if revision in cached.order:
+                    return None
+                fresh.append((revision, _touched(entry)))
+        except (KeyError, MissingCommitError):
+            # The old HEAD is not there any more. dulwich raises this
+            # while the walker is built or while it runs, depending on
+            # where the missing commit is reached, so both are caught in
+            # one place. `forget` drops the index before it rewrites and
+            # never gets here; this is for whatever else takes a commit
+            # out from under a running store - a repository somebody
+            # tidied by hand, most likely.
+            return None
+        if not fresh:
+            # HEAD moved without adding anything ahead of the old one:
+            # it went backwards, or sideways. Neither is an extension.
+            return None
+        # Everything already indexed slides back by what arrived in
+        # front of it, so position keeps meaning "how far from newest".
+        order = {
+            revision: position + len(fresh)
+            for revision, position in cached.order.items()
+        }
+        arrived: dict[str, list[str]] = {}
+        names = set(cached.names)
+        removed_meta: dict[str, bytes] = {}
+        for position, (revision, touched) in enumerate(fresh):
+            order[revision] = position
+            for key in touched.keys:
+                # `fresh` is newest first, so appending here keeps these
+                # in that order and they go in front as a block.
+                arrived.setdefault(key, []).append(revision)
+            names |= touched.names
+            for key, blob in touched.removed_meta.items():
+                removed_meta.setdefault(key, blob)
+        by_key = dict(cached.by_key)
+        for key, revisions in arrived.items():
+            by_key[key] = revisions + by_key.get(key, [])
+        # What arrived is newer than what was cached, so it wins - a
+        # dashboard deleted twice is remembered by its second deletion.
+        return RevisionIndex(
+            head, by_key, order, names, {**cached.removed_meta, **removed_meta}
+        )
+
+    def _indexed_revisions(
+        self, repo: Repo, key: str, before: str | None
+    ) -> list[str] | None:
+        """One dashboard's revisions from the index, newest first.
+
+        Three answers, and the difference between two of them matters:
+        a list is what to hand out, the empty list is "nothing to hand
+        out", and None is "the index cannot answer this" - only then
+        does the caller walk.
+        """
+        index = self._revision_index(repo)
+        if index is None:
+            return None
+        revisions = index.by_key.get(key, [])
+        if before is None:
+            return revisions
+        resolved = self._resolve(repo, before)
+        if resolved is None:
+            # An unknown `before` yields nothing, as the docstring of
+            # `list_changes` promises - not a walk that finds plenty.
+            return []
+        at = index.order.get(resolved)
+        if at is None:
+            # Resolves, but is not in this walk: outside the index's
+            # reach, so let the walk answer it.
+            return None
+        return [r for r in revisions if index.order[r] > at]
 
     def search_changes(
         self,
@@ -936,16 +1235,23 @@ class HistoryStore:
         can sit in between, and its state is no state of this dashboard
         at all - reading it would answer a question nobody asked.
 
-        Walked from the change itself, filtered on the dashboard's paths,
-        two entries deep: the change and the one before it. Listing the
-        dashboard's whole history to find a neighbour cost a walk over
-        all of it - and, capped at a thousand, answered None beyond that,
-        which every caller reads as "the first recorded state".
+        One step along the list the index already holds, which is what
+        the question actually is. It used to be walked from the change
+        itself, filtered on the dashboard's paths and two entries deep -
+        fast only while those two entries sit close together. A
+        dashboard with little history of its own has them far apart,
+        with every other dashboard's commits in between, and the walk
+        steps over all of them. Measured on the test bench on
+        2026-09-07, 45 dashboards over 4454 commits: the current state
+        of `dh-probe` (77 entries) took 2637 ms, `allgemein-strom` (673
+        entries) 53 ms. Less history of your own meant a longer wait.
+
+        The walk is kept for the one case the index cannot answer: a
+        revision that resolves but is not in this walk at all.
 
         None when `revision` is not a change of this dashboard at all:
-        the first entry the filtered walk yields would then be some
-        earlier change of it, and calling that the predecessor of a
-        stranger would be wrong.
+        the entry before it is then some earlier change of it, and
+        calling that the predecessor of a stranger would be wrong.
         """
         repo = self._repo()
         if repo is None:
@@ -953,6 +1259,14 @@ class HistoryStore:
         full = self._resolve(repo, revision)
         if full is None:
             return None
+        index = self._revision_index(repo)
+        if index is not None and full in index.order:
+            revisions = index.by_key.get(key, [])
+            try:
+                at = revisions.index(full)
+            except ValueError:
+                return None
+            return revisions[at + 1] if at + 1 < len(revisions) else None
         walker = repo.get_walker(
             include=[full.encode()],
             paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
@@ -1136,43 +1450,8 @@ class HistoryStore:
         repo = self._repo()
         if repo is None or self._resolve(repo, "HEAD") is None:
             return []
-        return sorted(self._walk_history(repo)[0])
-
-    @staticmethod
-    def _walk_history(repo: Repo) -> tuple[set[str], dict[str, bytes]]:
-        """One walk over the whole history: every name, and every last meta.
-
-        The whole history, not the newest thousand commits. Capped, a
-        dashboard deleted a thousand saves ago left the panel's list and
-        could no longer be forgotten, silently - the invisible gap this
-        module exists to prevent. About a quarter of a second per
-        thousand commits.
-
-        The second half maps a key to the blob of the `meta/<key>.yaml`
-        its deletion removed - the newest such removal, since the walk
-        runs newest first. That is the name and icon a gone dashboard
-        last had.
-        """
-        names: set[str] = set()
-        removed_meta: dict[str, bytes] = {}
-        for entry in repo.get_walker():
-            for change in entry.changes():
-                for one in change if isinstance(change, list) else [change]:
-                    for side in (one.old, one.new):
-                        path = getattr(side, "path", None)
-                        # Top level only: meta/<key>.yaml is not a dashboard.
-                        if path and b"/" not in path and path.endswith(b".yaml"):
-                            names.add(path.decode()[: -len(".yaml")])
-                    old_path = getattr(one.old, "path", None)
-                    if (
-                        old_path
-                        and old_path.startswith(b"meta/")
-                        and old_path.endswith(b".yaml")
-                        and getattr(one.new, "path", None) is None
-                    ):
-                        key = old_path[len("meta/") : -len(".yaml")].decode()
-                        removed_meta.setdefault(key, one.old.sha)
-        return names, removed_meta
+        index = self._revision_index(repo)
+        return sorted(index.names) if index is not None else []
 
     def survey(self) -> Survey:
         """Every dashboard ever, which are live, and what each is called.
@@ -1199,7 +1478,13 @@ class HistoryStore:
         if cached is not None and cached[0] == head:
             return cached[1]
 
-        names, removed_meta = self._walk_history(repo)
+        # From the index, which walked for this as well. Kept apart from
+        # the index all the same: this reads blobs at HEAD, and those
+        # change under a HEAD the index carries itself forward across.
+        index = self._revision_index(repo)
+        if index is None:
+            return Survey([], set(), {})
+        names, removed_meta = index.names, index.removed_meta
         tree = repo[repo[head.encode()].tree]
         live = {
             entry.path.decode()[: -len(".yaml")]

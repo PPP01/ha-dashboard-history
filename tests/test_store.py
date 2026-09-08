@@ -1,8 +1,10 @@
 """Tests for the git-backed history store."""
 
 import threading
+from contextlib import contextmanager
 
 import pytest
+from dulwich.object_store import DiskObjectStore
 from dulwich.repo import Repo
 import store as store_module
 from store import HistoryStore, Version, _as_text
@@ -743,6 +745,26 @@ def test_a_lightweight_tag_in_a_namespace_is_reported(store):
     assert offered["patch"] in _versions(store)
 
 
+def test_a_version_says_when_it_was_made(store):
+    # The panel's simple mode lists nothing but versions, and versions
+    # a routine makes carry the same title over and over - on the test
+    # bench a whole screen of them read alike. The time is one of the
+    # two marks that tell them apart, and it was read here already, to
+    # sort by, then dropped before any caller could see it.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+
+    made = store.list_versions("home")[0]
+    assert made.timestamp > 0
+
+    # A tag made by hand carries no time of its own. It is reported all
+    # the same, with the time of the commit it marks - the one this list
+    # is already ordered by, so the panel draws no order of its own.
+    _lightweight_tag(store, "home/v1.1.0", first)
+    marked = {v.name: v.timestamp for v in store.list_versions("home")}
+    assert marked["home/v1.1.0"] == store.list_changes("home")[0].timestamp
+
+
 def test_a_name_git_cannot_accept_is_refused_as_an_answer(store):
     # dulwich raises RefFormatError, which inherits straight from
     # Exception: `operations.py` catches ValueError, the WebSocket wrapper
@@ -1381,3 +1403,251 @@ def test_an_empty_search_finds_nothing_rather_than_everything(store):
     store.write_snapshot("home", "a: 1\n", "home: first")
     assert store.search_changes("home", "") == []
     assert store.search_changes("home", "   ") == []
+
+
+# -- the cost of a read -------------------------------------------------
+#
+# Measured as objects read out of the repository, not as seconds. The
+# thing being pinned down is how much work a read does, and a second is
+# a poor way to say that: it moves with the machine, with the load, and
+# on this project with whether dulwich found its C extensions. Counting
+# reads says the same thing and says it the same way everywhere.
+
+
+@contextmanager
+def _counting_reads():
+    """Count every object read out of any repository inside the block."""
+    seen = {"objects": 0}
+    original = DiskObjectStore.__getitem__
+
+    def counted(self, sha):
+        seen["objects"] += 1
+        return original(self, sha)
+
+    DiskObjectStore.__getitem__ = counted
+    try:
+        yield seen
+    finally:
+        DiskObjectStore.__getitem__ = original
+
+
+def test_reading_one_dashboard_does_not_grow_with_the_others(tmp_path):
+    """One dashboard's page costs its own history, not everybody's.
+
+    Every dashboard shares one repository, so a walk filtered on one of
+    them still steps over every commit the others made. The walk stops
+    at `limit` entries - but a dashboard with fewer changes than that
+    never reaches it, and those are precisely the ones that end up
+    reading the whole history to hand back four rows.
+
+    Two repositories, same two changes to `small`, different amounts of
+    other people's history. What `small` costs must not tell them apart.
+    """
+
+    def reads_for(noise: int) -> int:
+        history = HistoryStore(tmp_path / f"h{noise}")
+        history.ensure()
+        for i in range(noise):
+            history.write_snapshot("noise", f"a: {i}\n", "noise")
+        history.write_snapshot("small", "b: 1\n", "small first")
+        history.write_snapshot("small", "b: 2\n", "small second")
+        # The store may read the history once to get its bearings; what
+        # is measured is what a read costs after that.
+        history.list_changes("small")
+        with _counting_reads() as seen:
+            changes = history.list_changes("small")
+        assert [c.message for c in changes] == ["small second", "small first"]
+        return seen["objects"]
+
+    quiet = reads_for(10)
+    busy = reads_for(60)
+    assert busy <= quiet + 10, (
+        f"reading `small` cost {quiet} objects beside 10 other commits and "
+        f"{busy} beside 60: the cost is the other dashboards', not its own"
+    )
+
+
+def test_a_new_change_costs_the_change_and_not_the_history(tmp_path):
+    """A recording costs the recording, not the history behind it.
+
+    The index is taken at one HEAD, and every save moves HEAD. Thrown
+    away and built again each time it would be no cheaper than the walk
+    it replaced - on an installation that records all day, never
+    cheaper. What arrived since the last one is what has to be read.
+
+    A ceiling rather than a comparison between two sizes, because what
+    a read costs absolutely is not steady: dulwich packs loose objects
+    as it goes, and the same repository answers in 22 reads or in 61
+    depending on when that happened. What does not move is the order of
+    magnitude. Measured on 2026-09-07 behind 240 other commits: 43 reads
+    carrying the index forward against 970 rebuilding it, and the same
+    at 60 commits was 51 against 250. The ceiling sits between the two
+    with room for the packing to breathe.
+    """
+    history = HistoryStore(tmp_path / "h")
+    history.ensure()
+    for i in range(120):
+        history.write_snapshot("noise", f"a: {i}\n", "noise")
+    history.write_snapshot("small", "b: 1\n", "small first")
+    history.list_changes("small")
+
+    history.write_snapshot("small", "b: 2\n", "small second")
+    with _counting_reads() as seen:
+        changes = history.list_changes("small")
+
+    assert [c.message for c in changes] == ["small second", "small first"]
+    assert seen["objects"] < 150, (
+        f"reading after one save cost {seen['objects']} objects behind 120 "
+        "other commits: the index was thrown away and built again, so the "
+        "save paid for the whole history"
+    )
+
+
+def test_forgetting_a_dashboard_leaves_no_stale_index_behind(store):
+    """A rewrite moves every revision; the index must not survive it.
+
+    `forget` is the one operation that rewrites history, and every
+    commit from the first affected one onwards comes out with a new id.
+    An index carried across that would hand back revisions that are no
+    longer reachable - and `read_at` on one of those is the silent
+    half-truth this project exists to prevent.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    # Build the index against the history as it stands now.
+    assert [c.message for c in store.list_changes("home")] == [
+        "home second",
+        "home first",
+    ]
+
+    store.forget("gone")
+
+    assert [c.message for c in store.list_changes("home")] == [
+        "home second",
+        "home first",
+    ]
+    assert store.list_changes("gone") == []
+    # And every revision still handed out is one that is really there.
+    for change in store.list_changes("home"):
+        assert store.read_at("home", change.revision) is not None
+
+
+def test_a_new_change_does_not_make_the_survey_walk_again(tmp_path):
+    """The survey costs what arrived too, not the history behind it.
+
+    `survey` is keyed by HEAD, so it is free until anything is recorded
+    - and then it walks the whole history again, which is precisely the
+    moment the panel asks for it. An installation that records all day
+    never gets the cached one. The walk it needs is the walk the index
+    already did.
+
+    A ceiling for the same reason as the test above: the number moves
+    with packing, its order of magnitude does not.
+    """
+    history = HistoryStore(tmp_path / "h")
+    history.ensure()
+    for i in range(120):
+        history.write_snapshot("noise", f"a: {i}\n", "noise")
+    history.survey()
+
+    history.write_snapshot("small", "b: 1\n", "small first")
+    with _counting_reads() as seen:
+        found = history.survey()
+
+    assert "small" in found.names
+    assert "small" in found.live
+    assert seen["objects"] < 150, (
+        f"the survey cost {seen['objects']} objects after one save behind "
+        "120 other commits: it walked the whole history again"
+    )
+
+
+def test_an_index_built_across_a_rewrite_is_not_kept(store, monkeypatch):
+    """A read that was overtaken by a rewrite must not leave its index.
+
+    `forget` drops the index and takes the write lock; reads take
+    neither. So a read that started before the rewrite finishes after
+    it, holding an index of a history that no longer exists - and puts
+    it back, on top of the empty slot `forget` just cleared. Every read
+    after that is served from it.
+
+    The read that was overtaken cannot be saved; it answers from what it
+    saw, and that is what any snapshot read means. What must not happen
+    is that it becomes the answer for everybody else.
+
+    This passed the first time it was run, which is worth saying plainly:
+    the guard is already there, in `_extended_index`. `forget` leaves the
+    old HEAD unreadable, so carrying the stale index forward raises
+    `MissingCommitError` and the index is built again from what is
+    actually in the repository. The test is here to keep that true - the
+    guard reads like belt and braces until you see what it is holding
+    up.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+
+    overtaken = store._built_index
+    # Once, and guarded: `forget` asks for the dashboard list, which
+    # builds the index, which would call this again.
+    already = []
+
+    def build_and_be_overtaken(repo, head):
+        found = overtaken(repo, head)
+        if not already:
+            already.append(True)
+            store.forget("gone")
+        return found
+
+    monkeypatch.setattr(store, "_built_index", build_and_be_overtaken)
+    try:
+        list(store.list_changes("home"))
+    except KeyError:  # pragma: no cover - the overtaken read may not finish
+        pass
+    monkeypatch.undo()
+
+    # Everything handed out from here on has to be really there.
+    changes = store.list_changes("home")
+    assert [c.message for c in changes] == ["home second", "home first"]
+    for change in changes:
+        assert store.read_at("home", change.revision) is not None
+
+
+def test_the_predecessor_does_not_grow_with_the_other_dashboards(tmp_path):
+    """Finding the entry before this one costs this dashboard's history.
+
+    The neighbour of a change is one step along a list the index already
+    holds. Walked for instead, it is filtered on this dashboard's two
+    paths and stops after two entries - which is fast only when those
+    two are close together. A dashboard with little history of its own
+    has them far apart, with everybody else's commits in between, and
+    the walk steps over every one of them.
+
+    Measured on the test bench on 2026-09-07, 45 dashboards over 4454
+    commits: expanding the current state of `dh-probe` (77 entries of
+    its own) waited 2637 ms on this, against 53 ms for `allgemein-strom`
+    (673 entries). Less history of your own, longer wait - which is
+    exactly backwards.
+    """
+
+    def reads_for(noise: int) -> int:
+        history = HistoryStore(tmp_path / f"p{noise}")
+        history.ensure()
+        history.write_snapshot("small", "b: 1\n", "small first")
+        # In between the two, so the walk has to step over them.
+        for i in range(noise):
+            history.write_snapshot("noise", f"a: {i}\n", "noise")
+        history.write_snapshot("small", "b: 2\n", "small second")
+        newest = history.list_changes("small")[0].revision
+        with _counting_reads() as seen:
+            found = history.previous_change("small", newest)
+        assert found is not None
+        return seen["objects"]
+
+    quiet = reads_for(10)
+    busy = reads_for(60)
+    assert busy <= quiet + 20, (
+        f"the predecessor cost {quiet} objects with 10 commits in between "
+        f"and {busy} with 60: it is the other dashboards being walked past"
+    )
