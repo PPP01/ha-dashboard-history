@@ -992,10 +992,12 @@ Zwei Anmerkungen für den Umsetzenden, beide über die Attrappe und nicht über 
 - [ ] **Step 2: Run them to verify they fail**
 
 ```bash
-python3 -m pytest tests/test_panel_behaviour.py -k "bin or removing or pen_stays" -v
+python3 -m pytest tests/test_panel_behaviour.py -k "bin or dialog or confirming or cancelling or pen_stays" -v
 ```
 
 Erwartet: `SyntaxError`/`TypeError` aus Node — `rows.bin` ist keine Funktion, `el._removeVersion` existiert nicht.
+
+⚠️ **Der Ausdruck hieß bis zum 2026-09-08 `-k "bin or removing or pen_stays"` und wählte die vier Dialog-Fälle nicht aus.** `removing` ist der Name der **Fixture**, nicht der Tests: die heißen `test_the_dialog_is_filled_from_a_preview_the_server_answered`, `…_says_the_number_comes_free_where_it_does`, `test_confirming_sends_confirm_…` und `test_cancelling_sends_no_second_call`, und `-k` liest Testnamen. Nachgezählt beim Review: von 136 Fällen wählte der alte Ausdruck **5** aus, darunter keinen einzigen `_removeVersion`-Fall — die Hälfte des RED-Schritts bewies also nichts. Dieselbe Klasse Fehler wie der Grep in Task 5: ein Ausdruck, der *etwas* trifft, sieht aus wie einer, der das Richtige trifft. Wer ihn anfasst, zählt mit `--collect-only` nach.
 
 - [ ] **Step 3: Add `bin` to `rows.js`**
 
