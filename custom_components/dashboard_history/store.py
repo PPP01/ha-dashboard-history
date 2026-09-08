@@ -724,10 +724,12 @@ class HistoryStore:
 
         Resolved here rather than left to `tag_create`, which takes any
         object at all: a blob id makes a tag that reads back as a version
-        and can never be returned to - and a version, unlike a
-        description, has nothing that deletes it again. Refused as a
-        ValueError, the same kind of answer a colliding name gives, so the
-        one place that already catches those needs no second branch.
+        and can never be returned to. Such a tag can be taken away since
+        decision 18, and it is still refused here - a version somebody
+        has to create and then remove again is a fault, not a way of
+        working. Refused as a ValueError, the same kind of answer a
+        colliding name gives, so the one place that already catches those
+        needs no second branch.
         """
         repo = self._repo()
         found = None if repo is None else self._resolve(repo, revision or "HEAD")

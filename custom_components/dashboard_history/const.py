@@ -8,9 +8,14 @@ DOMAIN = "dashboard_history"
 # The WebSocket command and the service both take it, and while it was
 # written out twice they disagreed: one required a title, the other
 # accepted any dict at all - so `keep_as_version: {}` with `confirm:
-# true` made a real tag with an empty title, and nothing in this
-# integration can delete a version again. A schema stated once cannot
+# true` made a real tag with an empty title. A schema stated once cannot
 # drift from itself.
+#
+# Such a tag can be taken away since decision 18, and the schema is
+# still the right place to stop it being made: a version somebody has to
+# create and then remove again is a fault, not a way of working. The
+# sentence here used to end "and nothing in this integration can delete
+# a version again", which excused the gap instead of arguing the rule.
 #
 # Shaped here, never judged: an unknown level is answered by operations
 # with a sentence the panel can show, and a schema that refused first

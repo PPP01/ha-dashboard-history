@@ -818,14 +818,10 @@ async def async_create_version(
     if not title.strip():
         # A version is a name for a state, so one without a name is not
         # a version - it is a row somebody cannot pick out of a list
-        # again, and this integration has nothing that deletes a tag.
-        # `const.KEEP_AS_VERSION` deliberately shapes without judging,
-        # and `vol.Required("title"): str` accepts the empty string, so
-        # the judgement belongs here - at the fence both ways in pass
-        # through, the service and the button alike. Not filled in for:
-        # the panel already falls back on the day's own date before it
-        # asks, so anything arriving here empty is a caller's mistake,
-        # and answering it is worth more than guessing at a name.
+        # again, and leaving a field blank is not a way of saying
+        # anything. (It used to say "and this integration has nothing
+        # that deletes a tag"; since decision 18 it has, and the fence
+        # stands on its own reason instead.)
         return {"created": None, "error": "a version needs a title"}
     if not revision:
         # Emphatically not HEAD, which is what the store would fall back
@@ -900,8 +896,10 @@ async def async_retitle_version(
         # The same fence `async_create_version` puts up, for the same
         # reason: a version without a name is a row nobody can pick out
         # of a list again. Emptying the field would be a way to *unname*
-        # a version, and unlike a description there is nothing that would
-        # put a name back.
+        # a version, and that is not what an empty field means - whoever
+        # wants the version gone says so with `remove_version`, which
+        # asks first. A form whose emptiness destroys something would be
+        # a trap.
         return {"applied": False, "error": "a version needs a title"}
     try:
         written = await hass.async_add_executor_job(

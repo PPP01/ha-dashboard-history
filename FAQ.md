@@ -62,6 +62,19 @@ This works because versions group and never squash. Nothing is
 overwritten and nothing is thrown away, so an extra name is never the
 destructive option that renaming would be.
 
+**Or take the wrong one away.** Since a version can be removed, a
+number that was given out by mistake is not a permanent fixture: remove
+the version and the mark is gone, while the state it pointed at stays
+in the history exactly where it was. If the one you remove carries the
+highest number, that number becomes free again and the next version you
+create will use it — which is the short way out of "I clicked patch and
+meant minor".
+
+What this does not do is move a version. Removing one and creating
+another is two acts, and the second is addressed at whatever state you
+point it at. That is the difference from renaming a number, and it is
+the reason the number still is not typed.
+
 ### What you *can* change, at any time
 
 - The **title** and the **description** of any version, in both views,
@@ -73,9 +86,17 @@ destructive option that renaming would be.
 - Which **state** a version marks never changes. Renaming rewrites the
   wording and touches neither the dashboard nor the history, so it needs
   no confirmation, exactly like describing a change.
+- Whether a version exists **at all**, in both views, through the bin on
+  the version — or with the `dashboard_history.remove_version` service.
+  It asks first, and without `confirm` it answers with the words it
+  would take. The state stays either way; what cannot be written back
+  is the title and description, so the confirmation is there to be read
+  rather than clicked through.
 
 One thing cannot be undone by this route: a version cannot be left
 without a title. Emptying the field is refused rather than accepted,
 because a version with no name is a row you cannot pick out of a list
-again — and unlike a description, there is nothing that would put a name
-back.
+again — and because leaving a field blank is not a way of saying
+anything. If what you want is for the version to be gone, the bin says
+that plainly and asks you first; a form whose emptiness destroys
+something would be a trap.

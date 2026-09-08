@@ -828,6 +828,7 @@ dashboard's internal id (`energie_2`); the two are not the same string.
 | `next_versions` | What the next patch, minor and major would be called |
 | `create_version` | Name a recorded state as a version |
 | `retitle_version` | Give an existing version a new title and description |
+| `remove_version` | Take a version's mark away — the state it named stays (needs `confirm`) |
 | `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
 | `debug_snapshot` | What the integration currently sees |
 
@@ -839,10 +840,11 @@ Three notes for scripting:
   revision, which is how a script reaches a version the same way the panel
   does. It also takes `keep_as_version` to mark the state it is about to
   replace.
-- `create_version` requires a non-empty title. A version without a name is
-  a row nobody can pick out of a list again, and nothing in this
-  integration deletes a tag. `retitle_version` requires one for the same
-  reason, so it cannot be used to take a name away.
+- `create_version` requires a non-empty title. A version without a name
+  is a row nobody can pick out of a list again, and leaving a field blank
+  is not a way of saying anything. `retitle_version` requires one for the
+  same reason, so it cannot be used to take a name away — that is what
+  `remove_version` is for, and it says so and asks first.
 - `retitle_version` changes a version's **wording only**. The number it
   is addressed by, the state it marks and the time it was made all stay —
   so the order of the version list does not shift under a correction.
