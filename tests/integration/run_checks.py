@@ -1164,12 +1164,12 @@ def _same_content(changes: list, one: str, other: str) -> bool:
 async def run_forget(access: str) -> None:
     """Forgetting a deleted dashboard for good.
 
-    The only irreversible operation here, and the only one that rewrites
-    the stored history. Which is why the interesting check is not that the
-    dashboard is gone - that is easy - but that a description on a
-    *different* dashboard survived. Descriptions are git notes keyed by
-    commit sha, and a rewrite changes every sha; carrying them across is
-    the part that can go silently wrong.
+    The only operation here that rewrites the stored history. Which is
+    why the interesting check is not that the dashboard is gone - that is
+    easy - but that a description on a *different* dashboard survived.
+    Descriptions are git notes keyed by commit sha, and a rewrite changes
+    every sha; carrying them across is the part that can go silently
+    wrong.
     """
     key = "dh-forget-check"
     async with Socket(access) as socket:
@@ -2668,7 +2668,7 @@ async def run_retitle(access: str) -> None:
 
         # An empty title is refused rather than accepted. A version
         # without a name is a row nobody can pick out of a list again,
-        # and nothing here deletes a tag.
+        # and leaving a field blank is not a way of saying anything.
         empty = await rename(key, was["name"], "   ")
         check(
             "an empty title is refused with a sentence",

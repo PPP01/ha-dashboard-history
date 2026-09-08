@@ -2154,6 +2154,7 @@ console.log(JSON.stringify({
     badge: count(plain, "class=\\"chip now\\""),
     undo: count(plain, "Undo / Go back"),
     pens: count(plain, "data-retitle="),
+    bins: count(plain, "data-remove="),
   },
   filtered: {
     standing: filtered.includes("in the state of v1.2.0"),
@@ -2251,6 +2252,16 @@ def test_every_row_offers_a_way_to_rename_its_version(simple_mode):
     # *button* - it holds the live state, it is where you are - has any
     # bearing on this one.
     assert simple_mode["plain"]["pens"] == 4
+
+
+def test_every_row_in_the_simple_mode_offers_a_way_to_remove_its_version(
+    simple_mode,
+):
+    # The mode a fresh panel opens in, and the one `look_at_panel.py`
+    # never reads - it only checks the advanced head. Without this, the
+    # bin could be deleted from `simple.js` and nothing here would
+    # notice.
+    assert simple_mode["plain"]["bins"] == 4
 
 
 def test_the_current_state_carries_the_badge_the_other_mode_carries(simple_mode):
@@ -2536,6 +2547,8 @@ def test_a_version_that_is_not_in_the_list_opens_nothing(retitling):
 
 _ROWS = """
 const rows = await import(new URL("./panel/rows.js", %(url)s).href);
+const annotated = { name: "dash/v1.0.0", title: "First", annotated: true };
+const byHand = { name: "dash/v2.0.0", title: "", annotated: false };
 
 // A version marks a state, so it heads the section running from its own
 // change downwards to the next version below. Everything above the
@@ -2601,10 +2614,15 @@ console.log(JSON.stringify({
     .includes("same state as v1.0.0"),
   pen: head(false, 2).includes('data-retitle="dash/v1.0.0"'),
   sharedPens: (shared.match(/data-retitle=/g) || []).length,
+  sharedBins: (shared.match(/data-remove=/g) || []).length,
   penOnAHandMadeTag: rows.pen({ name: "dash/by-hand", title: "", annotated: false }),
   penOnATitlelessAnnotatedTag: rows.pen({
     name: "dash/odd", title: "", annotated: true,
   }).includes("data-retitle"),
+  binOnAnnotated: rows.bin(annotated).includes("data-remove"),
+  binOnByHand: rows.bin(byHand).includes("data-remove"),
+  binCarriesTheName: rows.bin(annotated).includes('data-remove="dash/v1.0.0"'),
+  binIsRevealedLikeThePen: rows.bin(annotated).includes('class="pen bin"'),
 }));
 """
 
@@ -2654,6 +2672,9 @@ def test_every_version_a_head_names_can_be_renamed(row_parts):
     # renameable in the simple mode and nowhere else.
     assert row_parts["pen"] is True
     assert row_parts["sharedPens"] == 2
+    # The bin is offered on every version, unlike the pen, so it needs
+    # the same twin assertion to be exercised at all in this shape.
+    assert row_parts["sharedBins"] == 2
 
 
 def test_a_version_made_by_hand_gets_no_pen(row_parts):
@@ -3883,72 +3904,26 @@ def test_with_nothing_but_deleted_dashboards_one_of_those_is_opened(opening):
     assert opening["deadOnly"] == ["gone"]
 
 
-_CONTROLS = """
-const rows = await import(%(rows)s);
-const annotated = { name: "dash/v1.0.0", title: "First", annotated: true };
-const byHand = { name: "dash/v2.0.0", title: "", annotated: false };
-console.log(JSON.stringify({
-  penOnAnnotated: rows.pen(annotated).includes("data-retitle"),
-  penOnByHand: rows.pen(byHand),
-  binOnAnnotated: rows.bin(annotated).includes("data-remove"),
-  binOnByHand: rows.bin(byHand).includes("data-remove"),
-  binCarriesTheName: rows.bin(annotated).includes('data-remove="dash/v1.0.0"'),
-  binIsRevealedLikeThePen: rows.bin(annotated).includes('class="pen bin"'),
-}));
-"""
-
-
-@pytest.fixture(scope="module")
-def controls(tmp_path_factory):
-    """The two controls a version row carries, imported as a module.
-
-    `rows.js` is pure - data in, markup out, no `this` - so it needs no
-    stand-in for the browser at all. Imported rather than read with a
-    regex, because what is being checked is a rule with a branch in it.
-    """
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is not installed; the panel's logic cannot be run here")
-    harness = tmp_path_factory.mktemp("panel") / "controls.mjs"
-    rows = PANEL.parent / "panel" / "rows.js"
-    harness.write_text(
-        _CONTROLS % {"rows": json.dumps(rows.as_uri())}, encoding="utf-8"
-    )
-    run = subprocess.run(
-        [node, str(harness)], capture_output=True, text=True, timeout=60, check=False
-    )
-    assert run.returncode == 0, run.stderr
-    return json.loads(run.stdout.strip().splitlines()[-1])
-
-
-def test_the_pen_stays_off_a_version_made_by_hand(controls):
-    # Unchanged, and here as the control for the test below it: the two
-    # rules differ, and a change that quietly aligned them would be
-    # caught by nothing else.
-    assert controls["penOnAnnotated"] is True
-    assert controls["penOnByHand"] == ""
-
-
-def test_the_bin_is_offered_on_a_version_made_by_hand_too(controls):
+def test_the_bin_is_offered_on_a_version_made_by_hand_too(row_parts):
     # The one place the two controls part company. Renaming a
     # lightweight tag is refused by the server, so a pen there could only
     # ever produce that sentence; removing one is allowed, and has to be
     # offered, or a hand-made tag would hold its number for ever.
-    assert controls["binOnAnnotated"] is True
-    assert controls["binOnByHand"] is True
+    assert row_parts["binOnAnnotated"] is True
+    assert row_parts["binOnByHand"] is True
 
 
-def test_the_bin_names_the_version_it_would_remove(controls):
-    assert controls["binCarriesTheName"] is True
+def test_the_bin_names_the_version_it_would_remove(row_parts):
+    assert row_parts["binCarriesTheName"] is True
 
 
-def test_the_bin_is_revealed_by_the_same_class_as_the_pen(controls):
+def test_the_bin_is_revealed_by_the_same_class_as_the_pen(row_parts):
     # The stylesheet reveals `.pen` from a class on whatever holds it,
     # rather than from a list of the buttons that exist - the comment
     # there says why, and the failure mode of a fourth place forgetting
     # itself is silent invisibility. So the bin carries that class too
     # instead of earning a fifth selector.
-    assert controls["binIsRevealedLikeThePen"] is True
+    assert row_parts["binIsRevealedLikeThePen"] is True
 
 
 _REMOVE_VERSION = """
@@ -4011,24 +3986,56 @@ await settle();
 const cancelDialog = two.shadowRoot.querySelector("dialog.remove");
 // Read before the dialog is closed - this is the negative case for the
 // one sentence in the whole dialog somebody acts on. Without it, a
-// panel that dropped the `facts.highest` branch and printed "becomes
-// free" unconditionally would still pass every test here.
+// panel that dropped the `facts.highest` branch and printed "free
+// again" unconditionally would still pass every test here.
 const cancelBody = cancelDialog.querySelector(".body").innerHTML;
 cancelDialog.returnValue = "cancel";
 cancelDialog.close();
 await settle();
 await cancelling;
 
+// And a third run: the wordless lightweight tag `bin()` exists to
+// extend the offer to. Neither a title nor a description, so `words`
+// must fall back, the "goes with it" paragraph has nothing true left to
+// say and must not appear, and there is no description text to render
+// either - the dialog must not claim a loss that is not real.
+const three = new Panel();
+three.shadowRoot = node();
+three._render = () => {};
+three._selected = "dash";
+three._versions = el._versions;
+const threeCalls = [];
+three._call = (type, extra) =>
+  new Promise((resolve) => threeCalls.push({ type, extra, resolve }));
+three._refresh = async () => {};
+const wordless = three._removeVersion("dash/by-hand");
+await settle();
+threeCalls[0].resolve({
+  applied: false, name: "dash/by-hand", title: "", description: "",
+  revision: "z", automatic: false, highest: false,
+});
+await settle();
+const wordlessDialog = three.shadowRoot.querySelector("dialog.remove");
+const wordlessBody = wordlessDialog.querySelector(".body").innerHTML;
+wordlessDialog.returnValue = "cancel";
+wordlessDialog.close();
+await settle();
+await wordless;
+
 console.log(JSON.stringify({
   asked: { type: asked.type, extra: asked.extra },
   confirmed: confirmed && { type: confirmed.type, extra: confirmed.extra },
-  saysTheNumberComesFree: bodyWhenOpened.includes("becomes free"),
-  hidesTheNumberSentence: !cancelBody.includes("becomes free"),
+  saysTheNumberComesFree: bodyWhenOpened.includes("free again"),
+  hidesTheNumberSentence: !cancelBody.includes("free again"),
   saysTheStateStays: bodyWhenOpened.includes("stays in the history"),
   namesTheVersion: bodyWhenOpened.includes("Third"),
+  showsTheDescription: bodyWhenOpened.includes("a note"),
   callsAfterCancel: twoCalls.length,
   firstSaysAutomatic: bodyWhenOpened.includes("Made automatically"),
   secondSaysAutomatic: cancelBody.includes("Made automatically"),
+  wordlessFallsBack: wordlessBody.includes("this version"),
+  wordlessHidesTheWordsParagraph: !wordlessBody.includes("goes with it"),
+  wordlessHasNoDescriptionParagraph: !wordlessBody.includes('class="muted"'),
 }));
 """
 
@@ -4049,6 +4056,15 @@ def test_the_dialog_is_filled_from_a_preview_the_server_answered(removing):
     }
     assert removing["namesTheVersion"] is True
     assert removing["saysTheStateStays"] is True
+
+
+def test_the_dialog_shows_the_description_that_would_be_lost(removing):
+    # The one string here that is genuinely unrecoverable, and until now
+    # it appeared in neither the dialog nor the log - only its presence
+    # as a boolean decided whether a paragraph was shown at all. Read
+    # rather than taken on faith, as the FAQ's "there to be read rather
+    # than clicked through" promises.
+    assert removing["showsTheDescription"] is True
 
 
 def test_the_dialog_says_the_number_comes_free_where_it_does(removing):
@@ -4085,3 +4101,15 @@ def test_cancelling_sends_no_second_call(removing):
     # The preview is a read, so it happens either way; what must not
     # happen is the write. One call, not two.
     assert removing["callsAfterCancel"] == 1
+
+
+def test_the_wordless_lightweight_tag_claims_nothing_it_does_not_have(removing):
+    # A hand-made tag has neither a title nor a description - the very
+    # version `bin()` exists to extend the offer to. Three branches at
+    # once: `words` falls back to "this version" instead of rendering an
+    # empty `<strong>`, the "goes with it" paragraph has nothing true
+    # left to say and stays out, and there is no description text to
+    # render either - the dialog must not claim a loss that is not real.
+    assert removing["wordlessFallsBack"] is True
+    assert removing["wordlessHidesTheWordsParagraph"] is True
+    assert removing["wordlessHasNoDescriptionParagraph"] is True

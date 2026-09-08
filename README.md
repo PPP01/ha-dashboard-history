@@ -389,9 +389,9 @@ button removes its history. Without confirmation you first get a count of
 what would go — how many recorded states, over what period, and how many
 carry a note you wrote.
 
-This is **the only thing here that cannot be undone**, and the only thing
-that refuses to touch a live dashboard: if Home Assistant still has it,
-the answer is no.
+This is **the only operation here that rewrites the stored history**, and
+the only thing that refuses to touch a live dashboard: if Home Assistant
+still has it, the answer is no.
 
 One side effect, stated because you will notice it: git can only really
 remove something by rewriting history, so every revision from the first

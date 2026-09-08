@@ -578,9 +578,10 @@ def test_asking_an_empty_repository_is_empty(tmp_path):
 
 # -- forgetting a dashboard for good -----------------------------------
 #
-# The one irreversible operation in this project, in a tool built to stop
-# things disappearing. It exists because a deleted dashboard stays in the
-# list forever, and after enough years that list is mostly gravestones.
+# The one operation in this project that rewrites the stored history, in
+# a tool built to stop things disappearing. It exists because a deleted
+# dashboard stays in the list forever, and after enough years that list
+# is mostly gravestones.
 #
 # git can only really remove something by rewriting history, so every
 # revision from the first affected commit onwards changes. Two things hang
@@ -1091,9 +1092,10 @@ def test_an_object_that_is_not_a_commit_resolves_to_nothing(store):
     # then treated the answer as a commit: `read_at` reaches for `.tree`
     # and raised AttributeError - a generic failure through the WebSocket,
     # a bare traceback through `services.py`. Worse, `create_version`
-    # accepted one and made a tag that can never be returned to, and
-    # versions cannot be deleted. None already means "unknown revision" to
-    # every caller, so that is what these are now.
+    # accepted one and made a tag that can never be returned to. Such a
+    # tag can be taken away since decision 18; the refusal stands on the
+    # tag being useless, not on being stuck with it. None already means
+    # "unknown revision" to every caller, so that is what these are now.
     first = store.write_snapshot("home", "a: 1\n", "first")
     tree, blob = _tree_and_blob(store, "home", first)
 

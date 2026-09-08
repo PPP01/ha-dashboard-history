@@ -1175,7 +1175,7 @@ python3 -m pytest tests/test_panel_behaviour.py -v
 python3 -m pytest tests/ -q
 ```
 
-Erwartet: **510 bestanden** (8 neue auf die 502 aus Task 2). Ohne `node` überspringen die Panel-Fälle **sichtbar**, wie es die Datei für ihre übrigen tut — ein Lauf ohne `node` ist kein Nachweis.
+Erwartet: **511 bestanden** (9 neue auf die 502 aus Task 2 — die neunte kam erst im Fix-Durchgang dazu: `test_the_automatic_paragraph_shows_only_where_it_applies`). Ohne `node` überspringen die Panel-Fälle **sichtbar**, wie es die Datei für ihre übrigen tut — ein Lauf ohne `node` ist kein Nachweis.
 
 - [ ] **Step 9: Teach `look_at_panel.py` about the new control**
 
@@ -1722,7 +1722,7 @@ Danach dieselbe Suche noch einmal: sie darf nur noch die Stellen zeigen, die die
 python3 -m pytest tests/ -q
 ```
 
-Erwartet: **510 bestanden**, unverändert gegenüber Task 3.
+Erwartet: **511 bestanden**, unverändert gegenüber Task 3.
 
 - [ ] **Step 8: Commit (nur nach Ansage des Nutzers)**
 
@@ -1799,4 +1799,4 @@ Der Plan lief durch zwei unabhängige Reviews, bevor eine Zeile davon umgesetzt 
 
 **Was daraus für die Umsetzung folgt, über die Berichtigungen hinaus:** Ein `grep`, der nichts findet, ist keine Abwesenheit — er ist eine Vermutung, bis er einmal an einer bekannten Fundstelle bewiesen hat, dass er trifft. Dieselbe Falle, gegen die Task 2 seinen eigenen Test baut: Der `services.py`↔`services.yaml`-Vergleich existiert, weil zwei Dateien nichts verband, und Task 5 stolperte über genau das eine Verzeichnis weiter. Wer diesen Plan ausführt und irgendwo eine Suche als Beweis benutzt, führt sie zuerst gegen eine Stelle, von der er weiß, dass sie da ist.
 
-**Die Zählungen nach der Runde**, damit niemand sie erneut ausrechnet: Ausgangsstand **489** → Task 1 **501** → Task 2 **502** → Task 3 **510** → Task 5 **510** (unverändert, reine Prosa). `run_remove_version` bringt **zwölf** Prüfungen mit, `run_day_marks.py` kommt auf **sechs**.
+**Die Zählungen nach der Runde**, damit niemand sie erneut ausrechnet: Ausgangsstand **489** → Task 1 **501** → Task 2 **502** → Task 3 **511** → Task 5 **511** (unverändert, reine Prosa). `run_remove_version` bringt **zwölf** Prüfungen mit, `run_day_marks.py` kommt auf **sechs**.

@@ -324,7 +324,7 @@ remove_version:
     with the title and description you gave it, and those cannot be
     written back. Without confirm, you get the version's own words and
     nothing changes. If it carries the highest number, that number
-    becomes free again and the next version will use it.
+    becomes free again - the next patch will use it.
   fields:
     dashboard:
       required: true

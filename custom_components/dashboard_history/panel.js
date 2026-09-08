@@ -1510,26 +1510,36 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     const dialog = this.shadowRoot.querySelector("dialog.remove");
-    // Five paragraphs when everything applies, not three - the name
-    // line above was never counted, and the one about the title and
-    // description has since become conditional too. What stays comes
+    // Up to six paragraphs when everything applies, not three - the name
+    // line above was never counted, and the ones about the title and
+    // description have since become conditional too. What stays comes
     // first, because it is the reassurance the whole design rests on.
-    // What goes comes second, and only where there is something to
-    // lose: a hand-made lightweight tag carries neither a title nor a
+    // What goes comes second, and names only what is actually there: a
+    // hand-made lightweight tag carries neither a title nor a
     // description, and this dialog must not claim a loss that is not
     // real for the very version `bin()` exists to extend the offer to.
-    // The automatic and highest paragraphs follow, each shown only
-    // where it applies.
+    // The description itself follows where there is one - it is the one
+    // string here that is genuinely unrecoverable, so it is read rather
+    // than taken on faith. The automatic and highest paragraphs come
+    // last, each shown only where it applies.
     const words = facts.title
       ? `<strong>${escape(facts.title)}</strong>`
       : "this version";
+    const goesWith = facts.title && facts.description
+      ? "The title and description go with it, and they cannot be " +
+        "written back."
+      : facts.title
+      ? "The title goes with it, and it cannot be written back."
+      : facts.description
+      ? "The description goes with it, and it cannot be written back."
+      : "";
     dialog.querySelector(".body").innerHTML = `
       <p>${escape(shortName(name))} — ${words}</p>
       <p>The state it marks <strong>stays in the history</strong> and
          remains findable in the advanced view. Only the mark goes.</p>
-      ${facts.title || facts.description
-        ? `<p>The title and description go with it, and they cannot be
-             written back.</p>`
+      ${goesWith ? `<p>${goesWith}</p>` : ""}
+      ${facts.description
+        ? `<p class="muted">${escape(facts.description)}</p>`
         : ""
       }
       ${facts.automatic
@@ -1541,8 +1551,8 @@ class DashboardHistoryPanel extends HTMLElement {
       }
       ${facts.highest
         ? `<p class="muted" style="font-size:13px">It carries the highest
-             number, so that number becomes free again — the next version
-             you create will use it.</p>`
+             number, so that number is free again — the next patch will
+             use it.</p>`
         : ""
       }`;
     dialog.returnValue = "";
@@ -1696,9 +1706,10 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The one thing here that cannot be undone, so it is asked twice: once
-   * by the button, once by a dialog that counts what is about to be lost.
-   * No diff - a diff of this would be the whole history.
+   * The one operation here that rewrites the stored history, so it is
+   * asked twice: once by the button, once by a dialog that counts what
+   * is about to be lost. No diff - a diff of this would be the whole
+   * history.
    */
   async _forget() {
     // Held and claimed before the first await, for the reason spelled

@@ -1003,16 +1003,17 @@ async def async_remove_version(
         # traceback: `services.py` has no `except` in it.
         return {"applied": False, "error": str(err)}
     # At warning, and carrying the words. This log line is the only place
-    # a removed version's title still exists - `forget` is loud for a
-    # bigger loss, and somebody asking later where a version went has
-    # nowhere else to look. The revision is in it so that the same person
-    # can see the state was never touched.
+    # a removed version's title and description still exist - `forget`
+    # is loud for a bigger loss, and somebody asking later where a
+    # version went has nowhere else to look. The revision is in it so
+    # that the same person can see the state was never touched.
     _LOGGER.warning(
-        "Removed version %s of dashboard %s (%r); the state it marked is "
-        "untouched at %s",
+        "Removed version %s of dashboard %s (%r, %r); the state it marked "
+        "is untouched at %s",
         name,
         key,
         removed.title,
+        removed.description,
         removed.revision,
     )
     return {"applied": True, **_version_dict(removed)}
@@ -1105,8 +1106,8 @@ async def async_forget(
 ) -> dict:
     """Remove a deleted dashboard's history for good.
 
-    The one irreversible operation this integration offers, so it is
-    fenced on three sides.
+    The one operation this integration offers that rewrites the stored
+    history, so it is fenced on three sides.
 
     * **Only a deleted dashboard.** Forgetting a live one would throw away
       the history of something somebody is using. `is_absent` answers

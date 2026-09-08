@@ -823,10 +823,10 @@ class HistoryStore:
     def forget(self, key: str) -> int:
         """Remove a dashboard's history for good. Returns commits removed.
 
-        The only irreversible operation here, in a tool built to stop
-        things disappearing. It exists because a deleted dashboard stays
-        in the list forever: delete one every few months and the list is
-        mostly gravestones.
+        The only operation here that rewrites the stored history, in a
+        tool built to stop things disappearing. It exists because a
+        deleted dashboard stays in the list forever: delete one every few
+        months and the list is mostly gravestones.
 
         git can only really remove something by rewriting history, so
         every revision from the first affected commit onwards changes.

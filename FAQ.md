@@ -66,9 +66,9 @@ destructive option that renaming would be.
 number that was given out by mistake is not a permanent fixture: remove
 the version and the mark is gone, while the state it pointed at stays
 in the history exactly where it was. If the one you remove carries the
-highest number, that number becomes free again and the next version you
-create will use it — which is the short way out of "I clicked patch and
-meant minor".
+highest number, that number is free again — the next patch will use it.
+And removing it is the short way out of "I clicked patch and meant
+minor": take the mistaken version away, then create the one you meant.
 
 What this does not do is move a version. Removing one and creating
 another is two acts, and the second is addressed at whatever state you
