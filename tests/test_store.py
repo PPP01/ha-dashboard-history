@@ -1309,9 +1309,7 @@ def test_a_version_made_by_hand_can_be_taken_away(store):
     assert store.read_at("home", first) == "a: 1\n"
 
 
-def test_taking_a_version_in_an_empty_repository_is_refused_not_built(
-    store, tmp_path
-):
+def test_taking_a_version_in_an_empty_repository_is_refused_not_built(tmp_path):
     # As with `retitle_version`: no `_ensure()`, because this can only
     # ever take away something that exists. Building a history in order
     # to report that it holds no such version would leave one behind
@@ -1332,8 +1330,10 @@ def test_reading_one_version_gives_what_the_list_gives(store):
     store.create_version("home/v1.0.0", "First", "a note", first)
     _lightweight_tag(store, "home/v2.0.0", first)
 
-    for listed in store.list_versions("home"):
-        assert store.read_version("home", listed.name) == listed
+    listed = store.list_versions("home")
+    assert len(listed) == 2
+    for version in listed:
+        assert store.read_version("home", version.name) == version
 
 
 # -- a history longer than any cap ---------------------------------------

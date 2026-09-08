@@ -555,15 +555,7 @@ class HistoryStore:
             # to be built: creating one to then report "no such version"
             # would leave a history behind that nobody asked for.
             repo = self._repo()
-            if not _owns(name.encode("utf-8"), key):
-                raise ValueError(f"not a version of {key}: {name}")
-            ref = b"refs/tags/" + name.encode("utf-8")
-            try:
-                old = repo[repo.refs[ref]] if repo is not None else None
-            except KeyError:
-                old = None
-            if old is None:
-                raise ValueError(f"unknown version: {name}")
+            ref, old = self._tag_at_locked(repo, key, name)
             if not hasattr(old, "object"):
                 # A lightweight tag: the ref *is* the tag. Giving it a
                 # message means handing back a different kind of tag than
@@ -594,6 +586,45 @@ class HistoryStore:
                 timestamp=fresh.tag_time,
             )
 
+    @staticmethod
+    def _tag_at_locked(repo, key: str, name: str):
+        """One dashboard's tag by name, already under the lock. Ref and target.
+
+        The two refusals shared by every caller that looks a tag up by
+        name - `retitle_version`, `read_version`, `remove_version` - in
+        one place rather than three: a ValueError carrying a sentence,
+        the version is not this dashboard's or there is none by that
+        name. `_owns` decides the first, the whole ownership fence: a
+        command taking a bare ref name would otherwise reach any tag in
+        the repository.
+
+        Hands back the ref alongside the target, not the target alone.
+        `remove_version` deletes exactly the ref this found, and a
+        second `b"refs/tags/" + name.encode("utf-8")` at the call site -
+        agreeing with this one only because both spell the same rule -
+        is the one way its claim that the read and the delete are "one
+        move on one ref" could quietly come apart.
+
+        Called `_locked`, not because the lookup itself needs the lock -
+        it takes `repo` as an argument and touches no shared state of
+        its own - but because every caller of it already holds
+        `self._lock` for a reason of its own (a preview that must not
+        observe a half-finished write, a delete that must act on what it
+        just read). Naming that here is cheaper than a caller
+        rediscovering it by deadlocking on `self._lock`, which is a
+        plain, non-reentrant `threading.Lock`.
+        """
+        if not _owns(name.encode("utf-8"), key):
+            raise ValueError(f"not a version of {key}: {name}")
+        ref = b"refs/tags/" + name.encode("utf-8")
+        try:
+            target = repo[repo.refs[ref]] if repo is not None else None
+        except KeyError:
+            target = None
+        if target is None:
+            raise ValueError(f"unknown version: {name}")
+        return ref, target
+
     def read_version(self, key: str, name: str) -> Version:
         """One version of one dashboard, by name. Raises where there is none.
 
@@ -608,10 +639,11 @@ class HistoryStore:
 
         The lock is held for a read, which `list_versions` does not do.
         Said out loud, because the lock is documented as a serialiser of
-        *writes*: what it buys is `_read_version`, shared with
-        `remove_version`, where the read and the delete have to be one
-        move. The price is that a preview can queue behind a 30 ms
-        commit, and a dialog that is opening can afford that.
+        *writes*: what it buys here is that a preview cannot observe a
+        half-finished write - a tag mid-rewrite, or a version mid-way
+        through being retitled. The price is that a preview can queue
+        behind a ~30 ms commit, and a dialog that is opening can afford
+        that.
 
         The refusals are the same two `retitle_version` gives, in the
         same shape - a ValueError carrying a sentence: the version is not
@@ -620,19 +652,11 @@ class HistoryStore:
         hand-made tag stays visible.
         """
         with self._lock:
-            return self._read_version(self._repo(), key, name)
+            return self._read_version_locked(self._repo(), key, name)
 
-    def _read_version(self, repo, key: str, name: str) -> Version:
-        """The read both public doors go through, already under the lock."""
-        if not _owns(name.encode("utf-8"), key):
-            raise ValueError(f"not a version of {key}: {name}")
-        ref = b"refs/tags/" + name.encode("utf-8")
-        try:
-            target = repo[repo.refs[ref]] if repo is not None else None
-        except KeyError:
-            target = None
-        if target is None:
-            raise ValueError(f"unknown version: {name}")
+    def _read_version_locked(self, repo, key: str, name: str) -> Version:
+        """The read every locked caller goes through, already under the lock."""
+        _, target = self._tag_at_locked(repo, key, name)
         return _version_from(name, target)
 
     def remove_version(self, key: str, name: str) -> Version:
@@ -681,7 +705,7 @@ class HistoryStore:
         moment earlier. It is the caller's only copy: once the ref is
         gone, nothing in this integration can read those words again.
 
-        The two refusals are `_read_version`'s, and they reach a caller
+        The two refusals are `_tag_at_locked`'s, and they reach a caller
         from *this* call rather than from a read before it. That is what
         `operations` catches around the removal itself: between a
         preview and the confirmation the version can be gone - two
@@ -690,8 +714,9 @@ class HistoryStore:
         """
         with self._lock:
             repo = self._repo()
-            version = self._read_version(repo, key, name)
-            del repo.refs[b"refs/tags/" + name.encode("utf-8")]
+            ref, target = self._tag_at_locked(repo, key, name)
+            version = _version_from(name, target)
+            del repo.refs[ref]
             return version
 
     def _marked_commit(self, revision: str | None) -> bytes:
