@@ -1734,7 +1734,7 @@ git add FAQ.md README.md \
 git commit -F - <<'MSG'
 Correct the sentences a removal makes false
 
-Six of them, in four files, and each one keeps its conclusion and
+Seven of them, in five files, and each one keeps its conclusion and
 changes its argument. The FAQ refused an empty title with "unlike a
 description, there is nothing that would put a name back". That reason
 is gone; the refusal is not. A version with no name is a row nobody can
