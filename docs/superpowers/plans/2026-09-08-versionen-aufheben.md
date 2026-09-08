@@ -1642,7 +1642,7 @@ Der fette Halbsatz wird falsch, und der Satz danach begründet sich mit ihm. Neu
 Zuerst die Suche, und zwar **diese**:
 
 ```bash
-grep -rn "delete a version\|deletes it again\|deletes a tag\|put a name" README.md FAQ.md custom_components/
+grep -rn "delete a version\|delete again\|deletes it again\|deletes a tag\|put a name" README.md FAQ.md custom_components/
 ```
 
 ⚠️ **Nicht die naheliegende Suche.** Ein `grep` nach »nothing in this integration can delete a version again« findet **nichts**: der Satz ist über zwei Zeilen umbrochen (`nothing in this` / `# integration can delete a version again`), und `grep` liest Zeile für Zeile. Dasselbe gilt für den in `store.py`. Eine frühere Fassung dieses Schritts suchte nach `nothing.*delete a version` und meldete null Treffer — woraus ein Umsetzender geschlossen hätte, es sei nichts zu tun.
