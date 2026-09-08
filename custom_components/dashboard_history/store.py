@@ -147,6 +147,43 @@ def _version_words(message: bytes | None) -> tuple[str, str]:
     return title.strip(), description.strip()
 
 
+def _version_from(name: str, target) -> Version:
+    """One tag as a `Version`, whichever of the two kinds it is.
+
+    `target` is what the ref points at: a tag object for an annotated
+    one, and the commit itself for a lightweight one - which is what a
+    lightweight tag *is*, a ref straight to the object.
+
+    One builder because there are two readers. `list_versions` walks the
+    namespace, `read_version` looks up one name, and the removal of a
+    version is previewed from the second while the panel's list comes
+    from the first. A field present in one answer and missing from the
+    next is the kind of difference a frontend quietly renders as False -
+    the same reason `_version_dict` exists one layer up.
+
+    A lightweight tag carries no message, so it has no title and no
+    description, and it is ordered by the time of the commit it marks -
+    the only time it has. Anything but a commit (a hand-made tag on a
+    blob) answers zero rather than raising: it is reported all the same,
+    as decision 13 of the design record promises.
+    """
+    annotated = hasattr(target, "object")
+    if annotated:
+        title, description = _version_words(target.message)
+        marked, made = target.object[1], target.tag_time
+    else:
+        title, description = "", ""
+        marked, made = target.id, getattr(target, "commit_time", 0)
+    return Version(
+        name=name,
+        revision=_as_text(marked),
+        title=title,
+        description=description,
+        timestamp=made,
+        annotated=annotated,
+    )
+
+
 def _change(commit, notes: dict, previous: str | None) -> Change:
     """One commit as a `Change`, with the predecessor handed in.
 
@@ -556,6 +593,106 @@ class HistoryStore:
                 description=written_description,
                 timestamp=fresh.tag_time,
             )
+
+    def read_version(self, key: str, name: str) -> Version:
+        """One version of one dashboard, by name. Raises where there is none.
+
+        The one-name counterpart to `list_versions`, and it exists for
+        the *preview* of a removal: it has to show the words that are
+        about to go, before anything goes. Read through the namespace
+        instead and that is a scan of every tag this dashboard has to
+        answer about one - measured at 365 versions, 35 ms of it. The
+        second read, the one that answers with what went, is
+        `remove_version`'s own and happens under the same lock as the
+        delete; nothing here reads a ref twice.
+
+        The lock is held for a read, which `list_versions` does not do.
+        Said out loud, because the lock is documented as a serialiser of
+        *writes*: what it buys is `_read_version`, shared with
+        `remove_version`, where the read and the delete have to be one
+        move. The price is that a preview can queue behind a 30 ms
+        commit, and a dialog that is opening can afford that.
+
+        The refusals are the same two `retitle_version` gives, in the
+        same shape - a ValueError carrying a sentence: the version is not
+        this dashboard's, or there is none by that name. Not a third for
+        a lightweight tag: this only reads, and decision 13 says a
+        hand-made tag stays visible.
+        """
+        with self._lock:
+            return self._read_version(self._repo(), key, name)
+
+    def _read_version(self, repo, key: str, name: str) -> Version:
+        """The read both public doors go through, already under the lock."""
+        if not _owns(name.encode("utf-8"), key):
+            raise ValueError(f"not a version of {key}: {name}")
+        ref = b"refs/tags/" + name.encode("utf-8")
+        try:
+            target = repo[repo.refs[ref]] if repo is not None else None
+        except KeyError:
+            target = None
+        if target is None:
+            raise ValueError(f"unknown version: {name}")
+        return _version_from(name, target)
+
+    def remove_version(self, key: str, name: str) -> Version:
+        """Take one dashboard's version away. Answers what was taken.
+
+        **The mark, never the state.** What goes is a ref. The commit it
+        pointed at keeps standing, stays readable through its revision,
+        keeps every note on it, and no other revision changes. Decision
+        18 of the design record calls this the discard of decision 17
+        made afterwards: there, choosing "discard" leaves a state in the
+        history without a name, and this leaves it in exactly the same
+        condition later on.
+
+        Which is also why `forget` stays the only destructive operation
+        in the sense the design record means. The rule it replaced its
+        own wording with: what takes a *state* away is called `forget`,
+        and it remains the one.
+
+        No `_ensure()`, as `retitle_version` has none and for the same
+        reason: this can only ever take away something that already
+        exists, so a repository that is not there is an answer rather
+        than a state to be built.
+
+        **Both kinds of tag**, unlike renaming. A lightweight one cannot
+        be *given* words - that would hand back a different kind of tag
+        than the one somebody made - but it can be taken away, and it
+        has to be. It counts when the next number is worked out, so one
+        that could not be removed would hold a number for ever. The
+        older reason is written into `_rewrite_tags` already: a tag
+        operation that quietly skips the lightweight kind ends up
+        silently ineffective, which is how `forget` once reported
+        success while leaving the forgotten text in the object store.
+
+        Neither `_index` nor `_survey` is dropped, and that is checked
+        rather than assumed: both are keyed by HEAD and built from the
+        commit walk, and neither reads `refs/tags`. `forget` drops them
+        because it rewrites commits, which this does not.
+
+        The old tag object stays behind as a loose object nothing points
+        at - the same few hundred bytes `retitle_version` leaves, and for
+        the same reason: pruning here would mean a full object-store walk
+        per removal, and `forget`'s `garbage_collect` sweeps it up.
+
+        Read before the delete and under the same lock, so the answer
+        describes what was actually taken rather than what stood there a
+        moment earlier. It is the caller's only copy: once the ref is
+        gone, nothing in this integration can read those words again.
+
+        The two refusals are `_read_version`'s, and they reach a caller
+        from *this* call rather than from a read before it. That is what
+        `operations` catches around the removal itself: between a
+        preview and the confirmation the version can be gone - two
+        removals at once, or a `forget` in between - and `services.py`
+        catches nothing at all.
+        """
+        with self._lock:
+            repo = self._repo()
+            version = self._read_version(repo, key, name)
+            del repo.refs[b"refs/tags/" + name.encode("utf-8")]
+            return version
 
     def _marked_commit(self, revision: str | None) -> bytes:
         """The commit a version is about to be pinned to.
@@ -1753,34 +1890,7 @@ class HistoryStore:
             return []
         found: list[tuple[int, Version]] = []
         for ref, tag in self._each_tag(repo, key):
-            name = ref.decode()
-            annotated = hasattr(tag, "object")
-            if annotated:
-                title, description = _version_words(tag.message)
-                marked, made = tag.object[1], tag.tag_time
-            else:
-                # A lightweight tag, made by hand: the ref points straight
-                # at the commit and carries no message, so it has no title
-                # and no description. Reported all the same, as decision 13
-                # of the design record promises - skipping it made
-                # `candidates` offer a number that already existed, and the
-                # refusal then landed in the middle of the dialog. Ordered
-                # by the time of the commit it marks, the only time it has;
-                # anything but a commit sorts last rather than crashing.
-                title, description = "", ""
-                marked, made = tag.id, getattr(tag, "commit_time", 0)
-            found.append(
-                (
-                    made,
-                    Version(
-                        name=name,
-                        revision=_as_text(marked),
-                        title=title,
-                        description=description,
-                        timestamp=made,
-                        annotated=annotated,
-                    ),
-                )
-            )
+            version = _version_from(ref.decode(), tag)
+            found.append((version.timestamp, version))
         # as_dict has no order of its own; the docstring promises one.
         return [version for _, version in sorted(found, key=lambda p: -p[0])]

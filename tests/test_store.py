@@ -1200,6 +1200,142 @@ def test_a_nested_key_stays_readable_and_deletable(store):
     assert store.read_at("energie/x", "HEAD") is None
 
 
+# -- taking a version away ---------------------------------------------
+
+
+def test_a_version_can_be_taken_away(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "a note", first)
+
+    removed = store.remove_version("home", "home/v1.0.0")
+
+    # Answered with what was taken, so a caller can say what is gone
+    # without a second read - and the log line is then the only place
+    # those words still exist.
+    assert (removed.name, removed.title, removed.description) == (
+        "home/v1.0.0",
+        "First",
+        "a note",
+    )
+    assert store.list_versions("home") == []
+
+
+def test_the_state_a_taken_version_marked_is_untouched(store):
+    # The whole point of decision 18, and the one test that would catch a
+    # slip into `forget` territory: the mark goes, the state stays.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    store.create_version("home/v1.0.0", "First", "", first)
+    head_before = store.list_changes("home")[0].revision
+
+    store.remove_version("home", "home/v1.0.0")
+
+    assert store.read_at("home", first) == "a: 1\n"
+    assert [c.revision for c in store.list_changes("home")] == [second, first]
+    assert store.list_changes("home")[0].revision == head_before
+
+
+def test_a_description_on_the_state_survives_the_version_being_taken(store):
+    # Notes hang on the commit, versions on a ref beside it. Taking the
+    # ref must not go near `refs/notes/commits` - and it is worth its own
+    # test because `forget`, the other operation that removes a tag,
+    # rewrites the notes as part of its work.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(first, "why I did it")
+    store.create_version("home/v1.0.0", "First", "", first)
+
+    store.remove_version("home", "home/v1.0.0")
+
+    assert store.list_changes("home")[0].description == "why I did it"
+
+
+def test_only_the_named_version_goes(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.create_version("home/v2.0.0", "Second", "", second)
+
+    store.remove_version("home", "home/v1.0.0")
+
+    assert [v.name for v in store.list_versions("home")] == ["home/v2.0.0"]
+
+
+def test_another_dashboards_version_cannot_be_taken_away(store):
+    # The same fence `retitle_version` has, and it has to be `_owns`
+    # rather than a `startswith`: a command taking a bare ref name would
+    # otherwise delete any tag in the repository.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("other", "b: 1\n", "other")
+    store.create_version("other/v1.0.0", "Theirs", "", first)
+
+    with pytest.raises(ValueError, match="not a version of home"):
+        store.remove_version("home", "other/v1.0.0")
+
+    assert [v.name for v in store.list_versions("other")] == ["other/v1.0.0"]
+
+
+def test_a_nested_key_does_not_reach_into_a_deeper_namespace(store):
+    # Measured on 2026-09-04 for `forget`: tested with `startswith`
+    # alone, "dh-slash/check/" also claimed the versions of a dashboard
+    # whose key holds one more slash. Home Assistant accepts such a
+    # url_path, so this is a real dashboard and not a contrivance.
+    first = store.write_snapshot("dh-slash/check", "a: 1\n", "first")
+    store.create_version("dh-slash/check/deeper/v1.0.0", "Deeper", "", first)
+
+    with pytest.raises(ValueError, match="not a version of dh-slash/check"):
+        store.remove_version("dh-slash/check", "dh-slash/check/deeper/v1.0.0")
+
+
+def test_an_unknown_version_cannot_be_taken_away(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    with pytest.raises(ValueError, match="unknown version"):
+        store.remove_version("home", "home/v9.9.9")
+
+
+def test_a_version_made_by_hand_can_be_taken_away(store):
+    # The one place this parts company with `retitle_version`, and
+    # deliberately. Renaming a lightweight tag would hand back a
+    # different kind of tag than the one somebody made; taking it away
+    # gives nothing back. And it has to be possible: a lightweight
+    # `home/v1.0.0` counts when the next number is worked out, so one
+    # that could not be removed would hold a number for ever.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    _lightweight_tag(store, "home/v1.0.0", first)
+
+    removed = store.remove_version("home", "home/v1.0.0")
+
+    assert (removed.name, removed.annotated) == ("home/v1.0.0", False)
+    assert store.list_versions("home") == []
+    assert store.read_at("home", first) == "a: 1\n"
+
+
+def test_taking_a_version_in_an_empty_repository_is_refused_not_built(
+    store, tmp_path
+):
+    # As with `retitle_version`: no `_ensure()`, because this can only
+    # ever take away something that exists. Building a history in order
+    # to report that it holds no such version would leave one behind
+    # that nobody asked for.
+    fresh = HistoryStore(tmp_path / "nothing")
+    with pytest.raises(ValueError, match="unknown version"):
+        fresh.remove_version("home", "home/v1.0.0")
+    assert not (tmp_path / "nothing").exists()
+
+
+def test_reading_one_version_gives_what_the_list_gives(store):
+    # `read_version` and `list_versions` must not drift: the preview of a
+    # removal is built from the first and the panel's list from the
+    # second, and a field present in one and missing in the other is the
+    # kind of difference a frontend renders as False. One builder for
+    # both is the fix, and this is the test that keeps it.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "a note", first)
+    _lightweight_tag(store, "home/v2.0.0", first)
+
+    for listed in store.list_versions("home"):
+        assert store.read_version("home", listed.name) == listed
+
+
 # -- a history longer than any cap ---------------------------------------
 #
 # Measured on 2026-09-03: `list_all_dashboards` and `previous_change`

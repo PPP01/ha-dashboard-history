@@ -415,3 +415,26 @@ def test_the_day_a_state_falls_on_is_answered_on_its_own():
 
     assert versions.local_day(_at("2026-09-03T23:59"), BERLIN) == date(2026, 9, 3)
     assert versions.local_day(_at("2026-09-04T00:01"), BERLIN) == date(2026, 9, 4)
+
+
+def test_a_number_that_was_taken_away_is_offered_again():
+    # The conditional half of decision 13, and it needs no production
+    # code: `candidates` counts from the highest name it is given, so a
+    # name that is gone is a name that no longer counts. Written down
+    # because it is a promise the interface makes out loud - the dialog
+    # says "its number becomes free again" - and a promise nobody tests
+    # is a sentence waiting to become false.
+    with_it = ["home/v1.0.0", "home/v1.0.1", "home/v1.0.2"]
+    without_it = ["home/v1.0.0", "home/v1.0.1"]
+    assert versions.candidates("home", with_it)["patch"] == "home/v1.0.3"
+    assert versions.candidates("home", without_it)["patch"] == "home/v1.0.2"
+
+
+def test_taking_a_lower_number_away_frees_nothing():
+    # The other half of the same sentence, and the reason the dialog only
+    # says it for the highest version: removing one in the middle changes
+    # no candidate at all, so a dialog that promised a free number there
+    # would be lying in the ordinary case.
+    assert versions.candidates("home", ["home/v1.0.0", "home/v1.0.2"])[
+        "patch"
+    ] == "home/v1.0.3"
