@@ -63,3 +63,30 @@ def test_the_option_the_code_writes_is_the_one_the_words_describe():
     source = (PACKAGE / "const.py").read_text(encoding="utf-8")
     assert 'OPTION_DAILY_VERSIONS = "daily_versions"' in source
     assert "daily_versions" in _strings()["options"]["step"]["init"]["data"]
+
+
+def test_every_registered_service_has_words_in_services_yaml():
+    # The two halves live in two files that nothing joins: `services.py`
+    # registers the name, `services.yaml` gives it a name, a description
+    # and its fields in Developer Tools. A service missing there shows up
+    # as a bare key with no fields, and hassfest - which HACS runs on a
+    # published integration - reports it. Nothing else in this suite
+    # reads services.yaml at all.
+    #
+    # `services.py` is read as text rather than imported: it pulls in
+    # Home Assistant, and this suite runs without an installation.
+    import re
+
+    import yaml
+
+    source = (PACKAGE / "services.py").read_text(encoding="utf-8")
+    registered = set(re.findall(r'^\s*\("([a-z_]+)",\s', source, re.MULTILINE))
+    assert registered, "no registrations found - has the table been rewritten?"
+    described = set(
+        yaml.safe_load((PACKAGE / "services.yaml").read_text(encoding="utf-8"))
+    )
+    assert registered - described == set()
+    # And the other way round, because a leftover entry names a service
+    # that no longer exists - a promise in the interface with nothing
+    # behind it.
+    assert described - registered == set()

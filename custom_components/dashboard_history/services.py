@@ -142,6 +142,15 @@ async def async_register(hass: HomeAssistant) -> None:
             call.data.get("description", ""),
         )
 
+    async def remove_version(call: ServiceCall) -> dict:
+        return await operations.async_remove_version(
+            hass,
+            store,
+            call.data["dashboard"],
+            call.data["name"],
+            bool(call.data.get("confirm")),
+        )
+
     async def versions(call: ServiceCall) -> dict:
         return await operations.async_versions(
             hass, store, call.data.get("dashboard")
@@ -189,6 +198,10 @@ async def async_register(hass: HomeAssistant) -> None:
             vol.Required("name"): cv.string,
             vol.Required("title"): cv.string,
             vol.Optional("description", default=""): cv.string,
+        })),
+        ("remove_version", remove_version, DASHBOARD.extend({
+            vol.Required("name"): cv.string,
+            vol.Optional("confirm", default=False): bool,
         })),
         ("versions", versions, vol.Schema({vol.Optional("dashboard"): cv.string})),
     ]

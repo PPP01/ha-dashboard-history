@@ -316,6 +316,35 @@ retitle_version:
         text:
           multiline: true
 
+remove_version:
+  name: Remove a version
+  description: >-
+    Take a version's mark away. The state it marks stays in the history
+    and remains findable in the advanced view - only the name goes, along
+    with the title and description you gave it, and those cannot be
+    written back. Without confirm, you get the version's own words and
+    nothing changes. If it carries the highest number, that number
+    becomes free again and the next version will use it.
+  fields:
+    dashboard:
+      required: true
+      description: The dashboard, by its url_path.
+      example: my-dashboard
+      selector:
+        text:
+    name:
+      required: true
+      description: >-
+        The version to remove, by its full name as `versions` reports it.
+      example: my-dashboard/v1.0.0
+      selector:
+        text:
+    confirm:
+      description: Without this, nothing is removed.
+      default: false
+      selector:
+        boolean:
+
 versions:
   name: Versions
   description: >-

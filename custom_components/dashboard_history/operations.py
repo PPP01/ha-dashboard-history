@@ -919,6 +919,100 @@ async def async_retitle_version(
     return {"applied": True, **_version_dict(written)}
 
 
+async def async_remove_version(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    name: str,
+    confirm: bool = False,
+) -> dict:
+    """Take a version's mark away. The state it names stays where it is.
+
+    Decision 18 of the design record, and the shortest way to say what
+    this is: the discard of decision 17, made afterwards. "Discard"
+    there means not marking rather than deleting, and this leaves a
+    state in exactly that condition - in the history, findable in the
+    advanced mode, without a name.
+
+    **`confirm` is required**, which puts this beside `forget` rather
+    than beside `describe`. No dashboard changes either way, so the
+    reason is not visibility but reversibility: a title and a
+    description live in the tag object, and once the ref is gone this
+    integration cannot write them back. That is the second side of
+    decision 7 - the rule says when `confirm` is *needed*, not when it
+    alone suffices.
+
+    Without `confirm` the answer is the version's own words. Not a diff:
+    a diff of this would be empty, because nothing on the dashboard
+    moves. `highest` comes with them and is the one field a person acts
+    on - the number of the highest version becomes free again, which is
+    the case this operation was built for.
+
+    **`highest` is in the preview and not in the applied answer**, and
+    that is deliberate rather than forgetful. Answering it costs a walk
+    of the whole namespace, because it cannot be read off one ref; the
+    removal is built to read one ref and nothing else. Whoever gets the
+    applied answer has already seen the preview that led to it. The
+    objection that moved `retitle_version` off the listing was about
+    looking around *a write*, not about looking around at all - a dialog
+    that is opening has 35 ms to spend, a 2 ms write does not.
+
+    **One read per path, and each path catches its own refusal.** The
+    preview reads the ref to show the words. The removal reads it again
+    inside the store, under the lock that also does the delete - so
+    reading it *here* first and then removing it would be two reads of
+    one ref around a 2 ms write, and `remove_version`'s own docstring
+    promises the opposite. The two refusals are the same two sentences
+    either way, but on the confirming path they arrive from the write
+    call, and that is where they have to be caught: `operations.py` is
+    the layer that turns a ValueError into an answer, the WebSocket
+    wrapper only swallows what escapes, and `services.py` has no
+    `except` anywhere in it. Every other operation here wraps its
+    raising store call; this one is not the exception.
+    """
+    if not confirm:
+        try:
+            version = await hass.async_add_executor_job(
+                store.read_version, key, name
+            )
+        except ValueError as err:
+            # Not this dashboard's version, or none by that name. An
+            # answer with a sentence in it, like every other refusal
+            # here.
+            return {"applied": False, "error": str(err)}
+        found = await hass.async_add_executor_job(store.list_versions, key)
+        top = versioning.highest(key, found)
+        return {
+            "applied": False,
+            **_version_dict(version),
+            "highest": top is not None and top.name == version.name,
+        }
+    try:
+        removed = await hass.async_add_executor_job(store.remove_version, key, name)
+    except ValueError as err:
+        # The same two sentences, caught a second time because they
+        # arrive from a different call. `remove_version` reads the ref
+        # again under its own lock, and between a preview and this call
+        # the version can be gone - two removals at once, or a `forget`
+        # in between. Uncaught it leaves the service as a bare
+        # traceback: `services.py` has no `except` in it.
+        return {"applied": False, "error": str(err)}
+    # At warning, and carrying the words. This log line is the only place
+    # a removed version's title still exists - `forget` is loud for a
+    # bigger loss, and somebody asking later where a version went has
+    # nowhere else to look. The revision is in it so that the same person
+    # can see the state was never touched.
+    _LOGGER.warning(
+        "Removed version %s of dashboard %s (%r); the state it marked is "
+        "untouched at %s",
+        name,
+        key,
+        removed.title,
+        removed.revision,
+    )
+    return {"applied": True, **_version_dict(removed)}
+
+
 async def async_versions(
     hass: HomeAssistant, store: HistoryStore, key: str | None = None
 ) -> dict:

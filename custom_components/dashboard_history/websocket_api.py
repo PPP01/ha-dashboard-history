@@ -205,6 +205,20 @@ _COMMANDS = (
             "description": msg["description"],
         },
     ),
+    _command(
+        f"{DOMAIN}/remove_version",
+        {
+            **_DASHBOARD,
+            vol.Required("name"): str,
+            vol.Optional("confirm", default=False): bool,
+        },
+        operations.async_remove_version,
+        lambda msg: {
+            "key": msg["dashboard"],
+            "name": msg["name"],
+            "confirm": msg["confirm"],
+        },
+    ),
 )
 
 
