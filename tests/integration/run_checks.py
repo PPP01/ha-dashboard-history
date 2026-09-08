@@ -2723,6 +2723,129 @@ async def run_retitle(access: str) -> None:
         )
 
 
+async def run_remove_version(access: str) -> None:
+    """Taking a version's mark away, with the state left standing.
+
+    Everything plain pytest cannot reach is in here: the WebSocket
+    command, the schema, the argument order in `services.py`, and the
+    two-step shape of a preview followed by a confirmation. Every fault
+    this project has found so far lived in exactly that layer.
+
+    It brings its own version and takes it away again, so the bench is
+    left as it was found. That matters here more than usually: the
+    checks below this one read the history of the same dashboard, and a
+    check that eats a version other checks rely on turns a real failure
+    into a puzzle about which check ran first.
+    """
+    async with Socket(access) as socket:
+        key = TARGET
+
+        async def listed() -> list:
+            return (
+                await socket.call("dashboard_history/versions", dashboard=key)
+            )["versions"]
+
+        async def remove(name: str, **extra):
+            return await socket.call(
+                "dashboard_history/remove_version",
+                dashboard=key,
+                name=name,
+                **extra,
+            )
+
+        changes = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        if not check("this dashboard has a state to mark", bool(changes), str(len(changes))):
+            return
+        before = {v["name"] for v in await listed()}
+        made = await socket.call(
+            "dashboard_history/create_version",
+            dashboard=key,
+            level="patch",
+            title="Aufgehoben im Prüflauf äöüß",
+            description="Diese Version wird gleich wieder entfernt.",
+            revision=changes[0]["revision"],
+        )
+        name = made.get("created")
+        if not check("a version to remove was made", bool(name), str(made)):
+            return
+
+        # The preview: the words, and nothing changed by asking.
+        facts = await remove(name)
+        check(
+            "the preview answers with the version's own words",
+            facts.get("applied") is False
+            and facts.get("title") == "Aufgehoben im Prüflauf äöüß"
+            and facts.get("description") == "Diese Version wird gleich wieder entfernt."
+            and facts.get("revision") == changes[0]["revision"],
+            str(facts),
+        )
+        check(
+            "and says the number would come free",
+            facts.get("highest") is True,
+            str(facts.get("highest")),
+        )
+        check(
+            "and the version is still there after asking",
+            name in {v["name"] for v in await listed()},
+            name,
+        )
+
+        # The fence, from the outside: another dashboard's namespace.
+        refused = await remove("someone-else/v1.0.0")
+        check(
+            "a version of another dashboard is refused with a sentence",
+            refused.get("applied") is False
+            and "not a version of" in str(refused.get("error", "")),
+            str(refused),
+        )
+        unknown = await remove(f"{key}/v99.99.99")
+        check(
+            "and so is one that does not exist",
+            unknown.get("applied") is False
+            and "unknown version" in str(unknown.get("error", "")),
+            str(unknown),
+        )
+
+        # And the removal itself.
+        done = await remove(name, confirm=True)
+        check(
+            "confirming takes the version away",
+            done.get("applied") is True and done.get("name") == name,
+            str(done),
+        )
+        # `_versions_settled` already returns bare names, not the
+        # dashboard-history/versions dicts `listed()` yields - the same
+        # shape `run_daily_switch` above compares two reads of it by.
+        after = await _versions_settled(socket, key)
+        check(
+            "the list no longer holds it",
+            name not in after,
+            name,
+        )
+        check(
+            "and the bench is as it was found",
+            set(after) == before,
+            f"{sorted(after)} vs {sorted(before)}",
+        )
+        # The state is the whole point: the mark went, the history did
+        # not. Read back by revision, which is how going back to it works.
+        still = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "the state the version marked is still in the history",
+            any(c["revision"] == changes[0]["revision"] for c in still),
+            changes[0]["revision"],
+        )
+        check(
+            "and no other revision moved",
+            [c["revision"] for c in still] == [c["revision"] for c in changes],
+            f"{len(still)} vs {len(changes)}",
+        )
+
+
 async def run_permissions(access: str) -> None:
     """A user who is not an administrator gets nothing from the services.
 
@@ -3357,6 +3480,8 @@ if __name__ == "__main__":
     asyncio.run(run_versions(access))
     print("\n  -- Versionen nachtraeglich umbenennen --")
     asyncio.run(run_retitle(access))
+    print("\n  -- Eine Version wieder aufheben --")
+    asyncio.run(run_remove_version(access))
     print("\n  -- Eine Aenderung gezielt zuruecknehmen --")
     asyncio.run(run_undo(access))
     print("\n  -- Blaettern statt abschneiden --")

@@ -181,6 +181,38 @@ async def main() -> int:
             marked == ["v1.0.0", "v1.0.1"],
             str(marked),
         )
+
+        print("\n  -- Eine aufgehobene Tagesmarke kommt wieder --")
+        # Decision 18 says this out loud rather than preventing it, and
+        # the dialog in the panel repeats the sentence. Which makes it a
+        # promise, and a promise about a rule that runs once a day is
+        # worth a check: the alternative reading - "removed means gone" -
+        # is the one a person will have.
+        where = root / "three"
+        store = Rewound(where)
+        for text, ago in [(A, 2), (B, 1), (A2, 1), (B, 0)]:
+            revision = store.write_snapshot(KEY, text, f"{KEY}: {text.strip()}")
+            assert revision is not None
+            store.shifts[revision] = ago * DAY
+        made = marking.Milestones(Hass(), store, Entry())
+        await made.async_lay_the_floor()
+        await made._async_mark_day(KEY)
+        marked = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+        if check(
+            "the day was marked to begin with", marked == ["v1.0.0", "v1.0.1"], str(marked)
+        ):
+            store.remove_version(KEY, f"{KEY}/v1.0.1")
+            gone = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+            check("and taking the mark away leaves it gone", gone == ["v1.0.0"], str(gone))
+            # The same call the next save would make. Nothing else
+            # changed: same states, same calendar, same walk.
+            await made._async_mark_day(KEY)
+            again = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+            check(
+                "and the next save marks that day again",
+                again == ["v1.0.0", "v1.0.1"],
+                str(again),
+            )
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
