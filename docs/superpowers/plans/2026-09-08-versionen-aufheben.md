@@ -320,7 +320,11 @@ Der lange Kommentar über leichtgewichtige Tags, der im alten `else`-Zweig stand
 python3 -m pytest tests/ -q
 ```
 
-Erwartet: **489 bestanden**, exakt wie vorher, mit den neuen Fällen noch scheiternd bzw. den zwei `test_versions`-Fällen bestehend. Diese Zwischenmessung ist der Sinn des eigenen Schritts: `list_versions` trägt den Verlauf des Panels, und der Umbau darf für sich prüfbar sein, bevor Neues darauf kommt.
+Erwartet: **491 bestanden, 10 gescheitert** — und diese zwei Zahlen sind die Aussage. Die zehn sind die neuen `test_store`-Fälle, jeder mit `AttributeError` auf eine noch nicht existierende Methode; die 491 sind die 489 von vorher **plus** die zwei `test_versions`-Fälle, die ohne Produktionscode bestehen (siehe Schritt 2). Bestehende Fehlschläge: keine. 491 − 2 = 489, also ist der Umbau verhaltensgleich.
+
+*(Am 2026-09-08 berichtigt: Hier stand »489 bestanden«, was dem eigenen Schritt 2 widersprach — der sagt ausdrücklich, dass die zwei `candidates`-Fälle sofort bestehen. Der Umsetzende hat die Arithmetik richtig aufgelöst, aber eine Zahl, die als Prüfstein gemeint ist und nicht stimmt, schickt den nächsten Leser auf die Suche nach einem Rückschritt, den es nicht gibt.)*
+
+Diese Zwischenmessung ist der Sinn des eigenen Schritts: `list_versions` trägt den Verlauf des Panels, die Tagesmarken und die Tag-Umschreibung in `forget`, und der Umbau muss für sich prüfbar sein, bevor Neues darauf kommt.
 
 - [ ] **Step 5: Write `read_version` and `remove_version`**
 
@@ -1047,8 +1051,10 @@ In `dialogs.js`, hinter dem `retitle`-Dialog, innerhalb des `DIALOGS`-Literals:
 
 In `style.js`, hinter `.penholder:hover .pen, .pen:focus { … }`:
 
+⚠️ **Keine Backticks in diesem Kommentar**, und das ist kein Stilhinweis. `style.js` ist **ein** durchgehendes Template-Literal; ein Backtick darin beendet den String und zerlegt die Datei. Die erste Fassung dieses Blocks schrieb `` `bin()` `` in Markdown-Manier, und der Umsetzende lief am 2026-09-08 hinein — gefangen hat es der bestehende Wächter `test_the_style_is_one_unbroken_template_literal`, den das Projekt genau dafür hält. Derselbe Grund, aus dem es daneben `test_no_substitution_hides_in_the_stylesheet` gibt.
+
 ```css
-  /* The bin borrows the pen's shape and reveal - see `bin()` in
+  /* The bin borrows the pen's shape and reveal - see bin() in
      rows.js - and differs only where it is about to take something
      away: on hover it says so in the warning colour rather than
      staying grey like the pen beside it. Not red in its resting
