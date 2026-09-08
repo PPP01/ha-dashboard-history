@@ -1367,13 +1367,13 @@ class HistoryStore:
         Opening one costs a file handle and a pack index; comparing fifty
         revisions is a normal thing for the panel to ask.
         """
-        blob_id = cls._blob_at(repo, path.encode(), revision)
+        blob_id = cls._blob_at(repo, path, revision)
         if blob_id is None:
             return None
         return repo[blob_id].data.decode("utf-8")
 
     @classmethod
-    def _blob_at(cls, repo: Repo, path: bytes, revision: str) -> bytes | None:
+    def _blob_at(cls, repo: Repo, path: str, revision: str) -> bytes | None:
         """The id of the blob one path holds at one revision, or None.
 
         The id, not the content. git names a blob by its bytes, so two
@@ -1385,13 +1385,18 @@ class HistoryStore:
         revision is unknown, it is not a commit, or the path is not in
         its tree. The last is the ordinary case for a dashboard that did
         not exist yet.
+
+        Takes the path as text like `_read_from` does, rather than as the
+        bytes git wants: two sibling helpers that disagree about that are
+        an encode a caller forgets, and `lookup_path` answers a forgotten
+        one with a KeyError that reads like a missing file.
         """
         resolved = cls._resolve(repo, revision)
         if resolved is None:
             return None
         try:
             tree = repo[repo[resolved.encode()].tree]
-            _, blob_id = tree.lookup_path(repo.get_object, path)
+            _, blob_id = tree.lookup_path(repo.get_object, path.encode())
         except KeyError:
             return None
         return blob_id
@@ -1422,7 +1427,7 @@ class HistoryStore:
         from dulwich.objects import Blob  # noqa: PLC0415
 
         wanted = Blob.from_string(text.encode("utf-8")).id
-        path = f"{key}.yaml".encode()
+        path = f"{key}.yaml"
         same: set[str] = set()
         # Deduplicated: two versions may sit on one commit, and a version
         # may sit on a change that is loaded beside it, so the same
@@ -1458,7 +1463,7 @@ class HistoryStore:
         repo = self._repo()
         if repo is None:
             return False
-        path = f"{key}.yaml".encode()
+        path = f"{key}.yaml"
         first = self._blob_at(repo, path, one)
         return first is not None and first == self._blob_at(repo, path, other)
 

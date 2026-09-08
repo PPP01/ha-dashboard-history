@@ -91,10 +91,15 @@ def highest(key: str, versions: Iterable) -> object | None:
     rather than be handed a name that cannot answer.
 
     The same question `latest` answers, one step further: `latest` gives
-    the three numbers, this gives the thing that carries them.
+    the three numbers, this gives the thing that carries them - and it is
+    built the same way, on `max` rather than on a sort. Sorting to take
+    one element parses every name again inside every comparison, and a
+    dashboard with a year of daily versions has 365 of them.
     """
-    numbered = [v for v in versions if parse(key, v.name) is not None]
-    return by_number(key, numbered)[0] if numbered else None
+    numbered = [
+        (parsed, v) for v in versions if (parsed := parse(key, v.name)) is not None
+    ]
+    return max(numbered, key=lambda pair: pair[0])[1] if numbered else None
 
 
 def bump(parts: tuple[int, int, int], level: str) -> tuple[int, int, int]:

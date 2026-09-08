@@ -25,7 +25,12 @@ one thing - the clock, at the single place the calendar reads it
 (`list_changes`). A wrong answer here is a wrong answer in a running
 installation.
 
-Two things it does deliberately:
+The two runs it makes differ in a single byte, at the end of the day
+being marked - same states, same calendar, same walk. That is the
+control: on its own, "no second version" could as easily mean the
+scenario never called for one.
+
+Three things it does deliberately:
 
   * It calls `_async_mark_day` directly, a private method. There is no
     other door: the public one is an event on Home Assistant's bus, and
@@ -34,7 +39,14 @@ Two things it does deliberately:
   * It watches the log for anything at ERROR. That path swallows every
     exception on purpose - a missing mark must never break a save - so a
     typo in it looks precisely like the rule working, and a check that
-    only counts versions would pass while proving nothing.
+    only counts versions would pass while proving nothing. Shown by
+    breaking `same_state` on purpose: the first run still passes, for
+    the wrong reason, and only the watcher says so.
+  * It carries its own copy of `check` and the tally around it, spelled
+    exactly as `run_checks.py` has them. Sharing them is not possible
+    the way this file is run - it arrives on stdin, and nothing of
+    `tests/` is mounted in the container - so mirroring the sibling is
+    worth more than trimming the copy.
 """
 
 from __future__ import annotations
@@ -50,16 +62,17 @@ from pathlib import Path
 sys.path.insert(0, "/config")
 
 from custom_components.dashboard_history import milestones as marking  # noqa: E402
-from custom_components.dashboard_history import versions as versioning  # noqa: E402
 from custom_components.dashboard_history.store import HistoryStore  # noqa: E402
 from homeassistant.util import dt as dt_util  # noqa: E402
 
 DAY = 86400
 KEY = "home"
-# Three states, and only whether they are equal matters.
+# Three states, and only whether they are equal matters. `A2` is `A`
+# with one byte changed: it is what turns the second run into a control
+# rather than a second story.
 A = "views:\n- title: A\n"
+A2 = "views:\n- title: a\n"
 B = "views:\n- title: B\n"
-C = "views:\n- title: C\n"
 
 _passed: list[str] = []
 _failed: list[str] = []
@@ -116,7 +129,7 @@ class Entry:
     options: dict = {}
 
 
-async def scenario(where: Path, states, without_the_rule: bool = False) -> list[str]:
+async def scenario(where: Path, states) -> list[str]:
     """Write `states`, lay the floor, then mark the day that ended.
 
     `states` are (text, days ago) pairs, oldest first, and the last one
@@ -132,17 +145,7 @@ async def scenario(where: Path, states, without_the_rule: bool = False) -> list[
     made = marking.Milestones(Hass(), store, Entry())
     await made.async_lay_the_floor()
 
-    keep = versioning.highest
-    if without_the_rule:
-        # What this path looked like before the rule: no version to
-        # compare against, so the mark is made whatever it holds. It is
-        # the control - without it, "no second version" could just as
-        # well mean the scenario never called for one.
-        versioning.highest = lambda *_: None
-    try:
-        await made._async_mark_day(KEY)
-    finally:
-        versioning.highest = keep
+    await made._async_mark_day(KEY)
     return sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
 
 
@@ -167,18 +170,14 @@ async def main() -> int:
             quiet == ["v1.0.0"],
             str(quiet),
         )
-        loose = await scenario(root / "two", back_and_forth, without_the_rule=True)
-        check(
-            "and that same day would have been marked without the rule",
-            loose == ["v1.0.0", "v1.0.1"],
-            str(loose),
-        )
 
         print("\n  -- Und eine, die etwas anbietet, entsteht weiterhin --")
-        moved_on = [(A, 2), (B, 1), (C, 0)]
-        marked = await scenario(root / "three", moved_on)
+        # The same four states on the same two days, and the day ends one
+        # byte away from what the floor holds.
+        one_byte_apart = [(A, 2), (B, 1), (A2, 1), (B, 0)]
+        marked = await scenario(root / "two", one_byte_apart)
         check(
-            "a day ending on a state of its own still gets its mark",
+            "and one byte of difference at that day's end earns one",
             marked == ["v1.0.0", "v1.0.1"],
             str(marked),
         )

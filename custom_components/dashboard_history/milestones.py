@@ -421,6 +421,15 @@ class Milestones:
                 # older version holds that content too. Against all of
                 # them, that mark would be dropped and the day it
                 # happened would show nothing.
+                #
+                # So what this stops is the immediate duplicate, not
+                # every duplicate. A dashboard alternating between two
+                # states across days still collects a mark a day, each
+                # one duplicating an older version - and those rows are
+                # not the ones this is about: they carry a working
+                # button, because what the dashboard holds is the other
+                # state. Dropping them too is the same mistake as
+                # comparing against every version, from the other end.
                 top = versioning.highest(key, found)
                 if top is not None and await self._hass.async_add_executor_job(
                     self._store.same_state, key, previous.revision, top.revision
