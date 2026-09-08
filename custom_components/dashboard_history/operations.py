@@ -819,9 +819,16 @@ async def async_create_version(
         # A version is a name for a state, so one without a name is not
         # a version - it is a row somebody cannot pick out of a list
         # again, and leaving a field blank is not a way of saying
-        # anything. (It used to say "and this integration has nothing
+        # anything. (It used to end "and this integration has nothing
         # that deletes a tag"; since decision 18 it has, and the fence
         # stands on its own reason instead.)
+        # `const.KEEP_AS_VERSION` deliberately shapes without judging,
+        # and `vol.Required("title"): str` accepts the empty string, so
+        # the judgement belongs here - at the fence both ways in pass
+        # through, the service and the button alike. Not filled in for:
+        # the panel already falls back on the day's own date before it
+        # asks, so anything arriving here empty is a caller's mistake,
+        # and answering it is worth more than guessing at a name.
         return {"created": None, "error": "a version needs a title"}
     if not revision:
         # Emphatically not HEAD, which is what the store would fall back

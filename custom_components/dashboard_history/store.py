@@ -1638,9 +1638,12 @@ class HistoryStore:
             # reaches for `.tree` and raises AttributeError, which arrives
             # as a generic failure through the WebSocket and as a bare
             # traceback through `services.py`, and `create_version`
-            # accepts it and leaves a tag nobody can ever return to, which
-            # nothing can delete again. `None` already means "unknown
-            # revision" to every caller here, and every one of them
+            # accepts it and leaves a tag nobody can ever return to.
+            # (That clause used to end "which nothing can delete
+            # again"; since decision 18 something does, and the refusal
+            # stands on such a tag being useless rather than on being
+            # stuck with it.) `None` already means "unknown revision"
+            # to every caller here, and every one of them
             # handles it; saying it once, at the only place that knows
             # what the object really is, is the whole fix.
             return None
