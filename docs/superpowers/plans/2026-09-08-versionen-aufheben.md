@@ -1545,7 +1545,9 @@ MSG
 | `operations.async_create_version` (~Zeile 821) | »this integration has nothing that deletes a tag« |
 | `operations.async_retitle_version` (~Zeile 904) | »unlike a description there is nothing that would put a name back« |
 
-Das sind keine Ergänzungen, sondern Berichtigungen, und die Spec nennt das Muster unter Entscheidung 18, »Drittens«, ausdrücklich einen Befund: Kommentare, die eine Auslassung *entschuldigen*, statt eine Entscheidung zu begründen. Sie haben einen eigenen Prüfer verdient. **Alle vier bleiben stehen und werden umformuliert — keiner wird gestrichen.**
+Das sind keine Ergänzungen, sondern Berichtigungen, und die Spec nennt das Muster unter Entscheidung 18, »Drittens«, ausdrücklich einen Befund: Kommentare, die eine Auslassung *entschuldigen*, statt eine Entscheidung zu begründen. Sie haben einen eigenen Prüfer verdient. **Alle sechs bleiben stehen und werden umformuliert — keine wird gestrichen.** (Vier davon sind Code-Kommentare und werden in Schritt 6 zusammen erledigt; die zwei in `FAQ.md` und `README.md` in den Schritten 3 und 5. Wo unten »alle vier« steht, sind die Kommentare gemeint.)
+
+⚠️ **Die Zeilennummern in dieser Aufgabe stammen aus der Zeit vor Task 1 bis 3.** `store.py` und `operations.py` wachsen dort um je einige Dutzend Zeilen, `README.md` und `FAQ.md` nicht. Jede Stelle wird über ihren **Wortlaut** gesucht, nie über die Zahl.
 
 - [ ] **Step 1: Correct the answer under »What to do instead«**
 
@@ -1628,10 +1630,12 @@ Der fette Halbsatz wird falsch, und der Satz danach begründet sich mit ihm. Neu
 Zuerst die Suche, und zwar **diese**:
 
 ```bash
-grep -rn "delete a version\|deletes it again\|deletes a tag\|put a name back" README.md FAQ.md custom_components/
+grep -rn "delete a version\|deletes it again\|deletes a tag\|put a name" README.md FAQ.md custom_components/
 ```
 
-⚠️ **Nicht die naheliegende Suche.** Ein `grep` nach »nothing in this integration can delete a version again« findet **nichts**: der Satz ist über zwei Zeilen umbrochen (`nothing in this` / `# integration can delete a version again`), und `grep` liest Zeile für Zeile. Dasselbe gilt für den in `store.py`. Eine frühere Fassung dieses Schritts suchte nach `nothing.*delete a version` und meldete null Treffer — woraus ein Umsetzender geschlossen hätte, es sei nichts zu tun. Das Muster oben ist an allen Fundstellen ausprobiert.
+⚠️ **Nicht die naheliegende Suche.** Ein `grep` nach »nothing in this integration can delete a version again« findet **nichts**: der Satz ist über zwei Zeilen umbrochen (`nothing in this` / `# integration can delete a version again`), und `grep` liest Zeile für Zeile. Dasselbe gilt für den in `store.py`. Eine frühere Fassung dieses Schritts suchte nach `nothing.*delete a version` und meldete null Treffer — woraus ein Umsetzender geschlossen hätte, es sei nichts zu tun.
+
+⚠️ **Und dieselbe Falle noch einmal, am 2026-09-08 im Vorflug der Umsetzung gefunden.** Das Muster oben hieß bis dahin `… \|put a name back` und traf damit **fünf** der sechs Stellen: In `FAQ.md` ist der Satz als `… would put a name` / `back.` umbrochen, in `operations.py` steht `# put a name back.` ganz auf einer Zeile. Ein Muster, das an fünf von sechs Stellen trifft, sieht wie ein funktionierendes aus — und die Schlussprüfung dieses Schritts (»dieselbe Suche noch einmal«) hätte die FAQ-Stelle nie gesehen, weder vorher noch nachher. Gekürzt auf `put a name`. **Nachgezählt und belegt:** 6 Treffer in 5 Dateien (`operations.py` trägt zwei). Wer das Muster erneut anfasst, zählt wieder nach.
 
 Ebenso wenig erledigt **Task 1** diese Stellen: Task 1 fasst `const.py` nicht an und ändert an `store.py` nur, was um `_marked_commit` herum liegt, nicht dessen Docstring. Sie gehören hierher, und der Commit dieser Aufgabe stellt sie bereit.
 
