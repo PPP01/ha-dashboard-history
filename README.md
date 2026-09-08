@@ -3,83 +3,427 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Records every change to your Home Assistant dashboards and lets you put
-back what disappeared.
+Records every change to your Home Assistant dashboards, and gives you a
+way back.
 
 Home Assistant only offers undo *while* you are editing. Close the editor
 and that history is gone; a card you deleted last week is only in a full
-backup, if at all. This integration keeps a history of its own.
+backup, if at all. This integration keeps a history of its own — one
+commit per save, forever, with no configuration.
 
-## What it does
+**This page has two parts.** [Part 1](#part-1-using-it) is for using it
+and assumes nothing. [Part 2](#part-2-how-it-works-and-where-it-stops)
+is the mechanism and the exact limits, for anyone who wants to know what
+the tool can prove and what it can only assume.
 
-- Records every dashboard save automatically. No configuration needed.
-- Shows the history of each dashboard: when it changed and what changed.
-- **Puts back what disappeared** — a deleted card, a deleted view.
-- **Takes one change back on its own** — only what that change touched,
-  with everything you saved since left standing. Offered where it can be
-  proved exact, refused with a reason where it cannot.
-- Restores a whole dashboard to an earlier state.
-- **Says in plain words what a change did**, and what restoring it would
-  do — cards and views by name, with the diff underneath for anyone who
-  wants it.
-- **Lets you describe a change in your own words.** One field. The text
-  becomes the headline of that entry.
+---
 
-## What it does not do
+## Part 1: Using it
 
-- **It undoes an edit only where it can prove the undo exact.** *Put back*
-  reaches disappearances and nothing else; *Undo this change* reaches an
-  edit too, but only while the card that change produced still stands in
-  the dashboard, untouched and exactly once. Otherwise it refuses and
-  says why. See "Why only deletions?" below — the reason is not
-  laziness.
-- It does not record *who* made a change. Home Assistant does not pass
-  that information to integrations.
-- It is not a backup. It covers dashboards, nothing else.
+### What you get
 
-## Why only deletions?
+- **Every save recorded, automatically.** No setup, no configuration, no
+  scheduling. The history starts with the first save after installation.
+- **A panel in the sidebar**, there all the time — not only while you are
+  editing, which was the whole complaint this project started from.
+- **Plain-language history.** Not just a diff: *"markdown: Shopping list
+  was deleted"*, *"tile: Living room lamp was moved to Kitchen"*. The
+  diff is still there, one click away.
+- **Three ways back**, from the surgical to the sweeping: take back one
+  change, put back one missing card, or set the whole dashboard to an
+  earlier state.
+- **Versions** — names for states worth coming back to, such as
+  `my-dashboard/v1.2.0`. Some are made for you, so the list is never
+  empty.
+- **Your own notes on any change.** One field. Your text becomes the
+  headline of that entry.
+- **Search**, across the whole recorded history of a dashboard, including
+  your own notes and version titles.
+- **Deleted a whole dashboard?** It comes back — cards, title, icon and
+  sidebar setting.
+- **Nothing is written without a preview** and an explicit confirmation.
 
-A Lovelace card carries no identifier. It is defined purely by its
-position in a list. Putting back a card that is gone is *additive*:
-nothing is overwritten, so there is exactly one correct result. Undoing
-an *edit* means replacing today's version with an older one — a merge
-without identities, and when a later change touched the same card there
-is no single correct answer.
+### Installing
 
-Deletions are also the painful case. A card you moved by accident, you
-move back. A card you deleted is gone.
+1. Add this repository to HACS as a custom repository (type:
+   Integration).
+2. Install "Dashboard History".
+3. Restart Home Assistant.
+4. Settings → Devices & Services → Add Integration → Dashboard History.
 
-**What changed, and what did not.** The identity is still missing — but
-in one shape it can be *proved* instead of assumed. Take the card a
-change produced, byte for byte, and look for it in the dashboard as it
-stands today. If it is there exactly once, it can be pointed at without
-an identifier, and undoing that change is a definite exchange rather
-than a merge. If it is there twice, or not at all, the tool refuses and
-names the card. That is what **Undo this change** rests on, and it is
-why it is offered on some rows and not on others.
+That is all. There is exactly one option, and you can ignore it (see
+[Versions](#versions)).
 
-## Telling a move from a deletion
+Only administrators can read or use any of this. A signed-in
+non-administrator gets no history, no previews and no restores.
 
-This is the hardest thing the integration does, and it is worth
-understanding, because it decides what you get offered when something
-goes missing.
+### The panel
 
-A card has no identifier. Not a hidden one, not an optional one —
-measured across twelve real dashboards, 1783 cards carried exactly zero
-identifiers between them. So when two states of a dashboard are
-compared, the cards have to be recognised **by their content**. Four
-passes do that:
+**Dashboard History** appears in the sidebar. Pick a dashboard on the
+left and you get its history, newest first.
 
-1. Identical cards pair up **in the same card list**.
-2. Whatever is left over is looked for **anywhere on the dashboard**. A
-   card found somewhere else was moved — and a moved card is not
-   missing.
-3. What is still left is paired **within its own list** by a
-   content-based fingerprint — entity, title, name, heading, first
-   entity of a list, first line of text — choosing the **most similar**
-   candidate.
-4. Anything unpaired is a real deletion on one side, a real addition on
-   the other.
+**That list is your sidebar, in your sidebar's order** — including an
+arrangement you dragged into place, which lives in your own user data
+and so differs from the next person's. Dashboards that are *not* in your
+sidebar, whether hidden for everyone or only by you, are counted and
+folded away under `Not in the sidebar (N)`. The order is read when the
+panel loads; rearrange your sidebar in another tab and the reload button
+fetches it again.
+
+**The state you have now is set apart at the top**, marked `current
+state`. That mark is worked out rather than assumed: if a dashboard was
+changed behind Home Assistant's back, the newest entry is *not* what you
+have, and then nothing is marked. Entries further down holding the same
+content say `same state as now`, which is what makes a history that went
+back and forth readable at all.
+
+Click a change and it expands: what it did, in words, with the diff
+underneath and the buttons that lead back.
+
+#### Two views
+
+A button in the top right switches between them, and your choice is
+remembered.
+
+**Simple view** shows nothing but the versions — the named states. This
+is the one to use when you want *"put it back to how it was on Tuesday"*
+and nothing more. Each version is a section you can fold open to see the
+changes inside it.
+
+At the top of it sits the state you have now, marked `current state`.
+That mark is unconditional here, unlike the one on a row above: this box
+*is* what you have, whatever the history does or does not agree with.
+It names the version you are standing in, or says that the dashboard
+has changed since the last one was saved — and in that case it offers a
+single button, **Undo / Go back to v1.2.0**, which takes the dashboard
+off everything since that version in one step. Like every other way
+back it shows you the diff first, and what you are leaving is kept: it
+stays in the history as its own entry, and the dialog offers to name it
+as a version too. The box folds open as well, and lists the changes
+made since that version.
+
+**Advanced view** shows every recorded change, newest first, twenty-five
+at a time with a *Load older changes* button. The versions still appear,
+as headers that cut the list into sections.
+
+#### Search
+
+A search box sits above the list and searches what the current view
+shows: in the simple view, the versions; in the advanced view, the
+changes that are loaded. If the answer is not among them, a button offers
+**Search the whole history** — that goes to the server and walks the
+entire recorded past, looking at the automatic message, any note you
+wrote yourself, and the title, description and number of any version on
+that state.
+
+### Getting something back
+
+There are three ways back, and they differ in *reach* rather than in
+quality. The panel leads with the narrowest one that fits.
+
+| | What it touches |
+| --- | --- |
+| **Undo this change** | That one change, and nothing else. Everything saved since stays exactly as it is. |
+| **Put back** | One missing item, reinserted into the dashboard *as it stands today*. Nothing else changes. |
+| **Back to the state before / after this change** | The whole dashboard. That earlier state is written over what is there now. |
+
+**Undo this change** is what people mean by undoing something, so the row
+leads with it. It is offered only where the tool can *prove* the result
+is exact — see [The proof behind the undo](#the-proof-behind-the-undo).
+Where it cannot, the row says so in place of the button rather than
+guessing:
+
+> This change cannot be taken back exactly: tile: Living room lamp was
+> changed again after this, so there is no exact version left to put
+> back.
+
+**Put back** is for something that is simply missing. It only ever
+*adds* — it never overwrites anything — so it is always safe, and it
+leaves everything you have done since alone.
+
+**The two whole-dashboard buttons sit under a fold**, labelled *Replace
+the whole dashboard instead*. They are a real capability and somebody
+wants one about once a year; leading with them would be offering the
+largest step first. Either one disappears when its target is already what
+the dashboard holds, so a button never offers a change that changes
+nothing.
+
+An example that shows the difference. Picture a deletion from three weeks
+ago:
+
+- **Put back** brings that one card into today's dashboard and leaves the
+  three weeks alone.
+- **Undo this change** does the same, and also takes back anything else
+  that one save did.
+- **Back to the state before this change** throws the three weeks away.
+
+On the *newest single deletion* all three leave you with the same
+dashboard, which is exactly why the difference is so easy to miss: the
+first shape anybody meets is the one where they agree.
+
+#### The undo does not run out with time
+
+Thirty saves and a week later, **Undo this change** still takes back that
+one save and leaves the other thirty standing. What it needs is not haste
+but the card that change produced: still on the dashboard, byte for byte
+as the change left it, and there exactly once.
+
+**What ends it is a second edit, not the calendar.** Change the same card
+again and there is no version left that this change produced — then the
+row says so, and the remaining choice is the blunt one: put the old card
+back beside the new one and delete the one you do not want, or set the
+whole dashboard back and lose the changes since.
+
+So the practical advice is *fix it soon* — where "soon" means "before you
+edit that card again", not "before the week is out".
+
+#### I deleted a card by accident
+
+In the panel: find the change that deleted it, expand it, press **Undo
+this change** or the card's own **Put back**, read the preview, confirm.
+
+The same thing through Developer Tools → Actions, if you prefer:
+
+```yaml
+# 1. Find the change. Note its revision.
+action: dashboard_history.history
+data:
+  dashboard: my-dashboard
+```
+
+```yaml
+# 2. See what disappeared since then, with a position for each item.
+action: dashboard_history.deleted_since
+data:
+  dashboard: my-dashboard
+  revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
+```
+
+```yaml
+# 3. Put one back. Without confirm this only previews — nothing is written.
+action: dashboard_history.restore_deleted
+data:
+  dashboard: my-dashboard
+  revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
+  position: 0
+  confirm: true
+```
+
+### If your dashboard uses sections
+
+Sections — the boxes a dashboard in the modern layout is built from — are
+the one place where this tool is noticeably weaker, and it is worth
+knowing that *before* you need it.
+
+**Cards inside a section are handled normally.** Deleted, edited, or
+dragged from one section to another: all recognised, all named correctly,
+all recoverable with the narrow tools. If your sections stay as they are
+and you work on the cards in them, nothing below applies to you.
+
+**The section itself is not recognised.** Home Assistant's editor gives a
+section no identifier and no path, and a view's URL path has no equivalent
+one level down — so the integration knows a section only by its position
+in the row. That has four consequences:
+
+- **Renaming a section** does not show up in words. The entry says `no
+  card changes` and points at the diff, which is correct and complete.
+- **Deleting a whole section** cannot be taken back with the narrow
+  tools: neither *Put back* nor *Undo this change* will do it, and both
+  say why. The whole-state restore brings it back in full.
+- **Adding a section** switches the undo off for that one save. Nothing
+  is broken; the tool declines to work while the row it counts on has
+  shifted.
+- **Reordering sections that have no titles** is the one case in the
+  whole integration where something can go wrong silently — see the
+  caution below.
+
+**Setting the whole dashboard back to an earlier state always works**, for
+sections exactly as for everything else. Nothing you have is ever
+unrecoverable; what the limits cost is the precision of the small tools.
+
+> [!TIP]
+> **Give your sections titles.** A title is the only thing the
+> integration can recognise a section by. With titles, a reordering that
+> would confuse it produces an honest refusal. Without them, **Put back**
+> can file a card into the wrong section without warning. Titles are
+> optional in Home Assistant and most people leave them off — on the
+> installation this was developed against, all 80 sections were untitled.
+
+There is an intention to recognise sections properly, by having the
+integration keep an identity chain of its own alongside each save. It is
+**an idea at this point** — not designed, not planned, not built — so
+nothing on this page should be read as a promise about it.
+[Part 2](#sections-in-detail) has the measured behaviour, case by case.
+
+### Versions
+
+A version is a name for a state your dashboard has already reached — an
+annotated git tag such as `my-dashboard/v1.2.0`. It belongs to one
+dashboard, so every dashboard counts its own: two dashboards can each
+have a `v1.0.0` without conflict.
+
+Expand any change and choose **Version up to here**. A dialog offers
+three buttons — patch, minor, major — each already showing the number it
+would get, patch preselected, plus a title and an optional description.
+You never type the number: it counts up from the highest that dashboard
+already has, so it can never collide with one you made before.
+
+There are no checkboxes for which changes to include. Every commit holds
+the dashboard's complete state, so the state after change 3 contains
+change 2 whether you want it there or not — a gap in a selection is not
+something a version could express.
+
+Making a version writes no commit and changes nothing about the
+dashboard, so it needs no confirmation.
+
+#### Versions you never made
+
+Two kinds appear on their own, so a dashboard is never a list with
+nothing in it:
+
+- **`v1.0.0`, once per dashboard.** The first time the integration sees a
+  dashboard it marks the oldest state it has of it — the state to come
+  back to before anything happened. A dashboard you create later gets its
+  own at the next start of Home Assistant.
+- **One per day, on the day's last state.** When the first change of a
+  new day is recorded, the state that was there before it is marked and
+  named after the day it belongs to, such as `5 September 2026`. A day on
+  which nothing changed gets no version, and a day never gets two.
+
+Both carry the label `automatic`, and are otherwise ordinary versions —
+same numbering, same *Back to this version*.
+
+The daily ones can be switched off under *Settings → Devices & services →
+Dashboard History → Configure*. It takes effect at the next change, with
+no restart. The `v1.0.0` is not affected by that switch, and **nothing is
+ever deleted either way**: every state stays in the history, marked or
+not.
+
+#### Keeping the state you are leaving
+
+When you go back to an earlier state, the dialog offers to mark the state
+you are *leaving* as a version in the same movement. In the simple view
+that box is ticked by default, because somebody who only sees versions
+would otherwise be leaving an unnamed state behind — and to them, an
+unnamed state is gone.
+
+The mark is made after the state you are leaving is safely in the history
+and before the older one is written, which is the only moment it is the
+state you actually saw.
+
+Going back destroys nothing in any case: the tag still points at its
+commit, so from an older version you can go forward to a newer one with
+the same button, and working on after going back is fine.
+
+### Describing a change
+
+Hover a change and a pencil appears. One field, prefilled, Enter saves —
+the same shape as Home Assistant's own *rename* on an integration.
+
+Your text becomes the headline of that entry; the automatic message moves
+underneath it in grey and stays there, because that is the part you can
+trust when your own note from last year no longer says enough. Emptying
+the field removes the description again.
+
+The commit is **not** rewritten. A description is a git note, so every
+revision you have written down anywhere stays valid.
+
+### When a whole dashboard is gone
+
+The deletion is recorded within about ten seconds, as `<dashboard>:
+dashboard deleted`. Home Assistant fires no event for a deleted
+dashboard, so it is noticed by comparison rather than as it happens:
+deleting one moves a sidebar panel, and *that* is announced, which is the
+cue to compare the history against what Home Assistant still has. No
+restart needed.
+
+The dashboard stays in the panel, folded away under a `Deleted (N)`
+section. **Nothing is lost**, and it comes back with its cards, title,
+icon and sidebar setting:
+
+```yaml
+action: dashboard_history.restore_state
+data:
+  dashboard: the-deleted-one
+  revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
+  confirm: true
+```
+
+Measured against Home Assistant 2026.8.3: the dashboard is back
+immediately with a byte-identical configuration, and Home Assistant
+manages it as its own — you can rename or delete it from the settings
+dialog straight away, with no restart.
+
+#### Forgetting one for good
+
+A deleted dashboard stays in the list forever, which is the point. When
+you are certain you will never want one back, the *Forget for good*
+button removes its history. Without confirmation you first get a count of
+what would go — how many recorded states, over what period, and how many
+carry a note you wrote.
+
+This is **the only thing here that cannot be undone**, and the only thing
+that refuses to touch a live dashboard: if Home Assistant still has it,
+the answer is no.
+
+One side effect, stated because you will notice it: git can only really
+remove something by rewriting history, so every revision from the first
+affected commit onwards changes, and a revision you wrote down elsewhere
+will no longer resolve. Descriptions and versions of the dashboards that
+stay are carried across — that part is not left to chance. The forgotten
+dashboard's own versions go with it, because a version belongs to one
+dashboard.
+
+### Renames and other dashboard settings
+
+A dashboard's title, icon and sidebar setting live in Home Assistant's
+registry rather than in the dashboard configuration, and Home Assistant
+announces no event when they change. They are picked up when a panel
+moves — which covers creating, renaming and deleting — so a rename shows
+up in the history as `renamed to "…"`, and a restored dashboard comes
+back under the name it had rather than the name it started with.
+
+### What it will not do
+
+- **It does not record *who* made a change.** Home Assistant does not
+  pass that information to integrations.
+- **It is not a backup.** It covers dashboards, and nothing else.
+- **It will not guess.** Where it cannot work out what belongs where, it
+  refuses and says why, rather than writing something plausible. Part 2
+  lists every one of those cases.
+- **It does not edit your dashboards behind your back.** Nothing is ever
+  written without a preview you confirmed.
+
+One thing worth knowing in plain terms: **the further back and the finer
+the operation, the more the tool has to recognise things by their
+content**, because Lovelace cards carry no identifier. That is why the
+narrow ways back are sometimes withheld while the broad one always works.
+Which cases those are, and why, is the subject of Part 2.
+
+---
+
+## Part 2: How it works, and where it stops
+
+### Recognising cards without identifiers
+
+A Lovelace card carries no identifier. Not a hidden one, not an optional
+one. Counted across the eleven dashboards this was built against: **1523
+cards, including the ones nested inside wrappers, and exactly 0 with an
+`id`.** A card is defined purely by its position in a list.
+
+So when two states of a dashboard are compared, the cards have to be
+recognised **by their content**. Four passes do that, in this order:
+
+1. **Identical cards pair up within the same card list.** Same content,
+   same place: that card did not change.
+2. **What is left over is looked for anywhere on the dashboard.** A card
+   found somewhere else was *moved* — and a moved card is not missing.
+3. **What is still left is paired within its own list** by a
+   content-based fingerprint — entity, title, name, heading, first entity
+   of a list, first line of text — choosing the **most similar**
+   candidate. That card was *edited*.
+4. **Anything still unpaired** is a real deletion on one side and a real
+   addition on the other.
 
 Pass 1 running before pass 2 is what keeps this honest. Delete a card
 from one view while an identical card sits untouched in another, and a
@@ -87,66 +431,112 @@ global search running first would pair your deleted card with the
 untouched one and lose the deletion entirely. Every card claims its own
 place first.
 
-### What you will see
+Pass 3 choosing the *most similar* candidate rather than the first one
+matters just as much. Two tile cards on the same light: you delete the
+first and change the second from blue to green. The survivor matches its
+own old form in three fields of four and the deleted card in two of five,
+so the closer pair wins and the card offered back is the one you actually
+deleted. Before this was best-match, the result was backwards — you were
+offered the old version of a card still on the dashboard, and the card
+you really lost was never offered at all.
 
-**You drag a card into another view, or into another section.**
+### What holds the cards: views and sections
 
-```
-1 moved
-  tile: Living room lamp was moved to "Kitchen"
-```
+The comparison walks exactly two kinds of container, and knowing which is
+which explains most of the limits further down.
 
-Nothing is offered to put back, because nothing is missing. **Undo this
-change** still takes it back: a moved card is the same card, so it can
-be lifted off where it sits and put back where it came from. That
-reverses the whole save it belonged to — anything else you did in the
-same step comes back too — but nothing you saved afterwards.
+| | Identified by | Stable? |
+| --- | --- | --- |
+| **View** | its URL path | Yes, when it has one. A view may have none. |
+| **Section** | its position, cross-checked against its title | No. A section can have no path or id at all, and its title is optional. |
 
-**You have two similar cards, delete one and edit the other.**
+Counted on the same eleven dashboards: **67 views, of which 8 carry no
+path**, and **24 views using the sections layout with 80 sections between
+them — of which 80 carry no title.**
 
-Say two tile cards on the same light: you delete the first and change
-the second from blue to green. The surviving card matches its own old
-form in three fields of four; it matches the deleted card in two of
-five. The closer pair wins, so the card offered back is the one you
-actually deleted — not the survivor.
+Anything that is not in one of those two containers is outside the
+comparison altogether. In practice that means **badges**: a view's badges
+are neither cards nor in a card list, so a change to them is invisible to
+every part that speaks in words.
 
-Before this, the first match won instead of the best one, and the
-result was backwards: you were offered the old version of a card that
-was still on the dashboard, and the card you really lost was never
-offered at all.
+### The proof behind the undo
 
-### Two things it still gets wrong
+*Undo this change* does not merge and does not guess. It works from a
+proof, and the proof is this: take the card that change produced, byte
+for byte, and look for it in the dashboard as it stands today.
 
-Both are named here rather than hidden, and both are covered by tests
-so that they cannot drift silently.
+- Found **exactly once** — it can be pointed at without an identifier, so
+  removing it and putting the old one in its place is a definite
+  exchange.
+- Found **twice**, or **not at all** — there is nothing to point at, or
+  nothing to tell two candidates apart. The undo refuses and names the
+  card.
 
-**A card with nothing to recognise it by.** Some cards carry no entity,
-no title, no name, no heading, no entity list, no text, and no nameable
-card inside them — measured on a real installation, 27 of 484, mostly
-custom chart cards, `vertical-stack` and `conditional`. Edit one of
-those and the data cannot say whether it is the same card changed, or
-the old one deleted and a new one added. You will see `1 removed, 1
-added` and be offered the old version back. Accepting that gives you
-the card twice; the diff shown before you accept is your protection.
+This is what makes the undo exact rather than approximate, and it is why
+it is offered on some rows and not on others. The proof is worked out
+again on the confirming call, not just for the preview: somebody may have
+saved while you were reading.
 
-**A card moved and edited in the same save.** Pass 2 no longer
-recognises it (the content changed), and pass 3 does not look across
-places. So it reads as a deletion plus an addition, with the same
-consequence as above. Looking for edited cards across views would close
-this and open something worse: the same entity on two views is
-ordinary, so a real deletion could be mistaken for a move and never be
-offered back at all. A missed offer is worse than one you can decline.
+One consequence worth stating: the undo reaches **edits**, not only
+disappearances. Reduce an `entities` card from sixty rows to one, edit the
+text of a markdown card, delete a card from inside a `vertical-stack`,
+rename a view's URL path — all of those are taken back exactly, verified
+against the current code. What *Put back* is restricted to is
+disappearances, because it is additive by definition.
 
-### What the gap costs, and when
+#### Where the undo hides a Put back button
 
-Worth walking through, because the two ways back behave very differently
-here — and because the exact one does not last forever.
+Where an undo already covers an item, that item's own *Put back* button is
+gone, for one of two reasons and no others:
 
-Change the URL of an `iframe` card. The history reads `1 removed, 1
-added` — the tool cannot tell the edit from a deletion with an addition
-beside it. The two ways back then do very different things.
+- The undo brings back exactly that one item and nothing else — a change
+  that deleted a single thing. Two buttons doing literally the same thing
+  is what the first person to see them side by side reported.
+- The change also *added* something. Then a put-back is not merely
+  redundant but wrong: an edit that touches the identifying field reads
+  as one removal plus one addition, so putting the old card back would
+  leave both versions standing.
 
-**Undo this change** is exact:
+What is missing because of *later* changes keeps its button, under a line
+saying where it comes from.
+
+### Known limits, measured
+
+Every row below was reproduced against the current code. The last column
+is the point: **no state is ever unrecoverable** — the whole-state restore
+writes the recorded YAML verbatim and is untouched by any of this. What
+the limits cost is the *narrow* way back, not the content.
+
+| Situation | What the history says | Undo this change | Put back | Whole state |
+| --- | --- | --- | --- | --- |
+| Card with nothing to recognise it by, edited | `1 removed, 1 added` | exact | offered, **would duplicate** | works |
+| Card moved *and* edited in one save | `1 removed, 1 added` | exact | offered, **would duplicate** | works |
+| A badge added, changed or deleted | `no card changes`, points at the diff | **refuses** | not offered | works |
+| A section renamed | `no card changes`, points at the diff | **refuses** | not offered | works |
+| A whole section deleted | its cards, listed as deleted | **refuses** | **refuses** | works |
+| A section added | the cards in it, as added | **refuses** | — | works |
+| Titled sections reordered | correct | **refuses** | **refuses** | works |
+| **Untitled** sections reordered | correct | writes positionally | **writes into the wrong section** | works |
+| A view without a URL path shifts position | can name a view that was not touched | **refuses** | — | works |
+| A view's URL path changed | `1 view removed, 1 view added` | exact | offered (adds the old view) | works |
+| A path freed and reused by a new view | read as card changes inside it | writes the old cards into the new view | — | works |
+| Two views sharing one path | the first is invisible to the analysis | — | — | works |
+
+Four of these deserve the detail.
+
+#### A card with nothing to recognise it by
+
+Some cards carry no entity, no title, no name, no heading, no entity list,
+no text, and no nameable card inside them. Counted on the real
+installation: **54 of 1523**, mostly custom chart cards, `vertical-stack`
+and `conditional`.
+
+Edit one of those and the data cannot say whether it is the same card
+changed, or the old one deleted and a new one added. Take an `iframe` card
+whose URL you changed. The history reads `1 removed, 1 added`, and the two
+narrow ways back do very different things.
+
+*Undo this change* is exact:
 
 ```diff
      - type: iframe
@@ -154,7 +544,7 @@ beside it. The two ways back then do very different things.
 +      url: https://example.com/old
 ```
 
-**Put back** cannot be, and the preview says so before you accept:
+*Put back* cannot be, and the preview says so before you accept:
 
 ```diff
      - type: iframe
@@ -165,498 +555,250 @@ beside it. The two ways back then do very different things.
        aspect_ratio: 60%
 ```
 
-That is not a fault in the button. **Put back** is additive by
-definition — it never overwrites anything — so the only thing it can do
-with a card it believes was deleted is add it back. It believes that
-because the card carries nothing to recognise it by. Both halves are
-behaving exactly as designed; they simply meet a card with no identity.
+That is not a fault in the button. *Put back* is additive by definition,
+so the only thing it can do with a card it believes was deleted is add it
+back. Both halves behave exactly as designed; they simply meet a card with
+no identity. Which is why, on this row, only the undo is offered.
 
-Which is why, on this row, only the undo is offered: where a change
-added something as well, a put-back of what it removed would stand the
-old card next to the new one. On the rows *before* this change the card
-still has its own **Put back** button, because there it is simply
-missing, with nothing added alongside it.
+A card **moved and edited in the same save** lands in the same place for a
+different reason: pass 2 no longer recognises it (the content changed) and
+pass 3 does not look across places. Making pass 3 global would close this
+and open something worse — the same entity on two views is ordinary, so a
+real deletion could be mistaken for a move and never be offered back at
+all. A missed offer is worse than one you can decline.
 
-**The exact way back does not run out with time.** Thirty saves and a
-week later, **Undo this change** still takes back that one save and
-leaves the other thirty standing. What it needs is not haste but the
-card it produced: still on the dashboard, byte for byte as that change
-left it, and there exactly once.
+#### Badges are outside the comparison
 
-**What ends it is a second edit, not the calendar.** Change the URL
-again and there is no version left that this change produced. Two cards
-that end up byte-identical do it too: then there are two candidates and
-nothing to tell them apart. Either way the row says so rather than
-guessing:
+A view's badges are neither cards nor in a card list, so a change to them
+produces:
 
-> This change cannot be taken back exactly: iframe was changed again
-> after this, so there is no exact version left to put back.
-
-(Just `iframe`, because that is the whole problem: the card carries no
-title, no name and no entity to call it by.) From then on the choice is
-the blunt one:
-
-| | |
-| --- | --- |
-| **Put back** | Two cards. Delete the one you do not want, by hand. |
-| **Back to the state before this change** | The other thirty changes go too. |
-
-"Go" rather than "are lost": every one of them is still recorded, and
-you can come forward again the same way. But it is a large step taken
-for a small mistake, and you would be redoing work you had already
-decided on.
-
-**So the practical advice is still: fix it soon** — only "soon" now
-means "before you edit that card again", not "before the week is out".
-
-**And the reason it is like this** is the one this whole page keeps
-coming back to. A card with no entity, title, name, heading, entity
-list or text has no identity across two states, and nothing can invent
-one. The tool could guess — pair up whatever is left over and hope. The
-cost of guessing wrong in the other direction is worse than this: a
-card you really deleted, quietly reclassified as an edit, and never
-offered back at all. A duplicate you can see in a preview and decline
-beats a deletion you are never told about.
-
-
-## Installation
-
-1. Add this repository to HACS as a custom repository (type: Integration).
-2. Install "Dashboard History".
-3. Restart Home Assistant.
-4. Settings → Devices & Services → Add Integration → Dashboard History.
-
-## Usage
-
-### The panel
-
-After setup you get **Dashboard History** in the sidebar. It is there all
-the time, not only while you are editing a dashboard — which was the whole
-complaint this project started from.
-
-Pick a dashboard on the left, and you get its changes, newest first. Click
-a change to see what it made disappear, and put any of it back. A deleted
-dashboard is listed too, marked as such, with a button that brings it back.
-
-**The state you have now is set apart at the top**, marked `current state`,
-with the history below it. That mark is worked out, not assumed: if the
-dashboard was changed behind Home Assistant's back, the newest entry is
-*not* what you have, and then nothing is marked. Entries further down that
-hold the same content say `same as now` — which is what makes a history
-that went back and forth readable at all.
-
-Where setting the dashboard back would change nothing, the button is not
-offered; it says why instead.
-
-**You click a change, never a revision.** Asked to undo a deletion, people
-reach for the line that says the card was deleted — which is one line too
-late, because what they want is the state just before it. For putting a
-single card back, the panel works that out for you, so the trap is not
-signposted, it is gone.
-
-For setting the *whole* dashboard back, a row offers **both** of the states
-it sits between, folded away under *Replace the whole dashboard instead*:
-
-- *Back to the state before this change* — for undoing something.
-- *Back to the state after this change* — for a state you recognise and
-  want again.
-
-Either one disappears when its target is what the dashboard holds already,
-so a button never offers a change that changes nothing.
-
-**Three ways back, and what each one reaches.** A row can carry more than
-one kind of button, and they are not labels for one action. They differ in
-reach:
-
-| Button | What it touches |
-| --- | --- |
-| **Undo this change** | That one change, and nothing else. Everything saved since stays exactly as it is. |
-| **Put back** | One item. It is reinserted into the dashboard *as it stands today*, and nothing else changes. |
-| **Back to the state before this change** | The whole dashboard. That earlier state is written over what is there now. |
-
-**The row leads with the undo**, because it is what people mean by undoing
-something. It is offered only where it can be proved exact — every card
-that change produced still standing in the dashboard, untouched and
-exactly once. Where it cannot, the row says so in place of the button:
-
-> This change cannot be taken back exactly: tile: Living room lamp was
-> changed again after this, so there is no exact version left to put
-> back.
-
-The two whole-dashboard buttons sit underneath, behind a fold. They are a
-real capability and somebody wants one about once a year; leading with
-them was the panel offering the largest step first. And where the undo
-would write exactly the state before the change, *Back to the state before
-this change* is left out altogether — two buttons doing literally the same
-thing is what the first person to see them side by side reported.
-
-**Where the undo already covers an item, that item's own Put back button
-is gone**, for one of two reasons and no others. Either the undo brings
-back exactly that one item and nothing else — a change that deleted a
-single thing — or the change also *added* something, and then a put-back
-is not merely redundant but wrong: an edit that touches the identifying
-field reads as one removal plus one addition, so putting the old card
-back would leave both versions standing. What is missing because of
-*later* changes keeps its button, under a line that says where it comes
-from.
-
-That coincidence is the case most people meet first: delete a single
-card, and putting it back or undoing the change leave you with exactly
-the same dashboard. Which is exactly why the difference between the
-three was so easy to miss — the first shape anybody sees is the one
-where two of them agree.
-
-Now picture a deletion from three weeks ago. **Put back** brings that one
-card into today's dashboard and leaves the three weeks alone. **Undo this
-change** does the same here, and would also take back anything else that
-one save did. **Back to the state before this change** throws the three
-weeks away.
-
-Each button says what it does rather than claiming the others are wrong:
-
-> Puts this change back and keeps the 12 changes made since.
-
-> Setting a state back replaces the whole dashboard with how it was then.
-> Everything saved since is no longer what the dashboard holds.
-
-Where the outcomes do coincide — and on the newest single deletion they do
-— "these are not the same thing" would be the confusing sentence, not the
-helpful one.
-
-Nothing is written until you have confirmed it — and before you do, the
-panel says in plain words what will happen:
-
-```
-What applying this does
-
-  In the view Ground floor
-    heading: Right now will be deleted
-
-  ▸ Show the technical details
+```text
+This change cannot be described in terms of cards — see the technical
+details below.
 ```
 
-The diff is still there, one click away, and it is still the exact
-account. It is just no longer the first thing you have to read. The same
-summary appears when you expand a change, in the past tense: what that
-change did.
+The diff below it is complete and correct; only the words are missing.
+*Undo this change* refuses with *"this change did not alter any cards"*,
+and no *Put back* is offered, because nothing it can name went missing. A
+badge is recovered by setting the dashboard back to a state that had it.
 
-And when a change cannot be described in terms of cards — a renamed
-dashboard, a changed icon — the summary says so and points at the diff.
-It never claims that nothing changed while a diff below it shows
-otherwise.
+#### Sections in detail
 
-### Describing a change
+This is the weakest part of the tool, so here is every case, measured
+rather than reasoned about. The pattern is simple once you see it: **what
+sits *inside* a section is handled well; the section itself is barely
+handled at all.**
 
-Hover a change and a pencil appears. One field, prefilled, Enter saves —
-the same shape as Home Assistant's own "rename" on an integration.
+A section as Home Assistant's editor writes it has no path and no
+identifier — there is no equivalent of a view's URL path one level down.
+(Home Assistant does store an `id` field on a section unchanged if one is
+already there; putting identifiers into your dashboards is ruled out for
+this integration, for the reasons at the end of this section.) All it has
+to work with, then, is the section's index in the row, cross-checked
+against its title. A title is optional, and in practice absent: all 80
+sections on the installation this was developed against carry none.
 
-Your text becomes the headline of that entry; the automatic message moves
-underneath it in grey and stays there, because it is the part you can
-trust when your own note from last year no longer says enough. Emptying
-the field removes the description again.
+**Works, and works exactly:**
 
-The commit is **not** rewritten. The description is a git note, so every
-revision you have written down anywhere stays valid.
+| What you did | The history says | Put back | Undo |
+| --- | --- | --- | --- |
+| Deleted a card in a section | `1 removed`, names the card | into the right section | exact |
+| Edited a card in a section | `1 edited`, names the card | — | exact |
+| Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
 
-### Versions
+So the everyday case is sound. As long as the row of sections is as it
+was, cards inside them are recognised and recoverable like any others.
 
-A version is a name for a state your dashboard has already reached — an
-annotated git tag such as `my-dashboard/v1.2.0`. It belongs to one
-dashboard, so every dashboard counts its own: two different dashboards
-can each have their own `v1.0.0` without conflict.
+**Refuses, honestly, and writes nothing:**
 
-Expand any change and choose "Version up to here". A dialog offers three
-buttons — patch, minor, major — each already carrying the number it would
-get, patch preselected, plus a title and an optional description. You
-never type the number yourself: it always counts up from the highest that
-dashboard already has, so it can never collide with one you made before.
+| What you did | Why it refuses |
+| --- | --- |
+| Deleted a whole section | `find_removed` knows `view` and `card`, not `section`. Its cards are offered individually, and each refuses: *"the section this card sat in is not the one standing at that place now, so putting it back would file it in a stranger."* The undo refuses for the same reason. |
+| Added a section | The row of sections shifted, so every positional address is suspect. The rule is stricter than it needs to be here — appending one at the end is unambiguous — and it still refuses. |
+| Reordered sections **that have titles** | The titles no longer line up with the positions, which is precisely the signal the guard looks for. It stops. |
+| Renamed a section | A section's own properties are not cards. The change reads as `no card changes` and the undo says *"this change did not alter any cards."* |
 
-There are no checkboxes for which changes to include. Each commit already
-holds the dashboard's complete state, so the state after change 3
-contains change 2 whether you wanted it there or not — a gap in a
-selection is not something a version could express.
+A refusal is the correct outcome for all four — Home Assistant's own data
+does not contain the answer, and the design forbids guessing. What it
+costs is that a deleted section has **no narrow way back at all**: not
+*Put back*, not *Undo*. The whole-state restore recovers it in full.
 
-Making one writes no commit and changes nothing about the dashboard, so
-it needs no confirmation.
+**Writes something nobody asked for — one case:**
 
-#### Versions you never made
+Reorder **untitled** sections and change a card in the same save. The
+guard compares the number of sections and their titles; with two untitled
+sections swapped, the count is unchanged and both titles are still empty,
+so the check passes while telling the guard nothing. *Put back* then files
+the card into whichever section now occupies that index — verified: the
+card lands beside the wrong neighbour, silently. The undo is not blocked
+either.
 
-Two kinds appear on their own, so that a dashboard is never a list with
-nothing in it:
+This is the one row in the whole table where the tool writes a state
+nobody asked for. Two things bound it:
 
-- **`v1.0.0`, once per dashboard.** The first time the integration sees a
-  dashboard, it marks the oldest state it has recorded of it — the state
-  to come back to before anything happened. A dashboard you create later
-  gets its own at the next start of Home Assistant.
-- **One per day, on the day's last state.** When the first change of a
-  new day is recorded, the state that was there before it is marked and
-  named after the day it belongs to, such as `5 September 2026`. A day on
-  which nothing changed gets no version, and a day never gets two.
+- The trigger is a **reordering**, not an edit. Sections have to change
+  places in the same save as the card change.
+- **Titles remove it entirely.** With titles the same situation becomes
+  the honest refusal above. This is the single most useful thing a user of
+  the sections layout can do for their own safety, which is why it is
+  called out in Part 1 as well.
 
-Both say so: they carry `automatic`, and the panel tells them apart from
-the ones you made. Nothing about them is different otherwise — the same
-numbering, the same "Back to this version".
+**What would fix it properly**, and its status: an identity chain of the
+integration's own — matching each save's views and sections against the
+previous one (by path, then identical content, then similarity) and
+committing that mapping as a third track beside the dashboard and its
+metadata. It is computable retroactively, since every intermediate state
+is already a commit, and it would leave `analyze.py` free of Home
+Assistant. **This is an idea and nothing more.** It has not been designed,
+not planned and not built, and it touches a decision in the design record
+that argues from cards having no identity — so it needs that argument
+revisited first. Nothing here is a commitment.
 
-The daily ones can be turned off under *Settings → Devices & services →
-Dashboard History → Configure*. It takes effect at the next change, with
-no restart. The `v1.0.0` is not affected by that switch, and nothing is
-ever deleted either way: every state stays in the history, marked or not.
+Writing identifiers into *your* dashboards was considered and ruled out:
+Home Assistant offers no extension point before a save (`async_save`
+writes the configuration through verbatim, and `lovelace_updated` arrives
+afterwards), so the only routes are replacing its WebSocket command or
+writing back after the event — the first is forbidden by this project's
+own rules, the second changes other people's dashboards, doubles the
+history and loses the race against an open editor.
 
-A version on a dashboard that no longer exists is worth having — "Back to
-this version" brings the whole dashboard back. Mark one of its own states
-though: the change that recorded the *deletion* holds no state at all, so
-marking that one is refused rather than made into a version nobody could
-return to.
+#### Views without a URL path
 
-In the panel, the history is cut into collapsible sections at the
-versions, with the changes not yet in a version sitting above them. Each
-section head shows the version's number, its title, how many changes it
-holds, and a "Back to this version" button — not offered when that
-version is what the dashboard already holds.
+Eight of 67 views carry no path, and a view without one is keyed by its
+position. When the position shifts — even because a *neighbour* was
+deleted — the same key means a different view.
 
-"Back to this version" goes through the same preview as everything else:
-plain words, the diff, and an explicit Apply. Going back destroys
-nothing — the tag still points at its commit, so from an older version
-you can go forward to a newer one with the same button, and working on
-after going back is fine too.
+Every write path refuses in that case:
+
+> a view without a URL path sits somewhere else now, so an exact undo
+> cannot tell which view is which
+
+The refusal is thorough: it covers the case where the pathless view was
+not touched at all, and it is deliberately stricter than strictly
+necessary — an *added* pathless view blocks an undo even though its
+neighbours are still unambiguous. Refusing too often is the correct error
+to make here.
+
+What the refusal does *not* fix is the wording of the history entry. A
+shifted pathless view can still be described wrongly — naming a view that
+was not the one deleted. The entry misleads; the buttons no longer write.
+This is the same gap the section idea above would close, and it has the
+same status: an idea.
+
+### Refusals by design
+
+Not everything above is a defect. These are refusals the project chose:
+
+- **Nothing that writes a dashboard state runs without `confirm`.**
+  `restore_deleted`, `restore_state` and `undo_change` each answer with a
+  preview and write nothing until confirmed. `describe` and
+  `create_version` are the exceptions, and they write a note and a tag —
+  no dashboard changes, so a confirmation dialog would be ceremony
+  without protection.
+- **Put back never overwrites.** It is additive by definition. Where that
+  is the wrong shape for what you want, the undo is the tool.
+- **Undo is all or nothing.** One unresolvable step blocks the whole plan.
+  A half-applied undo leaves a state nobody asked for and which the row
+  beside it no longer describes.
+- **The state you leave is preserved before every undo**, so the way
+  forward is always open. The safety net is the history, not the preview.
+- **Administrators only.** Every service is registered as an admin service
+  and every WebSocket command requires admin, because a non-administrator
+  cannot edit dashboards in Home Assistant either — and a preview leaks a
+  dashboard's full content.
+- **No `git` binary, ever.** Whether one exists differs between Home
+  Assistant OS, Container, Core and Supervised.
 
 ### Services
 
-Everything the panel does is also available as services under Developer
-Tools → Actions.
-
-Dashboards are addressed by their **key**: that is the dashboard's
-`url_path`, and `_default` for the built-in default dashboard. Run
-`dashboard_history.debug_snapshot` to see the keys as the integration
-sees them. Note that the key is the `url_path` (`energie-2`), not the
-dashboard's internal id (`energie_2`) — the two are not the same string.
-
-### I deleted a card by accident
-
-1. `dashboard_history.history` with your dashboard — note the revision
-   from *before* the deletion.
-
-   ```yaml
-   action: dashboard_history.history
-   data:
-     dashboard: dashboard-erika
-   ```
-
-2. `dashboard_history.deleted_since` with that revision — lists what is
-   missing, each with a position.
-
-   ```yaml
-   action: dashboard_history.deleted_since
-   data:
-     dashboard: dashboard-erika
-     revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
-   ```
-
-   ```yaml
-   items:
-     - position: 0
-       kind: card
-       label: heading
-       view: home
-   ```
-
-3. `dashboard_history.restore_deleted` with that position — returns a
-   preview. **Nothing is written.**
-
-   ```yaml
-   action: dashboard_history.restore_deleted
-   data:
-     dashboard: dashboard-erika
-     revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
-     position: 0
-   ```
-
-4. Same call again with `confirm: true` — the card is back, at its old
-   position.
-
-### Services
+Everything the panel does is available under Developer Tools → Actions.
+Dashboards are addressed by their **key**, which is the dashboard's
+`url_path` — and `_default` for the built-in default dashboard. Run
+`dashboard_history.debug_snapshot` to see the keys as the integration sees
+them. Note that the key is the `url_path` (`energie-2`), not the
+dashboard's internal id (`energie_2`); the two are not the same string.
 
 | Service | What it does |
 | --- | --- |
-| `history` | The recorded states of one dashboard |
+| `history` | The recorded states of one dashboard, newest first, paged |
+| `search` | Find changes of one dashboard by their words, over the whole history |
 | `explain` | What one change did, in plain words |
-| `describe` | Give a change your own description |
-| `deleted_since` | What disappeared since a revision |
-| `restore_deleted` | Put one of them back (needs `confirm`) |
-| `restore_state` | Set a dashboard back to an earlier state (needs `confirm`) |
+| `deleted_since` | What disappeared since a revision, each with a position |
+| `restore_deleted` | Put one of them back — additive (needs `confirm`) |
 | `undo_change` | Take one change back and keep the ones after it (needs `confirm`) |
-| `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
+| `restore_state` | Set a dashboard back to an earlier state (needs `confirm`) |
+| `describe` | Give a change your own description |
 | `versions` | The named versions, all of them or one dashboard's |
 | `next_versions` | What the next patch, minor and major would be called |
 | `create_version` | Name a recorded state as a version |
+| `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
 | `debug_snapshot` | What the integration currently sees |
 
-Three of them write a *dashboard* state — `restore_deleted`,
-`restore_state` and `undo_change` — and without `confirm` each of them
-answers with the preview and writes nothing. `undo_change` can answer
-with a refusal instead, where it cannot prove itself exact, and it works
-that proof out again on the confirming call: somebody may have saved
-while you were reading the preview.
+Three notes for scripting:
 
-`describe` and `create_version` are the only writing services without
-`confirm`. Neither can put a dashboard into a state you would need
-`restore_state` to escape: one writes a note, the other a tag, and
-neither touches the dashboard itself. A wrong description is undone by
-an ordinary edit — clearing the field; a version, once made, was never a
-change to the dashboard in the first place.
+- `undo_change` can answer with a **refusal** rather than a preview, and
+  it re-derives its proof on the confirming call — so handle both.
+- `restore_state` accepts **a version's name** where it accepts a
+  revision, which is how a script reaches a version the same way the panel
+  does. It also takes `keep_as_version` to mark the state it is about to
+  replace.
+- `create_version` requires a non-empty title. A version without a name is
+  a row nobody can pick out of a list again, and nothing in this
+  integration deletes a tag.
 
-The version services are in the panel as well, so reach for them only if
-you want to script them. One detail matters for scripting: `restore_state`
-accepts a version's name as its `revision`, exactly as it accepts a git
-revision — that is what lets a script go to a version the same way the
-panel does.
+### Where the data lives
 
-## If a whole dashboard is deleted
+In `config/dashboard_history/`, as a git repository this integration owns.
+Each dashboard is one YAML file, each save one commit, each version a tag,
+each description a git note.
 
-The deletion is recorded within about ten seconds, as a commit saying
-`<dashboard>: dashboard deleted`. Home Assistant announces a deleted
-dashboard with no event of its own, so it is noticed by comparison rather
-than as it happens: deleting a dashboard moves a sidebar panel, and that
-*is* announced, so the integration takes it as the cue to compare its
-history against what Home Assistant still has. No restart is needed.
+You may look inside. Do not edit it by hand — the integration writes it
+and expects to be the only writer.
 
-**Nothing is lost.** Every earlier state stays readable at its revision:
+**No system `git` is required.** A pure Python implementation does the
+work, so it behaves identically on Home Assistant OS, Container, Core and
+Supervised. Blocking work — commits, diffs, matching — runs in an executor
+and never on the event loop.
 
-```yaml
-action: dashboard_history.history
-data:
-  dashboard: the-deleted-one
-```
+#### How much space
 
-**And it comes back.** `restore_state` with a revision from before the
-deletion recreates the dashboard — with its old title, icon and sidebar
-setting, not just its cards:
+Measured on the installation this was built against: the largest
+dashboard is 262 KB as YAML, and the first recorded state of every
+dashboard came to roughly 620 KB in total. A save that changes one card
+adds a few kilobytes, because git stores states deduplicated and
+compressed.
 
-```yaml
-action: dashboard_history.restore_state
-data:
-  dashboard: the-deleted-one
-  revision: 939b93231b6f9ea7349d5c3e8a875534865facf3
-  confirm: true
-```
-
-Without `confirm` you get the preview and a `creates_dashboard: true` flag,
-and nothing is written.
-
-Measured against Home Assistant 2026.8.3: the dashboard comes back
-immediately, with its old title and icon and a byte-identical
-configuration, and Home Assistant manages it as its own — you can rename
-it or delete it from the settings dialog straight away, with no restart.
-
-It is created through Home Assistant's own dashboard collection, which is
-not a guaranteed extension point. If a future version puts that object out
-of reach, the restore **refuses** rather than half-writing one:
-
-```yaml
-applied: false
-error: >-
-  Cannot recreate the dashboard the-deleted-one: Home Assistant's dashboard
-  collection could not be reached … Create a dashboard with the URL
-  the-deleted-one under Settings > Dashboards, then run this restore again
-  to put its cards back.
-```
-
-That refusal replaced an earlier version that wrote the entry through a
-collection of its own and reported a partial success. It looked like it
-worked: the dashboard appeared, opened and could be edited. But Home
-Assistant lists dashboards from one place and changes them in another, so
-renaming it failed with "Unable to find dashboard_id". A half-restored
-dashboard that looks healthy is worse than an honest refusal.
-
-## Tidying up: forgetting a deleted dashboard
-
-A deleted dashboard stays in the list forever, which is the point — it is
-the one you come here for. But delete one every few months and the list
-fills up with them, so they are **folded away** under a `Deleted (N)`
-section rather than mixed in with the live ones.
-
-When you are sure you will never want one back, you can **forget** it:
-
-```yaml
-action: dashboard_history.forget
-data:
-  dashboard: the-one-i-am-done-with
-  confirm: true
-```
-
-Without `confirm` you get a count of what would be lost — how many
-recorded states, over what period, and how many carry a description you
-wrote — and nothing is changed. In the panel it is the *Forget for good*
-button on a deleted dashboard.
-
-This is the only thing here that cannot be undone, and the only thing
-that refuses to touch a live dashboard: if Home Assistant still has it,
-the answer is no.
-
-**One side effect, stated because you will notice it.** Git can only
-really remove something by rewriting history, so every revision from the
-first affected commit onwards changes. A revision you wrote down
-somewhere will no longer resolve. The descriptions and versions of the
-dashboards that stay are carried across onto the new commits — that part
-is not left to chance. **The forgotten dashboard's own versions go with
-it** — every tag under its own name — because a version belongs to one
-dashboard: keeping one would leave it hanging on some other dashboard's
-commit, naming a state that no longer exists.
-
-## Renames and other dashboard settings
-
-The title, icon and sidebar setting of a dashboard live in Home Assistant's
-registry rather than in the dashboard configuration, and Home Assistant
-announces no event when they change. They are picked up when a panel moves,
-which covers creating, renaming and deleting a dashboard, so a rename shows
-up in the history as `renamed to "…"` — and a dashboard that is restored
-comes back under the name it had, not the name it started with.
-
-## Where the data lives
-
-In `config/dashboard_history/`, as a git repository this integration
-owns. Each dashboard is one YAML file; each save is one commit; each
-version is a tag.
-
-You may look inside it. Do not edit it by hand — the integration writes
-it and expects to be the only writer.
-
-No system `git` is required: the integration uses a pure Python
-implementation, so it works the same on Home Assistant OS, Container,
-Core and Supervised.
-
-### How much space
-
-Measured on the installation this was built against: ten dashboards, the
-largest 262 KB as YAML, come to roughly 620 KB for the first recorded
-state of each. A save that changes one card adds a few kilobytes, since
-git stores the states deduplicated and compressed.
-
-## Development
+### Development
 
 **A note on language.** Everything here is English: the code, the
 comments, the commit messages, and anything on GitHub. One exception, and
 it is deliberate — the design record under `docs/superpowers/` is written
-in German. It is the author's working journal: every design decision in
-this project is numbered there together with the reasoning and the
-measurements behind it, and translating that would cost the precision it
-is written for. Nothing in it is needed to use this integration or to
-find your way around the code; this README and the comments carry that.
-If you want the reasoning behind a particular decision and do not read
-German, open an issue and ask — answering in English is easy.
+in German. It is the author's working journal: every design decision is
+numbered there together with the reasoning and the measurements behind it,
+and translating that would cost the precision it is written for. Nothing
+in it is needed to use this integration or to find your way around the
+code; this page and the comments carry that. If you want the reasoning
+behind a particular decision and do not read German, open an issue and ask
+— answering in English is easy.
 
-The four modules that carry the logic — `yaml_io.py`, `analyze.py`,
-`restore.py` and `versions.py` — import nothing from Home Assistant, so
-the test suite runs without an installation:
+Four modules carry the logic and import nothing from Home Assistant —
+`yaml_io.py`, `analyze.py`, `restore.py` and `versions.py` — so the test
+suite runs without an installation:
 
 ```bash
 python3 -m pytest tests/ -v
 ```
 
+Some cases run against **real** dashboards, which is the difference
+between four invented cards and fifteen hundred grown ones. Point
+`DASHBOARD_HISTORY_REAL_STORAGE` at a Home Assistant `.storage`
+directory, or write the path into `tests/.real-storage`. Without either,
+those cases skip *visibly* rather than passing quietly.
+
 Everything else — the capture, the services, the WebSocket API, the panel
 — needs a running Home Assistant, and every defect found in this project
-so far has been in exactly those parts. There is a disposable instance
-for that (see `docker/README.md`) and two things to run against it:
+so far has been in exactly those parts. There is a disposable instance for
+that (see `docker/README.md`) and two things to run against it:
 
 ```bash
 python3 tests/integration/run_checks.py     # the API, end to end
