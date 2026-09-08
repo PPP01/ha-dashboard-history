@@ -874,20 +874,31 @@ el._call = (type, extra) => {
 // A fresh stand-in per attempt: `querySelector` remembers what it
 // handed out, so a box ticked in one case would still be ticked in the
 // next and the answer would be about the wrong run.
-const attempt = async (shape) => {
+const attempt = async (shape, matching = []) => {
   preview = shape;
+  // What `history` answered about the live state, which is where the
+  // panel's own answer to "is this already a version" comes from.
+  // Handed in per attempt rather than set once: the default puts it
+  // back to none, so the control case below cannot inherit it.
+  el._matching = matching;
   el.shadowRoot = node();
   const at = sent.length;
   const done = el._restoreState("b", "Back to this version");
   await settle();
   const offered = !el.shadowRoot.querySelector("[data-keep]").hidden;
-  el.shadowRoot.querySelector("dialog.confirm").close("apply");
+  // Along the same path the code walks - the stand-in remembers what it
+  // handed out per node, so a second lookup from the shadow root would
+  // be a different `.body` than the one `_confirm` wrote into.
+  const dialog = el.shadowRoot.querySelector("dialog.confirm");
+  const body = dialog.querySelector(".body").innerHTML;
+  dialog.close("apply");
   await done;
   const confirming = sent
     .slice(at)
     .find((c) => c.type === "restore_state" && c.extra.confirm);
   return {
     offered,
+    body,
     sentKeep: confirming ? confirming.extra.keep_as_version ?? null : null,
   };
 };
@@ -910,15 +921,29 @@ const recreating = await attempt({
   explanation: { groups: [], note: "" },
 });
 
-// The ordinary case, in the same harness, so that "not offered" above
-// means the offer was withheld rather than never reachable.
-const ordinary = await attempt({
+// Going back while what the dashboard holds is what a version holds
+// already. The box exists to stop a state disappearing from a list
+// that shows nothing but versions - and this state is in that list,
+// under a name, so there is nothing for it to save. Measured on the
+// test rig 2026-09-08: two moves back and forth left v0.0.5 and
+// v0.0.6, byte-identical to v0.0.3 and v0.0.4 and titled with the day.
+//
+// One preview for both runs below, bound rather than written twice: the
+// control case only controls anything while it is the *same* restore
+// with no version holding the state. Two literals drifting apart would
+// break that silently.
+const restoring = {
   applied: false,
   preview: "-a\\n+b",
   explanation: { groups: [], note: "one card removed" },
-});
+};
+const covered = await attempt(restoring, [{ name: "dash/v0.0.4" }]);
 
-console.log(JSON.stringify({ nothing, recreating, ordinary }));
+// The ordinary case, in the same harness, so that "not offered" above
+// means the offer was withheld rather than never reachable.
+const ordinary = await attempt(restoring);
+
+console.log(JSON.stringify({ nothing, recreating, covered, ordinary }));
 """
 
 
@@ -937,6 +962,27 @@ def test_nothing_to_apply_offers_nothing_to_keep(keep_suppressed):
 def test_recreating_a_dashboard_offers_nothing_to_keep(keep_suppressed):
     assert keep_suppressed["recreating"]["offered"] is False
     assert keep_suppressed["recreating"]["sentKeep"] is None
+
+
+def test_a_state_a_version_already_holds_offers_nothing_to_keep(keep_suppressed):
+    """The tick box is about a loss, and here there is none.
+
+    Going back and forth between two states used to collect one dated
+    version per move, each byte-identical to an older one: the box is
+    ticked by default in the simple mode, and nothing asked whether the
+    state it was about was already named. Rows that duplicate a version
+    are exactly the wall the simple mode exists to avoid - the same
+    reason a day mark is skipped in `milestones.py` when the highest
+    version already holds that state.
+    """
+    assert keep_suppressed["covered"]["offered"] is False
+    assert keep_suppressed["covered"]["sentKeep"] is None
+    # And the box's absence is explained rather than silent. Without
+    # this the offer somebody is used to seeing is simply gone, which
+    # reads as a fault in the tool. The paragraph it replaces - "is not
+    # lost", for the case where no version holds the state - is held by
+    # `test_the_dialog_carries_the_technical_diff_and_the_promise`.
+    assert "v0.0.4" in keep_suppressed["covered"]["body"]
 
 
 def test_an_ordinary_restore_still_offers_to_keep(keep_suppressed):

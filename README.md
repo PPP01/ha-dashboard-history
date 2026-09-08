@@ -327,6 +327,13 @@ that box is ticked by default, because somebody who only sees versions
 would otherwise be leaving an unnamed state behind — and to them, an
 unnamed state is gone.
 
+**The box is not there when a version already holds that state**, which
+is what you have after going back and forth without changing anything. A
+mark would be a second dated name for content that has one, and the
+dialog says which version holds it instead. Should you want that second
+name anyway, *Version up to here* in the advanced view makes it — two
+versions on one state are allowed on purpose.
+
 The mark is made after the state you are leaving is safely in the history
 and before the older one is written, which is the only moment it is the
 state you actually saw.

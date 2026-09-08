@@ -1087,23 +1087,81 @@ class DashboardHistoryPanel extends HTMLElement {
     // difference." next to a live Apply button was the panel throwing that
     // answer away and offering a change that changes nothing.
     const nothingToDo = !preview.preview && preview.note;
+    // The versions that hold what the dashboard holds right now, as the
+    // short names a sentence uses. Where there is one, the state being
+    // replaced is not going anywhere: it stands in the list of versions
+    // under a name, which is the only list the simple mode shows. So the
+    // offer below has nothing left to protect, and taking it up produced
+    // exactly what it was meant to prevent - going back and forth twice
+    // on the test rig left two dated versions byte-identical to two
+    // older ones (2026-09-08). The same rule `milestones.py` follows
+    // before it makes a day mark, one module further out.
+    //
+    // From `history` and worked out there against every version of this
+    // dashboard, so a version below the loaded window counts too. As
+    // fresh as the badge the panel already draws from it, and stale in
+    // one window only: between that answer and this dialog. A save made
+    // there does announce itself, but the announcement is set aside
+    // while a dialog stands - and the cost of being wrong is small,
+    // because `_keep_the_live_state` records the state either way. It
+    // would only lack a name. (An edit straight to `.storage` is *not*
+    // that window: Home Assistant reads that file once and serves its
+    // dashboards from memory afterwards, so it has not seen the change
+    // either. See the README on when a change is recorded.)
+    //
+    // Only where a whole state is replaced, which is where the box is.
+    // "Put back" and "Undo" keep the live state rather than replacing
+    // it, and a sentence about versions in front of them would be an
+    // answer to a question nobody asked.
+    const covered = wantsKeep ? this._versionsMatchingNow() : [];
+    // The paragraph that says what happens to the state being replaced,
+    // and the tick box that offers to name it: two answers to one
+    // question, so they are worked out together rather than twenty
+    // lines apart. Both read `covered` and `creates_dashboard`, and a
+    // rule that changed in one place only would leave a box whose
+    // paragraph contradicts it.
+    //
+    // The question the paragraph answers came from a person who had to
+    // read the source to find it out: does setting a state back throw
+    // the present one away? It does not, and nothing here said so.
+    // Nothing in this integration rewrites history except `forget`; a
+    // restore writes the live dashboard, and the recorder appends an
+    // entry for what was there.
+    //
+    // Where a version already holds that state, the same paragraph says
+    // so instead - the more precise form of the same reassurance, and
+    // what explains the missing tick box: an offer that disappears
+    // without a word reads as a fault in the tool. Cut at three names
+    // like every other list of them, with the full set in the tooltip.
+    //
+    // Left out entirely when the dashboard is being recreated: there is
+    // no present state to keep, and the note beside the buttons already
+    // says what happens instead.
+    const keeps = preview.creates_dashboard
+      ? ""
+      : covered.length
+        ? `<p class="keeps" title="${escape(joinNames(covered))}">What the
+             dashboard holds now is already saved as
+             ${escape(someNames(covered))}, so there is nothing to keep.
+             Nothing is deleted.</p>`
+        : `<p class="keeps">What the dashboard holds now is not lost: it
+             stays in the history as its own entry, so you can set it
+             back the same way.</p>`;
+    // Offered only where a whole state is replaced and there is one to
+    // keep. Not while a dashboard is being recreated - the answer for
+    // that case is an error, and a tick box whose only possible outcome
+    // is a failure is worse than none. Not where nothing is applied
+    // either. And not where a version already holds the state: there is
+    // nothing to lose, so a mark made here would be a second dated name
+    // for content that has one.
+    const keepable = Boolean(
+      wantsKeep && !nothingToDo && !preview.creates_dashboard && !covered.length,
+    );
     dialog.querySelector(".body").innerHTML = nothingToDo
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : renderPlain(preview.explanation, "What applying this does") +
-      // The question this answers came from a person who had to read
-      // the source to find it out: does setting a state back throw the
-      // present one away? It does not, and nothing here said so.
-      // Nothing in this integration rewrites history except `forget`;
-      // a restore writes the live dashboard, and the recorder appends
-      // an entry for what was there. Left out when the dashboard is
-      // being recreated: there is no present state to keep, and the
-      // note beside the buttons already says what happens instead.
-      (preview.creates_dashboard
-        ? ""
-        : `<p class="keeps">What the dashboard holds now is not lost: it
-               stays in the history as its own entry, so you can set it
-               back the same way.</p>`) +
+      keeps +
       `<details class="raw">
            <summary>Show the technical details</summary>
            ${renderDiff(preview.preview)}
@@ -1116,14 +1174,6 @@ class DashboardHistoryPanel extends HTMLElement {
       ? "This recreates the dashboard, with its old title and icon."
       : "";
     dialog.querySelector(".note").textContent = note;
-    // Offered only where a whole state is replaced and there is one to
-    // keep. Not while a dashboard is being recreated - there is no live
-    // state then, and the answer for that case is an error; a tick box
-    // whose only possible outcome is a failure is worse than none. Not
-    // where nothing is applied either.
-    const keepable = Boolean(
-      wantsKeep && !nothingToDo && !preview.creates_dashboard,
-    );
     const keepBlock = this._armKeep(keepable);
     dialog.returnValue = "";
     dialog.showModal();
