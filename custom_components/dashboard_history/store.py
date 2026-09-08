@@ -1449,6 +1449,13 @@ class HistoryStore:
         rows the panel cannot even offer a button on, because going back
         to them would change nothing.
 
+        The question is a general one, and older than that caller:
+        decision 13 of the design record names "a comparison the panel
+        does not have" as the reason the create dialog can only say
+        "identical in content" about the *live* state. This is that
+        comparison. Anything that wants the same answer belongs here
+        rather than in a second method beside it.
+
         This dashboard's configuration decides and nothing else. The
         metadata travels in the same commit, so a dashboard renamed with
         its cards left alone is the *same state* by this answer - which
