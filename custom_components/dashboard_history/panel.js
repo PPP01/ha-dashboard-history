@@ -1510,10 +1510,16 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     const dialog = this.shadowRoot.querySelector("dialog.remove");
-    // Three sentences, and each is a different thing to say. The first
-    // is what stays - it comes first because it is the reassurance the
-    // whole design rests on. The second is what goes, and it is the only
-    // loss there is. The third and fourth appear where they apply.
+    // Five paragraphs when everything applies, not three - the name
+    // line above was never counted, and the one about the title and
+    // description has since become conditional too. What stays comes
+    // first, because it is the reassurance the whole design rests on.
+    // What goes comes second, and only where there is something to
+    // lose: a hand-made lightweight tag carries neither a title nor a
+    // description, and this dialog must not claim a loss that is not
+    // real for the very version `bin()` exists to extend the offer to.
+    // The automatic and highest paragraphs follow, each shown only
+    // where it applies.
     const words = facts.title
       ? `<strong>${escape(facts.title)}</strong>`
       : "this version";
@@ -1521,8 +1527,11 @@ class DashboardHistoryPanel extends HTMLElement {
       <p>${escape(shortName(name))} — ${words}</p>
       <p>The state it marks <strong>stays in the history</strong> and
          remains findable in the advanced view. Only the mark goes.</p>
-      <p>The title and description go with it, and they cannot be
-         written back.</p>
+      ${facts.title || facts.description
+        ? `<p>The title and description go with it, and they cannot be
+             written back.</p>`
+        : ""
+      }
       ${facts.automatic
         ? `<p class="muted" style="font-size:13px">Made automatically for
              the end of a day. If that day is recent enough to still be in

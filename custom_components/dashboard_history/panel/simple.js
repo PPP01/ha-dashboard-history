@@ -21,11 +21,11 @@
 
 const PARTS = new URL(import.meta.url).search;
 const { escape, when } = await import(`./render.js${PARTS}`);
-// The chip and the pen this mode borrows. `rows.js` calls itself the
-// pieces a history is drawn from - sections, heads, rows, chips - and
-// says both modes build from exactly those; for these two that is now
-// true. The pen especially: one control renaming a version, drawn the
-// same way wherever a version is shown.
+// The chip and the two controls this mode borrows. `rows.js` calls
+// itself the pieces a history is drawn from - sections, heads, rows,
+// chips - and says both modes build from exactly those; for these
+// three that is now true. The pen renames a version, the bin removes
+// it, both drawn the same way wherever a version is shown.
 const { NOW_CHIP, pen, bin } = await import(`./rows.js${PARTS}`);
 
 // The way over to the other mode. Offered in both of this mode's

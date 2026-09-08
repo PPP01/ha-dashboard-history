@@ -4005,10 +4005,15 @@ const cancelling = two._removeVersion("dash/v1.0.2");
 await settle();
 twoCalls[0].resolve({
   applied: false, name: "dash/v1.0.2", title: "Third", description: "",
-  revision: "c", automatic: false, highest: false,
+  revision: "c", automatic: true, highest: false,
 });
 await settle();
 const cancelDialog = two.shadowRoot.querySelector("dialog.remove");
+// Read before the dialog is closed - this is the negative case for the
+// one sentence in the whole dialog somebody acts on. Without it, a
+// panel that dropped the `facts.highest` branch and printed "becomes
+// free" unconditionally would still pass every test here.
+const cancelBody = cancelDialog.querySelector(".body").innerHTML;
 cancelDialog.returnValue = "cancel";
 cancelDialog.close();
 await settle();
@@ -4018,9 +4023,12 @@ console.log(JSON.stringify({
   asked: { type: asked.type, extra: asked.extra },
   confirmed: confirmed && { type: confirmed.type, extra: confirmed.extra },
   saysTheNumberComesFree: bodyWhenOpened.includes("becomes free"),
+  hidesTheNumberSentence: !cancelBody.includes("becomes free"),
   saysTheStateStays: bodyWhenOpened.includes("stays in the history"),
   namesTheVersion: bodyWhenOpened.includes("Third"),
   callsAfterCancel: twoCalls.length,
+  firstSaysAutomatic: bodyWhenOpened.includes("Made automatically"),
+  secondSaysAutomatic: cancelBody.includes("Made automatically"),
 }));
 """
 
@@ -4046,8 +4054,22 @@ def test_the_dialog_is_filled_from_a_preview_the_server_answered(removing):
 def test_the_dialog_says_the_number_comes_free_where_it_does(removing):
     # The one sentence in this dialog somebody acts on. It comes from the
     # server's `highest`, never from the panel comparing numbers - that
-    # calculation lives in versions.py by decision 13.
+    # calculation lives in versions.py by decision 13. Both halves of
+    # the name are checked: a panel that printed this sentence
+    # unconditionally, or worked it out itself from `this._versions`,
+    # would pass the positive half alone.
     assert removing["saysTheNumberComesFree"] is True
+    assert removing["hidesTheNumberSentence"] is True
+
+
+def test_the_automatic_paragraph_shows_only_where_it_applies(removing):
+    # `facts.automatic` has the same shape as `facts.highest`: a
+    # paragraph that only one of the two previews should carry. The
+    # first run answers `automatic: false`, the second `automatic:
+    # true`, so a panel that rendered this unconditionally - or never
+    # rendered it at all - is caught in one direction or the other.
+    assert removing["firstSaysAutomatic"] is False
+    assert removing["secondSaysAutomatic"] is True
 
 
 def test_confirming_sends_confirm_and_nothing_else_changes_hands(removing):
