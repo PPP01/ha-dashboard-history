@@ -1355,6 +1355,78 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * The create dialog's two fields, opened again on a version that
+   * exists. Same two fields, same wording, no third.
+   *
+   * The number is not among them, and that is decision 13 of the design
+   * record rather than an oversight: the number *is* the tag's name,
+   * going back to a version is `restore_state` with that name as the
+   * revision, and an automation holding one would break without a word
+   * the moment it moved. Whoever wants a different number puts a second
+   * version beside this one - one click, and nothing is lost. The
+   * reasoning is in `FAQ.md`, because it is the first question this
+   * screen provokes.
+   *
+   * Read out of `_versions`, which is the complete list from the server
+   * and is loaded in both modes. Never out of the marks hanging on a
+   * loaded change: the advanced mode has those, the simple one is built
+   * to work without them, and a version whose commit has slid out of
+   * the window is exactly the one somebody scrolls down to rename.
+   */
+  async _retitleVersion(name) {
+    const version = this._versions.find((v) => v.name === name);
+    if (!version) return;
+    // As in `_describe`: the write is addressed by a name that was
+    // resolved before the dialog opened, so it cannot land on the wrong
+    // dashboard - but the sentence about it can still arrive over a
+    // history somebody switched to in the meantime.
+    const asked = this._selected;
+    const dialog = this.shadowRoot.querySelector("dialog.retitle");
+    // Which one is being renamed, said in the dialog. Two rows of the
+    // simple mode can carry the same title - that is what the numbers
+    // are there for - so a dialog that only says "this version" leaves
+    // somebody checking behind themselves.
+    //
+    // And that the badge survives, where there is one. It is the one
+    // thing about the version this dialog changes nothing about while
+    // visibly rewriting what sits next to it.
+    dialog.querySelector("[data-which]").textContent =
+      shortName(name) +
+      (version.automatic ? " — it stays marked as saved automatically." : "");
+    const title = dialog.querySelector("input.title");
+    const description = dialog.querySelector("input.desc");
+    title.value = version.title || "";
+    description.value = version.description || "";
+    dialog.returnValue = "";
+    dialog.showModal();
+    title.focus();
+    title.select();
+    const answer = await this._answerFrom(dialog);
+    if (answer !== "save") return;
+    const result = await this._guard(
+      () =>
+        this._call("retitle_version", {
+          dashboard: asked,
+          name,
+          // Sent as typed, empty included. A version cannot be left
+          // without a title, and the refusal for it lives on the server
+          // where the same fence serves the service call - the panel
+          // repeating the rule here would be a second copy of it to
+          // keep right, which is what this file is built to avoid.
+          title: title.value.trim(),
+          description: description.value.trim(),
+        }),
+      () => this._selected === asked,
+    );
+    if (result?.error) {
+      this._sayAbout(asked, result.error);
+      return;
+    }
+    const stale = await this._reloadAfterWrite("the version was renamed");
+    if (stale) this._sayAbout(asked, stale);
+  }
+
+  /**
    * Three buttons carrying the finished numbers, patch preselected.
    *
    * The number is never typed. A tag name has ref rules - no spaces, no
@@ -2296,6 +2368,13 @@ class DashboardHistoryPanel extends HTMLElement {
       // row at the same time.
       event.stopPropagation();
       this._describe(element.dataset.describe);
+    });
+    onClick("[data-retitle]", (element, event) => {
+      // As with the other controls that sit inside a row: without this
+      // the click reaches the row underneath and folds it on the way to
+      // the dialog. The summary's own toggle is dealt with in `onClick`.
+      event.stopPropagation();
+      this._retitleVersion(element.dataset.retitle);
     });
     onClick("[data-version]", (element, event) => {
       // Otherwise the click reaches the row underneath and collapses it.

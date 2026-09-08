@@ -2,7 +2,7 @@
 
 import pytest
 import versions
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 
@@ -293,22 +293,119 @@ def test_another_dashboards_number_does_not_count():
 
 
 # -- a day carries at most one automatic version -----------------------
+#
+# Two steps, and the split is what makes the rule affordable:
+# `marks_since` says which versions are worth a commit read, and
+# `day_is_marked` decides from the times that came back. Answered from
+# the *day the marked state was recorded on*, never from the title - the
+# title used to carry it, and it stopped being able to the moment a
+# person could rewrite it.
 
 
-def test_a_day_that_already_carries_a_mark_is_named():
-    marks = [("3 September 2026", versions.automatic_description())]
-    assert versions.automatic_days(marks) == {"3 September 2026"}
+class _Mark:
+    """A stand-in for a version: a name, a state, a time, a description."""
+
+    def __init__(self, revision: str, timestamp: int, description: str):
+        self.revision = revision
+        self.timestamp = timestamp
+        self.description = description
 
 
-def test_a_version_somebody_made_does_not_claim_a_day():
-    marks = [("Before the rework", "Handed over to the tenant")]
-    assert versions.automatic_days(marks) == set()
+def _auto(revision: str, tagged: str, text: str = "") -> _Mark:
+    """An automatic mark, tagged at `tagged`."""
+    return _Mark(revision, _at(tagged), versions.automatic_description(text))
 
 
-def test_a_lightweight_tag_claims_no_day_either():
+DAY = date(2026, 9, 3)
+
+
+# -- which marks are worth looking up ----------------------------------
+
+
+def test_a_mark_tagged_on_the_day_itself_is_worth_looking_up():
+    mark = _auto("a", "2026-09-03T23:50")
+    assert versions.marks_since(DAY, [mark], BERLIN) == [mark]
+
+
+def test_a_mark_tagged_on_a_later_day_is_too():
+    # The ordinary case: a day is marked at the first save of the day
+    # after it, so the mark for the 3rd carries a tag time from the 4th.
+    mark = _auto("a", "2026-09-04T08:00")
+    assert versions.marks_since(DAY, [mark], BERLIN) == [mark]
+
+
+def test_a_mark_older_than_the_day_cannot_be_about_it():
+    # This is the bound that keeps the reading from growing without
+    # limit. A mark is written after its day ended, so one tagged before
+    # the day began is about an earlier day and needs no commit read.
+    assert versions.marks_since(DAY, [_auto("a", "2026-09-02T23:00")], BERLIN) == []
+
+
+def test_a_version_somebody_made_is_never_worth_looking_up():
+    mark = _Mark("a", _at("2026-09-04T08:00"), "Handed over to the tenant")
+    assert versions.marks_since(DAY, [mark], BERLIN) == []
+
+
+def test_a_lightweight_tag_is_not_either():
     # A hand-made lightweight tag has no message at all, so it has
-    # neither a title nor a description to read.
-    assert versions.automatic_days([("", "")]) == set()
+    # nothing to read a marker out of.
+    assert versions.marks_since(DAY, [_Mark("a", _at("2026-09-04T08:00"), "")], BERLIN) == []
+
+
+def test_the_bound_is_read_in_the_zone_the_user_lives_in():
+    # Tagged half past midnight Berlin time on the 4th: the same instant
+    # is still the 3rd to UTC. Against the day being asked about, that
+    # decides whether the mark is inside the bound or on its edge.
+    mark = _auto("a", "2026-09-04T00:30")
+    assert versions.marks_since(date(2026, 9, 4), [mark], BERLIN) == [mark]
+    assert versions.marks_since(date(2026, 9, 4), [mark], timezone.utc) == []
+
+
+# -- and whether one of them is this day's -----------------------------
+
+
+def test_a_day_whose_state_carries_a_mark_is_marked():
+    mark = _auto("a", "2026-09-04T08:00")
+    times = {"a": _at("2026-09-03T22:00")}
+    assert versions.day_is_marked(DAY, [mark], times, BERLIN) is True
+
+
+def test_a_mark_on_another_day_s_state_leaves_this_one_open():
+    mark = _auto("a", "2026-09-04T08:00")
+    times = {"a": _at("2026-09-02T22:00")}
+    assert versions.day_is_marked(DAY, [mark], times, BERLIN) is False
+
+
+def test_a_renamed_automatic_version_still_holds_its_day():
+    # The reason this reads a timestamp rather than a title. What a
+    # person calls the version is their business; which day it marks is
+    # not a matter of naming.
+    mark = _auto("a", "2026-09-04T08:00", "Before the rework")
+    times = {"a": _at("2026-09-03T22:00")}
+    assert versions.day_is_marked(DAY, [mark], times, BERLIN) is True
+
+
+def test_a_mark_whose_state_cannot_be_read_is_not_this_day():
+    # A decision, not an oversight - the docstring says which way and
+    # why. It happens when the commit was pruned between the listing and
+    # the reading, and the other choice would stop a dashboard from ever
+    # being marked again.
+    mark = _auto("a", "2026-09-04T08:00")
+    assert versions.day_is_marked(DAY, [mark], {}, BERLIN) is False
+
+
+def test_the_day_compared_is_the_one_the_user_lived_through():
+    # Half past midnight in Berlin is still the day before to UTC. The
+    # mark belongs to the day the person had, exactly as `local_day`
+    # decides everywhere else here.
+    mark = _auto("a", "2026-09-05T08:00")
+    times = {"a": _at("2026-09-04T00:30")}
+    assert versions.day_is_marked(date(2026, 9, 4), [mark], times, BERLIN) is True
+    assert versions.day_is_marked(date(2026, 9, 3), [mark], times, timezone.utc) is True
+
+
+def test_nothing_marked_is_not_marked():
+    assert versions.day_is_marked(DAY, [], {}, BERLIN) is False
 
 
 def test_the_day_a_state_falls_on_is_answered_on_its_own():

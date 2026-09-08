@@ -132,6 +132,16 @@ async def async_register(hass: HomeAssistant) -> None:
             call.data.get("revision"),
         )
 
+    async def retitle_version(call: ServiceCall) -> dict:
+        return await operations.async_retitle_version(
+            hass,
+            store,
+            call.data["dashboard"],
+            call.data["name"],
+            call.data["title"],
+            call.data.get("description", ""),
+        )
+
     async def versions(call: ServiceCall) -> dict:
         return await operations.async_versions(
             hass, store, call.data.get("dashboard")
@@ -174,6 +184,11 @@ async def async_register(hass: HomeAssistant) -> None:
             vol.Required("title"): cv.string,
             vol.Optional("description", default=""): cv.string,
             vol.Optional("revision"): cv.string,
+        })),
+        ("retitle_version", retitle_version, DASHBOARD.extend({
+            vol.Required("name"): cv.string,
+            vol.Required("title"): cv.string,
+            vol.Optional("description", default=""): cv.string,
         })),
         ("versions", versions, vol.Schema({vol.Optional("dashboard"): cv.string})),
     ]

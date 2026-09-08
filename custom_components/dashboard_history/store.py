@@ -68,6 +68,14 @@ class Version:
     # versions needs it: titles repeat, times do not. Zero where there is
     # none to have, and a reader shows nothing rather than 1970.
     timestamp: int = 0
+    # Whether this is an annotated tag - the only kind this class makes -
+    # or a lightweight one somebody set by hand. Carried because it
+    # decides what can be done with the version: a lightweight tag is the
+    # ref itself and has no message, so it has no words to rewrite.
+    # `list_versions` has always had to branch on this and used to throw
+    # the answer away, which left the panel inferring it from an empty
+    # title - a field a person is now allowed to rewrite.
+    annotated: bool = True
 
 
 @dataclass(frozen=True)
@@ -113,6 +121,30 @@ class RevisionIndex:
 
 def _as_text(value) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
+
+
+def _version_body(title: str, description: str) -> bytes:
+    """The message a version's tag carries: title, blank line, the rest.
+
+    One place, with `_version_words` as its other half. Two callers
+    write this - a version being made and one being given new words -
+    and two read it, and the blank line is the whole format. Copies of a
+    wire format drift until a description turns up inside somebody's
+    title.
+    """
+    return f"{title}\n\n{description}".encode("utf-8")
+
+
+def _version_words(message: bytes | None) -> tuple[str, str]:
+    """A version tag's message as `(title, description)`.
+
+    The reading half of `_version_body`. A tag with no message at all -
+    a lightweight one, or an annotated one somebody made with an empty
+    body - answers two empty strings rather than needing a branch at
+    every caller.
+    """
+    title, _, description = (message or b"").decode("utf-8").partition("\n\n")
+    return title.strip(), description.strip()
 
 
 def _change(commit, notes: dict, previous: str | None) -> Change:
@@ -397,7 +429,7 @@ class HistoryStore:
     ) -> None:
         self._refuse_colliding_name(name)
         marked = self._marked_commit(revision)
-        body = f"{title}\n\n{description}".encode("utf-8")
+        body = _version_body(title, description)
         try:
             porcelain.tag_create(
                 str(self.path),
@@ -416,6 +448,114 @@ class HistoryStore:
             # straight from Exception - a caller catching ValueError would
             # let it escape as a bare traceback.
             raise ValueError(f"git cannot use that as a version name: {name}") from err
+
+    def retitle_version(
+        self, key: str, name: str, title: str, description: str
+    ) -> Version:
+        """Give one dashboard's version new words. Answers the result.
+
+        Every refusal is a ValueError carrying a sentence, exactly as
+        `create_version` answers all of its own - a name that collides,
+        one git will not take, a revision that is not a commit. The
+        caller already catches those in one place, so there is nothing
+        here for it to learn.
+
+        Three of them, and each is a different thing to say to a person:
+        the version is not this dashboard's, there is no version by that
+        name, or there is one but somebody made it by hand and it has no
+        message to change. `_owns` decides the first, which is the whole
+        ownership fence: a command taking a bare ref name would
+        otherwise rewrite any tag in the repository.
+
+        The marker of an automatic version is carried over here rather
+        than by the caller. It says who *made* the version, which new
+        words about it do not change - and it is machine-read: the day
+        mark reads it to know which days already carry one, so a version
+        that lost it on being renamed would let its day be marked twice.
+        Written where the tag body is written, it cannot be forgotten by
+        the next caller that wants to change a version's words.
+
+        A tag object cannot be edited. Its name is the hash of its
+        contents, so what happens here is a fresh object and the same ref
+        pointed at it. `copy()` carries everything across rather than a
+        list of fields naming what to keep, which is the difference
+        between a rule and an inventory - measured on dulwich 1.2.14, a
+        hand-written list of the six fields that seemed to matter already
+        dropped `_tag_timezone_neg_utc`, so a tag made at `-0000` came
+        back as `+0000`. Three things it therefore keeps, and each was
+        wanted:
+
+        * **The commit it marks.** A version names a state; new words
+          about it are not a new state. This is what keeps the operation
+          outside the hard rule about previews - no dashboard changes,
+          and nothing anybody can see is different.
+        * **The time it was made.** `list_versions` orders by it, so a
+          fresh time would send a corrected typo to the top of the list.
+          Asked for explicitly when this was: the order must not change.
+        * **The tagger.** Rewriting it would claim the version was made
+          by whoever last touched its wording.
+
+        The signature is the one thing deliberately dropped: a signature
+        over the old words says nothing about the new ones, and carrying
+        it would hand back a tag that claims to be signed and is not.
+
+        The ref is re-pointed rather than deleted and written again.
+        `_rewrite_tags` deletes first because it moves names around; here
+        the name stays, and one assignment leaves no window in which the
+        version does not exist. A version is the protective mark of
+        project C - what carries a tag is never touched when the history
+        is compacted - so a crash that dropped one would be expensive in
+        a way a crash that leaves an old wording is not.
+
+        The old tag object stays behind as a loose object nothing points
+        at, a few hundred bytes that `forget`'s `garbage_collect` sweeps
+        up. Pruning it here would mean a full object-store walk per typo.
+        """
+        with self._lock:
+            # No `_ensure()`, unlike every other write here. This one can
+            # only ever change something that already exists, so a
+            # repository that is not there is an answer and not a state
+            # to be built: creating one to then report "no such version"
+            # would leave a history behind that nobody asked for.
+            repo = self._repo()
+            if not _owns(name.encode("utf-8"), key):
+                raise ValueError(f"not a version of {key}: {name}")
+            ref = b"refs/tags/" + name.encode("utf-8")
+            try:
+                old = repo[repo.refs[ref]] if repo is not None else None
+            except KeyError:
+                old = None
+            if old is None:
+                raise ValueError(f"unknown version: {name}")
+            if not hasattr(old, "object"):
+                # A lightweight tag: the ref *is* the tag. Giving it a
+                # message means handing back a different kind of tag than
+                # the one somebody made, which is the line `_rewrite_tags`
+                # draws for the same reason.
+                raise ValueError(f"version made by hand, it carries no text: {name}")
+            _, automatic = versioning.read_description(_version_words(old.message)[1])
+            stored = (
+                versioning.automatic_description(description)
+                if automatic
+                else description
+            )
+            fresh = old.copy()
+            fresh.message = _version_body(title, stored)
+            fresh.signature = None
+            repo.object_store.add_object(fresh)
+            repo.refs[ref] = fresh.id
+            # Built from what is already in hand. The caller needs the
+            # result in the one shape every version leaves in, and
+            # reading it back would be a second scan of the namespace -
+            # measured at 365 tags: 35 ms of listing around a 2 ms write.
+            written_title, written_description = _version_words(fresh.message)
+            return Version(
+                name=name,
+                revision=_as_text(fresh.object[1]),
+                title=written_title,
+                description=written_description,
+                timestamp=fresh.tag_time,
+            )
 
     def _marked_commit(self, revision: str | None) -> bytes:
         """The commit a version is about to be pinned to.
@@ -1474,6 +1614,39 @@ class HistoryStore:
         first = self._blob_at(repo, path, one)
         return first is not None and first == self._blob_at(repo, path, other)
 
+    def commit_times(self, revisions: Iterable[str]) -> dict[str, int]:
+        """When each of these revisions was recorded, by the name asked for.
+
+        Keyed by what the caller handed in rather than by what it
+        resolves to, so a caller can look its own answer up: a version
+        name and the commit behind it are the same state under two
+        names, and only one of them is on the caller's list.
+
+        A revision that cannot be read is left out rather than answered
+        with a zero. The caller reads a calendar day out of this, and a
+        zero would arrive there as the first of January 1970 - a day
+        like any other to a comparison, and one no state was ever
+        recorded on.
+
+        Its caller is the day mark, which has to know which day each
+        automatic version is about. Not folded into `list_versions`,
+        which every panel click runs: this loads one commit object per
+        entry, and paying for that on the hot path to serve a check that
+        happens once a day is the trade `_marks_by_revision` warns about.
+        """
+        repo = self._repo()
+        if repo is None:
+            return {}
+        found: dict[str, int] = {}
+        for revision in dict.fromkeys(revisions):
+            resolved = self._resolve(repo, revision)
+            if resolved is None:
+                continue
+            # `_resolve` promises a commit at the end of the search, so
+            # this reaches for `commit_time` without a second guard.
+            found[revision] = repo[resolved.encode()].commit_time
+        return found
+
     def list_dashboards(self) -> list[str]:
         """Every dashboard the history currently tracks."""
         repo = self._repo()
@@ -1581,9 +1754,9 @@ class HistoryStore:
         found: list[tuple[int, Version]] = []
         for ref, tag in self._each_tag(repo, key):
             name = ref.decode()
-            if hasattr(tag, "object"):
-                message = (tag.message or b"").decode("utf-8")
-                title, _, description = message.partition("\n\n")
+            annotated = hasattr(tag, "object")
+            if annotated:
+                title, description = _version_words(tag.message)
                 marked, made = tag.object[1], tag.tag_time
             else:
                 # A lightweight tag, made by hand: the ref points straight
@@ -1602,9 +1775,10 @@ class HistoryStore:
                     Version(
                         name=name,
                         revision=_as_text(marked),
-                        title=title.strip(),
-                        description=description.strip(),
+                        title=title,
+                        description=description,
                         timestamp=made,
+                        annotated=annotated,
                     ),
                 )
             )

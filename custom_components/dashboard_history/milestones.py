@@ -380,7 +380,6 @@ class Milestones:
                 # state, and the numbering would count on regardless.
                 if any(v.revision == previous.revision for v in found):
                     return
-                title = versioning.day_title(previous.timestamp, zone)
                 # And at most one automatic version per day, which is a
                 # wider rule than the one above and catches what it
                 # cannot see. The floor sits on a dashboard's oldest
@@ -391,9 +390,22 @@ class Milestones:
                 # two rows both reading `5 September 2026`, each with
                 # its own button. Indistinguishable for exactly the
                 # person that mode exists for.
-                if title in versioning.automatic_days(
-                    (v.title, v.description) for v in found
-                ):
+                #
+                # The rule itself lives in `versions.py`, and this is
+                # three lines of fetching around it. Which day an
+                # existing mark is about is only readable from the state
+                # it sits on, so `marks_since` narrows the list to the
+                # ones worth a commit read and `day_is_marked` decides
+                # from the times that come back - including what to make
+                # of a mark whose state cannot be read at all. Put here
+                # inline, that decision would sit in the one module
+                # plain pytest cannot reach.
+                day = versioning.local_day(previous.timestamp, zone)
+                recent = versioning.marks_since(day, found, zone)
+                marked = await self._hass.async_add_executor_job(
+                    self._store.commit_times, [v.revision for v in recent]
+                )
+                if versioning.day_is_marked(day, recent, marked, zone):
                     return
                 # And not where the state being marked is the one the
                 # highest numbered version already holds. The two above look

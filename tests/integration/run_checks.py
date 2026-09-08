@@ -2505,6 +2505,224 @@ async def run_versions(access: str) -> None:
         )
 
 
+async def run_retitle(access: str) -> None:
+    """Giving an existing version new words, without moving it.
+
+    The condition this was built under is the one `pytest` can state but
+    not demonstrate: the order must not change. `list_versions` orders
+    by the time the tag was made, so a rebuilt tag carrying a fresh time
+    would send a corrected typo to the top of the list. Checked here
+    against a real installation because the whole way in - the
+    WebSocket command, the schema, the argument order in `services.py` -
+    is the part plain pytest cannot reach.
+    """
+    async with Socket(access) as socket:
+        key = TARGET
+
+        async def listed(dash: str) -> list:
+            return (
+                await socket.call("dashboard_history/versions", dashboard=dash)
+            )["versions"]
+
+        async def one(dash: str, name: str):
+            """One version of one dashboard, by name, or None."""
+            return next((v for v in await listed(dash) if v["name"] == name), None)
+
+        async def rename(dash: str, name: str, title: str, description: str = ""):
+            return await socket.call(
+                "dashboard_history/retitle_version",
+                dashboard=dash,
+                name=name,
+                title=title,
+                description=description,
+            )
+
+        before = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        marks = await listed(key)
+        if not check(
+            "this dashboard has a version to rename", bool(marks), str(len(marks))
+        ):
+            return
+        # One with words in it. A lightweight tag somebody left in the
+        # repository has none, and the refusal for it is checked below.
+        target = next((v for v in marks if v["annotated"]), None)
+        if not check("one of them is annotated", bool(target), str(marks[:1])):
+            return
+        was = dict(target)
+
+        try:
+            answer = await rename(
+                key, was["name"], "Umbenannt im Prüflauf äöüß", "Die Nummer bleibt."
+            )
+        except RuntimeError as err:
+            check("the retitle_version command answers", False, str(err))
+            return
+        check(
+            "the words are reported back as applied",
+            answer.get("applied") is True
+            and answer.get("title") == "Umbenannt im Prüflauf äöüß"
+            and answer.get("description") == "Die Nummer bleibt.",
+            str(answer),
+        )
+
+        after = await listed(key)
+        now = next((v for v in after if v["name"] == was["name"]), None)
+        check(
+            "reading it back gives the new words",
+            bool(now)
+            and now["title"] == "Umbenannt im Prüflauf äöüß"
+            and now["description"] == "Die Nummer bleibt.",
+            str(now),
+        )
+        # The three things that must not have moved. The timestamp is the
+        # one the list is ordered by; the revision is the state the
+        # version marks; the name is what a script addresses it by. The
+        # answer has to agree with the list, or a caller would need a
+        # second read to trust it.
+        check(
+            "the mark, the time and the name are where they were",
+            bool(now)
+            and (now["revision"], now["timestamp"])
+            == (was["revision"], was["timestamp"])
+            == (answer.get("revision"), answer.get("timestamp")),
+            f"{now} vs {was} vs {answer}",
+        )
+        order_before = [v["name"] for v in marks]
+        order_after = [v["name"] for v in after]
+        check(
+            "the version list is in the same order as before",
+            order_after == order_before,
+            f"{len(order_after)} versions, first {order_after[:3]}",
+        )
+        # And nothing was recorded. A version marks a state; new words
+        # about it are not a new state.
+        again = (await socket.call("dashboard_history/history", dashboard=key))[
+            "changes"
+        ]
+        check(
+            "renaming writes no change to the history",
+            len(again) == len(before)
+            and (not again or again[0]["revision"] == before[0]["revision"]),
+            f"{len(again)} vs {len(before)}",
+        )
+
+        # A version a routine made keeps its badge. The marker lives in
+        # the first line of the stored description and is stripped before
+        # the panel sees it, so this is the check that a rename neither
+        # drops it nor leaks it into somebody's own words - and the day
+        # mark reads that same flag to know which days are already
+        # marked.
+        #
+        # Looked for across the whole installation rather than on the
+        # dashboard this phase works on: the bench's main dashboard is
+        # the one every other phase makes versions on by hand, and after
+        # a few hundred of those it has no automatic one left to find.
+        # The dashboard it does turn up on is derived from the name - a
+        # version is `<key>/vX.Y.Z`, so the key is everything before the
+        # last slash.
+        every = (await socket.call("dashboard_history/versions"))["versions"]
+        automatic = next((v for v in every if v["automatic"]), None)
+        if automatic is None:
+            check(
+                "an automatic version exists somewhere to try it on",
+                False,
+                f"none among {len(every)}",
+            )
+        else:
+            owner = automatic["name"].rsplit("/", 1)[0]
+            kept = await rename(
+                owner, automatic["name"], "Vor dem Umbau", "Eigene Worte."
+            )
+            reread = await one(owner, automatic["name"])
+            check(
+                "an automatic version keeps its badge when renamed",
+                kept.get("applied") is True
+                and kept.get("automatic") is True
+                and bool(reread)
+                and reread["automatic"] is True
+                and reread["title"] == "Vor dem Umbau"
+                and reread["description"] == "Eigene Worte.",
+                f"{kept} / {reread}",
+            )
+            # And put back what it said. This one version belongs to
+            # another phase's dashboard - `run_milestones` checks that a
+            # floor is titled after the day it marks - and a check that
+            # quietly spoils the bench for the next one is the failure
+            # mode this file has already been repaired for once.
+            await rename(
+                owner,
+                automatic["name"],
+                automatic["title"],
+                automatic["description"],
+            )
+            back = await one(owner, automatic["name"])
+            check(
+                "and the words it had can be put back exactly",
+                bool(back)
+                and (back["title"], back["description"], back["automatic"])
+                == (automatic["title"], automatic["description"], True),
+                f"{back} vs {automatic}",
+            )
+
+        # An empty title is refused rather than accepted. A version
+        # without a name is a row nobody can pick out of a list again,
+        # and nothing here deletes a tag.
+        empty = await rename(key, was["name"], "   ")
+        check(
+            "an empty title is refused with a sentence",
+            empty.get("applied") is False and "title" in (empty.get("error") or ""),
+            str(empty),
+        )
+
+        # Another dashboard's version cannot be reached through this
+        # dashboard's key. `_owns` in the store decides that, so the
+        # refusal names the dashboard rather than pretending the version
+        # does not exist.
+        foreign = next(
+            (v["name"] for v in every if not v["name"].startswith(f"{key}/")),
+            None,
+        )
+        if foreign is None:
+            check("another dashboard has a version to try it on", False, "none listed")
+        else:
+            refused = await rename(key, foreign, "Sollte nicht durchgehen")
+            check(
+                "a version of another dashboard is not reachable from this key",
+                refused.get("applied") is False
+                and key in (refused.get("error") or ""),
+                str(refused),
+            )
+
+        # The services skin over the same operation. `services.py` hands
+        # its arguments over positionally, so a reordering there would be
+        # invisible to every check above this line - the same trap
+        # `run_versions` names for `create_version`.
+        by_service = await socket.call(
+            "call_service",
+            domain="dashboard_history",
+            service="retitle_version",
+            service_data={
+                "dashboard": key,
+                "name": was["name"],
+                "title": "Über den Dienst umbenannt",
+                "description": "Beweist die Reihenfolge der Argumente.",
+            },
+            return_response=True,
+        )
+        told = by_service["response"]
+        settled = await one(key, was["name"])
+        check(
+            "the retitle_version service puts the title in the title",
+            told.get("applied") is True
+            and bool(settled)
+            and settled["title"] == "Über den Dienst umbenannt"
+            and settled["description"] == "Beweist die Reihenfolge der Argumente.",
+            f"{told} / {settled}",
+        )
+
+
 async def run_permissions(access: str) -> None:
     """A user who is not an administrator gets nothing from the services.
 
@@ -3137,6 +3355,8 @@ if __name__ == "__main__":
     asyncio.run(run_moves(access))
     print("\n  -- Versionen je Dashboard --")
     asyncio.run(run_versions(access))
+    print("\n  -- Versionen nachtraeglich umbenennen --")
+    asyncio.run(run_retitle(access))
     print("\n  -- Eine Aenderung gezielt zuruecknehmen --")
     asyncio.run(run_undo(access))
     print("\n  -- Blaettern statt abschneiden --")

@@ -89,7 +89,10 @@ export function versionHead({ section, here, top }) {
   const [first, ...also] = section.versions;
   const count = section.rows.length;
   const extra = also
-    .map((v) => `<span class="also">also ${escape(v.name)} — ${escape(v.title)}</span>`)
+    .map(
+      (v) =>
+        `<span class="also">also ${escape(v.name)} — ${escape(v.title)}${pen(v)}</span>`,
+    )
     .join("");
   // Two different truths, and one wording for both was an overclaim.
   // A version sitting on the newest entry *is* where the dashboard is.
@@ -107,12 +110,36 @@ export function versionHead({ section, here, top }) {
     : `<button class="act ghost" data-state="${escape(first.name)}"
                >Back to this version</button>`;
   return `
-    <summary>
+    <summary class="penholder">
       <span class="name">${escape(first.name.split("/").pop())}</span>
       <span class="grow">${escape(first.title || first.name)}${extra}</span>
       <span class="count">${count} change${count === 1 ? "" : "s"}</span>
       ${back}
+      ${pen(first)}
     </summary>`;
+}
+
+/**
+ * The way to give one version new words. Exported so that both modes
+ * draw the same control rather than two that drift.
+ *
+ * Offered only where there are words to change, and the server says so:
+ * a lightweight tag is the ref itself and has no message, so the store
+ * refuses to rename it. A button that could only ever produce that
+ * sentence is not an offer.
+ *
+ * `annotated` and not "does it have a title", which is what this asked
+ * first. A title is a field a person is now allowed to rewrite, so
+ * reading the kind of tag out of it was reading a fact out of a name -
+ * the same mistake the day mark was just repaired for. It was wrong in
+ * both directions: a hand-made *annotated* tag with an empty first line
+ * can be renamed and would have been refused a pen, and any future
+ * version without a title would lose its pen without a word.
+ */
+export function pen(version) {
+  if (!version.annotated) return "";
+  return `<button class="pen" data-retitle="${escape(version.name)}"
+               title="Rename this version">✎</button>`;
 }
 
 /**
@@ -163,7 +190,7 @@ export function renderRow({ change, newest = false, spokenFor = false, matching 
     : "";
   return `
       <div class="card">
-        <div class="change" data-revision="${escape(change.revision)}">
+        <div class="change penholder" data-revision="${escape(change.revision)}">
           <span class="what">${escape(change.description || change.message)}${chip}${named}
             ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
           </span>

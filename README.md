@@ -16,6 +16,9 @@ and assumes nothing. [Part 2](#part-2-how-it-works-and-where-it-stops)
 is the mechanism and the exact limits, for anyone who wants to know what
 the tool can prove and what it can only assume.
 
+Questions that come up while using it — and why some things are refused
+on purpose — are answered in [FAQ.md](FAQ.md).
+
 ---
 
 ## Part 1: Using it
@@ -298,6 +301,23 @@ Dashboard History → Configure*. It takes effect at the next change, with
 no restart. The `v1.0.0` is not affected by that switch, and **nothing is
 ever deleted either way**: every state stays in the history, marked or
 not.
+
+#### Renaming a version
+
+Hover a version — a row in the simple view, a section head in the
+advanced one — and a pencil appears. It opens the same two fields the
+create dialog asks for, prefilled: the title and the description. Enter
+your correction and save.
+
+The **number stays as it is**, and that is deliberate: the number is the
+tag's name, and going back to a version is done by that name. The
+reasoning, and what to do when you wanted a different number after all,
+is in [the FAQ](FAQ.md#why-cant-i-change-a-version-number-afterwards).
+
+A version made automatically keeps its `automatic` label when you rename
+it — the label says who made the version, not what it is called. Nothing
+about the dashboard or the history changes, so renaming needs no
+confirmation. A version cannot be left without a title.
 
 #### Keeping the state you are leaving
 
@@ -731,6 +751,7 @@ dashboard's internal id (`energie_2`); the two are not the same string.
 | `versions` | The named versions, all of them or one dashboard's |
 | `next_versions` | What the next patch, minor and major would be called |
 | `create_version` | Name a recorded state as a version |
+| `retitle_version` | Give an existing version a new title and description |
 | `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
 | `debug_snapshot` | What the integration currently sees |
 
@@ -744,7 +765,13 @@ Three notes for scripting:
   replace.
 - `create_version` requires a non-empty title. A version without a name is
   a row nobody can pick out of a list again, and nothing in this
-  integration deletes a tag.
+  integration deletes a tag. `retitle_version` requires one for the same
+  reason, so it cannot be used to take a name away.
+- `retitle_version` changes a version's **wording only**. The number it
+  is addressed by, the state it marks and the time it was made all stay —
+  so the order of the version list does not shift under a correction.
+  Renaming the number is not offered at all; the reasons are in
+  [the FAQ](FAQ.md#why-cant-i-change-a-version-number-afterwards).
 
 ### Where the data lives
 

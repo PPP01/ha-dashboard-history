@@ -156,6 +156,14 @@ def _version_dict(version: Version) -> dict:
         # the place empty then; the reason it is a number and not a
         # missing key is the paragraph above.
         "timestamp": version.timestamp,
+        # Whether there are words here to rewrite at all. A lightweight
+        # tag is the ref itself and carries no message, so renaming it
+        # is refused - and the panel needs to know that before it offers
+        # the button, not after. It used to infer it from an empty
+        # title, which is a field a person is now allowed to rewrite:
+        # a hand-made *annotated* tag with an empty first line read as
+        # unrenameable, and the FAQ promises any version can be renamed.
+        "annotated": version.annotated,
     }
 
 
@@ -852,6 +860,63 @@ async def async_create_version(
         # It is an answer, not a crash: the message says what is in the way.
         return {"created": None, "error": str(err)}
     return {"created": name}
+
+
+async def async_retitle_version(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    name: str,
+    title: str,
+    description: str = "",
+) -> dict:
+    """Give a version of one dashboard new words.
+
+    The two fields the create dialog asks for, filled in or corrected
+    afterwards - and only those two. The *number* is not among them, and
+    that is a decision rather than an omission: decision 13 of the design
+    record keeps the number out of anybody's typing on purpose, because a
+    tag name is a technical artefact with ref rules behind it, and a
+    version name is addressable as a revision - an automation calling
+    `restore_state` with `heizung/v1.0.0` would break silently the moment
+    the name moved. Whoever wants a different number puts a second
+    version beside this one, which is one click and loses nothing. The
+    reasoning is in `FAQ.md`, because it is the first question the
+    screen provokes.
+
+    No `confirm`, for the same reason `describe` and `create_version`
+    have none: this changes a tag's wording. No dashboard changes, and
+    nothing anybody can see is different afterwards.
+
+    One executor job, and the store answers with the version it wrote.
+    The ownership fence, the refusals and the marker of an automatic
+    version all live down there, where the ref is: this used to list a
+    dashboard's whole tag namespace first to find one name and read one
+    description, which at 365 versions was 35 ms of looking around a
+    2 ms write.
+    """
+    label = title.strip()
+    if not label:
+        # The same fence `async_create_version` puts up, for the same
+        # reason: a version without a name is a row nobody can pick out
+        # of a list again. Emptying the field would be a way to *unname*
+        # a version, and unlike a description there is nothing that would
+        # put a name back.
+        return {"applied": False, "error": "a version needs a title"}
+    try:
+        written = await hass.async_add_executor_job(
+            store.retitle_version, key, name, label, description.strip()
+        )
+    except ValueError as err:
+        # Every refusal the store has: not this dashboard's version, no
+        # version by that name, or one somebody made by hand that has no
+        # message to change. An answer with a sentence in it, like every
+        # other refusal here.
+        return {"applied": False, "error": str(err)}
+    # Through `_version_dict` like every other version that leaves as a
+    # payload, so the panel sees one shape and the marker is read rather
+    # than shown.
+    return {"applied": True, **_version_dict(written)}
 
 
 async def async_versions(

@@ -256,17 +256,76 @@ def automatic_level(key: str, names: Iterable[str]) -> str:
     return "patch" if latest(key, names) is not None else "major"
 
 
-def automatic_days(marks: Iterable[tuple[str, str]]) -> set[str]:
-    """Which days already carry an automatic version, by title.
+def marks_since(day: date, marks: Iterable, zone: tzinfo) -> list:
+    """The automatic marks that could be about `day` or a later one.
 
-    `marks` are `(title, description)` pairs, as a dashboard's versions
-    hand them over. A day gets at most one automatic version: the simple
-    mode shows a list of nothing but titles, and two rows reading
-    `5 September 2026` with two different buttons under them cannot be
-    told apart by the person that mode exists for.
+    Answers *which versions are worth looking up*, and it exists because
+    the looking up costs a commit object each. `day_is_marked` needs the
+    day each existing mark is about, and that day is only readable from
+    the state the mark sits on - so without a bound, deciding whether
+    today is marked reads one commit per version this dashboard has
+    ever had, every day, for ever. Measured on a repository of 365
+    daily versions: 47.5 ms for all of them against 0.56 ms for the one
+    or two this leaves. The same shape of growth `_each_tag` was
+    repaired for, from the other end.
+
+    The bound holds because a day mark is made *after* its day ended: it
+    is written at the first save of some later day, so its tag is never
+    older than the day it marks. Compared as calendar days rather than
+    against a midnight timestamp - there is no midnight to compute, and
+    a day where the clocks change has no single length.
+
+    What it gives up, said plainly: a mark whose tag time somehow *is*
+    older than the day it marks - a clock that went backwards between
+    the day ending and the mark being made - falls out of this list, and
+    its day can then be marked a second time. Against that, an
+    unbounded read of the whole tag namespace once a day per dashboard.
 
     Only automatic ones count. What somebody wrote themselves is their
     own name for a state, even in the unlikely event that it reads like
     a date.
     """
-    return {title for title, text in marks if title and read_description(text)[1]}
+    return [
+        v
+        for v in marks
+        if local_day(v.timestamp, zone) >= day and read_description(v.description)[1]
+    ]
+
+
+def day_is_marked(
+    day: date, marks: Iterable, times: dict[str, int], zone: tzinfo
+) -> bool:
+    """Whether one of these marks is about `day`.
+
+    A day gets at most one automatic version: the simple mode shows a
+    list of nothing but titles, and two rows reading `5 September 2026`
+    with two different buttons under them cannot be told apart by the
+    person that mode exists for.
+
+    `times` says when each mark's own state was recorded, by revision -
+    the marked commit's time, deliberately, and not the tag's. A day
+    mark is written at the first save of the *following* day, and any
+    number of days later where Home Assistant was off in between, so a
+    tag's own time names a different day than the one it marks.
+
+    Read off that time, and this rule used to read off the title, which
+    was right exactly as long as nothing could change a title. Since a
+    person can rename a version, a title is a name and not a fact:
+    renaming `3 September 2026` to `Before the rework` left that day
+    unclaimed, and the next first save of a day would have marked it
+    again.
+
+    A mark whose state `times` cannot account for counts as **not this
+    day**. That is a decision and not an oversight: it happens when the
+    commit was pruned between the listing and this reading - a `forget`
+    in between - and the alternative, treating an unreadable mark as
+    possibly about any day, would stop a whole dashboard from ever
+    being marked again. The cost is the one it is weighed against: a day
+    that gets a second row in the simple mode. Reachable by plain pytest
+    either way, which is why the rule lives here and not in the caller.
+    """
+    return any(
+        local_day(times[v.revision], zone) == day
+        for v in marks
+        if v.revision in times
+    )

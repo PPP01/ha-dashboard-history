@@ -278,6 +278,44 @@ create_version:
       selector:
         text:
 
+retitle_version:
+  name: Rename a version
+  description: >-
+    Give a version that already exists a new title and description. The
+    version number stays as it is - it is part of the tag's name, which
+    other things address the version by. Nothing on the dashboard
+    changes, so this needs no confirmation.
+  fields:
+    dashboard:
+      required: true
+      description: The dashboard, by its url_path.
+      example: my-dashboard
+      selector:
+        text:
+    name:
+      required: true
+      description: >-
+        The version to rename, by its full name as `versions` reports it.
+      example: my-dashboard/v1.0.0
+      selector:
+        text:
+    title:
+      required: true
+      description: >-
+        The new title. A version cannot be left without one, so this
+        cannot be emptied.
+      example: Before the kitchen rework
+      selector:
+        text:
+    description:
+      description: >-
+        The new description. Leave it empty to remove the one that is
+        there.
+      default: ""
+      selector:
+        text:
+          multiline: true
+
 versions:
   name: Versions
   description: >-

@@ -260,7 +260,17 @@ export const STYLE = `
     white-space: pre;
     overflow-x: auto;
   }
-  .change .pen {
+  /* One rule for every pen: the one on a change, the one on a version
+     row in the simple mode, the one on a section head in the advanced
+     one. Written for the first alone, it was copied twice before the
+     third asked to exist.
+
+     The pointer-events line, and not opacity alone. An invisible
+     button is still a click target, so a hidden pen sat in the corner
+     of a row taking taps meant for the row behind it - and that is
+     true wherever it is hidden, not only on a device with no pointer
+     at all. */
+  .pen {
     padding: 4px 8px;
     border: 0;
     border-radius: 4px;
@@ -270,8 +280,26 @@ export const STYLE = `
     font-size: 15px;
     cursor: pointer;
     opacity: 0;
+    pointer-events: none;
   }
-  .change:hover .pen, .change .pen:focus { opacity: 1; }
+  /* Revealed by a class on whatever carries the pen, rather than by a
+     list of the things that do. The list had grown to three selectors
+     living far from the markup they name, and the failure mode of a
+     fourth place forgetting itself is silent invisibility - which is
+     why look_at_panel.py had to grow a check reading the computed
+     opacity. Keyboard focus reveals it too, or the pen would be
+     reachable by Tab and still not visible. */
+  .penholder:hover .pen, .pen:focus {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  /* Where there is no pointer there is no hover, and a control that
+     only appears on hover is a control that does not exist. Since the
+     simple mode is the one opened on a phone, and renaming a version is
+     one of the two things it offers, they are all shown there. */
+  @media (hover: none) {
+    .pen { opacity: 1; pointer-events: auto; }
+  }
   .change .what .auto {
     display: block;
     margin-top: 2px;
@@ -424,6 +452,10 @@ export const STYLE = `
     font-size: 12px;
     color: var(--secondary-text-color, #727272);
   }
+  /* The pen on a second version named in the same head belongs to a
+     12px line, not to the row. At the shared size it stood a third
+     taller than the words it sits in and pulled the eye off them. */
+  details.ver .also .pen { padding: 0 6px; font-size: 12px; }
   .levels { display: flex; gap: 8px; margin: 12px 0; }
   .levels button {
     flex: 1 1 0;

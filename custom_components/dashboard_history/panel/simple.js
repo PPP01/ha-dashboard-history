@@ -21,10 +21,12 @@
 
 const PARTS = new URL(import.meta.url).search;
 const { escape, when } = await import(`./render.js${PARTS}`);
-// The one chip this mode borrows. `rows.js` calls itself the pieces a
-// history is drawn from - sections, heads, rows, chips - and says both
-// modes build from exactly those; for the chip that is now true.
-const { NOW_CHIP } = await import(`./rows.js${PARTS}`);
+// The chip and the pen this mode borrows. `rows.js` calls itself the
+// pieces a history is drawn from - sections, heads, rows, chips - and
+// says both modes build from exactly those; for these two that is now
+// true. The pen especially: one control renaming a version, drawn the
+// same way wherever a version is shown.
+const { NOW_CHIP, pen } = await import(`./rows.js${PARTS}`);
 
 // The way over to the other mode. Offered in both of this mode's
 // states - with versions and without - and written once, because two
@@ -272,11 +274,12 @@ export function renderSimple({
     // somebody wrote about the version. The note is short, it is the
     // one thing on the row nobody else wrote, and putting it behind a
     // click would make the closed row say less than it does today.
-    const head = `<span class="vhead">
+    const head = `<span class="vhead penholder">
                 <span class="name">${number(version)}</span>
                 <span class="grow">${escape(version.title)}${auto}</span>
                 ${made}
                 ${back}
+                ${pen(version)}
               </span>
               ${version.description
         ? `<p class="why">${escape(version.description)}</p>`

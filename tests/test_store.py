@@ -535,6 +535,47 @@ def test_comparing_in_an_empty_repository_is_not_the_same(tmp_path):
     assert fresh.same_state("home", "abc", "def") is False
 
 
+# -- when a recorded state was recorded ---------------------------------
+#
+# Asked by the day mark, which has to know which calendar day each
+# existing automatic version is about. That day is the day its marked
+# state was recorded on - not the day its tag was made, which is the
+# following one at the earliest.
+
+
+def test_the_time_of_each_revision_is_reported(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    times = store.commit_times([first, second])
+    recorded = {c.revision: c.timestamp for c in store.list_changes("home")}
+    assert times == recorded
+
+
+def test_an_unknown_revision_is_left_out_rather_than_answered(store):
+    # Left out, not zero: a caller reading a day out of this must not be
+    # handed 1970 for something it could not find.
+    only = store.write_snapshot("home", "a: 1\n", "only")
+    assert store.commit_times([only, "f" * 40]) == {only: store.list_changes("home")[0].timestamp}
+
+
+def test_a_version_name_is_a_revision_here_too(store):
+    only = store.write_snapshot("home", "a: 1\n", "only")
+    store.create_version("home/v1.0.0", "First", "", only)
+    # Answered under the name it was asked about, not under the commit
+    # it resolves to: a caller looks the answer up by what it handed in.
+    assert list(store.commit_times(["home/v1.0.0"])) == ["home/v1.0.0"]
+
+
+def test_asking_about_nothing_is_empty(store):
+    store.write_snapshot("home", "a: 1\n", "only")
+    assert store.commit_times([]) == {}
+
+
+def test_asking_an_empty_repository_is_empty(tmp_path):
+    fresh = HistoryStore(tmp_path / "nothing")
+    assert fresh.commit_times(["abc"]) == {}
+
+
 # -- forgetting a dashboard for good -----------------------------------
 #
 # The one irreversible operation in this project, in a tool built to stop
@@ -823,6 +864,177 @@ def test_a_version_says_when_it_was_made(store):
     _lightweight_tag(store, "home/v1.1.0", first)
     marked = {v.name: v.timestamp for v in store.list_versions("home")}
     assert marked["home/v1.1.0"] == store.list_changes("home")[0].timestamp
+
+
+# -- giving an existing version new words -------------------------------
+#
+# The two fields the create dialog asks for, filled in or corrected
+# afterwards. A tag object is immutable - its name *is* the hash of its
+# contents - so this builds a new one and points the same ref at it. The
+# commit it marks and the time it was made come along unchanged, and so
+# does the marker of a version nobody asked for.
+
+
+def test_a_version_can_be_given_new_words(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "the old note", first)
+
+    written = store.retitle_version("home", "home/v1.0.0", "Before the rework", "why")
+    # Answered, rather than read back: the caller needs the result in the
+    # one shape every version leaves in, and a second read would be a
+    # second scan of the whole tag namespace.
+    assert (written.title, written.description) == ("Before the rework", "why")
+    made = store.list_versions("home")[0]
+    assert (made.title, made.description) == ("Before the rework", "why")
+
+
+def test_new_words_move_neither_the_mark_nor_the_time_it_was_made(store):
+    # The condition this was asked for under, in as many words: the
+    # order must not change. `list_versions` orders by the time the tag
+    # was made, so a rebuilt tag carrying a fresh time would climb to the
+    # top of the list the moment somebody corrected a typo in it - and
+    # `by_number` is no protection, because the panel shows times too and
+    # the all-dashboards list has no numbers to fall back on.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.create_version("home/v2.0.0", "Second", "", second)
+    before = {v.name: (v.revision, v.timestamp) for v in store.list_versions("home")}
+
+    written = store.retitle_version("home", "home/v1.0.0", "Renamed", "")
+
+    after = {v.name: (v.revision, v.timestamp) for v in store.list_versions("home")}
+    assert after == before
+    # And the answer says the same, so a caller needs no second read to
+    # know the version did not move.
+    assert (written.revision, written.timestamp) == before["home/v1.0.0"]
+    # Nothing but the one named is touched.
+    assert {v.name: v.title for v in store.list_versions("home")}["home/v2.0.0"] == (
+        "Second"
+    )
+
+
+def test_a_version_nobody_asked_for_stays_marked_as_such(store):
+    # The marker is the first line of the stored description, and it is
+    # machine-read: the day mark asks it which days already carry an
+    # automatic version. Carried over here rather than by the caller, so
+    # the next writer of a version's words cannot forget it - a version
+    # that lost it on being renamed would let its day be marked twice.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version(
+        "home/v1.0.0", "3 September 2026", versions.automatic_description(), first
+    )
+
+    written = store.retitle_version("home", "home/v1.0.0", "Before the rework", "why")
+
+    assert versions.read_description(written.description) == ("why", True)
+    stored = store.list_versions("home")[0]
+    assert versions.read_description(stored.description) == ("why", True)
+
+
+def test_a_version_somebody_made_gains_no_marker(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "mine", first)
+    written = store.retitle_version("home", "home/v1.0.0", "First", "still mine")
+    assert versions.read_description(written.description) == ("still mine", False)
+
+
+def test_a_retitled_version_still_reads_back_by_its_name(store):
+    # It has to stay the same *kind* of thing. A ref left pointing at
+    # anything but an annotated tag would still list, and `read_at` over
+    # the name - which is how going back to a version works - would
+    # start answering None.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.retitle_version("home", "home/v1.0.0", "Renamed", "")
+    assert store.read_at("home", "home/v1.0.0") == "a: 1\n"
+
+
+def test_everything_the_tag_carried_but_its_words_comes_along(store):
+    # Built with `copy()` rather than from a list of fields worth
+    # keeping. Measured on dulwich 1.2.14: a hand-written list of the six
+    # that seemed to matter dropped `_tag_timezone_neg_utc`, so a tag
+    # made at `-0000` came back as `+0000`. What must *not* come along is
+    # the signature - one over the old words says nothing about the new.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    repo = Repo(str(store.path))
+    try:
+        tag = repo[repo.refs[b"refs/tags/home/v1.0.0"]]
+        tag._tag_timezone_neg_utc = True
+        tag.signature = b"-----BEGIN PGP SIGNATURE-----\nx\n"
+        repo.object_store.add_object(tag)
+        repo.refs[b"refs/tags/home/v1.0.0"] = tag.id
+        was = (tag.tagger, tag.tag_time, tag.tag_timezone)
+    finally:
+        repo.close()
+
+    store.retitle_version("home", "home/v1.0.0", "Renamed", "")
+
+    repo = Repo(str(store.path))
+    try:
+        now = repo[repo.refs[b"refs/tags/home/v1.0.0"]]
+        assert (now.tagger, now.tag_time, now.tag_timezone) == was
+        assert now._tag_timezone_neg_utc is True
+        assert now.signature is None
+    finally:
+        repo.close()
+
+
+def test_another_dashboards_version_cannot_be_reached(store):
+    # The whole ownership fence, and it is `_owns` rather than a
+    # `startswith`: a command taking a bare ref name would otherwise
+    # rewrite any tag in the repository.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("other", "b: 1\n", "other")
+    store.create_version("other/v1.0.0", "Theirs", "", first)
+    with pytest.raises(ValueError, match="not a version of home"):
+        store.retitle_version("home", "other/v1.0.0", "Renamed", "")
+    assert store.list_versions("other")[0].title == "Theirs"
+
+
+def test_an_unknown_version_is_refused_with_a_sentence(store):
+    # A ValueError like every other refusal `create_version` gives, so
+    # the one place that already catches those needs no second branch.
+    store.write_snapshot("home", "a: 1\n", "first")
+    with pytest.raises(ValueError, match="unknown version"):
+        store.retitle_version("home", "home/v9.9.9", "Nothing", "")
+
+
+def test_a_version_made_by_hand_has_no_words_to_change(store):
+    # A lightweight tag is the ref itself and carries no message. Giving
+    # it one would hand somebody back a different kind of tag than the
+    # one they made - the same line `_rewrite_tags` draws.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    _lightweight_tag(store, "home/v1.0.0", first)
+    with pytest.raises(ValueError, match="made by hand"):
+        store.retitle_version("home", "home/v1.0.0", "Renamed", "")
+
+
+def test_retitling_in_an_empty_repository_is_refused_not_built(store, tmp_path):
+    # And builds no repository on the way. Every other write here calls
+    # `_ensure` first; this one cannot need to, because it only ever
+    # changes something that already exists. Creating a history in order
+    # to report that it holds no such version would leave one behind
+    # that nobody asked for.
+    fresh = HistoryStore(tmp_path / "nothing")
+    with pytest.raises(ValueError, match="unknown version"):
+        fresh.retitle_version("home", "home/v1.0.0", "Renamed", "")
+    assert not (tmp_path / "nothing").exists()
+
+
+# -- and which kind of tag a version came from --------------------------
+
+
+def test_a_version_says_whether_it_has_words_at_all(store):
+    # Carried so that nobody has to infer it from an empty title, which
+    # is a field a person is now allowed to rewrite. `list_versions` has
+    # always branched on this and used to throw the answer away.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    _lightweight_tag(store, "home/v2.0.0", first)
+    kinds = {v.name: v.annotated for v in store.list_versions("home")}
+    assert kinds == {"home/v1.0.0": True, "home/v2.0.0": False}
 
 
 def test_a_name_git_cannot_accept_is_refused_as_an_answer(store):

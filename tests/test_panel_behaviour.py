@@ -2059,15 +2059,18 @@ el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
 // only the number and the time told them apart.
 el._versions = [
   { name: "dash/v1.2.0", title: "Kitchen rebuild", description: "",
-    revision: "a", same_as_now: true, timestamp: 1757246400 },
+    revision: "a", same_as_now: true, timestamp: 1757246400,
+    annotated: true },
   { name: "dash/v1.1.0", title: "Kitchen rebuild", description: "",
-    revision: "a", same_as_now: true, timestamp: 1757246300 },
+    revision: "a", same_as_now: true, timestamp: 1757246300,
+    annotated: true },
   { name: "dash/v1.0.0", title: "Autumn tidy", description: "",
-    revision: "c", same_as_now: false, timestamp: 0 },
+    revision: "c", same_as_now: false, timestamp: 0, annotated: true },
   // Its commit is below the loaded window, so there is nothing under
   // this one to open - the usual case on a dashboard with hundreds.
   { name: "dash/v0.9.0", title: "Older still", description: "",
-    revision: "z", same_as_now: false, timestamp: 1757100000 },
+    revision: "z", same_as_now: false, timestamp: 1757100000,
+    annotated: true },
 ];
 // The row somebody has open, remembered across renders the way the
 // advanced mode remembers its sections.
@@ -2104,6 +2107,7 @@ console.log(JSON.stringify({
     shut: /data-key="dash\\/v1\\.2\\.0"\\s+open/.test(plain),
     badge: count(plain, "class=\\"chip now\\""),
     undo: count(plain, "Undo / Go back"),
+    pens: count(plain, "data-retitle="),
   },
   filtered: {
     standing: filtered.includes("in the state of v1.2.0"),
@@ -2192,6 +2196,15 @@ def test_the_fold_counts_only_what_it_can_show(simple_mode):
     # this mode has no "load older" that could ever make it right.
     assert simple_mode["plain"]["twoChanges"] is True
     assert simple_mode["plain"]["oneChange"] is True
+
+
+def test_every_row_offers_a_way_to_rename_its_version(simple_mode):
+    # Every row, including the one whose commit is below the window and
+    # the one somebody is standing in. Renaming touches a tag's wording
+    # and nothing else, so none of the reasons a row withholds its
+    # *button* - it holds the live state, it is where you are - has any
+    # bearing on this one.
+    assert simple_mode["plain"]["pens"] == 4
 
 
 def test_the_current_state_carries_the_badge_the_other_mode_carries(simple_mode):
@@ -2346,6 +2359,135 @@ def test_the_drifted_current_state_still_carries_the_badge(simple_now):
 
 # -- rows.js, the other half with no behavioural test ----------------------
 
+_RETITLE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+// The complete list from the server, which is what this reads. Neither
+// version's commit is in `_changes` below - the ordinary case on a
+// dashboard with more versions than a window holds, and the one a
+// lookup through the loaded marks would get wrong.
+el._versions = [
+  { name: "dash/v1.0.0", title: "Autumn tidy", description: "the old note",
+    revision: "a", automatic: false },
+  { name: "dash/v1.1.0", title: "7 September 2026", description: "",
+    revision: "b", automatic: true },
+];
+el._changes = [{ revision: "z", message: "1 card added", versions: [] }];
+
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  return Promise.resolve({ applied: true });
+};
+// The reload is the sibling flows' and is measured with them; what
+// matters here is that this flow reaches it at all.
+let reloaded = 0;
+el._reloadAfterWrite = () => {
+  reloaded += 1;
+  return Promise.resolve(null);
+};
+el.shadowRoot = node();
+const box = el.shadowRoot.querySelector("dialog.retitle");
+const which = box.querySelector("[data-which]");
+const title = box.querySelector("input.title");
+const desc = box.querySelector("input.desc");
+
+// A version somebody made: both fields arrive prefilled.
+const editing = el._retitleVersion("dash/v1.0.0");
+await settle();
+const opened = {
+  open: box.open,
+  title: title.value,
+  desc: desc.value,
+  which: which.textContent,
+};
+title.value = "Before the rework";
+desc.value = "handed over to the tenant";
+box.close("save");
+await editing;
+const wrote = sent.map((call) => ({ type: call.type, ...call.extra }));
+
+// One a routine made. The dialog promises the badge survives, which is
+// the one thing about the version it changes nothing about.
+sent.length = 0;
+const automatic = el._retitleVersion("dash/v1.1.0");
+await settle();
+const badge = which.textContent;
+const prefilled = title.value;
+box.close("cancel");
+await automatic;
+const afterCancel = sent.length;
+
+// A name that is not in the list opens nothing. Same shape as the
+// lookup miss in `_describe`: the dialog never showing is the tell.
+box.open = false;
+await el._retitleVersion("dash/v9.9.9");
+const missing = box.open;
+
+console.log(JSON.stringify({
+  opened, wrote, badge, prefilled, afterCancel, missing, reloaded,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def retitling(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "retitling", _RETITLE)
+
+
+def test_the_two_fields_arrive_carrying_what_the_version_says(retitling):
+    # Prefilled, because this is a correction far more often than a
+    # rewrite - and an empty title field would be a trap: a version
+    # cannot be left without one, so somebody who only wanted to add a
+    # note would have to retype the name to get past the refusal.
+    assert retitling["opened"]["open"] is True
+    assert retitling["opened"]["title"] == "Autumn tidy"
+    assert retitling["opened"]["desc"] == "the old note"
+
+
+def test_the_dialog_names_the_version_it_is_about(retitling):
+    # Two rows of the simple mode can carry the same title - that is
+    # what the numbers are for - so "this version" alone leaves
+    # somebody checking behind themselves.
+    assert retitling["opened"]["which"] == "v1.0.0"
+
+
+def test_saving_sends_the_dashboard_the_name_and_both_fields(retitling):
+    assert retitling["wrote"] == [
+        {
+            "type": "retitle_version",
+            "dashboard": "dash",
+            "name": "dash/v1.0.0",
+            "title": "Before the rework",
+            "description": "handed over to the tenant",
+        }
+    ]
+    # And ends on the reload, or the row on the screen would go on
+    # showing the title that was just replaced.
+    assert retitling["reloaded"] == 1
+
+
+def test_renaming_an_automatic_version_promises_the_badge_survives(retitling):
+    # It does survive - `async_retitle_version` puts the marker back -
+    # and the badge is the one thing next to the words that this dialog
+    # visibly rewrites without touching. Said, rather than left to be
+    # discovered by whoever wonders where it went.
+    assert retitling["badge"] == (
+        "v1.1.0 — it stays marked as saved automatically."
+    )
+    assert retitling["prefilled"] == "7 September 2026"
+
+
+def test_a_dialog_dismissed_without_saving_writes_nothing(retitling):
+    assert retitling["afterCancel"] == 0
+
+
+def test_a_version_that_is_not_in_the_list_opens_nothing(retitling):
+    assert retitling["missing"] is False
+
+
 _ROWS = """
 const rows = await import(new URL("./panel/rows.js", %(url)s).href);
 
@@ -2361,12 +2503,28 @@ const cut = rows.sections([
 const head = (here, top) =>
   rows.versionHead({
     section: {
-      versions: [{ name: "dash/v1.0.0", title: "One" }],
+      versions: [{ name: "dash/v1.0.0", title: "One", annotated: true }],
       rows: [top, top + 1],
     },
     here,
     top,
   });
+
+// Two versions on one state: the head names both, so both need a way
+// to be renamed. The second only ever appears here - the simple mode
+// gives it a row of its own - so a pen on the first alone would leave
+// it reachable from one mode and not the other.
+const shared = rows.versionHead({
+  section: {
+    versions: [
+      { name: "dash/v1.0.0", title: "One", annotated: true },
+      { name: "dash/v1.1.0", title: "Also one", annotated: true },
+    ],
+    rows: [0, 1],
+  },
+  here: false,
+  top: 2,
+});
 
 const row = (change, extra) =>
   rows.renderRow({ change, ...extra });
@@ -2395,6 +2553,12 @@ console.log(JSON.stringify({
     .includes("chip"),
   named: row(CHANGE, { newest: true, matching: ["v1.0.0"] })
     .includes("same state as v1.0.0"),
+  pen: head(false, 2).includes('data-retitle="dash/v1.0.0"'),
+  sharedPens: (shared.match(/data-retitle=/g) || []).length,
+  penOnAHandMadeTag: rows.pen({ name: "dash/by-hand", title: "", annotated: false }),
+  penOnATitlelessAnnotatedTag: rows.pen({
+    name: "dash/odd", title: "", annotated: true,
+  }).includes("data-retitle"),
 }));
 """
 
@@ -2435,6 +2599,30 @@ def test_a_chip_says_which_kind_of_sameness_it_means(row_parts):
     # And nothing at all where the dashboard has moved on.
     assert row_parts["movedOn"] is False
     assert row_parts["named"] is True
+
+
+def test_every_version_a_head_names_can_be_renamed(row_parts):
+    # Including the ones the head lists as "also". They sit on the same
+    # state as the first, and this is the only place the advanced mode
+    # shows them at all - so a pen on the first alone would make them
+    # renameable in the simple mode and nowhere else.
+    assert row_parts["pen"] is True
+    assert row_parts["sharedPens"] == 2
+
+
+def test_a_version_made_by_hand_gets_no_pen(row_parts):
+    # A lightweight tag has no message, so there is nothing to change
+    # and the store says so. An offer that can only produce that
+    # sentence is not an offer.
+    assert row_parts["penOnAHandMadeTag"] == ""
+
+
+def test_the_pen_asks_the_kind_of_tag_and_not_the_title(row_parts):
+    # This used to read "does it have a title", which was reading a fact
+    # out of a name - and wrong in both directions. A hand-made
+    # *annotated* tag with an empty first line can be renamed, and the
+    # FAQ promises that any version can be.
+    assert row_parts["penOnATitlelessAnnotatedTag"] is True
 
 
 def test_a_long_list_of_names_is_cut_and_says_so(row_parts):

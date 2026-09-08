@@ -145,6 +145,41 @@ class Session:
         await self.mouse(x, y, "mousePressed", "left")
         await self.mouse(x, y, "mouseReleased", "left")
 
+    async def opacity_at(self, x, y, selector, settle=0.5):
+        """What a person would see of `selector`, pointer at (x, y).
+
+        Hovered for real, because CSS :hover answers no synthetic event
+        - and *read* rather than assumed, because a control at opacity 0
+        is still in the DOM and still clickable: a click alone proves
+        nothing about whether it can be found. Three pens are checked
+        this way, and the check exists because the reveal is a selector
+        living far from the markup it names, whose failure mode is
+        silent invisibility.
+        """
+        await self.mouse(x, y)
+        await asyncio.sleep(settle)
+        return await self.js(
+            f"getComputedStyle({PANEL}.querySelector({json.dumps(selector)})).opacity"
+        )
+
+    async def cancel_dialog(self, which="dialog[open]", settle=0.5):
+        """Close a dialog the way a person does, through its own button.
+
+        Not `close()`: that skips the wiring, and the wiring is part of
+        what this script is here to watch. Every block that opens a
+        dialog ends here - nothing on the bench is written by a check
+        that is only looking - and the selector it depends on
+        (`.actions` plus `button[value=cancel]`) belongs to
+        `dialogs.js`. Written out at each call site it had reached four
+        copies, and a dialog left open sends the next phase clicking
+        against a modal.
+        """
+        await self.js(
+            f'{PANEL}.querySelector("{which} .actions'
+            ' button[value=cancel]")?.click()'
+        )
+        await asyncio.sleep(settle)
+
 
 # The panel is not in the document: Home Assistant nests it several
 # shadow roots deep. A plain document.querySelector finds nothing, which
@@ -248,6 +283,18 @@ async def main():
             # than assumed: this script sat in "The panel showed no
             # changes" for a profile whose only fault was being new.
             await page.settle(f"!!{PANEL}")
+            # And waited for it to have drawn once, not merely to exist.
+            # The panel loads its six parts over the network and only its
+            # *first* render waits for them; everything after reads
+            # `escape` and `STYLE` at call time, on the promise that no
+            # render happens before `set hass` has run (see the note above
+            # `partsReady` in panel.js). Poking `_setMode` at an element
+            # that is only constructed breaks that promise from outside,
+            # and the render throws `escape is not a function`. Seen on
+            # 2026-09-08, on the first run after a container restart -
+            # nothing a browser does on its own, and a flake that would
+            # otherwise be blamed on whatever change was in flight.
+            await page.settle(f'!!{PANEL}.querySelector(".bar")')
             await page.js(f'{ELEMENT}._setMode("advanced")')
             ok = await page.settle(f'{PANEL}?.querySelectorAll(".change").length')
             if not ok:
@@ -263,10 +310,8 @@ async def main():
                 ".getBoundingClientRect();"
                 " return {x: r.x, y: r.y, w: r.width, h: r.height}; })()"
             )
-            await page.mouse(box["x"] + box["w"] - 30, box["y"] + box["h"] / 2)
-            await asyncio.sleep(0.5)
-            opacity = await page.js(
-                f'getComputedStyle({PANEL}.querySelector(".pen")).opacity'
+            opacity = await page.opacity_at(
+                box["x"] + box["w"] - 30, box["y"] + box["h"] / 2, ".change .pen"
             )
             print(f"  pencil opacity while hovering: {opacity}")
             await page.shot("2-pen-visible.png")
@@ -781,6 +826,55 @@ async def main():
                 )
             await page.shot("13-version-sections.png")
 
+            print("\n-- The pen on a version section head --")
+            # The other half of the rename, and the half with its own CSS
+            # selector: the pen on a section head is revealed by
+            # `details.ver > summary:hover .pen`, which is a different
+            # rule from the one over a simple-mode row. A wrong selector
+            # there leaves the pen permanently invisible in this mode -
+            # present in the markup, passing every node test, and
+            # unfindable on the screen.
+            head_pen = await page.js(
+                "(() => { const p = " + PANEL
+                + '; const mark = p.querySelector("details.ver > summary [data-retitle]");'
+                " if (!mark) return null;"
+                ' const section = mark.closest("details.ver");'
+                " const rect = mark.getBoundingClientRect();"
+                " return {name: mark.dataset.retitle, open: section.open,"
+                "         x: rect.x + rect.width / 2,"
+                "         y: rect.y + rect.height / 2}; })()"
+            )
+            if not head_pen:
+                print("    no version section carries a pen")
+            else:
+                print(f"    trying it on {head_pen['name']}")
+                shown = await page.opacity_at(
+                    head_pen["x"],
+                    head_pen["y"],
+                    "details.ver > summary [data-retitle]",
+                )
+                print(f"    pen opacity while hovering the head: {shown}")
+                await page.shot("13b-version-head-pen.png")
+                await page.click_at(head_pen["x"], head_pen["y"])
+                asked = await page.settle(
+                    f'!!{PANEL}.querySelector("dialog.retitle[open]")', 15
+                )
+                print(f"    the pen opens the rename dialog: {asked}")
+                # The same collision as in the other mode: this pen sits
+                # in a <summary> too, and a section folding shut on the
+                # way to the dialog is what the two controls before it
+                # both did.
+                after = await page.js(
+                    "(() => { const s = " + PANEL
+                    + '.querySelector("details.ver > summary [data-retitle]")'
+                    '?.closest("details.ver"); return s ? s.open : null; })()'
+                )
+                print(
+                    f"    and leaves the section as it was: "
+                    f"{after == head_pen['open']}"
+                )
+                await page.cancel_dialog()
+
             print("\n-- The button on a row --")
             await page.js(f'{PANEL}.querySelector(".change").click()')
             # Wait for the row's own explain/deleted_since fetch to settle,
@@ -819,13 +913,7 @@ async def main():
                     for number, pressed in levels:
                         print(f"    {number!r}  aria-pressed={pressed}")
                 await page.shot("15-version-dialog.png")
-                # Cancel through the dialog's own button, not dialog.close():
-                # this exercises the same generic ".actions button" wiring a
-                # person clicking it would, and leaves nothing open behind.
-                await page.js(
-                    f'{PANEL}.querySelector("dialog.version .actions button[value=cancel]")'
-                    "?.click()"
-                )
+                await page.cancel_dialog("dialog.version", settle=0)
 
             print("\n-- A section stays open behind the preview --")
             # _guard() rebuilds the whole shadow DOM on every guarded call,
@@ -864,10 +952,7 @@ async def main():
                     + " behind the preview dialog"
                 )
                 await page.shot("16-section-stays-open.png")
-                await page.js(
-                    f'{PANEL}.querySelector("dialog.confirm .actions button[value=cancel]")'
-                    "?.click()"
-                )
+                await page.cancel_dialog("dialog.confirm", settle=0)
 
             print("\n-- Joining the two halves of 'where am I' --")
             # Built rather than waited for. The state this answers takes
@@ -1000,11 +1085,7 @@ async def main():
                 print(f"    entry {index} ({what}):\n      {said!r}")
                 # Cancelled every time. Nothing above ever clicks Create,
                 # so no version is written to the instance.
-                await page.js(
-                    f'{PANEL}.querySelector("dialog.version .actions'
-                    ' button[value=cancel]")?.click()'
-                )
-                await asyncio.sleep(0.3)
+                await page.cancel_dialog("dialog.version", settle=0.3)
             await page.shot("18-create-dialog-warns.png")
 
             print("\n-- The page hears about a change from elsewhere --")
@@ -1152,13 +1233,91 @@ async def main():
                     " return true; })()"
                 )
                 await asyncio.sleep(0.5)
-            print("\n-- The simple mode: the current state is a way in too --")
-            # One cancel for both dialogs below, through the dialog's own
-            # button rather than close(): the same wiring a person uses.
-            cancel = (
-                f'{PANEL}.querySelector("dialog[open] .actions'
-                ' button[value=cancel]")?.click()'
+            print("\n-- The simple mode: renaming a version from its row --")
+            # The third control that sits inside a <summary>, and the one
+            # with the least reason to be trusted: it was added last, and
+            # the two before it both folded the row up under the hand
+            # that clicked before they were stopped from doing so. Clicked
+            # by coordinates rather than with .click(), because only a
+            # real click carries the summary's own default behaviour with
+            # it - .click() on the button would pass whether or not the
+            # collision is handled.
+            #
+            # The pen is drawn on hover, so the click has to land on it
+            # while the pointer is over the row. A click at a point does
+            # both: Chrome moves the pointer there first.
+            pen = await page.js(
+                "(() => { const row = " + PANEL
+                + '.querySelector("details.vrow [data-retitle]")?.closest(".vrow");'
+                " if (!row) return null;"
+                ' const head = row.querySelector(".vhead").getBoundingClientRect();'
+                ' const mark = row.querySelector("[data-retitle]");'
+                " const rect = mark.getBoundingClientRect();"
+                " return {key: row.dataset.key, name: mark.dataset.retitle,"
+                "         headX: head.x + 60, headY: head.y + head.height / 2,"
+                "         penX: rect.x + rect.width / 2,"
+                "         penY: rect.y + rect.height / 2,"
+                "         title: row.querySelector('.grow')?.textContent.trim()"
+                "}; })()"
             )
+            if not pen:
+                # Every version on this dashboard was made by hand, or
+                # there are none. Said rather than passed over.
+                print("    no version row offers a pen")
+            else:
+                print(f"    trying it on {pen['name']}")
+                open_state = (
+                    "(() => { const r = " + PANEL
+                    + ".querySelector('details.vrow[data-key=\"'"
+                    + f" + {json.dumps(pen['key'])} + '\"]');"
+                    " return r ? r.open : null; })()"
+                )
+                # Opened only if it is shut, and read rather than assumed.
+                # The block above leaves this same row open, so a click
+                # here on principle shut it - and the whole point below is
+                # whether the pen leaves an *open* row open. Measured
+                # 2026-09-08: the first run of this reported "leaves the
+                # row open: False" and proved nothing, because there was
+                # nothing open to leave.
+                if not await page.js(open_state):
+                    await page.click_at(pen["headX"], pen["headY"])
+                    await asyncio.sleep(0.4)
+                standing = await page.js(open_state)
+                print(f"    the row is open before the pen: {standing}")
+                shown = await page.opacity_at(
+                    pen["penX"], pen["penY"], "details.vrow [data-retitle]"
+                )
+                print(f"    pen opacity while hovering the row: {shown}")
+                await page.click_at(pen["penX"], pen["penY"])
+                asked = await page.settle(
+                    f'!!{PANEL}.querySelector("dialog.retitle[open]")', 15
+                )
+                print(f"    the pen opens the rename dialog: {asked}")
+                # The collision. The pen sits inside a <summary>, and a
+                # summary toggles on any click it sees; two controls
+                # before this one folded the row up under the hand that
+                # clicked before they were stopped from doing so.
+                still = await page.js(open_state)
+                print(f"    and leaves the row as it was: {still == standing}")
+                filled = await page.js(
+                    "(() => { const d = " + PANEL
+                    + '.querySelector("dialog.retitle");'
+                    " if (!d) return null; return {"
+                    '  which: d.querySelector("[data-which]").textContent,'
+                    '  title: d.querySelector("input.title").value,'
+                    '  desc: d.querySelector("input.desc").value,'
+                    " }; })()"
+                )
+                print(f"    it names the version: {filled and filled['which']!r}")
+                print(f"    the title arrives prefilled: {filled and filled['title']!r}")
+                same = bool(filled) and filled["title"] == (pen["title"] or "").split(
+                    "saved automatically"
+                )[0].strip()
+                print(f"    and it is the one on the row: {same}")
+                await page.shot("26-simple-rename-dialog.png")
+                await page.cancel_dialog()
+
+            print("\n-- The simple mode: the current state is a way in too --")
             badge = await page.js(f'!!{PANEL}.querySelector(".standing .chip.now")')
             print(f"    the box carries the badge: {badge}")
             box = await page.js(
@@ -1210,8 +1369,7 @@ async def main():
                 print(f"    saving a version opens its dialog: {asked}")
                 print(f"    and leaves the box open: {await page.js(opened)}")
                 await page.shot("24-simple-save-keeps-it-open.png")
-                await page.js(cancel)
-                await asyncio.sleep(0.5)
+                await page.cancel_dialog()
                 if box["backX"] is None:
                     print("    the dashboard is in a version's state, so no way back")
                 else:
@@ -1224,8 +1382,7 @@ async def main():
                     await page.shot("25-simple-way-back-dialog.png")
                     # Cancelled, always. Nothing on the bench is written by
                     # a check that is only looking.
-                    await page.js(cancel)
-                    await asyncio.sleep(0.5)
+                    await page.cancel_dialog()
 
             # Left as it was found: the mode is stored per browser, and a
             # check that changes what somebody sees next time is a check

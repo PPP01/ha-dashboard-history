@@ -189,6 +189,22 @@ _COMMANDS = (
             "revision": msg.get("revision"),
         },
     ),
+    _command(
+        f"{DOMAIN}/retitle_version",
+        {
+            **_DASHBOARD,
+            vol.Required("name"): str,
+            vol.Required("title"): str,
+            vol.Optional("description", default=""): str,
+        },
+        operations.async_retitle_version,
+        lambda msg: {
+            "key": msg["dashboard"],
+            "name": msg["name"],
+            "title": msg["title"],
+            "description": msg["description"],
+        },
+    ),
 )
 
 

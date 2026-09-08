@@ -2,11 +2,24 @@
  * Every dialog the panel opens, as markup.
  *
  * Out of `_render` because they are the half of it that never changes:
- * the same four elements are in the shadow root whatever mode is on and
+ * the same five elements are in the shadow root whatever mode is on and
  * whichever dashboard is picked. What differs is what gets written into
  * their `.body` before they are shown, and that stays in the class,
  * where the data is.
  */
+
+// The two fields a version's words are typed into, and the one place
+// they are spelled. Two dialogs ask for them - one making a version,
+// one renaming it - and they have to ask the same way: the classes are
+// a contract with `panel.js` and with two test harnesses, and a
+// `maxlength` that drifted would let one dialog accept a title the
+// other refuses, against the same store.
+const VERSION_FIELDS = `
+      <input class="text title" type="text" maxlength="200"
+             placeholder="What is this version?">
+      <input class="text desc" type="text" maxlength="500"
+             style="margin-top:8px"
+             placeholder="Anything more worth remembering (optional)">`;
 
 export const DIALOGS = `
   <dialog class="confirm">
@@ -69,14 +82,26 @@ export const DIALOGS = `
           <strong></strong><span>Major</span>
         </button>
       </div>
-      <input class="text title" type="text" maxlength="200"
-             placeholder="What is this version?">
-      <input class="text desc" type="text" maxlength="500"
-             style="margin-top:8px"
-             placeholder="Anything more worth remembering (optional)">
+      ${VERSION_FIELDS}
     </div>
     <div class="actions">
       <button class="act ghost" value="cancel">Cancel</button>
       <button class="act" value="create">Create</button>
+    </div>
+  </dialog>
+  <dialog class="retitle">
+    <h2>Rename this version</h2>
+    <div class="body" style="padding:0 16px 8px">
+      <p class="muted" style="font-size:13px" data-which></p>
+      ${VERSION_FIELDS}
+      <p class="muted" style="font-size:13px">
+        The two fields of the create dialog, nothing else. The number
+        stays as it is: it is the version's name, and going back to a
+        version is done by that name. Nothing on the dashboard changes.
+      </p>
+    </div>
+    <div class="actions">
+      <button class="act ghost" value="cancel">Cancel</button>
+      <button class="act" value="save">Save</button>
     </div>
   </dialog>`;
