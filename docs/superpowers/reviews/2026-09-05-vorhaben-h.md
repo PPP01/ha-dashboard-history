@@ -191,7 +191,7 @@ zurück — vier von 131 —, und der Code war beweisbar byte-identisch mit
 dem Stand, der Minuten vorher `131 von 131` ergeben hatte.
 
 Die Ursache stand in der Zeile *vor* dem ersten Fehlschlag: Der neueste
-Eintrag lautete schon vor dem Prüfschritt `allgemein-strom: 1 added` und
+Eintrag lautete schon vor dem Prüfschritt `strom-board: 1 added` und
 danach unverändert genauso. Der Speichervorgang der Prüfung war gar nicht
 aufgezeichnet worden. Gestartet worden war der Lauf, sobald Home
 Assistant auf HTTP antwortete — da lief der Eröffnungsdurchgang des

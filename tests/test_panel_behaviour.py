@@ -3960,11 +3960,11 @@ def test_switching_dashboards_also_rewinds_a_scrolled_main_column(after_a_switch
 # first dashboard rather than on the one at the top of the sidebar.
 _OPENING = _PANEL_SHAPE + """
 const panels = {
-  "a-hurz": panel("a-hurz", "Hurz"),
+  "a-attic": panel("a-attic", "Attic"),
   "b-garden": panel("b-garden", "Garden"),
   "c-test": panel("c-test", "Test", { show_in_sidebar: false }),
 };
-// This user dragged Garden above Hurz. Everything the panel needs to
+// This user dragged Garden above Attic. Everything the panel needs to
 // know that comes from the browser, so both halves are answered here:
 // `hass.panels` and this user's own arrangement.
 const seeing = () => ({
@@ -3989,7 +3989,7 @@ const opened = async (dashboards, hass) => {
 // them out would answer "gone" and be caught.
 const live = [
   { key: "gone", title: "Gone", exists: false },
-  { key: "a-hurz", title: "Hurz", exists: true },
+  { key: "a-attic", title: "Attic", exists: true },
   { key: "b-garden", title: "Garden", exists: true },
 ];
 
@@ -4017,7 +4017,7 @@ def opening(tmp_path_factory):
 
 
 def test_the_panel_opens_on_the_first_dashboard_in_its_own_list(opening):
-    # Not "a-hurz", which is what the server listed first and what the
+    # Not "a-attic", which is what the server listed first and what the
     # panel used to open on. The list on the left starts with the one
     # this user dragged to the top of their sidebar, and a panel showing
     # a history belonging to the second row is a panel that ignored it.
@@ -4028,7 +4028,7 @@ def test_without_a_readable_sidebar_it_opens_on_the_first_the_server_gave(openin
     # No `hass.panels`, so there is no order to read - every render
     # before the first answer arrives is this case. The server's own
     # order stands, and a live dashboard still beats a deleted one.
-    assert opening["noSidebar"] == ["a-hurz"]
+    assert opening["noSidebar"] == ["a-attic"]
 
 
 def test_one_that_is_not_in_the_sidebar_is_still_opened_on(opening):

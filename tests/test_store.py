@@ -1412,7 +1412,7 @@ def test_the_state_before_a_change_is_found_however_old_it_is(store):
 def test_a_version_gone_between_listing_and_reading_is_skipped(store, monkeypatch):
     """Measured on 2026-09-04 against the test bench: `forget` deletes
     every tag and writes it back, and a `history` call that ran at that
-    moment saw `allgemein-strom/v0.56.0` in the list and then found no ref
+    moment saw `busy-board/v0.56.0` in the list and then found no ref
     behind it - KeyError, and the whole history answered with an error.
     dulwich's own `as_dict` skips exactly this; so does this.
     """
@@ -2036,8 +2036,8 @@ def test_the_predecessor_does_not_grow_with_the_other_dashboards(tmp_path):
 
     Measured on the test bench on 2026-09-07, 45 dashboards over 4454
     commits: expanding the current state of `dh-probe` (77 entries of
-    its own) waited 2637 ms on this, against 53 ms for `allgemein-strom`
-    (673 entries). Less history of your own, longer wait - which is
+    its own) waited 2637 ms on this, against 53 ms for a board of 673
+    entries. Less history of your own, longer wait - which is
     exactly backwards.
     """
 

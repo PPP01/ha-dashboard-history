@@ -91,7 +91,7 @@ def test_an_ordinary_url_path_is_a_safe_key():
     # What Home Assistant's own frontend lets a person type: letters,
     # digits, `-` and `_`, with a `-` required on top. Plus the default
     # dashboard's key, which the integration makes up itself.
-    for key in ("home", "energie-strom", "a-hurz", "dashboard-standard", "_default"):
+    for key in ("home", "energie-strom", "a-attic", "dashboard-standard", "_default"):
         assert keys.is_safe_key(key), key
 
 
@@ -104,12 +104,12 @@ def test_a_key_may_hold_an_umlaut():
 def test_a_key_that_is_not_one_path_segment_is_refused():
     """The whole rule, in the cases that made it necessary.
 
-    `energie-x/growatt` is what a *view* is addressed by, and it reads
+    `energie-x/inverter` is what a *view* is addressed by, and it reads
     like a dashboard - which is how the mistake starts. `../entwichen`
     is the one that was measured: recorded to a file outside the
     repository the integration owns.
     """
-    for key in ("energie-x/growatt", "../entwichen", "/absolut", "..", ".", ""):
+    for key in ("energie-x/inverter", "../entwichen", "/absolut", "..", ".", ""):
         assert not keys.is_safe_key(key), key
     assert not keys.is_safe_key("x\\y")
 

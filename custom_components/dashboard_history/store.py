@@ -1551,8 +1551,8 @@ class HistoryStore:
         with every other dashboard's commits in between, and the walk
         steps over all of them. Measured on the test bench on
         2026-09-07, 45 dashboards over 4454 commits: the current state
-        of `dh-probe` (77 entries) took 2637 ms, `allgemein-strom` (673
-        entries) 53 ms. Less history of your own meant a longer wait.
+        of `dh-probe` (77 entries) took 2637 ms, a long-running board of
+        673 entries 53 ms. Less history of your own meant a longer wait.
 
         The walk is kept for the one case the index cannot answer: a
         revision that resolves but is not in this walk at all.
