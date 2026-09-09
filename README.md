@@ -832,7 +832,7 @@ dashboard's internal id (`energie_2`); the two are not the same string.
 | `forget` | Remove a deleted dashboard's history for good (needs `confirm`) |
 | `debug_snapshot` | What the integration currently sees |
 
-Three notes for scripting:
+Four notes for scripting:
 
 - `undo_change` can answer with a **refusal** rather than a preview, and
   it re-derives its proof on the confirming call — so handle both.

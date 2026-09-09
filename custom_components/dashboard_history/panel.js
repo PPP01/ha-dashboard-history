@@ -1510,51 +1510,67 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     const dialog = this.shadowRoot.querySelector("dialog.remove");
-    // Up to six paragraphs when everything applies, not three - the name
-    // line above was never counted, and the ones about the title and
-    // description have since become conditional too. What stays comes
-    // first, because it is the reassurance the whole design rests on.
-    // What goes comes second, and names only what is actually there: a
-    // hand-made lightweight tag carries neither a title nor a
-    // description, and this dialog must not claim a loss that is not
-    // real for the very version `bin()` exists to extend the offer to.
-    // The description itself follows where there is one - it is the one
-    // string here that is genuinely unrecoverable, so it is read rather
-    // than taken on faith. The automatic and highest paragraphs come
-    // last, each shown only where it applies.
-    const words = facts.title
-      ? `<strong>${escape(facts.title)}</strong>`
-      : "this version";
-    const goesWith = facts.title && facts.description
-      ? "The title and description go with it, and they cannot be " +
-        "written back."
+    // The version names itself first, then one note carrying a list a
+    // person can scan. Prose was tried and read worse: three paragraphs
+    // of consequence, each having to re-establish what it was about
+    // before it could say anything. A labelled list says the subject in
+    // two words and the consequence in one sentence, and the reader can
+    // stop after the labels.
+    //
+    // Two things always appear - the identity line and the first bullet
+    // - and the rest only where they apply. A hand-made lightweight tag
+    // carries neither title nor description, so the head is the number
+    // alone and the lead names only the tag: this dialog must not claim
+    // a loss that is not real for the very version `bin()` exists to
+    // extend the offer to.
+    //
+    // The freed number is spelled out rather than described. "That
+    // number is free again" made a reader look up which number that
+    // was, on the row they had just left; `v1.0.3` is the thing they
+    // act on. It is only ever shown where the server said `highest`,
+    // because only there is it true - the numbering lives in
+    // versions.py by decision 13 and is never worked out here.
+    //
+    // The description itself is shown rather than summarised: it is the
+    // one string here the integration cannot write back, and a
+    // confirmation the FAQ calls "there to be read rather than clicked
+    // through" cannot hide half of what it is about.
+    const number = escape(shortName(name));
+    const head = facts.title ? `${number} — ${escape(facts.title)}` : number;
+    // Named in the lead, not in a bullet: it is what the sentence is
+    // about, and "only" is doing the reassuring work in front of it.
+    const alsoGoes = facts.title && facts.description
+      ? ", its title and its description"
       : facts.title
-      ? "The title goes with it, and it cannot be written back."
+      ? " and its title"
       : facts.description
-      ? "The description goes with it, and it cannot be written back."
+      ? " and its description"
       : "";
     dialog.querySelector(".body").innerHTML = `
-      <p>${escape(shortName(name))} — ${words}</p>
-      <p>The state it marks <strong>stays in the history</strong> and
-         remains findable in the advanced view. Only the mark goes.</p>
-      ${goesWith ? `<p>${goesWith}</p>` : ""}
+      <p><strong>${head}</strong></p>
+      <p><strong>Note:</strong><br>
+         Removing this version only deletes the tag${alsoGoes}${
+           alsoGoes ? ", which cannot be written back" : ""}:</p>
       ${facts.description
         ? `<p class="muted">${escape(facts.description)}</p>`
         : ""
       }
-      ${facts.automatic
-        ? `<p class="muted" style="font-size:13px">Made automatically for
-             the end of a day. If that day is recent enough to still be in
-             reach, the next save will mark it again. The switch in the
-             integration's options is the way to stop that for good.</p>`
-        : ""
-      }
-      ${facts.highest
-        ? `<p class="muted" style="font-size:13px">It carries the highest
-             number, so that number is free again — the next patch will
-             use it.</p>`
-        : ""
-      }`;
+      <ul class="loss">
+        <li><strong>History is preserved:</strong> The underlying state
+            remains accessible in the advanced view.</li>
+        ${facts.highest
+          ? `<li><strong>Version number freed:</strong> The next patch
+               will reuse <strong>${number}</strong>.</li>`
+          : ""
+        }
+        ${facts.automatic
+          ? `<li><strong>Automatic re-tagging:</strong> Because this
+               version was generated automatically, saving will create it
+               again. You can disable this behavior globally in the
+               integration settings.</li>`
+          : ""
+        }
+      </ul>`;
     dialog.returnValue = "";
     dialog.showModal();
     const answer = await this._answerFrom(dialog);

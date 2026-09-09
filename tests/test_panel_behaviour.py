@@ -4025,16 +4025,29 @@ await wordless;
 console.log(JSON.stringify({
   asked: { type: asked.type, extra: asked.extra },
   confirmed: confirmed && { type: confirmed.type, extra: confirmed.extra },
-  saysTheNumberComesFree: bodyWhenOpened.includes("free again"),
-  hidesTheNumberSentence: !cancelBody.includes("free again"),
-  saysTheStateStays: bodyWhenOpened.includes("stays in the history"),
+  saysTheNumberComesFree: bodyWhenOpened.includes("Version number freed"),
+  hidesTheNumberSentence: !cancelBody.includes("Version number freed"),
+  // The number itself, not a sentence about it. Matched on the markup
+  // so a bullet that lost the `<strong>` and said "the next patch will
+  // reuse it" would fail here rather than read as a pass.
+  namesTheFreedNumber: bodyWhenOpened.includes("reuse <strong>v1.0.2</strong>"),
+  saysTheStateStays: bodyWhenOpened.includes("History is preserved"),
   namesTheVersion: bodyWhenOpened.includes("Third"),
   showsTheDescription: bodyWhenOpened.includes("a note"),
   callsAfterCancel: twoCalls.length,
-  firstSaysAutomatic: bodyWhenOpened.includes("Made automatically"),
-  secondSaysAutomatic: cancelBody.includes("Made automatically"),
-  wordlessFallsBack: wordlessBody.includes("this version"),
-  wordlessHidesTheWordsParagraph: !wordlessBody.includes("goes with it"),
+  firstSaysAutomatic: bodyWhenOpened.includes("Automatic re-tagging"),
+  secondSaysAutomatic: cancelBody.includes("Automatic re-tagging"),
+  // A hand-made tag has no title, so the head is the number alone and
+  // the lead stops at the tag. Both halves are checked: a head that
+  // rendered "by-hand — undefined" would pass the second on its own.
+  wordlessHeadIsTheNumberAlone:
+    wordlessBody.includes("<strong>by-hand</strong>"),
+  wordlessNamesOnlyTheTag: wordlessBody.includes("only deletes the tag:"),
+  // Matched on "its title" rather than the whole clause: the lead reads
+  // ", its title and its description" with both and " and its title"
+  // with one, so a matcher tied to either phrasing would go quiet the
+  // moment the other one appeared.
+  wordlessHidesTheWordsParagraph: !wordlessBody.includes("its title"),
   wordlessHasNoDescriptionParagraph: !wordlessBody.includes('class="muted"'),
 }));
 """
@@ -4076,6 +4089,10 @@ def test_the_dialog_says_the_number_comes_free_where_it_does(removing):
     # would pass the positive half alone.
     assert removing["saysTheNumberComesFree"] is True
     assert removing["hidesTheNumberSentence"] is True
+    # And it spells the number out. "That number is free again" made a
+    # reader look up which number that was, on the row they had just
+    # left; the bullet names `v1.0.2` instead.
+    assert removing["namesTheFreedNumber"] is True
 
 
 def test_the_automatic_paragraph_shows_only_where_it_applies(removing):
@@ -4106,10 +4123,11 @@ def test_cancelling_sends_no_second_call(removing):
 def test_the_wordless_lightweight_tag_claims_nothing_it_does_not_have(removing):
     # A hand-made tag has neither a title nor a description - the very
     # version `bin()` exists to extend the offer to. Three branches at
-    # once: `words` falls back to "this version" instead of rendering an
-    # empty `<strong>`, the "goes with it" paragraph has nothing true
-    # left to say and stays out, and there is no description text to
-    # render either - the dialog must not claim a loss that is not real.
-    assert removing["wordlessFallsBack"] is True
+    # once: the head is the number alone rather than a number followed
+    # by an em dash and nothing, the lead stops at "the tag" instead of
+    # naming words that are not there, and no description is rendered.
+    # The dialog must not claim a loss that is not real.
+    assert removing["wordlessHeadIsTheNumberAlone"] is True
+    assert removing["wordlessNamesOnlyTheTag"] is True
     assert removing["wordlessHidesTheWordsParagraph"] is True
     assert removing["wordlessHasNoDescriptionParagraph"] is True
