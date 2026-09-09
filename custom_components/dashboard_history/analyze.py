@@ -551,7 +551,7 @@ def _paths_collide(config: dict) -> bool:
     only the last of the two. The first view is invisible to every
     comparison from that point on.
 
-    Ablesbar rather than worked out: no matching, no similarity, no
+    Readable rather than worked out: no matching, no similarity, no
     guessing. Which is why this can be answered today, while the question
     "is the view under this path still the same view" cannot.
     """
