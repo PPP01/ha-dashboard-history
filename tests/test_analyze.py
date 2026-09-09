@@ -1010,3 +1010,22 @@ def test_undo_still_works_when_the_sections_stayed_put():
     assert [(s.action, s.kind, s.payload) for s in plan.steps] == [
         ("insert", "card", B)
     ]
+
+
+def test_undo_refuses_when_two_views_share_one_path():
+    """Home Assistant's backend permits it; then a path names two views.
+
+    Measured before this guard: the first of the two was invisible to the
+    analysis, deleting it read as cards removed, and the undo wrote those
+    cards into the survivor.
+    """
+    old = {
+        "views": [
+            {"path": "x", "title": "One", "cards": [{"type": "tile", "entity": "light.a"}]},
+            {"path": "x", "title": "Two", "cards": [{"type": "tile", "entity": "light.b"}]},
+        ]
+    }
+    new = {"views": [{"path": "x", "title": "Two", "cards": [{"type": "tile", "entity": "light.b"}]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is not None
+    assert "share one URL path" in plan.blocked

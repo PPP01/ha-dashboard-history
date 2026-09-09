@@ -541,6 +541,28 @@ def _positions_lie(one: dict, other: dict) -> bool:
     return False
 
 
+def _paths_collide(config: dict) -> bool:
+    """Whether two views of one state claim the same URL path.
+
+    A path is the identity everything above rests on, and this is the one
+    way it stops being one. Home Assistant's backend does not enforce
+    uniqueness - saved through the API, `['x', 'x']` goes in without
+    complaint - and `_views_by_key` is then read into a dict, which keeps
+    only the last of the two. The first view is invisible to every
+    comparison from that point on.
+
+    Ablesbar rather than worked out: no matching, no similarity, no
+    guessing. Which is why this can be answered today, while the question
+    "is the view under this path still the same view" cannot.
+    """
+    paths = [
+        view.get("path")
+        for view in config.get("views") or []
+        if isinstance(view, dict) and view.get("path")
+    ]
+    return len(paths) != len(set(paths))
+
+
 def _section_marks(view: dict) -> list:
     """The titles of a view's sections, in order - all the identity there is."""
     return [
@@ -591,6 +613,11 @@ _SECTION_REFUSAL = (
     "the sections of this dashboard are arranged differently now, and a "
     "section has no path to recognise it by, so an exact undo cannot tell "
     "them apart"
+)
+
+_DUPLICATE_PATH_REFUSAL = (
+    "two views of this dashboard share one URL path, so a path no longer "
+    "tells them apart and an exact undo cannot say which one it means"
 )
 
 
@@ -688,6 +715,11 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         or view_work
     ):
         return UndoPlan(blocked="this change did not alter any cards")
+
+    # Before any pair is compared: a path that names two views is not an
+    # identity, and everything below reads views by their path.
+    if any(_paths_collide(state) for state in (before, after, current)):
+        return UndoPlan(blocked=_DUPLICATE_PATH_REFUSAL)
 
     # Every state this plan reads from or writes to has to agree on what
     # a position means: `before` and `after` decide what the change was,
