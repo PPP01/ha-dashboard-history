@@ -274,9 +274,12 @@ in the row. That has four consequences:
 
 - **Renaming a section** does not show up in words. The entry says `no
   card changes` and points at the diff, which is correct and complete.
-- **Deleting a whole section** cannot be taken back with the narrow
-  tools: neither *Put back* nor *Undo this change* will do it, and both
-  say why. The whole-state restore brings it back in full.
+- **Deleting a whole section** comes back through *Put back*, which
+  offers the section as one thing rather than as a heap of cards — as
+  long as the other sections of that view are as you left them. Edit one
+  of them in between and it says so; *Undo this change* declines either
+  way, because a section has no name to recognise it by. The whole-state
+  restore brings it back in any case.
 - **Adding a section** switches the undo off for that one save. Nothing
   is broken; the tool declines to work while the row it counts on has
   shifted.
@@ -702,7 +705,7 @@ the limits cost is the *narrow* way back, not the content.
 | Card moved *and* edited in one save | `1 removed, 1 added` | exact | offered, **would duplicate** | works |
 | A badge added, changed or deleted | `no card changes`, points at the diff | **refuses** | not offered | works |
 | A section renamed | `no card changes`, points at the diff | **refuses** | not offered | works |
-| A whole section deleted | its cards, listed as deleted | **refuses** | **refuses** | works |
+| A whole section deleted | the section, as one item | **refuses** | offered, with proof | works |
 | A section added | the cards in it, as added | **refuses** | — | works |
 | Titled sections reordered | correct | **refuses** | **refuses** | works |
 | **Untitled** sections reordered | correct | writes positionally | **writes into the wrong section** | works |
@@ -710,7 +713,7 @@ the limits cost is the *narrow* way back, not the content.
 | …and was edited in the same save | the same | **refuses** | **adds it a second time**, in its older form | works |
 | A view's URL path changed | `1 view removed, 1 view added` | exact | offered (adds the old view) | works |
 | A path freed and reused by a new view | read as card changes inside it | writes the old cards into the new view | — | works |
-| Two views sharing one path, the first one deleted | read as cards removed, not as a view gone | writes into the surviving view | writes into the surviving view | works |
+| Two views sharing one path | read as cards removed, not as a view gone | **refuses** | **refuses** | works |
 
 Four of these deserve the detail.
 
@@ -798,6 +801,7 @@ sections on the installation this was developed against carry none.
 | Deleted a card in a section | `1 removed`, names the card | into the right section | exact |
 | Edited a card in a section | `1 edited`, names the card | — | exact |
 | Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
+| Deleted a whole section | the section, named as one item | into the gap it left | — |
 
 So the everyday case is sound. As long as the row of sections is as it
 was, cards inside them are recognised and recoverable like any others.
@@ -806,15 +810,16 @@ was, cards inside them are recognised and recoverable like any others.
 
 | What you did | Why it refuses |
 | --- | --- |
-| Deleted a whole section | `find_removed` knows `view` and `card`, not `section`. Its cards are offered individually, and each refuses: *"the section this card sat in is not the one standing at that place now, so putting it back would file it in a stranger."* The undo refuses for the same reason. |
+| Deleted a whole section, and a neighbouring section changed since | The proof *Put back* works from is that today's sections are the ones this one stood beside — then the gap is the only place it fits. An edit next door takes that away, and the undo refuses regardless: a section has no path to recognise it by. |
 | Added a section | The row of sections shifted, so every positional address is suspect. The rule is stricter than it needs to be here — appending one at the end is unambiguous — and it still refuses. |
 | Reordered sections **that have titles** | The titles no longer line up with the positions, which is precisely the signal the guard looks for. It stops. |
 | Renamed a section | A section's own properties are not cards. The change reads as `no card changes` and the undo says *"this change did not alter any cards."* |
 
 A refusal is the correct outcome for all four — Home Assistant's own data
 does not contain the answer, and the design forbids guessing. What it
-costs is that a deleted section has **no narrow way back at all**: not
-*Put back*, not *Undo*. The whole-state restore recovers it in full.
+costs is precision, not content: the whole-state restore recovers every
+one of these in full, and since 2026-09-09 a deleted section also comes
+back on its own as long as the sections beside it are untouched.
 
 **Writes something nobody asked for — one case:**
 
@@ -827,7 +832,7 @@ card lands beside the wrong neighbour, silently. The undo is not blocked
 either.
 
 This is not the only row where the tool writes a state nobody asked for
-— the table has four, and it is worth knowing which:
+— the table has three, and it is worth knowing which:
 
 - **This one**, untitled sections reordered. Needs nothing unusual: the
   editor produces untitled sections by default.
@@ -839,14 +844,6 @@ This is not the only row where the tool writes a state nobody asked for
   adds it a second time, in its older form. The refusal one row above
   works by looking for the view as it was; an edited one no longer looks
   like itself. Needs a view without a URL path, which eight of 67 are.
-- **Two views sharing one path.** Home Assistant's backend allows it,
-  its editor does not produce it, and it appears on none of the eleven
-  dashboards this was built against. Only the first of the two is
-  affected, and only when it is deleted whole: that reads as cards
-  removed rather than as a view gone, and both narrow ways back put them
-  into the surviving view. Cards edited *inside* either view are handled
-  correctly — measured. Noted so that "a path is an identity" is not
-  read as a guarantee.
 
 Two things bound this row in particular:
 
@@ -920,6 +917,14 @@ shifted pathless view can still be described wrongly — naming a view that
 was not the one deleted. The entry misleads; the buttons no longer write.
 This is the same gap the section idea above would close, and it has the
 same status: an idea.
+
+A path can also stop being an identity outright: Home Assistant's backend
+does not enforce that two views carry different ones, and saved through
+the API `['x', 'x']` goes in without complaint. Read into a lookup, only
+the last of the two survives, and the first is invisible to every
+comparison. Since 2026-09-09 both write paths refuse as soon as a path
+appears twice — the whole-state restore is unaffected, and no dashboard
+Home Assistant's own editor produces is in that shape.
 
 ### Refusals by design
 

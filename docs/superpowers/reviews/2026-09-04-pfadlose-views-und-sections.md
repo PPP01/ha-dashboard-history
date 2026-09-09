@@ -189,3 +189,73 @@ beantworten. In der README als solche ausgewiesen.
 
 W1, W2 und W4 sind unverändert offen. Die falschen Historientexte aus C1
 ebenfalls.
+
+## Nachtrag vom 2026-09-09: W1 und W4 geschlossen
+
+W4 zuerst, weil es das einfachere Muster ist: Ein doppelter
+`view.path` ist im Zustand selbst ablesbar, ganz ohne
+Vorher-Nachher. `restore._paths_share` prüft das vor jedem
+Schreiben, `analyze.plan_undo` prüft dieselbe Frage über alle drei
+Stände, die es liest oder beschreibt (`before`, `after`, `current`)
+— ein doppelter Pfad in irgendeinem von ihnen genügt zur
+Verweigerung. `reinsert` und `apply_undo` verweigern mit
+`LookupError`, der Wortlaut ist »two views of this dashboard share
+one URL path, so a path does not identify a view here and nothing
+is put back« (im Undo: »… and no step is applied«). Die Prüfung ist
+bewusst grob: Sie sieht den gesamten Dashboard-Zustand an, nicht nur
+das eine Element, das zurückgeholt werden soll — ein doppelter Pfad
+heißt, dass ein Pfad hier grundsätzlich nichts mehr identifiziert,
+nicht nur an der einen Stelle.
+
+W1 ist der interessantere Fall, weil er additiv gelöst wurde und
+nicht über eine Identität. `find_removed` kennt jetzt
+`kind="section"` und bietet eine ganz gelöschte Section als **ein**
+Element an, mit den Karten, die sie enthielt, als Nutzlast.
+`restore.reinsert` setzt sie additiv in die Lücke ein, aber nur mit
+Beweis: `_section_gap_holds` verlangt, dass die heutigen Sections
+der Ansicht genau die sind, die neben der gelöschten standen, in
+derselben Reihenfolge — verglichen über `==`, nicht über Titel. Von
+den 80 Sections der Anlage trägt keine einen, ein Titelvergleich
+hätte also nichts geprüft. Fehlt der Beweis, verweigert `reinsert`
+mit »the other sections of this view are not the ones this section
+stood beside, so there is no telling where it belongs now«. Der
+Undo bleibt unverändert verweigert — eine Section hat keinen Pfad,
+an dem er sie festmachen könnte.
+
+**Warum es ohne Paket 2 ging, und wo die eigene Einschätzung
+danebenlag:** Der Abschnitt »Vorgehen« führt W1 unter Punkt 3 als
+»setzt Paket 2 voraus«. Das war eine Aussage über die *Identität*
+einer Section — über eine Zuordnung, die sie über mehrere
+Speichervorgänge hinweg wiedererkennt. Zurückgeholt wird aber
+additiv, und additiv braucht keine Identität des Objekts, sondern
+nur die Eindeutigkeit seiner Lücke — und die beweisen unveränderte
+Nachbarn, ganz ohne Identitätskette. Es ist derselbe Gedanke, mit
+dem Entscheidung 15 der Spec den Undo gegen Entscheidung 4 gerettet
+hat: nicht »es gibt eine Kennung«, sondern »die Eindeutigkeit wird
+geprüft, statt sie anzunehmen«. W4 brauchte noch weniger als das:
+Ein doppelter Pfad ist direkt am Zustand ablesbar, ganz ohne
+Lücken-Beweis.
+
+**Der Preis der Strenge:** Ist seit der Löschung eine Karte in einer
+Nachbar-Section geändert worden, verweigert `_section_gap_holds`
+den Vergleich, und *Put back* lehnt ab — derselbe Beweis über
+unveränderte Nachbarn, der die Section überhaupt erst wiederfindet,
+verlangt genau das. Der Whole-State-Restore bleibt davon unberührt
+und bringt die Section in jedem Fall zurück.
+
+Belegt: 539 pytest-Fälle, vorher 529.
+
+**Offen bleibt:**
+
+- **W2** — ein freigegebener und neu belegter URL-Pfad. Zwischen
+  »derselbe View, dreißig Änderungen später« und »ein anderer View
+  unter demselben Pfad« liegt keine Information, die zwei Stände
+  hergeben — das ist die Frage, für die Paket 2 existiert.
+- Die falschen Historientexte aus C1 — Verweigern hält das Schreiben
+  an, es korrigiert nicht, was die Zeile erzählt.
+- Die pfadlose Restlücke: eine Ansicht ohne Pfad, die verschoben
+  *und* bearbeitet wurde, ist sich selbst nicht mehr byte-identisch.
+- Titellose Sections in einer umsortierten Ansicht — der eine Fall,
+  in dem eine Karte still in der falschen Section landet. Unberührt;
+  der Section-Beweis dieses Nachtrags greift nur beim Zurückholen
+  einer *ganzen* Section.
