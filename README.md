@@ -705,12 +705,13 @@ the limits cost is the *narrow* way back, not the content.
 | Card moved *and* edited in one save | `1 removed, 1 added` | exact | offered, **would duplicate** | works |
 | A badge added, changed or deleted | `no card changes`, points at the diff | **refuses** | not offered | works |
 | A section renamed | `no card changes`, points at the diff | **refuses** | not offered | works |
-| A whole section deleted | the section, as one item | **refuses** | offered, with proof | works |
+| A whole section deleted | its cards, named one by one | **refuses** | the section, as one item, with proof | works |
 | A section added | the cards in it, as added | **refuses** | — | works |
 | Titled sections reordered | correct | **refuses** | **refuses** | works |
 | **Untitled** sections reordered | correct | writes positionally | **writes into the wrong section** | works |
 | A view without a URL path shifts position | can name a view that was not touched | **refuses** | **refuses** | works |
 | …and was edited in the same save | the same | **refuses** | **adds it a second time**, in its older form | works |
+| …and another view now stands at its position | the same | **refuses** | **writes into that other view**, if its shape fits | works |
 | A view's URL path changed | `1 view removed, 1 view added` | exact | offered (adds the old view) | works |
 | A path freed and reused by a new view | read as card changes inside it | writes the old cards into the new view | — | works |
 | Two views sharing one path | read as cards removed, not as a view gone | **refuses** | **refuses** | works |
@@ -801,7 +802,13 @@ sections on the installation this was developed against carry none.
 | Deleted a card in a section | `1 removed`, names the card | into the right section | exact |
 | Edited a card in a section | `1 edited`, names the card | — | exact |
 | Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
-| Deleted a whole section | the section, named as one item | into the gap it left | **refuses** |
+| Deleted a whole section | its cards, named one by one | the section, into the gap it left | **refuses** |
+
+One thing the last row does not change: the *words*. A deleted section is
+offered back as one thing, but the entry in the history still lists the
+cards that were on it, one by one — `explain_change` speaks in cards and
+was not touched here. What became one item is the way back, not the
+sentence above it.
 
 So the everyday case is sound. As long as the row of sections is as it
 was, cards inside them are recognised and recoverable like any others.
@@ -832,7 +839,7 @@ card lands beside the wrong neighbour, silently. The undo is not blocked
 either.
 
 This is not the only row where the tool writes a state nobody asked for
-— the table has three, and it is worth knowing which:
+— the table has four, and it is worth knowing which:
 
 - **This one**, untitled sections reordered. Needs nothing unusual: the
   editor produces untitled sections by default.
@@ -844,6 +851,10 @@ This is not the only row where the tool writes a state nobody asked for
   adds it a second time, in its older form. The refusal one row above
   works by looking for the view as it was; an edited one no longer looks
   like itself. Needs a view without a URL path, which eight of 67 are.
+- **A pathless view whose position another view has taken.** Then the
+  item goes into that other view. Needs the same eight views of 67 that
+  carry no path, plus a neighbour that fits — rare, and the only one of
+  the four that this integration has never been able to catch.
 
 Two things bound this row in particular:
 
@@ -911,6 +922,16 @@ and edited** is no longer byte-identical to itself, so it does not look
 like it is still there. It would be added a second time, in its older
 form. Telling that apart from a view somebody really deleted needs an
 identity of its own — the idea below.
+
+There is a second shape of the same gap, and it is the worse one. The
+position is looked up in the state as it stands: if another view has
+moved into it and its own shape fits what the proof asks for, the item
+is written into *that* view, silently. Measured on 2026-09-09 with a
+section, which landed in an untouched neighbour. This is not new and not
+particular to sections — the anchor a card carries has always been open
+to it, and the section proof, which compares the whole ordered run of
+its neighbours, is the stricter of the two. Both wait on the same idea
+below.
 
 What the refusal does *not* fix is the wording of the history entry. A
 shifted pathless view can still be described wrongly — naming a view that

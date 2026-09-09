@@ -259,3 +259,18 @@ Belegt: 539 pytest-Fälle, vorher 529.
   in dem eine Karte still in der falschen Section landet. Unberührt;
   der Section-Beweis dieses Nachtrags greift nur beim Zurückholen
   einer *ganzen* Section.
+
+**Nachtrag zum Nachtrag:** Die Schlussprüfung vor `v0.3.0` hat eine
+Fehlerklasse gefunden, die bisher nirgends benannt war: Bei einer
+pfadlosen Ansicht, deren Position eine **fremde** Ansicht eingenommen
+hat, wird still in diese geschrieben, wenn deren Struktur zum Beweis
+passt — nachgemessen mit einem Abschnitt, der in einer unbeteiligten
+Nachbaransicht landete. Das ist **nicht neu**: Der Karten-Anker
+(`_anchor_holds`) trägt sie seit je, der neue Abschnitts-Beweis führt
+sie unverändert mit und ist über die vollständige geordnete
+Nachbarliste sogar strenger. Die Wurzel ist dieselbe wie bei C1 und
+W2 — die Adresse ist eine Position, keine Kennung —, und sie gehört
+zu **Paket 2**. Was hier fehlte, war nicht der Schutz, sondern das
+Wort dafür: Die README beschrieb die pfadlose Lücke nur als
+Verdopplung, und eine Verdopplung ist die harmlosere Hälfte. Beide
+stehen dort jetzt.
