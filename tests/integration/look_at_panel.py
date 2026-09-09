@@ -128,6 +128,27 @@ class Session:
             await asyncio.sleep(0.4)
         return False
 
+    async def pick(self, key):
+        """Click the sidebar row for one dashboard, chosen by its key.
+
+        Answers the key when there was a row to click and None when
+        there was not - what that means belongs to the section asking,
+        which is usually "run run_checks.py first".
+
+        Here rather than at each caller because the sidebar contract - a
+        `.dash` button carrying `data-key` - was written out afresh by
+        every section that needed it. Change that markup and the script
+        breaks in as many places, each reporting it as a dashboard that
+        is not in the list, which reads as a missing dashboard rather
+        than as markup that moved.
+        """
+        return await self.js(
+            "(() => { const p = " + PANEL + ";"
+            ' const b = [...p.querySelectorAll(".dash")].find('
+            f"  (x) => x.dataset.key === {json.dumps(key)});"
+            " if (!b) return null; b.click(); return b.dataset.key; })()"
+        )
+
     async def shot(self, name):
         result = await self.send("Page.captureScreenshot", {"format": "png"})
         target = SHOTS / name
@@ -1158,11 +1179,7 @@ async def main():
             # own `hass` connection saves a dashboard directly - the same
             # thing that happens when somebody edits in another tab.
             key = "dh-live-check"
-            picked = await page.js(
-                "(() => { const p = " + PANEL + ";"
-                f' const b = [...p.querySelectorAll(".dash")].find(x => x.dataset.key === {json.dumps(key)});'
-                " if (!b) return null; b.click(); return b.dataset.key; })()"
-            )
+            picked = await page.pick(key)
             if not picked:
                 print(f"    {key} is not in the list - run run_checks.py first")
             else:
@@ -1447,6 +1464,67 @@ async def main():
                     # Cancelled, always. Nothing on the bench is written by
                     # a check that is only looking.
                     await page.cancel_dialog()
+
+            print("\n-- The simple mode: the state and its version, drawn once --")
+            # A section of its own, and on a dashboard of its own. The one
+            # above needs a dashboard that has *drifted* - that is the
+            # only place a way back exists to click - and this needs the
+            # opposite: one standing in its newest version's state, where
+            # the block and the row under it would otherwise be the same
+            # version said twice.
+            #
+            # `dh-floor-check` is that dashboard after run_checks.py: it
+            # collects day marks, and the changes recorded since the
+            # newest of them touched metadata rather than cards, so the
+            # live state is still the one that version holds.
+            key = "dh-floor-check"
+            picked = await page.pick(key)
+            if not picked:
+                print(f"    {key} is not in the list - run run_checks.py first")
+            else:
+                await page.settle(
+                    f"{ELEMENT}._selected === {json.dumps(key)}"
+                    f" && {ELEMENT}._versions.length > 0"
+                )
+                # Counted over the rendered page rather than asserted in
+                # the renderer, because what was wrong before was not a
+                # wrong string - both lines were right - but the two of
+                # them standing under each other.
+                named = await page.js(
+                    "(() => { const p = " + PANEL + ";"
+                    ' const n = p.querySelector(".standing .vhead .name");'
+                    " if (!n) return null;"
+                    " const name = n.textContent.trim();"
+                    ' const all = [...p.querySelectorAll(".vhead .name")]'
+                    ".filter((e) => e.textContent.trim() === name).length;"
+                    ' const head = n.closest(".vhead");'
+                    " return {name, all,"
+                    '         chevron: getComputedStyle(head, "::before").display,'
+                    '         here: p.textContent.includes("where you are"),'
+                    '         says: p.querySelector(".standing .stephead")'
+                    "?.textContent.trim() ?? null}; })()"
+                )
+                if named is None:
+                    # Standing on an older version's state, or on none at
+                    # all: then the block says so in a sentence and the
+                    # rows stay rows, which is the other half of the rule.
+                    # Said rather than passed over - a check that reports
+                    # nothing when it found nothing to check is how this
+                    # file stops meaning anything.
+                    print(f"    {key} is not standing in its newest version")
+                else:
+                    print(f"    the block carries its version: {named['name']!r}")
+                    print(f"    and the page draws it once: {named['all'] == 1}")
+                    # One block, one chevron. The block's own sits on the
+                    # heading above; a second one on the line under it
+                    # would offer a way in that is not there.
+                    print(f"    with no chevron of its own: {named['chevron']!r}")
+                    # The chip beside "Right now" says it already.
+                    print(f"    and no second 'where you are': {not named['here']}")
+                    # The version's own span, not the changes since it -
+                    # those are the ones that left the state where it was.
+                    print(f"    it folds onto: {named['says']!r}")
+                    await page.shot("27-simple-state-and-version.png")
 
             # Left as it was found: the mode is stored per browser, and a
             # check that changes what somebody sees next time is a check

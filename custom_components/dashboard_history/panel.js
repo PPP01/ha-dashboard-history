@@ -184,21 +184,29 @@ class DashboardHistoryPanel extends HTMLElement {
     // answers it, or null while it has not been read or could not be.
     // See `_loadSidebar`.
     this._sidebar = null;
-    // Which folds outside the version list are open: the two groups
-    // below the sidebar's dashboards, and the simple mode's
-    // current-state box. Kept out here for the same reason as
-    // `_verOpen`: a re-render builds new <details> elements, and without
-    // this the fold somebody is working in shuts itself the moment
-    // anything else on the page changes. The box is here rather than in
-    // that set because the set is keyed by version name and the box is
-    // not a version.
-    this._foldOpen = { apart: false, dead: false, now: false };
-    // Which version sections are expanded, keyed by the name of the
-    // section's first version. Native <details> state alone does not
-    // survive a re-render - _render() replaces the whole shadow DOM, so
-    // without this a "Back to this version" click would collapse the
-    // very section it was clicked from, the moment _guard's preview
-    // fetch triggers the first re-render.
+    // The sidebar's two groups below the dashboards. Kept out here for
+    // the same reason as `_verOpen`: a re-render builds new <details>
+    // elements, and without this the fold somebody is working in shuts
+    // itself the moment anything else on the page changes.
+    //
+    // The sidebar's, and nothing else. The simple mode's current-state
+    // box sat here too, on the grounds that `_verOpen` is keyed by
+    // version name and the box is not a version - which stopped being
+    // true when the box began carrying one. A fold that changed shelves
+    // depending on the data was a fact in two places, so it moved to
+    // the set below and this one is what its name says again.
+    this._foldOpen = { apart: false, dead: false };
+    // Which folds in the main area are open, keyed by name: a version
+    // section by its first version, and the simple mode's current-state
+    // box by the version it carries - or by the bare word `now` where
+    // it carries none. Those cannot collide: a version's key is a
+    // dashboard and a number with a slash between them.
+    //
+    // Native <details> state alone does not survive a re-render -
+    // _render() replaces the whole shadow DOM, so without this a "Back
+    // to this version" click would collapse the very section it was
+    // clicked from, the moment _guard's preview fetch triggers the
+    // first re-render.
     this._verOpen = new Set();
     // A count, not a flag. Two requests can be in flight at once - a row
     // opened while the previous row's answers are still coming - and a
@@ -2339,7 +2347,6 @@ class DashboardHistoryPanel extends HTMLElement {
           // other, which is right: it is one fact about one version,
           // not two pieces of furniture that happen to look alike.
           open: this._verOpen,
-          nowOpen: this._foldOpen.now,
         })
       );
     const shown = this._shown();

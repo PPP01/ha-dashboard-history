@@ -66,6 +66,133 @@ const steps = (list) =>
     .join("");
 
 /**
+ * The loaded changes one version collected: from its own change
+ * downwards, stopping at the next version below it.
+ *
+ * What has not been loaded is simply not in here. The head is what
+ * somebody goes back to and it is always there, so a span the window
+ * does not reach costs a fold, not a way back.
+ *
+ * Its own function because two places need it now: the row for the
+ * version, and the current-state block for the version it has been
+ * folded together with.
+ */
+const spanOf = (version, changes) => {
+  const start = changes.findIndex((c) => c.revision === version.revision);
+  if (start < 0) return [];
+  const inside = [];
+  for (let i = start; i < changes.length; i += 1) {
+    if (i > start && (changes[i].versions || []).length) break;
+    inside.push(changes[i]);
+  }
+  return inside;
+};
+
+/**
+ * A version's span as the lines behind it, with the note saying how far
+ * they reach.
+ *
+ * "The newest N", not "N": the span starts at the version's own change
+ * and walks downwards, so it is cut at the older end whenever the
+ * version holds more than the loaded window does. A flat "25 changes in
+ * this version" was wrong for a version spanning a hundred - and this
+ * mode has no "load older" that could ever make it right, so the label
+ * carries the limit instead of waiting for a button that does not exist.
+ *
+ * Empty for an empty span, which is what makes the caller's fold
+ * disappear rather than open onto nothing.
+ */
+const inThisVersion = (inside) =>
+  inside.length
+    ? `<p class="stephead">${
+        inside.length === 1
+          ? "The newest change in this version"
+          : `The newest ${inside.length} changes in this version`
+      }</p>
+       ${steps(inside)}`
+    : "";
+
+/**
+ * What makes a <details> a remembered fold: the key it is filed under,
+ * and whether it is open right now.
+ *
+ * Both attributes at once, because they are one decision. Written out
+ * at each of the two folds on this page, the "is it open" half stood
+ * twice in one expression at the box alone - and the panel wires folds
+ * by this attribute (`details[data-key]`), so the pair is a contract
+ * with something outside this file rather than a bit of markup.
+ */
+const foldAt = (key, open) =>
+  `data-key="${escape(key)}"${open.has(key) ? " open" : ""}`;
+
+/**
+ * The changes that are in no version yet, as the lines behind the
+ * current-state block, with the note saying how far they reach.
+ *
+ * The same cut the advanced mode's top section makes, made here from
+ * the same list. This is the one thing in that block which hangs on the
+ * loaded window, because a change's words only exist for a change that
+ * was loaded. The way back does not hang on it, and that is the point
+ * of the two being worked out separately rather than from one index.
+ *
+ * Exact or hedged, and the word "newest" is the whole difference. Where
+ * the version bounding these sits in the window, nothing is cut at the
+ * older end and the count is the whole truth - the one place in this
+ * mode that can say so, since a version row never knows where its own
+ * span ends. Where it does not, every loaded change is still rightly in
+ * here (the window holds the newest changes, and not one of them
+ * carries a mark, so the last version is older than all of them) and
+ * only the far end is unknown.
+ *
+ * Empty for an empty span, like `inThisVersion` - a block with nothing
+ * behind it does not offer itself as a way in.
+ */
+const sinceLastVersion = (changes) => {
+  const versioned = changes.findIndex((c) => (c.versions || []).length);
+  const bounded = versioned >= 0;
+  const loose = bounded ? changes.slice(0, versioned) : changes;
+  if (!loose.length) return "";
+  const reach = bounded ? "The" : "The newest";
+  const span = loose.length === 1 ? "change" : `${loose.length} changes`;
+  return `<p class="stephead">${reach} ${span} since the last version</p>
+       ${steps(loose)}`;
+};
+
+/**
+ * The line a version is known by: number, title, date, and the two
+ * controls that belong to the tag itself.
+ *
+ * `back` is what the caller offers on the right - a button, a label, or
+ * nothing at all where the caller says that in its own words. Drawn
+ * here rather than in each caller because this is the line people read
+ * down looking for a version, and two copies of it would drift.
+ */
+const vhead = (version, back) => {
+  const auto = version.automatic
+    ? `<span class="auto">saved automatically</span>`
+    : "";
+  // Nothing where the store has no time to give. A tag made by hand
+  // carries none, and a row reading "1 Jan 1970" would put every
+  // honest date beside it in doubt.
+  const made = version.timestamp
+    ? `<span class="made">${escape(when(version.timestamp))}</span>`
+    : "";
+  return `<span class="vhead penholder">
+            <span class="name">${number(version)}</span>
+            <span class="grow">${escape(version.title)}${auto}</span>
+            ${made}
+            ${back}
+            ${pen(version)}
+            ${bin(version)}
+          </span>
+          ${
+            version.description
+              ? `<p class="why">${escape(version.description)}</p>`
+              : ""
+          }`;
+};
+
+/**
  * `versions` is every version of this dashboard, newest number first
  * and complete. `shown` is the part of it a search has left, and
  * defaults to all of them. `changes` is the loaded window, newest
@@ -82,17 +209,21 @@ const steps = (list) =>
  * a fact the server had answered and quietly recomputed it over a
  * display list.
  *
- * `open` are the rows somebody has opened, by version name. It is the
- * element's own bookkeeping and not the browser's: a render builds new
- * <details>, and native state alone shuts the row being worked in -
- * which here would happen on the way to the confirm dialog, since the
- * preview fetch renders before the dialog opens. The advanced mode's
- * sections learned this first; this is the same set.
+ * `open` are the folds somebody has opened, by key. It is the element's
+ * own bookkeeping and not the browser's: a render builds new <details>,
+ * and native state alone shuts the row being worked in - which here
+ * would happen on the way to the confirm dialog, since the preview
+ * fetch renders before the dialog opens. The advanced mode's sections
+ * learned this first; this is the same set.
  *
- * `nowOpen` is the same fact about the current-state box, and a flag
- * rather than a member of that set: the set is keyed by version name,
- * and this box is not a version. It rides the panel's fold bookkeeping
- * instead, which is what that exists for.
+ * Every fold on this page, the current-state box included. The box used
+ * to keep its own flag beside this set, on the grounds that it stands
+ * for the live state rather than for a version - and that held until it
+ * started carrying a version, at which point which shelf the fact lived
+ * on depended on the data. One fold, one store: the box's key is that
+ * version's name where the two are drawn as one, and the bare word
+ * `now` where they are not. The two cannot collide, because a version's
+ * key is a dashboard and a number with a slash between them.
  */
 export function renderSimple({
   versions,
@@ -100,7 +231,6 @@ export function renderSimple({
   changes,
   searching = false,
   open = new Set(),
-  nowOpen = false,
 }) {
   if (!shown.length)
     // Two different reasons for an empty list, and each gets its own
@@ -117,53 +247,60 @@ export function renderSimple({
          <button class="act ghost" data-version="now">Save this as a version</button>
          ${HINT}`;
 
-  // Where the dashboard stands, said in the only vocabulary this mode
-  // has. `same_as_now` comes from the server and is worked out against
-  // every version, so it is right whether or not that version's commit
-  // is in the loaded window.
+  // The one place you are standing, said in the only vocabulary this
+  // mode has. `same_as_now` comes from the server and is worked out
+  // against every version, so it is right whether or not that version's
+  // commit is in the loaded window.
+  //
   // Over every version, never over `shown`: see the note above.
-  const here = versions.filter((v) => v.same_as_now);
-  // The one place you are standing. More than one version can hold what
-  // the dashboard holds - a routine that saves every day collects them
-  // by the dozen - and the sentence has always named exactly one of
-  // them: the highest numbered. The rows now name the same one, which
-  // is the whole of the fix. Before it, every matching row said "where
-  // you are", and a screen answering "where am I" six times answers it
-  // not at all.
-  // Escaped as it is built, and only here: the sentence used to be
-  // escaped a second time on its way out, which turned an ampersand in
-  // a dashboard's title into &amp; on the screen.
-  const standingOn = here.length ? here[0] : null;
-  const standing = standingOn
-    ? `The dashboard is in the state of ${number(standingOn)}${standingOn.title ? ` — ${escape(standingOn.title)}` : ""}.`
-    : "The dashboard has changed since the last version was saved.";
+  //
+  // More than one version can hold what the dashboard holds - a routine
+  // that saves every day collects them by the dozen - and the sentence
+  // has always named exactly one of them: the highest numbered, which
+  // over a list ordered by number is the first that matches. The rows
+  // now name the same one, which is the whole of the fix. Before it,
+  // every matching row said "where you are", and a screen answering
+  // "where am I" six times answers it not at all.
+  const standingOn = versions.find((v) => v.same_as_now) ?? null;
+  // Whether the block and the row under it would be the same version
+  // said twice - the block naming it in a sentence and the row naming
+  // it again, with nothing on that row this block does not offer.
+  //
+  // Said of `shown[0]` rather than of `versions[0]`, because what the
+  // block takes away is a *drawn row*, and the top drawn row is the
+  // only one it can take. It reads the same on an unfiltered page and
+  // needs no argument about two orderings agreeing; it also carries
+  // `standingOn` being a real version, since a null could not equal a
+  // row, and `shown` is never empty by the return above.
+  //
+  // Not merged where the dashboard stands on an *older* version's
+  // state, which is where going back leaves you: newer versions are
+  // then drawn above the one being stood on, and it is not the top row.
+  //
+  // Never while searching, and not because the block would read the
+  // query - it reads `standingOn` and `changes`, neither of which a
+  // search touches. Because the rows are the answer to what somebody
+  // typed, and this would take one of the answers out of the list and
+  // put it in a box above, where it no longer reads as a hit. With two
+  // versions alike enough to match one word, one of them would simply
+  // be missing from the list of matches.
+  const merged = !searching && standingOn === shown[0];
 
-  // The changes that are in no version yet - the same cut the advanced
-  // mode's top section makes, made here from the same list. This is the
-  // one thing in the block below that still hangs on the loaded window,
-  // because a change's words only exist for a change that was loaded.
-  // The way back does not hang on it, and that is the point of the two
-  // being worked out separately rather than from one index.
-  const versioned = changes.findIndex((c) => (c.versions || []).length);
-  // Whether the version these changes stop at is itself in the window.
-  // Named because three lines below ask it, and the answer decides both
-  // what the fold holds and how far the count may claim to reach.
-  const bounded = versioned >= 0;
-  const loose = bounded ? changes.slice(0, versioned) : changes;
-  // Exact or hedged, and the word "newest" is the whole difference.
-  // Where the version bounding these sits in the window, nothing is cut
-  // at the older end and the count is the whole truth - the one place in
-  // this mode that can say so, since a version row never knows where
-  // its own span ends. Where it does not, every loaded change is still
-  // rightly in here (the window holds the newest changes, and not one of
-  // them carries a mark, so the last version is older than all of them)
-  // and only the far end is unknown.
-  const reach = bounded ? "The" : "The newest";
-  const span = loose.length === 1 ? "change" : `${loose.length} changes`;
-  const nowBody = loose.length
-    ? `<p class="stephead">${reach} ${span} since the last version</p>
-       ${steps(loose)}`
-    : "";
+  // Folded together, the block holds the version's own changes and not
+  // its own span. Those two are not a choice between equals: where the
+  // live state is a version's state, every change recorded *since* that
+  // version is by definition one that left the state where it was -
+  // metadata, or an edit and its undo - so the list of them answers
+  // nothing. What the version collected is what somebody opened the
+  // block to read. The advanced mode still has both.
+  //
+  // Two spans, two functions. Written as one nested expression with the
+  // second span's five working names spelled out beside it, every one
+  // of them was computed in the folded case as well and thrown away,
+  // and a reader had to work out for each which branch it belonged to.
+  const nowBody = merged
+    ? inThisVersion(spanOf(standingOn, changes))
+    : sinceLastVersion(changes);
   // One press that takes the dashboard off everything since the last
   // saved state. It is the top row's "Go back to this" under a name
   // that says how far it reaches - the same service, the same preview,
@@ -188,65 +325,69 @@ export function renderSimple({
     ? ""
     : `<button class="act ghost" data-state="${escape(versions[0].name)}"
            >Undo / Go back to ${number(versions[0])}</button>`;
+  // Where the two are folded together the version itself stands where
+  // the sentence about it stood - the same line the rows carry, so the
+  // number, the title and the date are written where somebody reading
+  // down the page already looks for them. The sentence is no loss: it
+  // said one thing, and the line says it in the version's own words.
+  //
+  // Nothing on the right of that line. "where you are" is what the row
+  // said there, and the chip beside "Right now" says it already; inside
+  // one block the two would sit four lines apart saying one thing twice.
+  //
+  // Where they are not, the sentence. Kept a name of its own rather
+  // than folded into the line below: it is the one thing on this page
+  // written as prose, and a nested conditional inside a template inside
+  // a ternary earns nothing but the half microsecond of not building it
+  // in the folded case.
+  //
+  // Escaped as it is built, and only here: the sentence used to be
+  // escaped a second time on its way out, which turned an ampersand in
+  // a dashboard's title into &amp; on the screen.
+  const standing = standingOn
+    ? `The dashboard is in the state of ${number(standingOn)}${standingOn.title ? ` — ${escape(standingOn.title)}` : ""}.`
+    : "The dashboard has changed since the last version was saved.";
+  const says = merged ? vhead(standingOn, "") : `<p>${standing}</p>`;
   // What the block says with itself shut. The chip is the advanced
   // mode's - the same constant, not the same words typed again - and
   // unlike there it needs no proof: a crowned row has to earn "current
   // state" by matching the live configuration, while "right now" *is*
   // the live state, and the chip labels the box rather than an entry.
   const nowHead = `<p class="heading">Right now ${NOW_CHIP}</p>
-      <p>${standing}</p>
+      ${says}
       <span class="acts">
         <button class="act ghost" data-version="now">Save this as a version</button>
         ${undo}
       </span>`;
-  // A way in only where there is something behind it - the same rule the
-  // rows below follow, and it bites here too: with the dashboard changed
-  // at Home Assistant's back there is no recorded change since the
-  // version, and an opener would lead onto an empty space.
+  // Under the version's own name where the box holds that version's
+  // changes, and under the bare word otherwise. Where it is a version's
+  // name it is the key the advanced mode folds that same span under, so
+  // a version opened in one mode is open in the other - and a version
+  // just made by the button above comes back open, since the panel puts
+  // a created name into this very set.
+  //
+  // The one thing that must not be read out of this: which mode drew
+  // it. The advanced mode folds a version section under the first name
+  // its marks list, ordered by the time the tag was made; this reads
+  // the first by *number*. Those coincide except where two versions sit
+  // on one commit and somebody numbered them out of order, and there
+  // the two modes fold under different names. Nobody is wrong, and
+  // nothing worse happens than a row coming back shut.
   const now = nowBody
-    ? `<details class="standing" data-fold="now"${nowOpen ? " open" : ""}>
+    ? `<details class="standing" ${foldAt(merged ? standingOn.name : "now", open)}>
          <summary>${nowHead}</summary>
          <div class="vbody">${nowBody}</div>
        </details>`
     : `<div class="standing">${nowHead}</div>`;
 
-  const rows = shown.map((version) => {
-    // Its changes are the loaded ones from this version's own state
-    // downwards, stopping at the next version. What has not been loaded
-    // is simply not folded in; the head is what somebody goes back to,
-    // and it is always there.
-    const start = changes.findIndex((c) => c.revision === version.revision);
-    const inside = [];
-    if (start >= 0)
-      for (let i = start; i < changes.length; i += 1) {
-        if (i > start && (changes[i].versions || []).length) break;
-        inside.push(changes[i]);
-      }
-    // "The newest N", not "N": `inside` starts at the version's own
-    // change and walks downwards, so it is cut at the older end
-    // whenever the version spans more than the loaded window holds. A
-    // flat "25 changes in this version" was wrong for a version
-    // spanning a hundred - and this mode has no "load older" that could
-    // ever make it right, so the label carries the limit instead of
-    // waiting for a button that does not exist.
-    //
-    // Where the version's own change is below the window there is no
-    // fold at all, which stays as it is: on a dashboard with many
-    // versions that is most of the rows, and a line on each of them
-    // saying so would be noise. An absent fold claims nothing; a
-    // wrong number claims something false.
-    //
-    // The sentence is a heading inside the opened row now rather than
-    // the thing you click. What you click is the row - so this line no
-    // longer has to be a place to aim at, and it can go back to being
-    // what it always was: the note saying how far the list under it
-    // reaches.
-    const folded = inside.length
-      ? `<p class="stephead">${inside.length === 1
-        ? "The newest change in this version"
-        : `The newest ${inside.length} changes in this version`}</p>
-           ${steps(inside)}`
-      : "";
+  // The version drawn inside the block above is not drawn again here.
+  // That is the whole of it: one version, one place on the page - and
+  // it is the top row by the condition `merged` was built from, so this
+  // takes it off the front rather than searching the list for it.
+  const listed = merged ? shown.slice(1) : shown;
+
+  const rows = listed.map((version) => {
+    const folded = inThisVersion(spanOf(version, changes));
     // No button where its target is what the dashboard already holds.
     // A button that does nothing is a question without an answer.
     //
@@ -261,36 +402,17 @@ export function renderSimple({
           ? `<span class="count">same state as now</span>`
           : `<button class="act ghost" data-state="${escape(version.name)}"
                  >Go back to this</button>`;
-    const auto = version.automatic
-      ? `<span class="auto">saved automatically</span>`
-      : "";
-    // Nothing where the store has no time to give. A tag made by hand
-    // carries none, and a row reading "1 Jan 1970" would put every
-    // honest date beside it in doubt.
-    const made = version.timestamp
-      ? `<span class="made">${escape(when(version.timestamp))}</span>`
-      : "";
     // What stays visible when the row is shut: the head, and the words
     // somebody wrote about the version. The note is short, it is the
     // one thing on the row nobody else wrote, and putting it behind a
     // click would make the closed row say less than it does today.
-    const head = `<span class="vhead penholder">
-                <span class="name">${number(version)}</span>
-                <span class="grow">${escape(version.title)}${auto}</span>
-                ${made}
-                ${back}
-                ${pen(version)}
-                ${bin(version)}
-              </span>
-              ${version.description
-        ? `<p class="why">${escape(version.description)}</p>`
-        : ""}`;
+    const head = vhead(version, back);
     // A row is a way in only where there is something behind it. Most
     // rows on a dashboard with hundreds of versions have nothing - the
     // window does not reach their changes - and a row that opens onto
     // an empty space is a promise broken as soon as it is taken up.
     if (!folded) return `<div class="vrow"><div class="vsum">${head}</div></div>`;
-    return `<details class="vrow" data-key="${escape(version.name)}"${open.has(version.name) ? " open" : ""}>
+    return `<details class="vrow" ${foldAt(version.name, open)}>
               <summary class="vsum">${head}</summary>
               <div class="vbody">${folded}</div>
             </details>`;

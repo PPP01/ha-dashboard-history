@@ -2104,9 +2104,11 @@ el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
 // versions - on the bench a whole screen of rows read the same, and
 // only the number and the time told them apart.
 el._versions = [
+  // Made by a routine, like most versions on an installation that has
+  // any - which is what puts "saved automatically" on its line.
   { name: "dash/v1.2.0", title: "Kitchen rebuild", description: "",
     revision: "a", same_as_now: true, timestamp: 1757246400,
-    annotated: true },
+    annotated: true, automatic: true },
   { name: "dash/v1.1.0", title: "Kitchen rebuild", description: "",
     revision: "a", same_as_now: true, timestamp: 1757246300,
     annotated: true },
@@ -2130,7 +2132,43 @@ el._changes = [
 ];
 
 const count = (text, needle) => text.split(needle).length - 1;
+// The current-state block on its own. Counted over the whole page the
+// version rows' own lines get mixed in, and what is asked here is what
+// *this* block holds. Cut at the first row rather than at the block's
+// own end tag: shut, the block has no end tag to cut at, and the cut
+// then ran on into the row below and found its pen, its fold and its
+// number - a probe that answered yes about the row it was written to
+// exclude.
+const box = (text) => text.split("class=\\"vrow\\"")[0];
+// Whether the block is rendered open. Asked of two pages, so it is
+// named once - the same regex twice four lines apart is the shape that
+// drifts.
+const boxOpen = (text) => /<details class="standing"[^>]*\\sopen/.test(text);
 const plain = el._renderMain();
+// The same page with the block already open. Its fold rides the
+// version's own name now, which is what makes it one fact across both
+// modes rather than two lookalike pieces of furniture.
+const everything = el._versions;
+const opens = el._verOpen;
+el._verOpen = new Set(["dash/v1.2.0"]);
+const opened = el._renderMain();
+el._verOpen = opens;
+// Standing on an *older* version's state, which is where somebody
+// lands after going back. The newest version is then not the one the
+// block names, the rows above it are newer and say something else, and
+// folding them together would put the wrong number in the block.
+el._versions = everything.map((v) => ({
+  ...v,
+  same_as_now: v.name === "dash/v1.0.0",
+}));
+const older = el._renderMain();
+el._versions = everything;
+// A search that leaves the standing version at the top. The rows are
+// the answer to what was typed and the block is a statement about the
+// dashboard; folding them together here would make the block's content
+// depend on the query.
+await el._search("kitchen");
+const hunting = el._renderMain();
 // The simple mode filters the complete version list and asks nobody,
 // so this needs no server at all.
 await el._search("autumn");
@@ -2155,6 +2193,32 @@ console.log(JSON.stringify({
     undo: count(plain, "Undo / Go back"),
     pens: count(plain, "data-retitle="),
     bins: count(plain, "data-remove="),
+    named: count(plain, ">v1.2.0<"),
+    boxNumber: box(plain).includes(">v1.2.0<"),
+    boxTitle: box(plain).includes("Kitchen rebuild"),
+    boxDated: box(plain).includes("class=\\"made\\""),
+    boxAuto: box(plain).includes("saved automatically"),
+    boxPen: box(plain).includes("data-retitle=\\"dash/v1.2.0\\""),
+    boxBin: box(plain).includes("data-remove=\\"dash/v1.2.0\\""),
+    boxSave: box(plain).includes("data-version=\\"now\\""),
+    boxSpan: box(plain).includes("The newest 2 changes in this version"),
+    boxSince: box(plain).includes("since the last version"),
+    boxHere: box(plain).includes("where you are"),
+    keyed: /<details class="standing" data-key="dash\\/v1\\.2\\.0"/.test(plain),
+    boxShut: boxOpen(plain),
+  },
+  opened: {
+    boxOpen: boxOpen(opened),
+  },
+  older: {
+    standing: older.includes("in the state of v1.0.0"),
+    rows: count(older, "class=\\"vrow\\""),
+    here: count(older, "where you are"),
+  },
+  hunting: {
+    standing: hunting.includes("in the state of v1.2.0"),
+    rows: count(hunting, "class=\\"vrow\\""),
+    named: count(hunting, ">v1.2.0<"),
   },
   filtered: {
     standing: filtered.includes("in the state of v1.2.0"),
@@ -2174,8 +2238,77 @@ def simple_mode(tmp_path_factory):
 def test_the_simple_mode_says_where_the_dashboard_stands(simple_mode):
     # `same_as_now` comes from the server, worked out against every
     # version - including one whose commit is below the loaded window.
-    assert simple_mode["plain"]["standing"] is True
-    assert simple_mode["plain"]["rows"] == 4
+    # The sentence is for the case the block cannot say it by itself:
+    # standing on an older version's state, with newer ones listed above
+    # it. Where the newest version *is* the one being stood on, the
+    # block carries that version instead of a sentence about it.
+    assert simple_mode["older"]["standing"] is True
+    assert simple_mode["older"]["rows"] == 4
+    assert simple_mode["plain"]["standing"] is False
+
+
+def test_the_state_and_the_version_it_holds_are_drawn_once(simple_mode):
+    # The block said "the dashboard is in the state of v1.2.0" and the
+    # row directly under it said "v1.2.0 - where you are": one version,
+    # twice, in two vocabularies. There is nothing to do on that row
+    # that the block does not offer, so the two become one and the
+    # number is written where the other boxes write it.
+    assert simple_mode["plain"]["rows"] == 3
+    assert simple_mode["plain"]["named"] == 1
+    assert simple_mode["plain"]["boxNumber"] is True
+    assert simple_mode["plain"]["boxTitle"] is True
+    assert simple_mode["plain"]["boxDated"] is True
+    assert simple_mode["plain"]["boxAuto"] is True
+
+
+def test_the_merged_block_folds_onto_the_versions_own_changes(simple_mode):
+    # The version's span, not the block's. Where the two are folded
+    # together the changes *since* the version are by definition the
+    # ones that did not alter the state - otherwise it would no longer
+    # match - so they answer nothing, while the changes the version
+    # collected are what somebody came to read.
+    assert simple_mode["plain"]["boxSpan"] is True
+    assert simple_mode["plain"]["boxSince"] is False
+
+
+def test_the_merged_block_keeps_what_the_row_could_do(simple_mode):
+    # Everything the row offered that the block did not: the pen, the
+    # bin. Withholding the pen here would take the newest version - the
+    # one most likely to be renamed - out of reach in this mode
+    # entirely, against the promise that any version can be renamed.
+    assert simple_mode["plain"]["boxPen"] is True
+    assert simple_mode["plain"]["boxBin"] is True
+    assert simple_mode["plain"]["boxSave"] is True
+
+
+def test_the_merged_block_says_where_you_are_only_once(simple_mode):
+    # The chip beside "Right now" already says it. "where you are" was
+    # the row's way of saying the same thing, and inside one block the
+    # two would sit four lines apart saying it twice.
+    assert simple_mode["plain"]["boxHere"] is False
+    assert simple_mode["plain"]["badge"] == 1
+
+
+def test_the_merged_block_folds_under_the_versions_own_name(simple_mode):
+    # Keyed by the version rather than by the block, because what it
+    # holds is that version's changes - the same fact the advanced mode
+    # folds under that name, and one fact should not need two keys. It
+    # also means the version made by "Save this as a version" is open
+    # when the page comes back, since the panel puts a created name into
+    # that same set.
+    assert simple_mode["plain"]["keyed"] is True
+    assert simple_mode["plain"]["boxShut"] is False
+    assert simple_mode["opened"]["boxOpen"] is True
+
+
+def test_a_search_leaves_the_block_and_the_rows_apart(simple_mode):
+    # Two subjects, and merging them would give the block a content that
+    # depends on what somebody typed. The search matches both "Kitchen
+    # rebuild" versions, so the standing one is the top row - which is
+    # the whole condition for merging, minus the search.
+    assert simple_mode["hunting"]["rows"] == 2
+    assert simple_mode["hunting"]["standing"] is True
+    assert simple_mode["hunting"]["named"] == 1
 
 
 def test_every_row_carries_the_number_it_is_known_by(simple_mode):
@@ -2201,7 +2334,11 @@ def test_only_one_row_is_where_you_are(simple_mode):
     # this mode - a screen on which the answer to "where am I" appeared
     # six times. The others say what is true of them: they hold the same
     # state. No button there, because going back would write nothing.
-    assert simple_mode["plain"]["here"] == 1
+    #
+    # Read off the drifted page, because on the plain one that row is
+    # inside the current-state block and its chip says it instead.
+    assert simple_mode["older"]["here"] == 1
+    assert simple_mode["plain"]["here"] == 0
     assert simple_mode["plain"]["alike"] == 1
 
 
@@ -2210,7 +2347,7 @@ def test_a_row_with_nothing_under_it_does_not_pretend_to_open(simple_mode):
     # like one where there are changes to show. A version whose commit
     # is below the loaded window has none - which on a dashboard with
     # hundreds is most of them - and stays a plain row.
-    assert simple_mode["plain"]["opens"] == 3
+    assert simple_mode["plain"]["opens"] == 2
     assert simple_mode["plain"]["flat"] == 1
 
 
@@ -2245,16 +2382,17 @@ def test_the_fold_counts_only_what_it_can_show(simple_mode):
     assert simple_mode["plain"]["oneChange"] is True
 
 
-def test_every_row_offers_a_way_to_rename_its_version(simple_mode):
-    # Every row, including the one whose commit is below the window and
-    # the one somebody is standing in. Renaming touches a tag's wording
-    # and nothing else, so none of the reasons a row withholds its
-    # *button* - it holds the live state, it is where you are - has any
-    # bearing on this one.
+def test_every_version_offers_a_way_to_rename_itself(simple_mode):
+    # Every one of the four, including the one whose commit is below the
+    # window and the one somebody is standing in - which is drawn inside
+    # the current-state block rather than as a row. Renaming touches a
+    # tag's wording and nothing else, so none of the reasons a row
+    # withholds its *button* - it holds the live state, it is where you
+    # are - has any bearing on this one.
     assert simple_mode["plain"]["pens"] == 4
 
 
-def test_every_row_in_the_simple_mode_offers_a_way_to_remove_its_version(
+def test_every_version_in_the_simple_mode_offers_a_way_to_remove_itself(
     simple_mode,
 ):
     # The mode a fresh panel opens in, and the one `look_at_panel.py`
@@ -2296,10 +2434,12 @@ el._versions = [
   { name: "dash/v1.0.0", title: "Autumn tidy", description: "",
     revision: "e", same_as_now: false, timestamp: 1757100000 },
 ];
-// The box's own fold, remembered where the panel remembers folds that
-// are not versions - the sidebar's two groups keep their state in the
-// same object.
-el._foldOpen.now = true;
+// The box's fold, remembered in the one set that remembers folds in
+// the main area. Not a second store beside it: the box carries a
+// version's own name where the two are drawn as one, and a fact that
+// changed shelves depending on the data was a fact in two places.
+// "now" cannot collide with a version, which always carries a slash.
+el._verOpen = new Set(["now"]);
 const since = [
   { revision: "a", message: "1 card added", versions: [], timestamp: 1 },
   { revision: "b", message: "2 cards moved", versions: [], timestamp: 2 },
@@ -2339,7 +2479,7 @@ console.log(JSON.stringify({
     badge: count(drifted, "class=\\"chip now\\""),
     undo: drifted.includes(">Undo / Go back to v1.2.0<"),
     target: /data-state="dash\\/v1\\.2\\.0"[^>]*>Undo/.test(drifted),
-    remembered: /data-fold="now"\\s+open/.test(drifted),
+    remembered: /data-key="now"\\s+open/.test(drifted),
   },
   cut: {
     hedged: cut.includes("The newest 2 changes since the last version"),

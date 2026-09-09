@@ -562,6 +562,18 @@ export const STYLE = `
      indent that puts its lines under the words and not under the
      chevron. */
   .standing .vbody { padding:0 0 2px 11px; }
+  /* Where the box and the version it holds are drawn as one, the
+     version's line moves in - and its own chevron with it. One box, one
+     chevron: the box's sits on the heading above, and a second one on
+     the line under it would offer a way in that is not there. Removed
+     rather than hidden, because here nothing needs to keep a column -
+     this line stands alone, not in a list of numbers. */
+  .standing .vhead::before { display:none; }
+  /* The gap goes on what follows the line rather than under the line
+     itself, so that the note - which is there on some versions and not
+     on others - can sit close to the title it belongs to without a
+     margin being subtracted again further down. */
+  .standing .vhead ~ .acts { margin-top:10px; }
   /* One pill per version - the same card the advanced mode's sections
      wear, and clickable for the same reason: the row is the way in to
      the changes underneath it. A pill that looked like that one and did
@@ -599,9 +611,20 @@ export const STYLE = `
   .vhead .made, .vhead .count { font-size:13px; white-space:nowrap;
                  color:var(--secondary-text-color,#727272); }
   .vhead .auto { margin-left:8px; font-size:12px; opacity:.6; }
-  /* Both indented past the chevron, so that everything a row says
-     stands under the title rather than under the marker. */
-  .vsum .why { margin:4px 0 0 19px; }
+  /* The note under a version's line, wherever that line is drawn: in a
+     row, or inside the current-state block where the two are one. By
+     the sibling it follows rather than by the container it sits in -
+     vhead() emits the line and the note as siblings, so one rule serves
+     both, and the alternative was the same 4px written a second time
+     under a selector with a different logic.
+
+     .why brings a 16px top margin of its own for the places it stands
+     alone, which is what has to be overridden here. */
+  .vhead + .why { margin:4px 0 0; }
+  /* And indented past the chevron where a chevron holds a column, so
+     that everything a row says stands under the title rather than under
+     the marker. */
+  .vsum .why { margin-left:19px; }
   .vbody { padding:0 16px 12px 35px; }
   /* The note above a list of changes, read as a heading rather than as
      the first faint line of the list. Three things make it one, and
