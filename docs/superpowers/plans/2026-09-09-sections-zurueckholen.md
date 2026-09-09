@@ -1101,7 +1101,7 @@ Spalte 3 ist *Put back*, Spalte 4 ist *Undo*, und hier verweigert der
 Undo weiterhin. Als weitere Zeile also:
 
 ```text
-| Deleted a whole section | the section, named as one item | into the gap it left | — |
+| Deleted a whole section | the section, named as one item | into the gap it left | **refuses** |
 ```
 
 - [ ] **Schritt 4: Den Absatz unter der Verweigerungs-Tabelle berichtigen**
@@ -1142,7 +1142,7 @@ Daraus wird:
   offers the section as one thing rather than as a heap of cards — as
   long as the other sections of that view are as you left them. Edit one
   of them in between and it says so; *Undo this change* declines either
-  way, because a section has no name to recognise it by. The whole-state
+  way, because a section has no path to recognise it by. The whole-state
   restore brings it back in any case.
 ```
 
