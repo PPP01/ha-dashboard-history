@@ -2012,6 +2012,146 @@ async def run_positions(access: str) -> None:
         )
 
 
+async def run_sections(access: str) -> None:
+    """A whole section, offered and put back as one thing.
+
+    W1 of the 2026-09-04 review, closed on 2026-09-09. Before it,
+    `find_removed` knew "view" and "card" and nothing between them, so a
+    deleted section arrived as a row of cards that each refused: the
+    section a card names is not the one standing at that index any more.
+    The panel was offering buttons that reliably fail.
+
+    None of this is reachable from pytest. The proof lives in
+    `restore._section_gap_holds`, which pytest covers - but whether the
+    new kind survives `operations.async_deleted_since`, the WebSocket
+    schema and the round trip back onto a live dashboard is exactly the
+    kind of question that only a running Home Assistant answers. Every
+    defect this project has found so far was in that gap.
+    """
+    key = "dh-sections-back"
+    a = {"type": "markdown", "content": "# A"}
+    b = {"type": "markdown", "content": "# B"}
+    c = {"type": "markdown", "content": "# C"}
+    d = {"type": "markdown", "content": "# D"}
+
+    def sections(*blocks):
+        return {
+            "views": [
+                {
+                    "path": "home",
+                    "title": "Home",
+                    "type": "sections",
+                    "sections": [dict(block) for block in blocks],
+                }
+            ]
+        }
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+        async def save(config: dict) -> list:
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            return await _wait_until_recorded(socket, key)
+
+        # The state to come back from. `history` answers newest first, so
+        # this is the revision that still holds both sections - and taking
+        # the newest entry *after* the deletion instead is the mistake
+        # that makes `deleted_since` answer with nothing at all, because
+        # from there nothing has gone.
+        both = await save(sections({"cards": [a, b]}, {"cards": [c]}))
+        base = both[0]["revision"]
+        await save(sections({"cards": [c]}))
+
+        gone = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=base
+        )
+        kinds = [item["kind"] for item in gone["items"]]
+        offered = check(
+            "a deleted section is offered as one item",
+            kinds == ["section"],
+            f"kinds={kinds}, labels={[i['label'] for i in gone['items']]}",
+        )
+
+        if offered:
+            preview = await socket.call(
+                "dashboard_history/restore_deleted", dashboard=key, revision=base, position=0
+            )
+            check(
+                "and it previews without an error",
+                bool(preview.get("preview")) and not preview.get("error"),
+                preview.get("error", ""),
+            )
+
+            await socket.call(
+                "dashboard_history/restore_deleted",
+                dashboard=key,
+                revision=base,
+                position=0,
+                confirm=True,
+            )
+            await asyncio.sleep(2)
+            live = await socket.call("lovelace/config", url_path=key)
+            standing = [
+                [card["content"] for card in section["cards"]]
+                for section in live["views"][0]["sections"]
+            ]
+            check(
+                "and goes back into the gap it left",
+                standing == [["# A", "# B"], ["# C"]],
+                f"{standing}",
+            )
+
+        # Changed next door: the proof no longer holds, and the refusal
+        # has to be the section's own - not the card anchor's, which
+        # would mean the section was never recognised in the first place.
+        both = await save(sections({"cards": [a, b]}, {"cards": [c]}))
+        base = both[0]["revision"]
+        await save(sections({"cards": [c]}))
+        await save(sections({"cards": [c, d]}))
+        refused = await socket.call(
+            "dashboard_history/restore_deleted", dashboard=key, revision=base, position=0
+        )
+        reason = str(refused.get("error", ""))
+        check(
+            "a changed neighbour makes it refuse",
+            "stood beside" in reason,
+            f"error={reason!r}",
+        )
+        check(
+            "and it is the section's proof that refuses, not the card anchor",
+            "stranger" not in reason,
+            f"error={reason!r}",
+        )
+
+        # A card of the deleted section found elsewhere counts as moved,
+        # not as removed - so the section is not whole in the eyes of the
+        # matching and no section item is made. Measured on 2026-09-09,
+        # after a first draft of this check built exactly that state and
+        # then wondered why the card anchor answered.
+        both = await save(sections({"cards": [a, b]}, {"cards": [c]}))
+        base = both[0]["revision"]
+        await save(sections({"cards": [c, a]}))
+        mixed = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=base
+        )
+        kinds = [item["kind"] for item in mixed["items"]]
+        check(
+            "a section whose card turned up elsewhere is not one item",
+            "section" not in kinds,
+            f"kinds={kinds}",
+        )
+
+        # Named, never by prefix: this instance holds other dh-* boards.
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        mine = next((e for e in listed if e.get("url_path") == key), None)
+        if mine is not None:
+            await socket.call(
+                "lovelace/dashboards/delete", dashboard_id=mine["id"]
+            )
+
 async def run_paging(access: str) -> None:
     """Paging by commit cursor.
 
@@ -3488,6 +3628,8 @@ if __name__ == "__main__":
     asyncio.run(run_paging(access))
     print("\n  -- Position ist keine Identitaet --")
     asyncio.run(run_positions(access))
+    print("\n  -- Ein ganzer Abschnitt, als eine Sache --")
+    asyncio.run(run_sections(access))
     print("\n  -- Versionen, die von selbst entstehen --")
     asyncio.run(run_milestones(access))
     print("\n  -- Der Schalter fuer die Tagesversionen --")
