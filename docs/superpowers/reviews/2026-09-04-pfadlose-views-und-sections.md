@@ -128,3 +128,64 @@ Zwei Grenzen, beide bewusst und im Code vermerkt:
 - Eine **hinzugefügte** pfadlose Ansicht führt zur Verweigerung, obwohl ihre Nachbarn noch stimmen. Die Regel ist an dieser Stelle strenger als nötig; Paket 2 hebt das auf.
 
 W1 bis W4 sind unverändert offen. Die falschen Historientexte aus C1 ebenfalls: Verweigern hält das Schreiben an, es korrigiert nicht, was die Zeile erzählt.
+
+## Nachtrag vom 2026-09-09: Paket 1 war für Ansichten nur halb umgesetzt
+
+Beim Prüfen der README vor dem Release von `v0.3.0` gefunden, nicht durch
+einen Fehlerbericht: Paket 1 hat den Grundsatz »verweigern statt stumm
+falsch schreiben« für **Karten** auf beiden Wegen umgesetzt, für
+**Ansichten** nur auf dem Undo-Weg.
+
+Die leere Zelle war *Ansicht × Schreibweg*. `restore.reinsert` prüfte für
+`kind="card"` drei Dinge (`_find_view`, `_anchor_holds`, `_cards_at`) und
+für `kind="view"` nichts:
+
+```python
+if item.kind == "view":
+    views.insert(min(item.index, len(views)), copy.deepcopy(item.payload))
+    return result
+```
+
+Damit war C1-B auf dem Put-back-Weg unverändert offen. Gemessen am
+2026-09-09: Ansichten `a`, `b`, »Home« (pfadlos, Position 2), der Nutzer
+löscht `b`. »Home« rückt auf Position 1 und wird unberührt weitergeführt —
+`find_removed` bietet es trotzdem als verschwunden an, weil der alte
+Schlüssel `("#", 2)` im neuen Stand fehlt, und `reinsert` schrieb
+`['A', 'Home', 'Home']`. Der Undo verweigerte im selben Fall korrekt.
+
+Warum es durchs Raster fiel: Das Review ist nach Symptomen gegliedert
+(C1 = Undo, C2 = Karten in Sections), und der Fix wurde nach Symptomen
+abgearbeitet. Der Satz in Paket 1 nennt beide Wege (`UndoPlan(blocked=…)`
+*beziehungsweise* `LookupError`) und beide Objekte — die Kreuzung stand
+nirgends als eigene Zeile.
+
+**Behoben:** `restore._view_has_gone` verweigert vor dem Einsetzen mit
+
+```text
+this view has no URL path and one just like it is on the dashboard
+already, so it did not go missing and putting it back would add a
+second copy
+```
+
+Die Prüfung ist die des Undo-Beweises, ein Objekt größer: Was
+verschwunden sein soll, wird im aktuellen Stand byte-für-byte gesucht;
+gefunden heißt, es ist nicht verschwunden. Ein Ansichts-Anker analog zu
+`RemovedItem.anchor` wäre die andere Bauform gewesen, trägt hier aber
+nicht: `_anchor_holds` verweigert unter anderem bei geänderter Anzahl,
+und die ändert sich beim *echten* Löschen einer pfadlosen Ansicht
+genauso — das hätte den Weg zurück mit weggenommen, den es zu erhalten
+gilt. Der Kontrollfall steht deshalb als eigener Test daneben.
+
+Belegt: zwei neue pytest-Fälle in `tests/test_restore.py`, beide zuerst
+rot gesehen (`DID NOT RAISE`), Suite 529 statt 527.
+
+**Eine Grenze bleibt, und sie gehört zu Paket 2:** Eine pfadlose
+Ansicht, die verschoben **und** bearbeitet wurde, ist sich selbst nicht
+mehr byte-identisch. Gemessen am 2026-09-09 wird sie ein zweites Mal
+eingesetzt, in ihrer älteren Form. Der Undo verweigert dort weiterhin, weil
+er zwei ganze Stände sieht; `reinsert` bekommt nur das einzelne Element und
+kann die Frage »verschoben oder gelöscht« ohne eigene Identitätskette nicht
+beantworten. In der README als solche ausgewiesen.
+
+W1, W2 und W4 sind unverändert offen. Die falschen Historientexte aus C1
+ebenfalls.

@@ -1,7 +1,7 @@
 # Dashboard History
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/PPP01/ha-dashboard-history/blob/main/LICENSE)
 
 Records every change to your Home Assistant dashboards, and gives you a
 way back.
@@ -17,7 +17,31 @@ is the mechanism and the exact limits, for anyone who wants to know what
 the tool can prove and what it can only assume.
 
 Questions that come up while using it — and why some things are refused
-on purpose — are answered in [FAQ.md](FAQ.md).
+on purpose — are answered in the
+[FAQ](https://github.com/PPP01/ha-dashboard-history/blob/main/FAQ.md).
+
+**[Part 1: Using it](#part-1-using-it)** —
+[What you get](#what-you-get) ·
+[Installing](#installing) ·
+[The panel](#the-panel) ·
+[Getting something back](#getting-something-back) ·
+[If your dashboard uses sections](#if-your-dashboard-uses-sections) ·
+[Versions](#versions) ·
+[Describing a change](#describing-a-change) ·
+[When a whole dashboard is gone](#when-a-whole-dashboard-is-gone) ·
+[Renames and other settings](#renames-and-other-dashboard-settings) ·
+[What it will not do](#what-it-will-not-do)
+
+**[Part 2: How it works, and where it stops](#part-2-how-it-works-and-where-it-stops)** —
+[Recognising cards without identifiers](#recognising-cards-without-identifiers) ·
+[What holds the cards](#what-holds-the-cards-views-and-sections) ·
+[The proof behind the undo](#the-proof-behind-the-undo) ·
+[When a change is recorded](#when-a-change-is-recorded) ·
+[Known limits, measured](#known-limits-measured) ·
+[Refusals by design](#refusals-by-design) ·
+[Services](#services) ·
+[Where the data lives](#where-the-data-lives) ·
+[Development](#development)
 
 ---
 
@@ -37,7 +61,8 @@ on purpose — are answered in [FAQ.md](FAQ.md).
   earlier state.
 - **Versions** — names for states worth coming back to, such as
   `my-dashboard/v1.2.0`. Some are made for you, so the list is never
-  empty.
+  empty. Rename one whenever you like, or take one away again; the state
+  underneath stays either way.
 - **Your own notes on any change.** One field. Your text becomes the
   headline of that entry.
 - **Search**, across the whole recorded history of a dashboard, including
@@ -47,6 +72,8 @@ on purpose — are answered in [FAQ.md](FAQ.md).
 - **Nothing is written without a preview** and an explicit confirmation.
 
 ### Installing
+
+Needs **Home Assistant 2024.11 or newer**.
 
 1. Add this repository to HACS as a custom repository (type:
    Integration).
@@ -85,8 +112,9 @@ underneath and the buttons that lead back.
 
 #### Two views
 
-A button in the top right switches between them, and your choice is
-remembered.
+A button in the top bar, right next to the title, switches between them,
+and your choice is remembered — in your browser, so it is yours rather
+than the installation's.
 
 **Simple view** shows nothing but the versions — the named states. This
 is the one to use when you want *"put it back to how it was on Tuesday"*
@@ -95,15 +123,24 @@ changes inside it.
 
 At the top of it sits the state you have now, marked `current state`.
 That mark is unconditional here, unlike the one on a row above: this box
-*is* what you have, whatever the history does or does not agree with.
-It names the version you are standing in, or says that the dashboard
-has changed since the last one was saved — and in that case it offers a
-single button, **Undo / Go back to v1.2.0**, which takes the dashboard
-off everything since that version in one step. Like every other way
-back it shows you the diff first, and what you are leaving is kept: it
-stays in the history as its own entry, and the dialog offers to name it
-as a version too. The box folds open as well, and lists the changes
-made since that version.
+*is* what you have, whatever the history does or does not agree with. It
+always carries **Save this as a version**, which is how a version gets
+made without leaving this view — including on a dashboard that has none
+yet, where the box is the only thing on the page.
+
+What else the box holds depends on where the dashboard stands:
+
+- **On the newest version.** The box and that version's own row are
+  drawn as one, so the number, the title and the date stand where a
+  sentence about them would. Folded open, it lists the changes *that
+  version* collected — not the ones since, because on a state a version
+  already holds, there are none that changed anything.
+- **Moved on since.** The box says so, and offers a second button,
+  **Undo / Go back to v1.2.0**, which takes the dashboard off everything
+  since that version in one step. Folded open, it lists what has
+  happened since. Like every other way back the button shows you the
+  diff first, and what you are leaving is kept: it stays in the history
+  as its own entry, and the dialog offers to name it as a version too.
 
 **Advanced view** shows every recorded change, newest first, twenty-five
 at a time with a *Load older changes* button. The versions still appear,
@@ -113,11 +150,18 @@ as headers that cut the list into sections.
 
 A search box sits above the list and searches what the current view
 shows: in the simple view, the versions; in the advanced view, the
-changes that are loaded. If the answer is not among them, a button offers
-**Search the whole history** — that goes to the server and walks the
-entire recorded past, looking at the automatic message, any note you
+changes that are loaded.
+
+In the **advanced view**, when the answer is not among them, a button
+offers **Search the whole history** — that goes to the server and walks
+the entire recorded past, looking at the automatic message, any note you
 wrote yourself, and the title, description and number of any version on
-that state.
+that state. If the box matches nothing that is loaded, the whole history
+is searched without being asked.
+
+The **simple view** searches the versions it has and says how many of
+them matched. It has no button to the server, and needs none: the
+versions are all there, however far back their states lie.
 
 ### Getting something back
 
@@ -291,10 +335,15 @@ nothing in it:
 - **One per day, on the day's last state.** When the first change of a
   new day is recorded, the state that was there before it is marked and
   named after the day it belongs to, such as `5 September 2026`. A day on
-  which nothing changed gets no version, and a day never gets two.
+  which nothing changed gets no version, and a day never gets two —
+  nor does a day that ends on the state the newest version already
+  holds, which is what "changed it and changed it back" leaves behind. A
+  row that leads back to where you already are is one the simple view
+  exists to spare you.
 
-Both carry the label `automatic`, and are otherwise ordinary versions —
-same numbering, same *Back to this version*.
+Both are labelled **saved automatically** in the simple view, and are
+otherwise ordinary versions — same numbering, same *Back to this
+version*.
 
 The daily ones can be switched off under *Settings → Devices & services →
 Dashboard History → Configure*. It takes effect at the next change, with
@@ -305,19 +354,53 @@ not.
 #### Renaming a version
 
 Hover a version — a row in the simple view, a section head in the
-advanced one — and a pencil appears. It opens the same two fields the
-create dialog asks for, prefilled: the title and the description. Enter
-your correction and save.
+advanced one, or the box at the top where the two are drawn as one — and
+a pencil appears, with a bin beside it. The pencil opens the same two
+fields the create dialog asks for, prefilled: the title and the
+description. Enter your correction and save.
 
 The **number stays as it is**, and that is deliberate: the number is the
 tag's name, and going back to a version is done by that name. The
 reasoning, and what to do when you wanted a different number after all,
-is in [the FAQ](FAQ.md#why-cant-i-change-a-version-number-afterwards).
+is in [the FAQ](https://github.com/PPP01/ha-dashboard-history/blob/main/FAQ.md#why-cant-i-change-a-version-number-afterwards).
 
-A version made automatically keeps its `automatic` label when you rename
-it — the label says who made the version, not what it is called. Nothing
-about the dashboard or the history changes, so renaming needs no
-confirmation. A version cannot be left without a title.
+A version made automatically stays marked **saved automatically** when
+you rename it — the label says who made the version, not what it is
+called. Nothing about the dashboard or the history changes, so renaming
+needs no confirmation. A version cannot be left without a title.
+
+#### Removing a version
+
+The bin beside the pencil takes a version away. **The state it named
+stays** — every recorded state does, marked or not, and in the advanced
+view it is still a row you can go back to. What goes is the mark and the
+words on it.
+
+Unlike renaming, this **asks first**, and the question is worth reading
+rather than clicking through. It names what will go — the tag, and the
+title and description with it — says that the history is preserved
+either way, and adds two more lines when they apply to the version in
+front of you:
+
+- **The number comes free.** Only when it was the highest: then the next
+  patch hands out that same number again. A number from the middle of
+  the list stays spent, so the order never shifts under a correction.
+- **It will come back on its own.** For an automatic mark, the dialog
+  says so when a save right now would make it again — worked out by
+  running the day rule with that save in front of it, not by guessing
+  from the calendar. The daily marking can be switched off entirely in
+  the integration's settings, which the dialog points at.
+
+The reason it asks at all, when renaming does not, is that this one
+cannot be undone by the same route: the state comes back as a row, but
+the title and description you wrote are gone with the tag. Removing and
+creating again is two acts, and the second one only marks whatever state
+you point it at.
+
+Getting a number wrong is therefore not permanent — remove the version
+and make the one you meant. That is also the short way out of *"I
+clicked patch and meant minor"*. [The FAQ](https://github.com/PPP01/ha-dashboard-history/blob/main/FAQ.md#what-to-do-instead)
+has the longer version, including why the number itself is never typed.
 
 #### Keeping the state you are leaving
 
@@ -366,7 +449,11 @@ restart needed.
 
 The dashboard stays in the panel, folded away under a `Deleted (N)`
 section. **Nothing is lost**, and it comes back with its cards, title,
-icon and sidebar setting:
+icon and sidebar setting. Pick it there and the banner across the top
+offers **Bring it back** — one click, with the same preview and
+confirmation as every other way back.
+
+The same thing through Developer Tools → Actions:
 
 ```yaml
 action: dashboard_history.restore_state
@@ -537,7 +624,7 @@ saying where it comes from.
 
 ### When a change is recorded
 
-Three triggers, and no others:
+Three triggers watch for a change:
 
 - **A save.** Home Assistant fires `lovelace_updated`; the recorder hears
   it and commits that one dashboard within milliseconds. The listener is
@@ -549,6 +636,12 @@ Three triggers, and no others:
   in bursts, so the events are collapsed into one reconciliation ten
   seconds later.
 - **Startup.** Every dashboard is read and compared against the history.
+
+Those three are the ones that watch. There is a fourth that this
+integration causes itself: **before it writes a dashboard**, for a
+restore or an undo, it records what is there now. That is the safety net
+under every way back — see [Refusals by design](#refusals-by-design) —
+and it is why going back never costs you the state you went back from.
 
 Everything that reaches a dashboard through Home Assistant is covered by
 the first trigger — the UI, a service call, the WebSocket API, an
@@ -613,10 +706,11 @@ the limits cost is the *narrow* way back, not the content.
 | A section added | the cards in it, as added | **refuses** | — | works |
 | Titled sections reordered | correct | **refuses** | **refuses** | works |
 | **Untitled** sections reordered | correct | writes positionally | **writes into the wrong section** | works |
-| A view without a URL path shifts position | can name a view that was not touched | **refuses** | — | works |
+| A view without a URL path shifts position | can name a view that was not touched | **refuses** | **refuses** | works |
+| …and was edited in the same save | the same | **refuses** | **adds it a second time**, in its older form | works |
 | A view's URL path changed | `1 view removed, 1 view added` | exact | offered (adds the old view) | works |
 | A path freed and reused by a new view | read as card changes inside it | writes the old cards into the new view | — | works |
-| Two views sharing one path | the first is invisible to the analysis | — | — | works |
+| Two views sharing one path, the first one deleted | read as cards removed, not as a view gone | writes into the surviving view | writes into the surviving view | works |
 
 Four of these deserve the detail.
 
@@ -669,9 +763,12 @@ A view's badges are neither cards nor in a card list, so a change to them
 produces:
 
 ```text
-This change cannot be described in terms of cards — see the technical
-details below.
+This change cannot be described in terms of cards - see the details
+below.
 ```
+
+The details it points at are behind *Show the technical details*, the
+fold that carries the diff.
 
 The diff below it is complete and correct; only the words are missing.
 *Undo this change* refuses with *"this change did not alter any cards"*,
@@ -729,8 +826,29 @@ the card into whichever section now occupies that index — verified: the
 card lands beside the wrong neighbour, silently. The undo is not blocked
 either.
 
-This is the one row in the whole table where the tool writes a state
-nobody asked for. Two things bound it:
+This is not the only row where the tool writes a state nobody asked for
+— the table has four, and it is worth knowing which:
+
+- **This one**, untitled sections reordered. Needs nothing unusual: the
+  editor produces untitled sections by default.
+- **A URL path freed and handed to a new view.** Also an ordinary thing
+  to do — delete a view, make another with the same path. The old cards
+  are then written into the new view, because a path is unique at any
+  one moment but not across a history.
+- **A pathless view shifted and edited in the same save.** *Put back*
+  adds it a second time, in its older form. The refusal one row above
+  works by looking for the view as it was; an edited one no longer looks
+  like itself. Needs a view without a URL path, which eight of 67 are.
+- **Two views sharing one path.** Home Assistant's backend allows it,
+  its editor does not produce it, and it appears on none of the eleven
+  dashboards this was built against. Only the first of the two is
+  affected, and only when it is deleted whole: that reads as cards
+  removed rather than as a view gone, and both narrow ways back put them
+  into the surviving view. Cards edited *inside* either view are handled
+  correctly — measured. Noted so that "a path is an identity" is not
+  read as a guarantee.
+
+Two things bound this row in particular:
 
 - The trigger is a **reordering**, not an edit. Sections have to change
   places in the same save as the card change.
@@ -764,16 +882,38 @@ Eight of 67 views carry no path, and a view without one is keyed by its
 position. When the position shifts — even because a *neighbour* was
 deleted — the same key means a different view.
 
-Every write path refuses in that case:
+Both write paths refuse in that case, and they say different things
+because they know different things. The undo works from a plan over two
+whole states, so it can see that a position has stopped meaning what it
+meant:
 
 > a view without a URL path sits somewhere else now, so an exact undo
 > cannot tell which view is which
 
-The refusal is thorough: it covers the case where the pathless view was
-not touched at all, and it is deliberately stricter than strictly
-necessary — an *added* pathless view blocks an undo even though its
-neighbours are still unambiguous. Refusing too often is the correct error
-to make here.
+*Put back* is handed one item and the state as it stands, nothing more,
+so it asks the question it can answer — is this view actually missing?
+It looks for it, byte for byte, in the dashboard it is about to write:
+
+> this view has no URL path and one just like it is on the dashboard
+> already, so it did not go missing and putting it back would add a
+> second copy
+
+That is the same proof the undo works from, one object smaller. It is
+also the newer of the two: until 2026-09-09 the put-back path had no
+check at all, and deleting the neighbour of an untouched pathless view
+offered that view back and added a second copy of it. The undo had been
+guarded since 2026-09-04; the writing twin of the same case was missed.
+
+The undo's refusal is deliberately stricter than strictly necessary — an
+*added* pathless view blocks it even though its neighbours are still
+unambiguous. Refusing too often is the correct error to make here.
+
+*Put back* keeps one gap that the undo does not, and it follows from
+working without the old state: a pathless view that was **both shifted
+and edited** is no longer byte-identical to itself, so it does not look
+like it is still there. It would be added a second time, in its older
+form. Telling that apart from a view somebody really deleted needs an
+identity of its own — the idea below.
 
 What the refusal does *not* fix is the wording of the history entry. A
 shifted pathless view can still be described wrongly — naming a view that
@@ -787,10 +927,15 @@ Not everything above is a defect. These are refusals the project chose:
 
 - **Nothing that writes a dashboard state runs without `confirm`.**
   `restore_deleted`, `restore_state` and `undo_change` each answer with a
-  preview and write nothing until confirmed. `describe` and
-  `create_version` are the exceptions, and they write a note and a tag —
-  no dashboard changes, so a confirmation dialog would be ceremony
-  without protection.
+  preview and write nothing until confirmed. `describe`,
+  `create_version` and `retitle_version` write without asking — a note
+  and a tag's wording, no dashboard changes, so a confirmation dialog
+  would be ceremony without protection.
+- **`confirm` says when it is needed, not when it alone suffices.** Two
+  operations ask although no dashboard changes: `remove_version` and
+  `forget`. Neither could put back what it takes — a tag's title and
+  description, a rewritten history — and irreversibility is a reason of
+  its own.
 - **Put back never overwrites.** It is additive by definition. Where that
   is the wrong shape for what you want, the undo is the tool.
 - **Undo is all or nothing.** One unresolvable step blocks the whole plan.
@@ -849,13 +994,18 @@ Four notes for scripting:
   is addressed by, the state it marks and the time it was made all stay —
   so the order of the version list does not shift under a correction.
   Renaming the number is not offered at all; the reasons are in
-  [the FAQ](FAQ.md#why-cant-i-change-a-version-number-afterwards).
+  [the FAQ](https://github.com/PPP01/ha-dashboard-history/blob/main/FAQ.md#why-cant-i-change-a-version-number-afterwards).
 
 ### Where the data lives
 
 In `config/dashboard_history/`, as a git repository this integration owns.
-Each dashboard is one YAML file, each save one commit, each version a tag,
-each description a git note.
+Each save is one commit, each version a tag, each description a git note.
+
+A dashboard is two files in that commit: `<key>.yaml` for what is on it,
+and `meta/<key>.yaml` for what Home Assistant knows about it — the title,
+the icon, the sidebar setting. Those live in Home Assistant's registry
+rather than in the dashboard configuration, which is why they need a file
+of their own, and why a restored dashboard comes back under its own name.
 
 You may look inside. Do not edit it by hand — the integration writes it
 and expects to be the only writer.
@@ -886,9 +1036,9 @@ code; this page and the comments carry that. If you want the reasoning
 behind a particular decision and do not read German, open an issue and ask
 — answering in English is easy.
 
-Four modules carry the logic and import nothing from Home Assistant —
-`yaml_io.py`, `analyze.py`, `restore.py` and `versions.py` — so the test
-suite runs without an installation:
+Six modules carry the logic and import nothing from Home Assistant —
+`analyze.py`, `restore.py`, `versions.py`, `yaml_io.py`, `store.py` and
+`keys.py` — so the test suite runs without an installation:
 
 ```bash
 python3 -m pytest tests/ -v
@@ -912,4 +1062,4 @@ python3 tests/integration/look_at_panel.py  # the panel, in a real browser
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/PPP01/ha-dashboard-history/blob/main/LICENSE).
