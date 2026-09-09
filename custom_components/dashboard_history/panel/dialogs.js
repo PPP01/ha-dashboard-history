@@ -2,10 +2,16 @@
  * Every dialog the panel opens, as markup.
  *
  * Out of `_render` because they are the half of it that never changes:
- * the same five elements are in the shadow root whatever mode is on and
+ * every one of them is in the shadow root whatever mode is on and
  * whichever dashboard is picked. What differs is what gets written into
  * their `.body` before they are shown, and that stays in the class,
  * where the data is.
+ *
+ * "the same five elements" until a sixth was added and this line was
+ * not. A count is a claim about the whole set, and it has to be hunted
+ * down every time the set changes - which nothing here would ever fail
+ * over, so it goes stale silently. The sentence says the load-bearing
+ * part instead, and anybody wanting the number can count the file.
  */
 
 // The two fields a version's words are typed into, and the one place
