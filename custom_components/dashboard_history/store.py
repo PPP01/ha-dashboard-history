@@ -651,13 +651,17 @@ class HistoryStore:
         a lightweight tag: this only reads, and decision 13 says a
         hand-made tag stays visible.
         """
+        # Two lines rather than a helper, and there used to be one here
+        # calling itself "the read every locked caller goes through". It
+        # had exactly one caller: `remove_version` deliberately does not
+        # use it, because it needs the ref as well as the target. A
+        # docstring inviting the next locked reader in would have sent
+        # them somewhere that cannot give them the ref - and rebuilding
+        # `b"refs/tags/" + name.encode(...)` at their own call site is
+        # the one thing `_tag_at_locked` exists to prevent.
         with self._lock:
-            return self._read_version_locked(self._repo(), key, name)
-
-    def _read_version_locked(self, repo, key: str, name: str) -> Version:
-        """The read every locked caller goes through, already under the lock."""
-        _, target = self._tag_at_locked(repo, key, name)
-        return _version_from(name, target)
+            _, target = self._tag_at_locked(self._repo(), key, name)
+            return _version_from(name, target)
 
     def remove_version(self, key: str, name: str) -> Version:
         """Take one dashboard's version away. Answers what was taken.

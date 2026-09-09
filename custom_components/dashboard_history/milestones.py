@@ -48,13 +48,17 @@ _LOGGER = logging.getLogger(__name__)
 # the save has been announced, so it delays no save - it holds a thread
 # and the lock below for about a tenth of a second.
 #
-# The number itself moved to `versions.py` on 2026-09-09. The prediction
-# of whether a removed day mark would come back has to read the same
-# window, and one bounded differently from the rule it predicts would
-# disagree with it only at the edge - the worst place to find out. The
-# measurements above are about what this window costs *here*, which is
-# why they stayed here.
-_RECENT = versioning.RECENT_STATES
+# The number itself moved to `versions.RECENT_STATES` on 2026-09-09. The
+# prediction of whether a removed day mark would come back has to read
+# the same window, and one bounded differently from the rule it predicts
+# would disagree with it only at the edge - the worst place to find out.
+# The measurements above are about what this window costs *here*, which
+# is why they stayed here.
+#
+# Read at each site rather than aliased back into this module. An alias
+# under a comment this long is the shape of a value somebody edits in
+# place, and the whole reason for the move was that the two readers must
+# not be able to drift apart. Nothing in this file can now set it.
 
 
 class Milestones:
@@ -350,7 +354,7 @@ class Milestones:
                 return
             async with self._marking:
                 newest = await self._hass.async_add_executor_job(
-                    self._store.list_changes, key, _RECENT
+                    self._store.list_changes, key, versioning.RECENT_STATES
                 )
                 if len(newest) < 2:
                     # The first state this dashboard ever had. There is
@@ -366,16 +370,16 @@ class Milestones:
                 )
                 if at is None:
                     # Either no day ended here - the ordinary case, and
-                    # by far the most common - or more than `_RECENT`
+                    # by far the most common - or more than `RECENT_STATES`
                     # saves landed since one did, and that state is out
                     # of reach for good. The second is worth a line:
                     # without one, the only way anybody would ever
                     # notice is a missing mark found weeks later.
-                    if len(newest) >= _RECENT:
+                    if len(newest) >= versioning.RECENT_STATES:
                         _LOGGER.debug(
                             "No day ended within the last %s states of %s; "
                             "if one did, it is out of this window",
-                            _RECENT,
+                            versioning.RECENT_STATES,
                             key,
                         )
                     return

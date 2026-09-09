@@ -305,7 +305,8 @@ export const STYLE = `
   /* Where there is no pointer there is no hover, and a control that
      only appears on hover is a control that does not exist. Since the
      simple mode is the one opened on a phone, and renaming a version is
-     one of the two things it offers, they are all shown there. */
+     one of the three things it offers - going back, renaming, removing
+     - they are all shown there. */
   @media (hover: none) {
     .pen { opacity: 1; pointer-events: auto; }
   }

@@ -130,24 +130,37 @@ class Entry:
     options: dict = {}
 
 
-async def scenario(where: Path, states) -> list[str]:
-    """Write `states`, lay the floor, then mark the day that ended.
+async def build(where: Path, states) -> tuple[Rewound, marking.Milestones]:
+    """Write `states` and lay the floor. Answers the store and the marker.
 
     `states` are (text, days ago) pairs, oldest first, and the last one
-    is always today - a mark needs a day to close. Answers the version
-    numbers the dashboard carries afterwards.
+    is always today - a mark needs a day to close.
+
+    Split out of `scenario` for the sections that act again afterwards:
+    they take a mark away and mark once more, so they need the two
+    objects rather than a list of names. Written twice inline first,
+    which put three copies of this loop in one file.
     """
     store = Rewound(where)
     for text, ago in states:
         revision = store.write_snapshot(KEY, text, f"{KEY}: {text.strip()}")
         assert revision is not None, f"nothing was recorded for {text!r}"
         store.shifts[revision] = ago * DAY
-
     made = marking.Milestones(Hass(), store, Entry())
     await made.async_lay_the_floor()
+    return store, made
 
-    await made._async_mark_day(KEY)
+
+def numbers(store: Rewound) -> list[str]:
+    """The version numbers the dashboard carries, sorted."""
     return sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+
+
+async def scenario(where: Path, states) -> list[str]:
+    """Write `states`, lay the floor, then mark the day that ended."""
+    store, made = await build(where, states)
+    await made._async_mark_day(KEY)
+    return numbers(store)
 
 
 async def main() -> int:
@@ -189,26 +202,19 @@ async def main() -> int:
         # promise, and a promise about a rule that runs once a day is
         # worth a check: the alternative reading - "removed means gone" -
         # is the one a person will have.
-        where = root / "three"
-        store = Rewound(where)
-        for text, ago in [(A, 2), (B, 1), (A2, 1), (B, 0)]:
-            revision = store.write_snapshot(KEY, text, f"{KEY}: {text.strip()}")
-            assert revision is not None
-            store.shifts[revision] = ago * DAY
-        made = marking.Milestones(Hass(), store, Entry())
-        await made.async_lay_the_floor()
+        store, made = await build(root / "three", [(A, 2), (B, 1), (A2, 1), (B, 0)])
         await made._async_mark_day(KEY)
-        marked = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+        marked = numbers(store)
         if check(
             "the day was marked to begin with", marked == ["v1.0.0", "v1.0.1"], str(marked)
         ):
             store.remove_version(KEY, f"{KEY}/v1.0.1")
-            gone = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+            gone = numbers(store)
             check("and taking the mark away leaves it gone", gone == ["v1.0.0"], str(gone))
             # The same call the next save would make. Nothing else
             # changed: same states, same calendar, same walk.
             await made._async_mark_day(KEY)
-            again = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+            again = numbers(store)
             check(
                 "and the next save marks that day again",
                 again == ["v1.0.0", "v1.0.1"],
@@ -228,16 +234,9 @@ async def main() -> int:
         # so there is no way to make a yesterday from outside. And
         # `pytest` cannot reach `_async_mark_day` at all. This is what
         # the third way is for.
-        where = root / "four"
-        store = Rewound(where)
-        for text, ago in [(A, 1), (B, 1), (A2, 0)]:
-            revision = store.write_snapshot(KEY, text, f"{KEY}: {text.strip()}")
-            assert revision is not None
-            store.shifts[revision] = ago * DAY
-        made = marking.Milestones(Hass(), store, Entry())
-        await made.async_lay_the_floor()
+        store, made = await build(root / "four", [(A, 1), (B, 1), (A2, 0)])
         await made._async_mark_day(KEY)
-        marked = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+        marked = numbers(store)
         if check(
             "yesterday is marked by the first save of today",
             marked == ["v1.0.0", "v1.0.1"],
@@ -247,7 +246,7 @@ async def main() -> int:
             # is on the oldest state, the day mark on the newest of
             # yesterday. Taking the day mark is the case; taking the
             # floor is a different one.
-            ends = store.list_changes(KEY, 20)
+            ends = store.list_changes(KEY, versioning.RECENT_STATES)
             yesterday_last = next(
                 c.revision for c in ends
                 if versioning.local_day(c.timestamp, dt_util.DEFAULT_TIME_ZONE)
@@ -265,7 +264,7 @@ async def main() -> int:
             )
             check("and the preview says it would come back", told is True, str(told))
             store.remove_version(KEY, mark.name)
-            gone = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+            gone = numbers(store)
             check(
                 "taking it away leaves it gone",
                 mark.name.split("/")[-1] not in gone,
@@ -283,7 +282,7 @@ async def main() -> int:
             check(
                 "and the next save the same day marks yesterday again",
                 bool(back),
-                str(sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))),
+                str(numbers(store)),
             )
 
     check(

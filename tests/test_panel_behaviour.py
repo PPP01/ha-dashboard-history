@@ -3927,172 +3927,127 @@ def test_the_bin_is_revealed_by_the_same_class_as_the_pen(row_parts):
 
 
 _REMOVE_VERSION = """
-const el = new Panel();
-// Handed in, because `attachShadow()` in the prelude answers `{}` and
-// panel.js throws that answer away - so `this.shadowRoot` is undefined
-// in Node. Every scenario in this file that touches a dialog does this;
-// without it the run dies at the first `querySelector` with a TypeError,
-// and all four tests below fail at the fixture instead of at what they
-// are about.
-el.shadowRoot = node();
-el._render = () => {};
-el._selected = "dash";
-el._versions = [
+// Four removals through one helper, because only three things differ
+// between them: the version, the preview the server answers, and how
+// the dialog is closed. Written out four times first, and that put
+// fifteen lines of identical scaffolding around each of the facts the
+// tests are actually about - a new stub or a changed `_call` signature
+// would have had to be repeated four times by hand.
+const shared = [
   { name: "dash/v1.0.2", title: "Third", description: "a note",
     revision: "c", annotated: true, automatic: false },
 ];
-const calls = [];
-el._call = (type, extra) =>
-  new Promise((resolve) => calls.push({ type, extra, resolve }));
-el._refresh = async () => {};
 
-const dialog = el.shadowRoot.querySelector("dialog.remove");
-// Answered the way a person would: the dialog is closed with the value
-// the button carries, once the preview has been put into it.
-let bodyWhenOpened = null;
-const opening = el._removeVersion("dash/v1.0.2");
-await settle();
-const asked = { ...calls[0] };
-calls[0].resolve({
-  applied: false, name: "dash/v1.0.2", title: "Third", description: "a note",
-  revision: "c", automatic: false, highest: true,
-});
-await settle();
-bodyWhenOpened = dialog.querySelector(".body").innerHTML;
-dialog.returnValue = "remove";
-dialog.close();
-await settle();
-const confirmed = calls[1] ? { ...calls[1] } : null;
-if (calls[1]) calls[1].resolve({ applied: true, name: "dash/v1.0.2" });
-await opening;
+async function tryRemoval(name, answer, closeAs) {
+  const panel = new Panel();
+  // Handed in, because `attachShadow()` in the prelude answers `{}` and
+  // panel.js throws that answer away - so `this.shadowRoot` is
+  // undefined in Node. Every scenario in this file that touches a
+  // dialog does this.
+  panel.shadowRoot = node();
+  panel._render = () => {};
+  panel._selected = "dash";
+  panel._versions = shared;
+  panel._refresh = async () => {};
+  const calls = [];
+  panel._call = (type, extra) =>
+    new Promise((resolve) => calls.push({ type, extra, resolve }));
 
-// And the second run, cancelled.
-const two = new Panel();
-two.shadowRoot = node();
-two._render = () => {};
-two._selected = "dash";
-two._versions = el._versions;
-const twoCalls = [];
-two._call = (type, extra) =>
-  new Promise((resolve) => twoCalls.push({ type, extra, resolve }));
-two._refresh = async () => {};
-const cancelling = two._removeVersion("dash/v1.0.2");
-await settle();
-twoCalls[0].resolve({
-  applied: false, name: "dash/v1.0.2", title: "Third", description: "",
-  revision: "c", automatic: true, highest: false, returns: true,
-});
-await settle();
-const cancelDialog = two.shadowRoot.querySelector("dialog.remove");
-// Read before the dialog is closed - this is the negative case for the
-// one sentence in the whole dialog somebody acts on. Without it, a
-// panel that dropped the `facts.highest` branch and printed "free
-// again" unconditionally would still pass every test here.
-const cancelBody = cancelDialog.querySelector(".body").innerHTML;
-cancelDialog.returnValue = "cancel";
-cancelDialog.close();
-await settle();
-await cancelling;
+  const running = panel._removeVersion(name);
+  await settle();
+  const asked = { ...calls[0] };
+  calls[0].resolve(answer);
+  await settle();
 
-// And a third run: the wordless lightweight tag `bin()` exists to
-// extend the offer to. Neither a title nor a description, so `words`
-// must fall back, the "goes with it" paragraph has nothing true left to
-// say and must not appear, and there is no description text to render
-// either - the dialog must not claim a loss that is not real.
-// And the case found on a real screen: an automatic day mark that is
-// NOT the one the next save would close. `automatic` is true and
-// `returns` is false, and the bullet must stay away - the old panel
-// hung it on `automatic` alone and told this version it would be
-// re-created, which was simply false.
-const mid = new Panel();
-mid.shadowRoot = node();
-mid._render = () => {};
-mid._selected = "dash";
-mid._versions = el._versions;
-const midCalls = [];
-mid._call = (type, extra) =>
-  new Promise((resolve) => midCalls.push({ type, extra, resolve }));
-mid._refresh = async () => {};
-const midway = mid._removeVersion("dash/v0.0.3");
-await settle();
-midCalls[0].resolve({
-  applied: false, name: "dash/v0.0.3", title: "7 September 2026",
-  description: "", revision: "m", automatic: true, highest: false,
-  returns: false,
-});
-await settle();
-const midDialog = mid.shadowRoot.querySelector("dialog.remove");
-const midBody = midDialog.querySelector(".body").innerHTML;
-midDialog.returnValue = "cancel";
-midDialog.close();
-await settle();
-await midway;
-const three = new Panel();
-three.shadowRoot = node();
-three._render = () => {};
-three._selected = "dash";
-three._versions = el._versions;
-const threeCalls = [];
-three._call = (type, extra) =>
-  new Promise((resolve) => threeCalls.push({ type, extra, resolve }));
-three._refresh = async () => {};
+  const dialog = panel.shadowRoot.querySelector("dialog.remove");
+  // Read before the dialog is closed. The stand-in does not clear it,
+  // but a body read after `close()` is the shape in which a negative
+  // assertion goes quietly vacuous, so both sides read it the same way.
+  const body = dialog.querySelector(".body").innerHTML;
+  dialog.returnValue = closeAs;
+  dialog.close();
+  await settle();
 
-const wordless = three._removeVersion("dash/by-hand");
-await settle();
-threeCalls[0].resolve({
-  applied: false, name: "dash/by-hand", title: "", description: "",
-  revision: "z", automatic: false, highest: false,
-});
-await settle();
-const wordlessDialog = three.shadowRoot.querySelector("dialog.remove");
-const wordlessBody = wordlessDialog.querySelector(".body").innerHTML;
-wordlessDialog.returnValue = "cancel";
-wordlessDialog.close();
-await settle();
-await wordless;
+  const confirmed = calls[1] ? { ...calls[1] } : null;
+  if (calls[1]) calls[1].resolve({ applied: true, name });
+  await running;
+  return { asked, body, confirmed, calls: calls.length };
+}
+
+// Highest and described, confirmed.
+const first = await tryRemoval(
+  "dash/v1.0.2",
+  { applied: false, name: "dash/v1.0.2", title: "Third", description: "a note",
+    revision: "c", automatic: false, highest: true },
+  "remove",
+);
+// Automatic and returning, cancelled - the negative case for the
+// number sentence and the positive one for re-tagging.
+const second = await tryRemoval(
+  "dash/v1.0.2",
+  { applied: false, name: "dash/v1.0.2", title: "Third", description: "",
+    revision: "c", automatic: true, highest: false, returns: true },
+  "cancel",
+);
+// Automatic but NOT the day the next save would close - found on a real
+// screen. The old panel hung the bullet on `automatic` alone and told
+// this version it would be re-created, which was false.
+const midway = await tryRemoval(
+  "dash/v0.0.3",
+  { applied: false, name: "dash/v0.0.3", title: "7 September 2026",
+    description: "", revision: "m", automatic: true, highest: false,
+    returns: false },
+  "cancel",
+);
+// A hand-made lightweight tag: no title, no description, nothing that
+// would come back. The version `bin()` exists to extend the offer to.
+const wordless = await tryRemoval(
+  "dash/by-hand",
+  { applied: false, name: "dash/by-hand", title: "", description: "",
+    revision: "z", automatic: false, highest: false },
+  "cancel",
+);
 
 console.log(JSON.stringify({
-  asked: { type: asked.type, extra: asked.extra },
-  confirmed: confirmed && { type: confirmed.type, extra: confirmed.extra },
-  saysTheNumberComesFree: bodyWhenOpened.includes("Version number freed"),
-  hidesTheNumberSentence: !cancelBody.includes("Version number freed"),
+  asked: { type: first.asked.type, extra: first.asked.extra },
+  confirmed: first.confirmed
+    && { type: first.confirmed.type, extra: first.confirmed.extra },
+  saysTheNumberComesFree: first.body.includes("Version number freed"),
+  hidesTheNumberSentence: !second.body.includes("Version number freed"),
   // The number itself, not a sentence about it. Matched on the markup
   // so a bullet that lost the `<strong>` and said "the next patch will
   // reuse it" would fail here rather than read as a pass.
-  namesTheFreedNumber: bodyWhenOpened.includes("reuse <strong>v1.0.2</strong>"),
-  saysTheStateStays: bodyWhenOpened.includes("History is preserved"),
-  namesTheVersion: bodyWhenOpened.includes("Third"),
-  showsTheDescription: bodyWhenOpened.includes("a note"),
-  callsAfterCancel: twoCalls.length,
-  firstSaysAutomatic: bodyWhenOpened.includes("Automatic re-tagging"),
-  secondSaysAutomatic: cancelBody.includes("Automatic re-tagging"),
+  namesTheFreedNumber: first.body.includes("reuse <strong>v1.0.2</strong>"),
+  saysTheStateStays: first.body.includes("History is preserved"),
+  namesTheVersion: first.body.includes("Third"),
+  showsTheDescription: first.body.includes("a note"),
+  labelsTheDescription: first.body.includes("<strong>Description:</strong>"),
+  callsAfterCancel: second.calls,
+  firstSaysAutomatic: first.body.includes("Automatic re-tagging"),
+  secondSaysAutomatic: second.body.includes("Automatic re-tagging"),
   // The one that matters: automatic, but not the day the next save
   // would close. Both halves are read from the same body, so a panel
   // that dropped the bullet altogether fails `secondSaysAutomatic`
   // rather than passing this one for the wrong reason.
-  midwaySaysAutomatic: midBody.includes("Automatic re-tagging"),
-  midwayStillNamesTheVersion: midBody.includes("7 September 2026"),
+  midwaySaysAutomatic: midway.body.includes("Automatic re-tagging"),
+  midwayStillNamesTheVersion: midway.body.includes("7 September 2026"),
   // A hand-made tag has no title, so the head is the number alone and
   // the lead stops at the tag. Both halves are checked: a head that
   // rendered "by-hand — undefined" would pass the second on its own.
-  wordlessHeadIsTheNumberAlone:
-    wordlessBody.includes("<strong>by-hand</strong>"),
-  wordlessNamesOnlyTheTag: wordlessBody.includes("only deletes the tag:"),
+  wordlessHeadIsTheNumberAlone: wordless.body.includes("<strong>by-hand</strong>"),
+  wordlessNamesOnlyTheTag: wordless.body.includes("only deletes the tag:"),
   // Matched on "its title" rather than the whole clause: the lead reads
   // ", its title and its description" with both and " and its title"
   // with one, so a matcher tied to either phrasing would go quiet the
   // moment the other one appeared.
-  wordlessHidesTheWordsParagraph: !wordlessBody.includes("its title"),
+  wordlessHidesTheWordsParagraph: !wordless.body.includes("its title"),
   // Matched on the class the description actually carries. It was
   // `muted` until the words moved up beside the number on 2026-09-09
   // and became `why` - and this assertion went on passing, because
   // nothing in this dialog says `muted` any more. A negative matcher
   // tied to a class the code no longer emits is always true.
-  wordlessHasNoDescriptionParagraph: !wordlessBody.includes('class="why"'),
-  // Both halves, so the pair cannot both go quiet: the described
-  // version must show the label, the wordless one must not.
-  labelsTheDescription: bodyWhenOpened.includes("<strong>Description:</strong>"),
-  wordlessHasNoDescriptionLabel: !wordlessBody.includes("Description:"),
+  wordlessHasNoDescriptionParagraph: !wordless.body.includes('class="why"'),
+  wordlessHasNoDescriptionLabel: !wordless.body.includes("Description:"),
 }));
 """
 

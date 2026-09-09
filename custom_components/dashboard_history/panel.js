@@ -1551,13 +1551,18 @@ class DashboardHistoryPanel extends HTMLElement {
     const head = facts.title ? `${number} — ${escape(facts.title)}` : number;
     // Named in the lead, not in a bullet: it is what the sentence is
     // about, and "only" is doing the reassuring work in front of it.
-    const alsoGoes = facts.title && facts.description
-      ? ", its title and its description"
-      : facts.title
-      ? " and its title"
-      : facts.description
-      ? " and its description"
-      : "";
+    //
+    // Built as a list and handed to `joinNames`, which is this
+    // codebase's own way of writing one - no separator for one item,
+    // "a and b" for two, "a, b and c" for three, no Oxford comma. It
+    // was a four-branch ternary first, and that spelled out by hand
+    // exactly what the helper two screens up already does: change the
+    // convention there and a hand-rolled chain keeps the old one
+    // silently, because nobody greps for an if/else.
+    const goes = ["the tag"];
+    if (facts.title) goes.push("its title");
+    if (facts.description) goes.push("its description");
+    const alsoGoes = goes.length > 1 ? ", which cannot be written back" : "";
     dialog.querySelector(".body").innerHTML = `
       <p class="who"><strong>${head}</strong>${facts.description
         ? `<span class="why"><strong>Description:</strong> ${
@@ -1565,8 +1570,7 @@ class DashboardHistoryPanel extends HTMLElement {
         : ""
       }</p>
       <p><strong>Note:</strong><br>
-         Removing this version only deletes the tag${alsoGoes}${
-           alsoGoes ? ", which cannot be written back" : ""}:</p>
+         Removing this version only deletes ${joinNames(goes)}${alsoGoes}:</p>
       <ul class="loss">
         <li><strong>History is preserved:</strong> The underlying state
             remains accessible in the advanced view.</li>
@@ -1734,10 +1738,17 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The one operation here that rewrites the stored history, so it is
-   * asked twice: once by the button, once by a dialog that counts what
-   * is about to be lost. No diff - a diff of this would be the whole
-   * history.
+   * Irreversible, so it is asked twice: once by the button, once by a
+   * dialog that counts what is about to be lost. No diff - a diff of
+   * this would be the whole history.
+   *
+   * No superlative here on purpose. What is unique about `forget` - it
+   * is the one operation that rewrites the stored history - is said
+   * where a reader needs it to decide whether to trust the tool, in
+   * the README and in `store.forget`. Repeated at every site that
+   * merely *consequences* from it, a claim about the whole set of
+   * operations has to be hunted down and reworded every time the set
+   * changes; this branch spent five commits doing exactly that.
    */
   async _forget() {
     // Held and claimed before the first await, for the reason spelled
