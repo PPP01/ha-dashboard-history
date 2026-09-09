@@ -727,7 +727,9 @@ in `test_restore.py`; der umgestellte Fall zählt schon mit).
 - [ ] **Schritt 13: Committen**
 
 ```bash
-git add custom_components/dashboard_history/analyze.py tests/test_analyze.py tests/test_restore.py
+git add custom_components/dashboard_history/analyze.py \
+        custom_components/dashboard_history/restore.py \
+        tests/test_analyze.py tests/test_restore.py
 git commit -m "$(cat <<'EOF'
 Offer a deleted section as one thing
 
