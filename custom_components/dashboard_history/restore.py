@@ -92,6 +92,30 @@ def _anchor_holds(view: dict, item: RemovedItem) -> bool:
     return isinstance(section, dict) and section.get("title") == title
 
 
+def _section_gap_holds(view: dict, item: RemovedItem) -> bool:
+    """Whether the gap this section left is still the only one it fits.
+
+    True exactly when today's sections are the ones that stood beside it,
+    in their order. Then the run is one short at `item.index` and there is
+    no second place it could belong to.
+
+    Compared with `==` on the sections themselves, which is why the item
+    carries them rather than a digest of them: this module has no runtime
+    import of `analyze` (see the note at the top) and so no fingerprint
+    to compare.
+
+    Not over titles, and that is the point. Of the 80 sections on the
+    installation this was developed against, 0 carry one - a check
+    against titles would pass on a run of `None`s while telling us
+    nothing. Strict instead: a card edited in a neighbouring section
+    since the deletion is enough to refuse, and the whole-state restore
+    is what covers that.
+    """
+    if item.neighbours is None:
+        return False
+    return list(view.get("sections") or []) == list(item.neighbours)
+
+
 def _view_has_gone(views: list, item: RemovedItem) -> bool:
     """Whether the view being put back is really missing from the state.
 
@@ -142,6 +166,30 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
                 "it back would add a second copy"
             )
         views.insert(min(item.index, len(views)), copy.deepcopy(item.payload))
+        return result
+
+    if item.kind == "section":
+        view = _find_view(views, item)
+        if view is None:
+            raise LookupError(
+                f"the view this section belonged to no longer exists "
+                f"(path={item.view_path!r}, index={item.view_index})"
+            )
+        if not _section_gap_holds(view, item):
+            raise LookupError(
+                "the other sections of this view are not the ones this "
+                "section stood beside, so there is no telling where it "
+                "belongs now"
+            )
+        # Not `setdefault`: a view written as `sections: null` in YAML
+        # arrives as {"sections": None}, and `setdefault` hands the None
+        # straight back - the key is there. `card_containers` guards the
+        # same shape with `or []`, so it does occur.
+        sections = view.get("sections")
+        if not isinstance(sections, list):
+            sections = []
+            view["sections"] = sections
+        sections.insert(min(item.index, len(sections)), copy.deepcopy(item.payload))
         return result
 
     if item.kind != "card":
@@ -231,6 +279,12 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
         raise LookupError(plan.blocked)
     result = copy.deepcopy(config)
     views = result.setdefault("views", [])
+
+    if _paths_share(result):
+        raise LookupError(
+            "two views of this dashboard share one URL path, so a path "
+            "does not identify a view here and no step is applied"
+        )
 
     # Cards before views: a card step finds its view by path, but falls
     # back to the index, and removing a view first would move it.

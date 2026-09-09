@@ -300,3 +300,77 @@ def test_reinsert_refuses_an_item_of_a_kind_it_does_not_know():
     )
     with pytest.raises(LookupError, match="does not know"):
         restore.reinsert(config, item)
+
+
+def test_a_deleted_section_goes_back_into_its_gap():
+    """The everyday case: deleted, then wanted back, nothing else touched."""
+    first = {"title": None, "cards": [A, B]}
+    second = {"title": None, "cards": [C]}
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [dict(first), dict(second)]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [dict(second)]}]}
+    item = next(i for i in analyze.find_removed(old, new) if i.kind == "section")
+
+    result = restore.reinsert(new, item)
+
+    assert result["views"][0]["sections"] == [first, second]
+
+
+def test_a_deleted_section_refuses_when_a_neighbour_changed_since():
+    """Then the gap is no longer the only place it could go.
+
+    Strict on purpose: without titles - and 0 of 80 sections on the real
+    installation have one - the run of sections carries no identity, so
+    "unchanged neighbours" is the whole proof there is.
+    """
+    first = {"title": None, "cards": [A, B]}
+    second = {"title": None, "cards": [C]}
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [dict(first), dict(second)]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [dict(second)]}]}
+    item = next(i for i in analyze.find_removed(old, new) if i.kind == "section")
+    # A card added to the surviving section after the deletion.
+    today = {"views": [{"path": "home", "type": "sections",
+                        "sections": [{"title": None, "cards": [C, A]}]}]}
+
+    with pytest.raises(LookupError, match="stood beside"):
+        restore.reinsert(today, item)
+
+
+def test_putting_a_section_back_leaves_the_input_alone():
+    """The caller still needs the old state to render a preview against."""
+    first = {"title": None, "cards": [A]}
+    second = {"title": None, "cards": [C]}
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [dict(first), dict(second)]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [dict(second)]}]}
+    item = next(i for i in analyze.find_removed(old, new) if i.kind == "section")
+
+    restore.reinsert(new, item)
+
+    assert new["views"][0]["sections"] == [second]
+
+
+def test_an_undo_refuses_to_write_into_a_doubled_path():
+    """The plan was made against a state that had one path per view.
+
+    `plan_undo` stops this case since the guard on the reading side, but
+    the plan travels: made against one state, applied to a later one. It
+    is the later one that decides where the write lands, so the writing
+    side asks again.
+    """
+    old = {"views": [{"path": "x", "title": "One", "cards": [A]}]}
+    new = {"views": [{"path": "x", "title": "One", "cards": [A, B]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is None, "the plan itself has to be sound for this test"
+    today = {
+        "views": [
+            {"path": "x", "title": "One", "cards": [A, B]},
+            {"path": "x", "title": "Another that appeared since", "cards": []},
+        ]
+    }
+    with pytest.raises(LookupError, match="share one URL path"):
+        restore.apply_undo(today, plan)
