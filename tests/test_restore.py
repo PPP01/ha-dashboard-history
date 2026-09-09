@@ -146,12 +146,20 @@ def _sections(*sections):
 
 
 def test_a_card_refuses_to_go_back_into_a_different_section():
-    """The first of two sections is gone, so index 0 is now "Unten"."""
-    old = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B]})
-    new = _sections({"title": "Unten", "cards": [B]})
-    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    """Its section went away after the card did, so index 1 means another.
+
+    The card is what disappeared between `old` and `new` - one card, no
+    section - and the state it would be written into is a third one, in
+    which "Oben" has since been removed. That is the shape `reinsert`
+    meets in practice: a plan made against one state, applied to a later
+    one.
+    """
+    old = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B, C]})
+    new = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == C)
+    today = _sections({"title": "Unten", "cards": [B]})
     with pytest.raises(LookupError, match="section"):
-        restore.reinsert(new, item)
+        restore.reinsert(today, item)
 
 
 def test_a_card_refuses_when_a_section_was_pushed_along():
@@ -267,3 +275,28 @@ def test_a_doubled_path_stops_a_card_that_has_nothing_to_do_with_it():
     }
     with pytest.raises(LookupError, match="does not identify a view"):
         restore.reinsert(today, item)
+
+
+def test_reinsert_refuses_an_item_of_a_kind_it_does_not_know():
+    """A kind it has no branch for must not fall into another one.
+
+    Measured on 2026-09-09: `location=("sections",)` walked into the card
+    branch, where `_cards_at` returned `view["sections"]` - a list, so no
+    refusal at all - and the item was inserted among the sections with
+    none of the checks that belong to it. A kind is answered or refused,
+    never approximated.
+    """
+    from analyze import RemovedItem
+
+    config = {"views": [{"path": "home", "sections": [{"cards": [A]}]}]}
+    item = RemovedItem(
+        kind="something-else",
+        view_path="home",
+        view_index=0,
+        location=("sections",),
+        index=0,
+        payload={"cards": []},
+        label="whatever",
+    )
+    with pytest.raises(LookupError, match="does not know"):
+        restore.reinsert(config, item)

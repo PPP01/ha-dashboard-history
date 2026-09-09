@@ -1029,3 +1029,56 @@ def test_undo_refuses_when_two_views_share_one_path():
     plan = analyze.plan_undo(old, new, new)
     assert plan.blocked is not None
     assert "share one URL path" in plan.blocked
+
+
+def _with_sections(*sections):
+    """A view in the sections layout, holding the sections given."""
+    return {
+        "views": [
+            {
+                "path": "home",
+                "title": "H",
+                "type": "sections",
+                "sections": [dict(section) for section in sections],
+            }
+        ]
+    }
+
+
+def test_a_deleted_section_is_offered_as_one_item():
+    """Not as its cards, each of which refuses on its own.
+
+    Before this, `find_removed` knew only "view" and "card": the cards of
+    a deleted section were offered individually and every one of them
+    refused, because the section they name is not the one standing at
+    that index now. Buttons that reliably fail.
+    """
+    first = {"title": None, "cards": [{"type": "tile", "entity": "light.a"},
+                                      {"type": "tile", "entity": "light.b"}]}
+    second = {"title": None, "cards": [{"type": "tile", "entity": "light.z"}]}
+    old = _with_sections(first, second)
+    new = _with_sections(second)
+
+    items = analyze.find_removed(old, new)
+
+    assert [item.kind for item in items] == ["section"]
+    section = items[0]
+    assert section.payload == first
+    assert section.index == 0
+    assert section.location == ("sections",)
+    assert section.neighbours == (second,)
+
+
+def test_an_empty_section_that_was_deleted_is_not_offered_back():
+    """It had nothing on it, and nothing to prove itself with.
+
+    An empty section carries no cards, so nothing in the matching can
+    say it was the one that went - every empty section in a shrunken
+    view would look equally deleted. And there was nothing on it to
+    lose, so refusing to offer it costs nobody anything.
+    """
+    card = {"type": "tile", "entity": "light.a"}
+    old = _with_sections({"title": None, "cards": [card]}, {"title": None, "cards": []})
+    new = _with_sections({"title": None, "cards": [card]})
+
+    assert analyze.find_removed(old, new) == []

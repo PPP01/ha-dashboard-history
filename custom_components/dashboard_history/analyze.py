@@ -25,7 +25,7 @@ from typing import Any
 class RemovedItem:
     """Something that was present before and is gone now."""
 
-    kind: str  # "card" or "view"
+    kind: str  # "card", "view" or "section"
     view_path: str | None
     view_index: int  # position of the view in the old configuration
     location: tuple  # path to the card list inside the view
@@ -38,6 +38,14 @@ class RemovedItem:
     # an address is exactly what stops being true when the neighbours
     # change. `restore` refuses rather than file the card in a stranger.
     anchor: tuple | None = None
+    # The other sections of that view, in order, as they stood when this
+    # section was removed - only on `kind="section"`. It is the proof that
+    # the gap this goes back into is the only one it could go into: if
+    # today's sections are exactly these, then index `index` is the single
+    # place missing. Carried as the sections themselves rather than as
+    # fingerprints of them, because `restore` compares it with `==` and
+    # cannot import `analyze.fingerprint` at runtime.
+    neighbours: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -621,6 +629,51 @@ _DUPLICATE_PATH_REFUSAL = (
 )
 
 
+def _sections_gone(old_view: dict, new_view: dict, gone: list[Slot]) -> dict:
+    """Sections of `old_view` that went away whole, by their old index.
+
+    Answers with at most one, and only where the answer is not a guess:
+    the view has to have lost exactly one section, and every card of the
+    section in question has to be among the ones the matching gave up on.
+    A section whose cards turned up elsewhere is not gone - they are in
+    `moved`, not in `removed` - and then nothing is reported here, which
+    is correct: nothing was lost.
+
+    An **empty** section is never reported. It has no cards to prove
+    anything with, so every empty section in a shrunken view would look
+    equally deleted; and there is nothing on it to lose.
+    """
+    old_sections = old_view.get("sections") or []
+    new_sections = new_view.get("sections") or []
+    if len(new_sections) != len(old_sections) - 1:
+        return {}
+    found = {}
+    for index, section in enumerate(old_sections):
+        if not isinstance(section, dict):
+            continue
+        cards = section.get("cards")
+        if not isinstance(cards, list) or not cards:
+            continue
+        here = ("sections", index, "cards")
+        if sum(1 for slot in gone if slot.location == here) == len(cards):
+            found[index] = section
+    return found if len(found) == 1 else {}
+
+
+def _section_label(section: dict, index: int) -> str:
+    """What to call a section in a list somebody has to choose from.
+
+    Its title where it has one. Where it has none - and on the
+    installation this was built against, none of the 80 sections did -
+    the position it sat at, one-based, because that is the only thing
+    left to say about it.
+    """
+    title = section.get("title")
+    if isinstance(title, str) and title.strip():
+        return f"section: {_shorten(title)}"
+    return f"section {index + 1}"
+
+
 def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     """Everything that disappeared between two states.
 
@@ -651,6 +704,30 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 )
             )
             continue
+        gone = gone_by_view.get(view_index, [])
+        # A section that went whole is one item, not one per card on it.
+        # Its cards each refuse on their own - the section they name is
+        # not the one standing at that index now - so offering them was
+        # offering buttons that reliably fail.
+        whole = _sections_gone(old_view, new_views[key], gone)
+        for index, section in whole.items():
+            items.append(
+                RemovedItem(
+                    kind="section",
+                    view_path=old_view.get("path"),
+                    view_index=view_index,
+                    location=("sections",),
+                    index=index,
+                    payload=section,
+                    label=_section_label(section, index),
+                    neighbours=tuple(
+                        other
+                        for position, other in enumerate(old_view.get("sections") or [])
+                        if position != index
+                    ),
+                )
+            )
+        swallowed = {("sections", index, "cards") for index in whole}
         items += [
             RemovedItem(
                 kind="card",
@@ -662,7 +739,8 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 label=_describe(slot.card),
                 anchor=_section_anchor(old_view, slot.location),
             )
-            for slot in gone_by_view.get(view_index, [])
+            for slot in gone
+            if slot.location not in swallowed
         ]
     return items
 

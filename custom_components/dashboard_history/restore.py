@@ -144,6 +144,16 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
         views.insert(min(item.index, len(views)), copy.deepcopy(item.payload))
         return result
 
+    if item.kind != "card":
+        # Answered or refused, never approximated. A `location` meant for
+        # another kind walks straight into the card branch otherwise:
+        # measured on 2026-09-09, `("sections",)` made `_cards_at` return
+        # the list of sections, which is a list and therefore no refusal,
+        # and the item went in among them with none of its own checks run.
+        raise LookupError(
+            f"this is an item of a kind restore does not know: {item.kind!r}"
+        )
+
     view = _find_view(views, item)
     if view is None:
         raise LookupError(
