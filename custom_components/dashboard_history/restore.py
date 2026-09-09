@@ -75,6 +75,33 @@ def _anchor_holds(view: dict, item: RemovedItem) -> bool:
     return isinstance(section, dict) and section.get("title") == title
 
 
+def _view_has_gone(views: list, item: RemovedItem) -> bool:
+    """Whether the view being put back is really missing from the state.
+
+    A view with a path was reported missing because its path is not
+    there, which is an identity and needs no second opinion. A view
+    without one was reported missing because the position it was keyed by
+    now holds something else - and that happens just as readily when the
+    view never moved and a *neighbour* was deleted in front of it.
+
+    So the same proof the undo works from: look for what is supposed to
+    have disappeared, byte for byte, in the state as it stands. Found, and
+    nothing disappeared. Measured on 2026-09-09, deleting the neighbour of
+    an untouched pathless view offered that view back and put a second
+    copy of it on the dashboard - the writing twin of case C1-B in the
+    review of 2026-09-04, whose package 1 closed the undo path here and
+    left this one open.
+
+    The limit, and it is the one package 2 lifts: a pathless view that was
+    both shifted and edited is not byte-identical to itself, so this lets
+    it through. Nothing short of an identity chain of our own tells that
+    apart from a view somebody really deleted.
+    """
+    if item.view_path is not None:
+        return True
+    return not any(view == item.payload for view in views)
+
+
 def reinsert(config: dict, item: RemovedItem) -> dict:
     """Return a new configuration with `item` put back.
 
@@ -85,6 +112,12 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
     views = result.setdefault("views", [])
 
     if item.kind == "view":
+        if not _view_has_gone(views, item):
+            raise LookupError(
+                "this view has no URL path and one just like it is on the "
+                "dashboard already, so it did not go missing and putting "
+                "it back would add a second copy"
+            )
         views.insert(min(item.index, len(views)), copy.deepcopy(item.payload))
         return result
 

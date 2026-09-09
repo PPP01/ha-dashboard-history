@@ -172,3 +172,46 @@ def test_a_card_goes_back_into_the_section_it_came_from():
     item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
     result = restore.reinsert(new, item)
     assert result["views"][0]["sections"][0]["cards"] == [A, B]
+
+
+# A view without a URL path is keyed by its position, and a position is
+# an address rather than an identity. Package 1 of the 2026-09-04 review
+# closed that on the undo path (`analyze._positions_lie`) and for cards
+# on the writing path (`_anchor_holds`), but a view arriving here carried
+# no check at all - measured on 2026-09-09: deleting the neighbour of an
+# untouched pathless view offered that view back and added a second copy
+# of it.
+
+
+def _views(*views):
+    return {"views": [dict(view) for view in views]}
+
+
+HOME = {"title": "Home", "cards": [C]}
+
+
+def test_a_pathless_view_that_is_still_there_refuses_to_be_added_again():
+    """Deleting `b` shifts "Home" from position 2 to 1.
+
+    "Home" was never touched. Its old key ("#", 2) is absent from the new
+    state, so it is offered back - and putting it back would leave the
+    dashboard holding it twice.
+    """
+    old = _views({"path": "a", "cards": [A]}, {"path": "b", "cards": [B]}, HOME)
+    new = _views({"path": "a", "cards": [A]}, HOME)
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == HOME)
+    with pytest.raises(LookupError, match="URL path"):
+        restore.reinsert(new, item)
+
+
+def test_a_pathless_view_that_really_went_is_still_put_back():
+    """The control case, and the reason this is not a blanket refusal.
+
+    "Home" is gone from the new state, and nothing that looks like it is
+    left - so it is missing, and additive is exactly the right shape.
+    """
+    old = _views({"path": "a", "cards": [A]}, HOME)
+    new = _views({"path": "a", "cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == HOME)
+    result = restore.reinsert(new, item)
+    assert [view.get("title") for view in result["views"]] == [None, "Home"]
