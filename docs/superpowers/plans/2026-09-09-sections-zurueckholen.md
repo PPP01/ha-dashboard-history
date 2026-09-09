@@ -284,8 +284,8 @@ In `reinsert`, **direkt nach** `views = result.setdefault("views", [])` und
 ```python
     if _paths_share(result):
         raise LookupError(
-            "two views of this dashboard share one URL path, so there is "
-            "no telling which of them this belongs to"
+            "two views of this dashboard share one URL path, so a path "
+            "does not identify a view here and nothing is put back"
         )
 ```
 
@@ -970,8 +970,8 @@ und vor der Schleife über die Schritte:
 ```python
     if _paths_share(result):
         raise LookupError(
-            "two views of this dashboard share one URL path, so there is "
-            "no telling which of them these steps belong to"
+            "two views of this dashboard share one URL path, so a path "
+            "does not identify a view here and no step is applied"
         )
 ```
 
