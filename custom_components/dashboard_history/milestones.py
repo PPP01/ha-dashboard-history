@@ -47,7 +47,14 @@ _LOGGER = logging.getLogger(__name__)
 # the history whatever the window is. It is paid in an executor after
 # the save has been announced, so it delays no save - it holds a thread
 # and the lock below for about a tenth of a second.
-_RECENT = 20
+#
+# The number itself moved to `versions.py` on 2026-09-09. The prediction
+# of whether a removed day mark would come back has to read the same
+# window, and one bounded differently from the rule it predicts would
+# disagree with it only at the edge - the worst place to find out. The
+# measurements above are about what this window costs *here*, which is
+# why they stayed here.
+_RECENT = versioning.RECENT_STATES
 
 
 class Milestones:

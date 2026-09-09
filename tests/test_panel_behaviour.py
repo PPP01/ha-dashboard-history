@@ -3999,15 +3999,6 @@ await cancelling;
 // must fall back, the "goes with it" paragraph has nothing true left to
 // say and must not appear, and there is no description text to render
 // either - the dialog must not claim a loss that is not real.
-const three = new Panel();
-three.shadowRoot = node();
-three._render = () => {};
-three._selected = "dash";
-three._versions = el._versions;
-const threeCalls = [];
-three._call = (type, extra) =>
-  new Promise((resolve) => threeCalls.push({ type, extra, resolve }));
-three._refresh = async () => {};
 // And the case found on a real screen: an automatic day mark that is
 // NOT the one the next save would close. `automatic` is true and
 // `returns` is false, and the bullet must stay away - the old panel
@@ -4036,6 +4027,15 @@ midDialog.returnValue = "cancel";
 midDialog.close();
 await settle();
 await midway;
+const three = new Panel();
+three.shadowRoot = node();
+three._render = () => {};
+three._selected = "dash";
+three._versions = el._versions;
+const threeCalls = [];
+three._call = (type, extra) =>
+  new Promise((resolve) => threeCalls.push({ type, extra, resolve }));
+three._refresh = async () => {};
 
 const wordless = three._removeVersion("dash/by-hand");
 await settle();

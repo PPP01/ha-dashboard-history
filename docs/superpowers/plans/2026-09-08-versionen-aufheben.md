@@ -482,7 +482,7 @@ MSG
 **Interfaces:**
 - Consumes: `store.read_version`, `store.remove_version`, `store.list_versions` (Task 1); `_version_dict(version: Version) -> dict` und `versioning.highest(key, versions) -> object | None` (beide vorhanden)
 - Produces: `operations.async_remove_version(hass, store, key: str, name: str, confirm: bool = False) -> dict`
-  - ohne `confirm`: `{"applied": False, **_version_dict(version), "highest": bool}`
+  - ohne `confirm`: `{"applied": False, **_version_dict(version), "highest": bool, "returns": bool}` — *`returns` am 2026-09-09 nachgetragen, nachdem der Dialog jeder automatischen Version versprach, sie käme beim nächsten Speichern wieder. Die Bedingung steht in Entscheidung 18, Festlegung 4; gerechnet wird sie in `versions.would_be_marked_again`, indem die Regel **ausgeführt** statt nachgebildet wird.*
   - mit `confirm`: `{"applied": True, **_version_dict(removed)}`
   - bei Ablehnung: `{"applied": False, "error": str}`
   - WebSocket: `dashboard_history/remove_version` mit `{dashboard, name, confirm}`

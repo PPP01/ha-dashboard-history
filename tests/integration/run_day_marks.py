@@ -62,6 +62,7 @@ from pathlib import Path
 sys.path.insert(0, "/config")
 
 from custom_components.dashboard_history import milestones as marking  # noqa: E402
+from custom_components.dashboard_history import versions as versioning  # noqa: E402
 from custom_components.dashboard_history.store import HistoryStore  # noqa: E402
 from homeassistant.util import dt as dt_util  # noqa: E402
 
@@ -215,6 +216,75 @@ async def main() -> int:
             )
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+        print("\n  -- Und die von gestern kommt beim nächsten Speichern heute wieder --")
+        # The case a pytest-only rule got wrong on 2026-09-09, and the
+        # only place it can be shown: yesterday's mark is written by the
+        # FIRST save of today, so states from today already sit behind
+        # it. Remove it, save AGAIN THE SAME DAY, and it is back - more
+        # states on today do not push the window past yesterday.
+        #
+        # `run_checks.py` cannot reach this: no API backdates a commit,
+        # so there is no way to make a yesterday from outside. And
+        # `pytest` cannot reach `_async_mark_day` at all. This is what
+        # the third way is for.
+        where = root / "four"
+        store = Rewound(where)
+        for text, ago in [(A, 1), (B, 1), (A2, 0)]:
+            revision = store.write_snapshot(KEY, text, f"{KEY}: {text.strip()}")
+            assert revision is not None
+            store.shifts[revision] = ago * DAY
+        made = marking.Milestones(Hass(), store, Entry())
+        await made.async_lay_the_floor()
+        await made._async_mark_day(KEY)
+        marked = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+        if check(
+            "yesterday is marked by the first save of today",
+            marked == ["v1.0.0", "v1.0.1"],
+            str(marked),
+        ):
+            # Which of the two sits on yesterday's last state - the floor
+            # is on the oldest state, the day mark on the newest of
+            # yesterday. Taking the day mark is the case; taking the
+            # floor is a different one.
+            ends = store.list_changes(KEY, 20)
+            yesterday_last = next(
+                c.revision for c in ends
+                if versioning.local_day(c.timestamp, dt_util.DEFAULT_TIME_ZONE)
+                < versioning.local_day(ends[0].timestamp, dt_util.DEFAULT_TIME_ZONE)
+            )
+            mark = next(
+                v for v in store.list_versions(KEY) if v.revision == yesterday_last
+            )
+            # And the prediction, before it is taken away: it must say
+            # this one comes back. A False here is the under-warning the
+            # dialog would then read as "permanent".
+            told = versioning.would_be_marked_again(
+                mark.revision, ends, int(ends[0].timestamp + 3600),
+                dt_util.DEFAULT_TIME_ZONE,
+            )
+            check("and the preview says it would come back", told is True, str(told))
+            store.remove_version(KEY, mark.name)
+            gone = sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))
+            check(
+                "taking it away leaves it gone",
+                mark.name.split("/")[-1] not in gone,
+                str(gone),
+            )
+            # One more save on the SAME day - the shape that was got
+            # wrong. Not a new day: that case is the section above.
+            again = store.write_snapshot(KEY, B, f"{KEY}: {B.strip()}")
+            assert again is not None
+            store.shifts[again] = 0
+            await made._async_mark_day(KEY)
+            back = [
+                v for v in store.list_versions(KEY) if v.revision == yesterday_last
+            ]
+            check(
+                "and the next save the same day marks yesterday again",
+                bool(back),
+                str(sorted(v.name.split("/")[-1] for v in store.list_versions(KEY))),
+            )
 
     check(
         "and nothing was swallowed on the way",

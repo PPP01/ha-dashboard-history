@@ -929,11 +929,12 @@ async def _async_returns(
 ) -> bool:
     """Whether removing this version would only be undone at the next save.
 
-    True for an automatic day mark whose day nothing has been recorded
-    after - the one case where the automatic marking makes it again. The
-    rule and the reason it is stable rather than a prediction live in
-    `versions.day_would_be_marked_again`; this reads the two timestamps
-    it compares and nothing else.
+    True for an automatic day mark that a save right now would make
+    again. The answer is worked out by *running* the day rule over the
+    window the marking itself reads, with a save at `now` put in front
+    of it - see `versions.would_be_marked_again`, which also says why a
+    prediction that re-derives the rule instead of running it was wrong
+    in the most ordinary case there is.
 
     False for anything a person named themselves, without reading a
     thing: the automatic marking only ever makes automatic versions, so
@@ -941,31 +942,33 @@ async def _async_returns(
     question to ask. That short circuit is why the ordinary removal - a
     version somebody made - costs no extra read at all.
 
-    The mark's own day is read off the **commit** it sits on, never off
-    the tag's time. A day mark is written at the first save of a later
-    day, and any number of days later where Home Assistant was off in
-    between, so the tag's time names a different day than the one it
-    marks. That mistake has been made in this file's neighbourhood once
-    already - `day_is_marked` carries the same warning.
+    **No timestamp of the version's own is read**, and that closes a
+    trap rather than avoiding it by care. A day mark is written at the
+    first save of a later day - and any number of days later where Home
+    Assistant was off in between - so a tag's own time names a different
+    day than the one it marks; `day_is_marked` and `marks_since` both
+    carry that warning, and an earlier draft of this function had to
+    heed it by reaching for `commit_times`. Matching the **revision**
+    the rule lands on needs no day of the mark's at all, so there is
+    nothing left to get wrong.
 
-    A revision the store cannot account for answers False. It means the
-    commit went between the read and this one - a `forget` in between -
-    and a version whose state is gone is not one the day marking will
-    reach for.
+    A dashboard with no recorded state answers False, and so does a
+    version whose revision the window does not hold - the state went
+    between the two reads, a `forget` in between, and a version whose
+    state is gone is not one the day marking will reach for.
     """
     if not payload.get("automatic"):
         return False
-    revision = payload["revision"]
-    marked = await hass.async_add_executor_job(store.commit_times, [revision])
-    when = marked.get(revision)
-    if when is None:
+    recent = await hass.async_add_executor_job(
+        store.list_changes, key, versioning.RECENT_STATES
+    )
+    if not recent:
         return False
-    newest = await hass.async_add_executor_job(store.list_changes, key, 1)
-    if not newest:
-        return False
-    zone = dt_util.DEFAULT_TIME_ZONE
-    return versioning.day_would_be_marked_again(
-        versioning.local_day(when, zone), newest[0].timestamp, zone
+    return versioning.would_be_marked_again(
+        payload["revision"],
+        recent,
+        int(dt_util.now().timestamp()),
+        dt_util.DEFAULT_TIME_ZONE,
     )
 
 

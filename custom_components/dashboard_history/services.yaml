@@ -323,8 +323,12 @@ remove_version:
     and remains findable in the advanced view - only the name goes, along
     with the title and description you gave it, and those cannot be
     written back. Without confirm, you get the version's own words and
-    nothing changes. If it carries the highest number, that number
-    becomes free again - the next patch will use it.
+    nothing changes. That answer also says whether the version carries
+    the highest number - then it is free again and the next patch will
+    use it - and, in `returns`, whether the automatic day marking would
+    create this one again at the next save. `returns` is false for
+    anything you named yourself, and for a day mark that a later day
+    has already left behind: removing that one is permanent.
   fields:
     dashboard:
       required: true

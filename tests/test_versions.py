@@ -441,55 +441,106 @@ def test_taking_a_lower_number_away_frees_nothing():
 
 
 # -- would a removed day mark come back? -------------------------------
+#
+# The rule is run rather than re-derived, so these describe scenarios
+# rather than a comparison: a window of states newest-first, a clock,
+# and the revision whose mark was taken away.
 
 
-def test_a_mark_on_the_newest_day_would_be_made_again():
-    # The case the rule is about: nothing has been recorded on a later
-    # day, so the next save - which is on a later day, or there would be
-    # no day to close - finds this day unmarked and marks it. Removing
-    # such a mark is undone by the next save.
-    zone = timezone.utc
-    day = date(2026, 9, 8)
-    newest = datetime(2026, 9, 8, 23, 30, tzinfo=zone).timestamp()
-    assert versions.day_would_be_marked_again(day, int(newest), zone) is True
+class _State:
+    """Enough of a `Change` for the day rule: a revision and a time."""
+
+    def __init__(self, revision: str, when: str) -> None:
+        self.revision = revision
+        self.timestamp = _at(when)
 
 
-def test_a_mark_with_a_later_day_behind_it_would_not():
-    # The case that was said wrongly in the panel until 2026-09-09, found
-    # on dh-probe: a mark about 7 September with seven states recorded on
-    # 8 September behind it. `end_of_previous_day` finds the *most
-    # recent* earlier day, so at the next save that is 8 September and
-    # never the 7th. Removing this mark is permanent.
-    zone = timezone.utc
-    day = date(2026, 9, 7)
-    newest = datetime(2026, 9, 8, 10, 0, tzinfo=zone).timestamp()
-    assert versions.day_would_be_marked_again(day, int(newest), zone) is False
+def test_a_mark_on_yesterday_returns_at_the_next_save_today():
+    # The case an earlier draft of this got wrong, and the ordinary one:
+    # yesterday's mark is written by the FIRST save of today, so by the
+    # time anybody looks at it there are already states from today
+    # behind it. Removing it and saving again the same day brings it
+    # straight back - more states on today do not push the window past
+    # yesterday, which `test_a_burst_of_saves_does_not_hide_the_day_before`
+    # says one screen up.
+    recent = [
+        _State("today-2", "2026-09-09T09:00"),
+        _State("today-1", "2026-09-09T08:00"),
+        _State("marked", "2026-09-08T21:00"),
+        _State("older", "2026-09-08T20:00"),
+    ]
+    now = _at("2026-09-09T11:00")
+    assert versions.would_be_marked_again("marked", recent, now, BERLIN) is True
 
 
-def test_the_answer_does_not_change_as_more_states_arrive():
-    # Why this is worth answering in a preview at all: it is not a
-    # prediction. Every new state pushes the window forward, so a day
-    # that has fallen behind can never occupy the "most recent earlier
-    # day" role again. Once permanent, always permanent.
-    zone = timezone.utc
-    day = date(2026, 9, 7)
-    for later in (
-        datetime(2026, 9, 8, 0, 1, tzinfo=zone),
-        datetime(2026, 9, 30, 12, 0, tzinfo=zone),
-        datetime(2027, 4, 1, 12, 0, tzinfo=zone),
-    ):
-        assert versions.day_would_be_marked_again(
-            day, int(later.timestamp()), zone
-        ) is False
+def test_a_mark_with_a_whole_day_behind_it_never_returns():
+    # dh-probe, 2026-09-09: `v0.0.3` marks 7 September and seven states
+    # from the 8th sit behind it. At any save from the 9th on, the most
+    # recent earlier day is the 8th and never the 7th.
+    recent = [
+        _State("eighth-last", "2026-09-08T18:00"),
+        _State("eighth-first", "2026-09-08T09:00"),
+        _State("marked", "2026-09-07T22:00"),
+    ]
+    now = _at("2026-09-09T11:00")
+    assert versions.would_be_marked_again("marked", recent, now, BERLIN) is False
+
+
+def test_the_state_it_lands_on_has_to_be_the_marked_one():
+    # A day ends on its LAST state, so a mark sitting on an earlier state
+    # of that day is not the one a save would make - a floor on a
+    # dashboard's oldest state is exactly that. Over-warning would be
+    # tolerable here; being right is free, because the rule is run.
+    recent = [
+        _State("today", "2026-09-09T08:00"),
+        _State("yesterday-last", "2026-09-08T21:00"),
+        _State("yesterday-first", "2026-09-08T07:00"),
+    ]
+    now = _at("2026-09-09T11:00")
+    assert versions.would_be_marked_again(
+        "yesterday-last", recent, now, BERLIN
+    ) is True
+    assert versions.would_be_marked_again(
+        "yesterday-first", recent, now, BERLIN
+    ) is False
+
+
+def test_a_window_of_nothing_but_today_ends_no_day():
+    # Nothing to close, so nothing is marked and nothing comes back. The
+    # same answer `end_of_previous_day` gives, reached through it.
+    recent = [_State("a", "2026-09-09T09:00"), _State("b", "2026-09-09T08:00")]
+    now = _at("2026-09-09T11:00")
+    assert versions.would_be_marked_again("a", recent, now, BERLIN) is False
+
+
+def test_a_day_pushed_out_of_the_window_is_not_promised_a_mark():
+    # More than `RECENT_STATES` states since the day ended: the marking
+    # gives up there, saying so in the log, so the honest answer is that
+    # no mark is coming. Read through the same window rather than
+    # reasoned about, which is what keeps the two in step.
+    recent = [
+        _State(f"today-{i}", f"2026-09-09T{8 + i // 4:02d}:{(i % 4) * 15:02d}")
+        for i in range(versions.RECENT_STATES + 2)
+    ] + [_State("marked", "2026-09-08T21:00")]
+    now = _at("2026-09-09T23:00")
+    assert versions.would_be_marked_again("marked", recent, now, BERLIN) is False
+
+
+def test_an_empty_history_promises_nothing():
+    assert versions.would_be_marked_again("x", [], _at("2026-09-09T11:00"), BERLIN) is (
+        False
+    )
 
 
 def test_the_calendar_decides_it_and_not_the_clock():
-    # A day is not 86400 seconds, and the answer must not be read off a
-    # difference in seconds. Twenty-three hours apart and still two
-    # different days; two hours apart and still the same one.
-    zone = ZoneInfo("Europe/Berlin")
-    late = int(datetime(2026, 9, 8, 23, 30, tzinfo=zone).timestamp())
-    early = int(datetime(2026, 9, 9, 0, 30, tzinfo=zone).timestamp())
-    assert versions.day_would_be_marked_again(date(2026, 9, 8), late, zone) is True
-    assert versions.day_would_be_marked_again(date(2026, 9, 8), early, zone) is False
-    assert versions.day_would_be_marked_again(date(2026, 9, 9), early, zone) is True
+    # Two hours apart and two different days: a save at half past
+    # midnight closes the day that ended at half past eleven. Read off a
+    # difference in seconds, this would be one day and answer wrongly.
+    recent = [_State("marked", "2026-09-08T23:30")]
+    assert versions.would_be_marked_again(
+        "marked", recent, _at("2026-09-09T00:30"), BERLIN
+    ) is True
+    # And the same two states within one day close nothing.
+    assert versions.would_be_marked_again(
+        "marked", recent, _at("2026-09-08T23:45"), BERLIN
+    ) is False

@@ -31,6 +31,14 @@ _NUMBERS = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 LEVELS = ("patch", "minor", "major")
 
+# How many of the newest states the day rule looks at. It lives here
+# rather than beside the marking that reads it, because two things now
+# depend on the same window: the marking, and the prediction of whether
+# a removed mark would come back. A prediction bounded differently from
+# the rule it predicts would disagree with it at the edge, and only
+# there - the worst place to find out.
+RECENT_STATES = 20
+
 
 def version_name(key: str, parts: tuple[int, int, int]) -> str:
     """The tag name one dashboard's version carries."""
@@ -331,41 +339,57 @@ def day_is_marked(
     )
 
 
-def day_would_be_marked_again(day: date, newest: int, zone: tzinfo) -> bool:
-    """Whether an automatic mark about `day`, once removed, would return.
+def would_be_marked_again(revision: str, recent, now: int, zone: tzinfo) -> bool:
+    """Whether a save at `now` would make an automatic mark on `revision`.
 
-    `newest` is when the dashboard's newest recorded state was written.
+    Answers the question a person has in front of the removal dialog: if
+    I take this day mark away, does it simply come back? `recent` is the
+    dashboard's newest states, newest first, exactly as `list_changes`
+    hands them over.
 
-    The answer is yes exactly while **no state has been recorded on a
-    later calendar day**, and the reason is `end_of_previous_day`: it
-    finds the *most recent* day before the newest state's day, never an
-    arbitrary one. So the next save closes `day` only if nothing has
-    happened since. As soon as a later day carries states, `day` has
-    fallen behind for good - every further state pushes the window
-    forward, and no save ever reaches back.
+    **It simulates rather than reasons.** A save at `now` is put at the
+    front of the window, the window is cut to what the marking itself
+    reads, and `end_of_previous_day` - the very function the marking
+    uses - is asked where the previous day ends. If that lands on this
+    revision, the mark comes back; if it lands anywhere else, no save
+    ever reaches this one again.
 
-    Which is what makes this worth answering in a preview at all: it is
-    **not a prediction**. "Permanent" here is stable, not a guess about
-    when somebody will next save. A dialog can carry it without
-    promising anything about the future.
+    That shape is the whole point, and it was arrived at the hard way.
+    The first version of this compared two calendar days directly:
+    `local_day(newest) <= day`, meaning "nothing has been recorded since
+    the marked day". It reads plausibly and it is wrong in the most
+    ordinary case there is - a mark about *yesterday* is written by the
+    first save of *today*, so by the time anybody looks at it there are
+    already states from today behind it, and that comparison says
+    "permanent" while the next save today brings it straight back. The
+    day rule does not care how many states today has: this module's own
+    `test_a_burst_of_saves_does_not_hide_the_day_before` says so, and
+    said so months before this function existed. A prediction that
+    re-derives a rule can be wrong about it; one that runs the rule
+    cannot.
 
-    Found on 2026-09-09, because the panel said the opposite. Every
-    automatic version was told it would be re-created at the next save;
-    at a mark about 7 September with seven states from 8 September
-    behind it, that was simply false. The condition was in the design
-    record all along - decision 18's fourth *Festlegung* - and the
-    dialog had turned it into a claim.
+    Reading the window the marking reads also settles the truncation for
+    free. Where more than `RECENT_STATES` states have landed since the
+    day ended, `end_of_previous_day` answers None here exactly as it does
+    there, and the marking gives up - so this answers False, which is
+    what will happen.
 
-    **This is the calendar question, not all three.** `_async_mark_day`
-    refuses on two further grounds: the day already carrying a second
-    automatic mark, and the state being the one the highest version
-    already holds. Neither is read here, so a True can over-warn - it
-    says "comes back" where nothing would in fact be made. That is the
-    right direction for a confirmation: too much warning is a
-    nuisance, too little is a trap.
+    **The calendar question, not all of them.** `_async_mark_day` has
+    three further refusals: another version already sitting on that
+    state, a second automatic mark about the same day, and the highest
+    version already holding that content. None is read here, so a True
+    can over-warn - it says "comes back" where nothing would in fact be
+    made. That is the right direction for a confirmation: too much
+    warning is a nuisance, too little is a trap.
 
-    Compared as calendar days rather than as a span of seconds, for the
-    reason `same_day` gives one screen up: a day is not 86400 seconds
-    wherever the clocks change, and the Sunday in March has 23 hours.
+    What stays true of the answer either way: **False is permanent.**
+    Today only moves forward, so a day that has fallen behind cannot
+    return to being the one a save would close. True is a statement
+    about now, and expires at the next midnight - which is why the
+    dialog carrying it speaks of the next save and not of some day.
     """
-    return local_day(newest, zone) <= day
+    window = [now, *(change.timestamp for change in recent)][:RECENT_STATES]
+    at = end_of_previous_day(window, zone)
+    # `window[0]` is the save being simulated, so `window[i]` is
+    # `recent[i - 1]`; `end_of_previous_day` never answers 0.
+    return at is not None and recent[at - 1].revision == revision
