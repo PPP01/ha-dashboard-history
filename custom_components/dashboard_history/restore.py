@@ -38,7 +38,6 @@ def _paths_share(config: dict) -> bool:
     return len(paths) != len(set(paths))
 
 
-
 def _find_view(views: list, item: RemovedItem | UndoStep) -> dict | None:
     """Locate the view an item belongs to, by path or by position.
 
@@ -131,8 +130,8 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
 
     if _paths_share(result):
         raise LookupError(
-            "two views of this dashboard share one URL path, so there is "
-            "no telling which of them this belongs to"
+            "two views of this dashboard share one URL path, so a path "
+            "does not identify a view here and nothing is put back"
         )
 
     if item.kind == "view":

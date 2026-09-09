@@ -234,3 +234,36 @@ def test_a_card_refuses_to_go_back_when_two_views_share_a_path():
     item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
     with pytest.raises(LookupError, match="share one URL path"):
         restore.reinsert(new, item)
+
+
+def test_a_doubled_path_stops_a_card_that_has_nothing_to_do_with_it():
+    """Deliberately coarse, the way `_positions_lie` is coarse.
+
+    The card belongs to "safe", whose path is unique, and it could be
+    filed without any ambiguity. It is still refused: one doubled path
+    means a path is not an identity on this dashboard, and the addresses
+    every item here carries are paths. Refusing too often is the right
+    error to make.
+    """
+    old = {
+        "views": [
+            {"path": "safe", "cards": [A, B]},
+            {"path": "x", "cards": [C]},
+        ]
+    }
+    new = {
+        "views": [
+            {"path": "safe", "cards": [A]},
+            {"path": "x", "cards": [C]},
+        ]
+    }
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    today = {
+        "views": [
+            {"path": "safe", "cards": [A]},
+            {"path": "x", "cards": [C]},
+            {"path": "x", "cards": []},
+        ]
+    }
+    with pytest.raises(LookupError, match="does not identify a view"):
+        restore.reinsert(today, item)
