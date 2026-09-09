@@ -1534,7 +1534,10 @@ class DashboardHistoryPanel extends HTMLElement {
     // The description itself is shown rather than summarised: it is the
     // one string here the integration cannot write back, and a
     // confirmation the FAQ calls "there to be read rather than clicked
-    // through" cannot hide half of what it is about.
+    // through" cannot hide half of what it is about. It sits with the
+    // number and the title, not further down: it says what this version
+    // *is*, and put between the note and its list - where it was first
+    // written - it cut that sentence off from its own bullets.
     //
     // The re-tagging bullet hangs on `returns`, not on `automatic`, and
     // the difference is a real one somebody found on the screen: every
@@ -1556,14 +1559,13 @@ class DashboardHistoryPanel extends HTMLElement {
       ? " and its description"
       : "";
     dialog.querySelector(".body").innerHTML = `
-      <p><strong>${head}</strong></p>
+      <p class="who"><strong>${head}</strong>${facts.description
+        ? `<span class="why">${escape(facts.description)}</span>`
+        : ""
+      }</p>
       <p><strong>Note:</strong><br>
          Removing this version only deletes the tag${alsoGoes}${
            alsoGoes ? ", which cannot be written back" : ""}:</p>
-      ${facts.description
-        ? `<p class="muted">${escape(facts.description)}</p>`
-        : ""
-      }
       <ul class="loss">
         <li><strong>History is preserved:</strong> The underlying state
             remains accessible in the advanced view.</li>

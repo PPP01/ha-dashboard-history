@@ -399,6 +399,25 @@ export const STYLE = `
     color: var(--secondary-text-color, #727272);
     font-size: 13px;
   }
+  /* The line a removal dialog opens with: which version this is, and
+     underneath it in the muted voice the words somebody gave it. They
+     belong to what the version *is*, so they sit in the identity block
+     rather than down among the consequences - between the note and its
+     list, which is where they were first put, they cut a sentence in
+     two on the way to its own bullets.
+
+     Set off by a line's worth of space and not by the 16px that .why
+     carries in a row: there it separates two unrelated things, here it
+     joins two halves of one.
+
+     No backticks in this comment, and that is not a style note - see
+     the rule two hundred lines up. This file is one template literal;
+     a backtick ends the string and takes the file apart. Written with
+     them once on 2026-09-08 and again on 2026-09-09, both times caught
+     by test_the_style_is_one_unbroken_template_literal within the
+     minute, which is exactly what that test is for. */
+  dialog .who { margin-bottom: 18px; }
+  dialog .who .why { margin-top: 4px; }
   /* The same voice as .why, in a dialog body rather than a row. */
   .keeps {
     margin: 0 0 12px;
