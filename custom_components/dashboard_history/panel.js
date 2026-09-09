@@ -1535,6 +1535,15 @@ class DashboardHistoryPanel extends HTMLElement {
     // one string here the integration cannot write back, and a
     // confirmation the FAQ calls "there to be read rather than clicked
     // through" cannot hide half of what it is about.
+    //
+    // The re-tagging bullet hangs on `returns`, not on `automatic`, and
+    // the difference is a real one somebody found on the screen: every
+    // automatic version used to be told it would be re-created at the
+    // next save, and for a mark about 7 September with states from the
+    // 8th behind it that is simply false - it never comes back. Only
+    // the server can tell the two apart, because the answer is a
+    // calendar question over the dashboard's own states; the panel
+    // works out neither that nor the numbering (decision 13).
     const number = escape(shortName(name));
     const head = facts.title ? `${number} — ${escape(facts.title)}` : number;
     // Named in the lead, not in a bullet: it is what the sentence is
@@ -1563,7 +1572,7 @@ class DashboardHistoryPanel extends HTMLElement {
                will reuse <strong>${number}</strong>.</li>`
           : ""
         }
-        ${facts.automatic
+        ${facts.returns
           ? `<li><strong>Automatic re-tagging:</strong> Because this
                version was generated automatically, saving will create it
                again. You can disable this behavior globally in the

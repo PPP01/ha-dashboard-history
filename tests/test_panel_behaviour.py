@@ -3980,7 +3980,7 @@ const cancelling = two._removeVersion("dash/v1.0.2");
 await settle();
 twoCalls[0].resolve({
   applied: false, name: "dash/v1.0.2", title: "Third", description: "",
-  revision: "c", automatic: true, highest: false,
+  revision: "c", automatic: true, highest: false, returns: true,
 });
 await settle();
 const cancelDialog = two.shadowRoot.querySelector("dialog.remove");
@@ -4008,6 +4008,35 @@ const threeCalls = [];
 three._call = (type, extra) =>
   new Promise((resolve) => threeCalls.push({ type, extra, resolve }));
 three._refresh = async () => {};
+// And the case found on a real screen: an automatic day mark that is
+// NOT the one the next save would close. `automatic` is true and
+// `returns` is false, and the bullet must stay away - the old panel
+// hung it on `automatic` alone and told this version it would be
+// re-created, which was simply false.
+const mid = new Panel();
+mid.shadowRoot = node();
+mid._render = () => {};
+mid._selected = "dash";
+mid._versions = el._versions;
+const midCalls = [];
+mid._call = (type, extra) =>
+  new Promise((resolve) => midCalls.push({ type, extra, resolve }));
+mid._refresh = async () => {};
+const midway = mid._removeVersion("dash/v0.0.3");
+await settle();
+midCalls[0].resolve({
+  applied: false, name: "dash/v0.0.3", title: "7 September 2026",
+  description: "", revision: "m", automatic: true, highest: false,
+  returns: false,
+});
+await settle();
+const midDialog = mid.shadowRoot.querySelector("dialog.remove");
+const midBody = midDialog.querySelector(".body").innerHTML;
+midDialog.returnValue = "cancel";
+midDialog.close();
+await settle();
+await midway;
+
 const wordless = three._removeVersion("dash/by-hand");
 await settle();
 threeCalls[0].resolve({
@@ -4037,6 +4066,12 @@ console.log(JSON.stringify({
   callsAfterCancel: twoCalls.length,
   firstSaysAutomatic: bodyWhenOpened.includes("Automatic re-tagging"),
   secondSaysAutomatic: cancelBody.includes("Automatic re-tagging"),
+  // The one that matters: automatic, but not the day the next save
+  // would close. Both halves are read from the same body, so a panel
+  // that dropped the bullet altogether fails `secondSaysAutomatic`
+  // rather than passing this one for the wrong reason.
+  midwaySaysAutomatic: midBody.includes("Automatic re-tagging"),
+  midwayStillNamesTheVersion: midBody.includes("7 September 2026"),
   // A hand-made tag has no title, so the head is the number alone and
   // the lead stops at the tag. Both halves are checked: a head that
   // rendered "by-hand — undefined" would pass the second on its own.
@@ -4103,6 +4138,21 @@ def test_the_automatic_paragraph_shows_only_where_it_applies(removing):
     # rendered it at all - is caught in one direction or the other.
     assert removing["firstSaysAutomatic"] is False
     assert removing["secondSaysAutomatic"] is True
+
+
+def test_a_day_mark_that_would_not_come_back_is_not_promised_one(removing):
+    # Found on a real screen on 2026-09-09, on dh-probe: `v0.0.3` marks
+    # 7 September, seven states from the 8th sit behind it, and the
+    # dialog told it that saving would create it again. It never would -
+    # `end_of_previous_day` finds the most recent earlier day, so at the
+    # next save that is the 8th and never the 7th.
+    #
+    # The bullet therefore hangs on `returns`, which only the server can
+    # answer, and not on `automatic`, which the panel can see. The third
+    # run is automatic with `returns: false`: the bullet stays away, and
+    # the rest of the dialog is unaffected.
+    assert removing["midwaySaysAutomatic"] is False
+    assert removing["midwayStillNamesTheVersion"] is True
 
 
 def test_confirming_sends_confirm_and_nothing_else_changes_hands(removing):

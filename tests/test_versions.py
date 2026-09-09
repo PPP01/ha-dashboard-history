@@ -438,3 +438,58 @@ def test_taking_a_lower_number_away_frees_nothing():
     assert versions.candidates("home", ["home/v1.0.0", "home/v1.0.2"])[
         "patch"
     ] == "home/v1.0.3"
+
+
+# -- would a removed day mark come back? -------------------------------
+
+
+def test_a_mark_on_the_newest_day_would_be_made_again():
+    # The case the rule is about: nothing has been recorded on a later
+    # day, so the next save - which is on a later day, or there would be
+    # no day to close - finds this day unmarked and marks it. Removing
+    # such a mark is undone by the next save.
+    zone = timezone.utc
+    day = date(2026, 9, 8)
+    newest = datetime(2026, 9, 8, 23, 30, tzinfo=zone).timestamp()
+    assert versions.day_would_be_marked_again(day, int(newest), zone) is True
+
+
+def test_a_mark_with_a_later_day_behind_it_would_not():
+    # The case that was said wrongly in the panel until 2026-09-09, found
+    # on dh-probe: a mark about 7 September with seven states recorded on
+    # 8 September behind it. `end_of_previous_day` finds the *most
+    # recent* earlier day, so at the next save that is 8 September and
+    # never the 7th. Removing this mark is permanent.
+    zone = timezone.utc
+    day = date(2026, 9, 7)
+    newest = datetime(2026, 9, 8, 10, 0, tzinfo=zone).timestamp()
+    assert versions.day_would_be_marked_again(day, int(newest), zone) is False
+
+
+def test_the_answer_does_not_change_as_more_states_arrive():
+    # Why this is worth answering in a preview at all: it is not a
+    # prediction. Every new state pushes the window forward, so a day
+    # that has fallen behind can never occupy the "most recent earlier
+    # day" role again. Once permanent, always permanent.
+    zone = timezone.utc
+    day = date(2026, 9, 7)
+    for later in (
+        datetime(2026, 9, 8, 0, 1, tzinfo=zone),
+        datetime(2026, 9, 30, 12, 0, tzinfo=zone),
+        datetime(2027, 4, 1, 12, 0, tzinfo=zone),
+    ):
+        assert versions.day_would_be_marked_again(
+            day, int(later.timestamp()), zone
+        ) is False
+
+
+def test_the_calendar_decides_it_and_not_the_clock():
+    # A day is not 86400 seconds, and the answer must not be read off a
+    # difference in seconds. Twenty-three hours apart and still two
+    # different days; two hours apart and still the same one.
+    zone = ZoneInfo("Europe/Berlin")
+    late = int(datetime(2026, 9, 8, 23, 30, tzinfo=zone).timestamp())
+    early = int(datetime(2026, 9, 9, 0, 30, tzinfo=zone).timestamp())
+    assert versions.day_would_be_marked_again(date(2026, 9, 8), late, zone) is True
+    assert versions.day_would_be_marked_again(date(2026, 9, 8), early, zone) is False
+    assert versions.day_would_be_marked_again(date(2026, 9, 9), early, zone) is True

@@ -924,6 +924,51 @@ async def async_retitle_version(
     return {"applied": True, **_version_dict(written)}
 
 
+async def _async_returns(
+    hass: HomeAssistant, store: HistoryStore, key: str, payload: dict
+) -> bool:
+    """Whether removing this version would only be undone at the next save.
+
+    True for an automatic day mark whose day nothing has been recorded
+    after - the one case where the automatic marking makes it again. The
+    rule and the reason it is stable rather than a prediction live in
+    `versions.day_would_be_marked_again`; this reads the two timestamps
+    it compares and nothing else.
+
+    False for anything a person named themselves, without reading a
+    thing: the automatic marking only ever makes automatic versions, so
+    an own milestone can never come back and there is no calendar
+    question to ask. That short circuit is why the ordinary removal - a
+    version somebody made - costs no extra read at all.
+
+    The mark's own day is read off the **commit** it sits on, never off
+    the tag's time. A day mark is written at the first save of a later
+    day, and any number of days later where Home Assistant was off in
+    between, so the tag's time names a different day than the one it
+    marks. That mistake has been made in this file's neighbourhood once
+    already - `day_is_marked` carries the same warning.
+
+    A revision the store cannot account for answers False. It means the
+    commit went between the read and this one - a `forget` in between -
+    and a version whose state is gone is not one the day marking will
+    reach for.
+    """
+    if not payload.get("automatic"):
+        return False
+    revision = payload["revision"]
+    marked = await hass.async_add_executor_job(store.commit_times, [revision])
+    when = marked.get(revision)
+    if when is None:
+        return False
+    newest = await hass.async_add_executor_job(store.list_changes, key, 1)
+    if not newest:
+        return False
+    zone = dt_util.DEFAULT_TIME_ZONE
+    return versioning.day_would_be_marked_again(
+        versioning.local_day(when, zone), newest[0].timestamp, zone
+    )
+
+
 async def async_remove_version(
     hass: HomeAssistant,
     store: HistoryStore,
@@ -952,6 +997,13 @@ async def async_remove_version(
     moves. `highest` comes with them and is the one field a person acts
     on - the number of the highest version becomes free again, which is
     the case this operation was built for.
+
+    `returns` comes with them too, and it answers the other question a
+    person has in front of this dialog: is this permanent? For an
+    automatic day mark it is not always, and until 2026-09-09 the panel
+    said it never was - see `_async_returns` and decision 18's fourth
+    *Festlegung*. Both fields are in the preview and neither in the
+    applied answer, for the reason the next paragraph gives.
 
     **`highest` is in the preview and not in the applied answer**, and
     that is deliberate rather than forgetful. Answering it costs a walk
@@ -987,11 +1039,12 @@ async def async_remove_version(
             return {"applied": False, "error": str(err)}
         found = await hass.async_add_executor_job(store.list_versions, key)
         top = versioning.highest(key, found)
-        return {
+        payload = {
             "applied": False,
             **_version_dict(version),
             "highest": top is not None and top.name == version.name,
         }
+        return {**payload, "returns": await _async_returns(hass, store, key, payload)}
     try:
         removed = await hass.async_add_executor_job(store.remove_version, key, name)
     except ValueError as err:

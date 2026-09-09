@@ -329,3 +329,43 @@ def day_is_marked(
         for v in marks
         if v.revision in times
     )
+
+
+def day_would_be_marked_again(day: date, newest: int, zone: tzinfo) -> bool:
+    """Whether an automatic mark about `day`, once removed, would return.
+
+    `newest` is when the dashboard's newest recorded state was written.
+
+    The answer is yes exactly while **no state has been recorded on a
+    later calendar day**, and the reason is `end_of_previous_day`: it
+    finds the *most recent* day before the newest state's day, never an
+    arbitrary one. So the next save closes `day` only if nothing has
+    happened since. As soon as a later day carries states, `day` has
+    fallen behind for good - every further state pushes the window
+    forward, and no save ever reaches back.
+
+    Which is what makes this worth answering in a preview at all: it is
+    **not a prediction**. "Permanent" here is stable, not a guess about
+    when somebody will next save. A dialog can carry it without
+    promising anything about the future.
+
+    Found on 2026-09-09, because the panel said the opposite. Every
+    automatic version was told it would be re-created at the next save;
+    at a mark about 7 September with seven states from 8 September
+    behind it, that was simply false. The condition was in the design
+    record all along - decision 18's fourth *Festlegung* - and the
+    dialog had turned it into a claim.
+
+    **This is the calendar question, not all three.** `_async_mark_day`
+    refuses on two further grounds: the day already carrying a second
+    automatic mark, and the state being the one the highest version
+    already holds. Neither is read here, so a True can over-warn - it
+    says "comes back" where nothing would in fact be made. That is the
+    right direction for a confirmation: too much warning is a
+    nuisance, too little is a trap.
+
+    Compared as calendar days rather than as a span of seconds, for the
+    reason `same_day` gives one screen up: a day is not 86400 seconds
+    wherever the clocks change, and the Sunday in March has 23 hours.
+    """
+    return local_day(newest, zone) <= day
