@@ -3271,7 +3271,7 @@ const offers = (html) => (html.match(/data-restore=/g) || []).length;
 // sit in their template. A test that searched for one as it stands
 // would go red the next time somebody reflows a paragraph - a cosmetic
 // edit failing a case about meaning.
-const flat = (html) => html.replace(/\s+/g, " ");
+const flat = (html) => html.replace(/\\s+/g, " ");
 
 // Two cards gone and nothing added: putting one back is unambiguous, so
 // the rows stay beside the undo.
