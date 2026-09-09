@@ -21,6 +21,24 @@ if TYPE_CHECKING:
     from .analyze import RemovedItem, UndoPlan, UndoStep
 
 
+def _paths_share(config: dict) -> bool:
+    """Whether two views of this state claim the same URL path.
+
+    Written here rather than imported: this module has no runtime import
+    of `analyze` on purpose (see the note at the top of the file), so the
+    five lines live twice. `_find_view` walks the views by path and
+    returns the first match, which is exactly the wrong answer when there
+    are two.
+    """
+    paths = [
+        view.get("path")
+        for view in config.get("views") or []
+        if isinstance(view, dict) and view.get("path")
+    ]
+    return len(paths) != len(set(paths))
+
+
+
 def _find_view(views: list, item: RemovedItem | UndoStep) -> dict | None:
     """Locate the view an item belongs to, by path or by position.
 
@@ -110,6 +128,12 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
     """
     result = copy.deepcopy(config)
     views = result.setdefault("views", [])
+
+    if _paths_share(result):
+        raise LookupError(
+            "two views of this dashboard share one URL path, so there is "
+            "no telling which of them this belongs to"
+        )
 
     if item.kind == "view":
         if not _view_has_gone(views, item):

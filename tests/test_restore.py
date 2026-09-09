@@ -215,3 +215,22 @@ def test_a_pathless_view_that_really_went_is_still_put_back():
     item = next(i for i in analyze.find_removed(old, new) if i.payload == HOME)
     result = restore.reinsert(new, item)
     assert [view.get("title") for view in result["views"]] == [None, "Home"]
+
+
+def test_a_card_refuses_to_go_back_when_two_views_share_a_path():
+    """With a path naming two views, there is no telling which is meant."""
+    old = {
+        "views": [
+            {"path": "x", "title": "One", "cards": [A, B]},
+            {"path": "x", "title": "Two", "cards": [C]},
+        ]
+    }
+    new = {
+        "views": [
+            {"path": "x", "title": "One", "cards": [A]},
+            {"path": "x", "title": "Two", "cards": [C]},
+        ]
+    }
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    with pytest.raises(LookupError, match="share one URL path"):
+        restore.reinsert(new, item)
