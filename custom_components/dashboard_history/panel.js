@@ -1560,7 +1560,8 @@ class DashboardHistoryPanel extends HTMLElement {
       : "";
     dialog.querySelector(".body").innerHTML = `
       <p class="who"><strong>${head}</strong>${facts.description
-        ? `<span class="why">${escape(facts.description)}</span>`
+        ? `<span class="why"><strong>Description:</strong> ${
+             escape(facts.description)}</span>`
         : ""
       }</p>
       <p><strong>Note:</strong><br>

@@ -4083,7 +4083,16 @@ console.log(JSON.stringify({
   // with one, so a matcher tied to either phrasing would go quiet the
   // moment the other one appeared.
   wordlessHidesTheWordsParagraph: !wordlessBody.includes("its title"),
-  wordlessHasNoDescriptionParagraph: !wordlessBody.includes('class="muted"'),
+  // Matched on the class the description actually carries. It was
+  // `muted` until the words moved up beside the number on 2026-09-09
+  // and became `why` - and this assertion went on passing, because
+  // nothing in this dialog says `muted` any more. A negative matcher
+  // tied to a class the code no longer emits is always true.
+  wordlessHasNoDescriptionParagraph: !wordlessBody.includes('class="why"'),
+  // Both halves, so the pair cannot both go quiet: the described
+  // version must show the label, the wordless one must not.
+  labelsTheDescription: bodyWhenOpened.includes("<strong>Description:</strong>"),
+  wordlessHasNoDescriptionLabel: !wordlessBody.includes("Description:"),
 }));
 """
 
@@ -4111,8 +4120,13 @@ def test_the_dialog_shows_the_description_that_would_be_lost(removing):
     # it appeared in neither the dialog nor the log - only its presence
     # as a boolean decided whether a paragraph was shown at all. Read
     # rather than taken on faith, as the FAQ's "there to be read rather
-    # than clicked through" promises.
+    # than clicked through" promises. Since 2026-09-09 it sits beside
+    # the number rather than among the consequences, under a label of
+    # its own - it says what the version *is*, and between the note and
+    # its list it cut that sentence off from its own bullets.
     assert removing["showsTheDescription"] is True
+    assert removing["labelsTheDescription"] is True
+    assert removing["wordlessHasNoDescriptionLabel"] is True
 
 
 def test_the_dialog_says_the_number_comes_free_where_it_does(removing):
