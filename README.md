@@ -278,7 +278,7 @@ in the row. That has four consequences:
   offers the section as one thing rather than as a heap of cards — as
   long as the other sections of that view are as you left them. Edit one
   of them in between and it says so; *Undo this change* declines either
-  way, because a section has no name to recognise it by. The whole-state
+  way, because a section has no path to recognise it by. The whole-state
   restore brings it back in any case.
 - **Adding a section** switches the undo off for that one save. Nothing
   is broken; the tool declines to work while the row it counts on has
@@ -801,7 +801,7 @@ sections on the installation this was developed against carry none.
 | Deleted a card in a section | `1 removed`, names the card | into the right section | exact |
 | Edited a card in a section | `1 edited`, names the card | — | exact |
 | Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
-| Deleted a whole section | the section, named as one item | into the gap it left | — |
+| Deleted a whole section | the section, named as one item | into the gap it left | **refuses** |
 
 So the everyday case is sound. As long as the row of sections is as it
 was, cards inside them are recognised and recoverable like any others.
