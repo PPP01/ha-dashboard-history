@@ -31,22 +31,26 @@ export const DIALOGS = `
   <dialog class="confirm">
     <h2></h2>
     <div class="body"></div>
-    <div class="keep" data-keep hidden>
-      <label>
-        <input type="checkbox" class="keepbox">
-        <span>Save the state you are leaving as a version</span>
-      </label>
-      <input class="text keeptitle" type="text" maxlength="200"
-             placeholder="What to call it">
-      <p class="muted" style="font-size:13px">
-        Kept either way — without a name it is only findable in the
-        advanced view. Nothing is deleted.
-      </p>
-    </div>
-    <div class="actions">
-      <span class="note muted" style="margin-right:auto"></span>
-      <button class="act ghost" value="cancel">Cancel</button>
-      <button class="act" value="apply">Apply</button>
+    <div class="confirm-footer">
+      <div class="keep" data-keep hidden>
+        <label class="save-checkbox-label">
+          <input type="checkbox" class="keepbox">
+          <span>Save the state you are leaving as a version</span>
+        </label>
+        <div class="keepfields" hidden>
+          <input class="text keeptitle" type="text" maxlength="200"
+                 placeholder="What to call it">
+          <p class="muted" style="font-size:13px">
+            Kept either way — without a name it is only findable in the
+            advanced view. Nothing is deleted.
+          </p>
+        </div>
+      </div>
+      <div class="actions">
+        <span class="note muted" style="margin-right:auto"></span>
+        <button class="act ghost" value="cancel">Cancel</button>
+        <button class="act" value="apply">Apply</button>
+      </div>
     </div>
   </dialog>
   <dialog class="forget">

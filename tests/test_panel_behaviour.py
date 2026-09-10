@@ -53,7 +53,26 @@ const node = () => {
     textContent: "", innerHTML: "", value: "", checked: false,
     hidden: false, returnValue: "", open: false, dataset: {},
     _seen: {}, _on: {},
+    classList: {
+      _classes: new Set(),
+      toggle(c, force) {
+        const has = this._classes.has(c);
+        const should = force !== undefined ? Boolean(force) : !has;
+        if (should) this._classes.add(c);
+        else this._classes.delete(c);
+        return should;
+      },
+      add(...cs) { cs.forEach((c) => this._classes.add(c)); },
+      remove(...cs) { cs.forEach((c) => this._classes.delete(c)); },
+      contains(c) { return this._classes.has(c); },
+    },
     querySelector(selector) {
+      if (selector === "dialog[open]") {
+        for (const key of Object.keys(it._seen)) {
+          if (key.startsWith("dialog") && it._seen[key]?.open) return it._seen[key];
+        }
+        return null;
+      }
       return (it._seen[selector] ||= node());
     },
     querySelectorAll(selector) { return [it.querySelector(selector)]; },
@@ -743,6 +762,8 @@ const press = async (value) => {
     ticked: box().checked,
     title: box() && el.shadowRoot
       .querySelector("[data-keep]").querySelector(".keeptitle").value,
+    fieldsHidden: el.shadowRoot
+      .querySelector("[data-keep]").querySelector(".keepfields").hidden,
   };
   dialog().close(value);
   await done;
@@ -766,8 +787,10 @@ console.log(JSON.stringify({
   diffShown: simple.body.includes("Show the technical details"),
   keepsShown: simple.body.includes("is not lost"),
   tickedInSimple: simple.ticked,
+  fieldsHiddenInSimple: simple.fieldsHidden,
   offeredTitle: simple.title,
   clearInAdvanced: advanced.ticked,
+  fieldsHiddenInAdvanced: advanced.fieldsHidden,
   withKeep: kept[0].extra.keep_as_version ?? null,
   withoutKeep: plain[1].extra.keep_as_version ?? null,
   afterEscape: sent.length - before,
@@ -1053,11 +1076,13 @@ def test_the_dialog_carries_the_technical_diff_and_the_promise(keeping):
 
 
 def test_the_box_follows_the_mode(keeping):
-    # Simple mode: an unmarked state is invisible, so it is ticked.
+    # Simple mode: an unmarked state is invisible, so it is ticked and fields shown.
     # Advanced mode: everything shows anyway, and a mark per experiment
-    # would pile up.
+    # would pile up, so fields start hidden.
     assert keeping["tickedInSimple"] is True
+    assert keeping["fieldsHiddenInSimple"] is False
     assert keeping["clearInAdvanced"] is False
+    assert keeping["fieldsHiddenInAdvanced"] is True
 
 
 def test_a_name_is_offered_in_the_spelling_the_automatic_ones_use(keeping):
@@ -1084,6 +1109,156 @@ def test_a_dialog_dismissed_without_a_button_writes_nothing(keeping):
     # was confirmed once would confirm itself for ever after. Only the
     # preview may be fetched here - one call, and no second one.
     assert keeping["afterEscape"] == 1
+
+
+_CONFIRM_SEGMENTED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+el._select = async () => {};
+el._loadDashboardsQuietly = async () => {};
+
+el._call = (type, extra) => {
+  if (type === "restore_state" && !extra.confirm)
+    return Promise.resolve({
+      applied: false,
+      preview: "-a\\n+b",
+      explanation: { groups: [], note: "one card removed" },
+    });
+  return Promise.resolve({ applied: true, changes: [], dashboards: [] });
+};
+
+const done = el._restoreState("b", "Back to this version");
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
+const segBar = dialog.querySelector(".confirm-seg-bar");
+const diffBtn = segBar.querySelector('[data-seg="diff"]');
+const infoBtn = segBar.querySelector('[data-seg="info"]');
+const raw = dialog.querySelector("details.raw");
+const infoPanel = dialog.querySelector(".confirm-info-panel");
+
+const initial = {
+  diffActive: diffBtn.classList.contains("active"),
+  infoActive: infoBtn.classList.contains("active"),
+  rawOpen: raw.open,
+  infoHidden: infoPanel.hidden,
+};
+
+diffBtn._on.click();
+const afterDiffClick = {
+  diffActive: diffBtn.classList.contains("active"),
+  infoActive: infoBtn.classList.contains("active"),
+  rawOpen: raw.open,
+  infoHidden: infoPanel.hidden,
+};
+
+diffBtn._on.click();
+const afterDiffToggleOff = {
+  diffActive: diffBtn.classList.contains("active"),
+  infoActive: infoBtn.classList.contains("active"),
+  rawOpen: raw.open,
+  infoHidden: infoPanel.hidden,
+};
+
+infoBtn._on.click();
+const afterInfoClick = {
+  diffActive: diffBtn.classList.contains("active"),
+  infoActive: infoBtn.classList.contains("active"),
+  rawOpen: raw.open,
+  infoHidden: infoPanel.hidden,
+};
+
+diffBtn._on.click();
+const afterSwitchToDiff = {
+  diffActive: diffBtn.classList.contains("active"),
+  infoActive: infoBtn.classList.contains("active"),
+  rawOpen: raw.open,
+  infoHidden: infoPanel.hidden,
+};
+
+dialog.close("cancel");
+await done;
+
+console.log(JSON.stringify({
+  initial,
+  afterDiffClick,
+  afterDiffToggleOff,
+  afterInfoClick,
+  afterSwitchToDiff,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def confirm_segmented(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "confirm_segmented", _CONFIRM_SEGMENTED)
+
+
+def test_confirm_segmented_bar_starts_collapsed(confirm_segmented):
+    assert confirm_segmented["initial"]["diffActive"] is False
+    assert confirm_segmented["initial"]["infoActive"] is False
+    assert confirm_segmented["initial"]["rawOpen"] is False
+    assert confirm_segmented["initial"]["infoHidden"] is True
+
+
+def test_confirm_segmented_bar_toggles_diff(confirm_segmented):
+    assert confirm_segmented["afterDiffClick"]["diffActive"] is True
+    assert confirm_segmented["afterDiffClick"]["rawOpen"] is True
+    assert confirm_segmented["afterDiffClick"]["infoHidden"] is True
+
+    # Clicking active diff segment toggles it off
+    assert confirm_segmented["afterDiffToggleOff"]["diffActive"] is False
+    assert confirm_segmented["afterDiffToggleOff"]["rawOpen"] is False
+    assert confirm_segmented["afterDiffToggleOff"]["infoHidden"] is True
+
+
+def test_confirm_segmented_bar_toggles_info_and_switches(confirm_segmented):
+    assert confirm_segmented["afterInfoClick"]["infoActive"] is True
+    assert confirm_segmented["afterInfoClick"]["diffActive"] is False
+    assert confirm_segmented["afterInfoClick"]["rawOpen"] is False
+    assert confirm_segmented["afterInfoClick"]["infoHidden"] is False
+
+    # Switching directly to diff
+    assert confirm_segmented["afterSwitchToDiff"]["diffActive"] is True
+    assert confirm_segmented["afterSwitchToDiff"]["infoActive"] is False
+    assert confirm_segmented["afterSwitchToDiff"]["rawOpen"] is True
+    assert confirm_segmented["afterSwitchToDiff"]["infoHidden"] is True
+
+
+_KEEPBOX_CHANGE = """
+const el = new Panel();
+el.shadowRoot = node();
+el._render();
+
+const keepbox = el.shadowRoot.querySelector("dialog.confirm .keepbox");
+const fields = el.shadowRoot.querySelector("dialog.confirm .keepfields");
+
+keepbox._on.change({ target: { checked: true } });
+const shownWhenChecked = fields.hidden;
+
+keepbox._on.change({ target: { checked: false } });
+const hiddenWhenUnchecked = fields.hidden;
+
+console.log(JSON.stringify({
+  shownWhenChecked,
+  hiddenWhenUnchecked,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def keepbox_change(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "keepbox_change", _KEEPBOX_CHANGE)
+
+
+def test_keepbox_change_toggles_keepfields_visibility(keepbox_change):
+    assert keepbox_change["shownWhenChecked"] is False
+    assert keepbox_change["hiddenWhenUnchecked"] is True
 
 
 _ADDRESSING = """

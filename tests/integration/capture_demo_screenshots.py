@@ -219,7 +219,7 @@ async def main():
             # 3. Restore Dialog Light
             print("3. Opening undo/restore dialog...")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-undo]") || {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
             )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
@@ -227,9 +227,48 @@ async def main():
             await page.js(
                 f'(() => {{ const raw = {PANEL}.querySelector("dialog.confirm details.raw"); if (raw) raw.open = true; }})()'
             )
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
             print("Capturing 03-restore-dialog-light.png...")
             await page.shot("03-restore-dialog-light.png")
+
+            # Click info segment
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+            )
+            await asyncio.sleep(0.5)
+            print("Capturing 03a-restore-dialog-info-light.png...")
+            await page.shot("03a-restore-dialog-info-light.png")
+
+            # Click checkbox to show keepfields
+            await page.js(
+                f'(() => {{ const cb = {PANEL}.querySelector("dialog.confirm .keepbox"); if (cb) cb.click(); }})()'
+            )
+            await asyncio.sleep(0.5)
+            print("Capturing 03b-restore-dialog-checked-light.png...")
+            await page.shot("03b-restore-dialog-checked-light.png")
+
+            # Close dialog
+            await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
+            await asyncio.sleep(0.5)
+
+            # Open Put back dialog
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-restore]"); if (btn) btn.click(); }})()'
+            )
+            await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
+            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+            await asyncio.sleep(0.5)
+            print("Capturing 03c-put-back-dialog-light.png...")
+            await page.shot("03c-put-back-dialog-light.png")
+
+            # Click info segment on Put back dialog
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+            )
+            await asyncio.sleep(0.5)
+            print("Capturing 03d-put-back-info-light.png...")
+            await page.shot("03d-put-back-info-light.png")
+
             # Close dialog
             await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
             await asyncio.sleep(0.5)
@@ -290,16 +329,55 @@ async def main():
             # 8. Restore Dialog Dark
             print("8. Opening undo/restore dialog (Dark)...")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-undo]") || {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
             )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
             await page.js(
                 f'(() => {{ const raw = {PANEL}.querySelector("dialog.confirm details.raw"); if (raw) raw.open = true; }})()'
             )
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.5)
             print("Capturing 07-restore-dialog-dark.png...")
             await page.shot("07-restore-dialog-dark.png")
+
+            # Click info segment
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+            )
+            await asyncio.sleep(0.5)
+            print("Capturing 07a-restore-dialog-info-dark.png...")
+            await page.shot("07a-restore-dialog-info-dark.png")
+
+            # Click checkbox to show keepfields
+            await page.js(
+                f'(() => {{ const cb = {PANEL}.querySelector("dialog.confirm .keepbox"); if (cb) cb.click(); }})()'
+            )
+            await asyncio.sleep(0.5)
+            print("Capturing 07b-restore-dialog-checked-dark.png...")
+            await page.shot("07b-restore-dialog-checked-dark.png")
+
+            # Close dialog
+            await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
+            await asyncio.sleep(0.5)
+
+            # Open Put back dialog (Dark)
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-restore]"); if (btn) btn.click(); }})()'
+            )
+            await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
+            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+            await asyncio.sleep(0.5)
+            print("Capturing 07c-put-back-dialog-dark.png...")
+            await page.shot("07c-put-back-dialog-dark.png")
+
+            # Click info segment on Put back dialog
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+            )
+            await asyncio.sleep(0.5)
+            print("Capturing 07d-put-back-info-dark.png...")
+            await page.shot("07d-put-back-info-dark.png")
+
             await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
 
             print("\nAll screenshots captured successfully!")

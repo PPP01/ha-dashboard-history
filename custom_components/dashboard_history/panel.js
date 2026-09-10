@@ -1231,15 +1231,95 @@ class DashboardHistoryPanel extends HTMLElement {
     const keepable = Boolean(
       wantsKeep && !nothingToDo && !preview.creates_dashboard && !covered.length,
     );
+    const keepsContent = keeps
+      ? `<div class="info-callout">
+           <div class="info-callout__icon" aria-hidden="true">
+             <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
+               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+             </svg>
+           </div>
+           <div class="info-callout__content">
+             ${keeps}
+           </div>
+         </div>`
+      : "";
+
     dialog.querySelector(".body").innerHTML = nothingToDo
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : renderPlain(preview.explanation, "What applying this does") +
-      keeps +
-      `<details class="raw">
+      `<div class="confirm-seg-bar" role="group" aria-label="Details and information">
+         <button type="button" class="confirm-seg-btn" data-seg="diff" aria-pressed="false">
+           <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor" class="seg-icon">
+             <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/>
+           </svg>
+           <span>Show the technical details</span>
+         </button>
+         <button type="button" class="confirm-seg-btn" data-seg="info" aria-pressed="false"${keeps ? "" : " hidden"}>
+           <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor" class="seg-icon">
+             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+           </svg>
+           <span>Current state is preserved</span>
+         </button>
+       </div>
+       <div class="confirm-panels">
+         <details class="raw">
            <summary>Show the technical details</summary>
            ${renderDiff(preview.preview)}
-         </details>`;
+         </details>
+         <div class="confirm-info-panel" hidden>
+           ${keepsContent}
+         </div>
+       </div>`;
+
+    const segBar = dialog.querySelector(".confirm-seg-bar");
+    const rawDetails = dialog.querySelector("details.raw");
+    const infoPanel = dialog.querySelector(".confirm-info-panel");
+    const diffBtn = segBar?.querySelector('[data-seg="diff"]');
+    const infoBtn = segBar?.querySelector('[data-seg="info"]');
+
+    let currentSeg = null;
+
+    const updateSegState = (activeSeg) => {
+      currentSeg = activeSeg;
+      if (diffBtn) {
+        diffBtn.classList.toggle("active", activeSeg === "diff");
+        diffBtn.setAttribute("aria-pressed", String(activeSeg === "diff"));
+      }
+      if (infoBtn) {
+        infoBtn.classList.toggle("active", activeSeg === "info");
+        infoBtn.setAttribute("aria-pressed", String(activeSeg === "info"));
+      }
+      if (rawDetails) {
+        rawDetails.open = activeSeg === "diff";
+      }
+      if (infoPanel) {
+        infoPanel.hidden = activeSeg !== "info";
+      }
+    };
+    updateSegState(null);
+
+    if (diffBtn) {
+      diffBtn.addEventListener("click", () => {
+        updateSegState(currentSeg === "diff" ? null : "diff");
+      });
+    }
+
+    if (infoBtn) {
+      infoBtn.addEventListener("click", () => {
+        updateSegState(currentSeg === "info" ? null : "info");
+      });
+    }
+
+    if (rawDetails) {
+      rawDetails.addEventListener("toggle", () => {
+        if (rawDetails.open && currentSeg !== "diff") {
+          updateSegState("diff");
+        } else if (!rawDetails.open && currentSeg === "diff") {
+          updateSegState(null);
+        }
+      });
+    }
     const applyButton = dialog.querySelector('.actions button[value="apply"]');
     applyButton.hidden = Boolean(nothingToDo);
     dialog.querySelector('.actions button[value="cancel"]').textContent =
@@ -1382,8 +1462,13 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!keep) return null;
     keep.hidden = !show;
     if (!show) return null;
-    keep.querySelector(".keepbox").checked = this._mode === "simple";
-    keep.querySelector(".keeptitle").value = this._dayTitle();
+    const isChecked = this._mode === "simple";
+    const box = keep.querySelector(".keepbox");
+    if (box) box.checked = isChecked;
+    const fields = keep.querySelector(".keepfields");
+    if (fields) fields.hidden = !isChecked;
+    const titleField = keep.querySelector(".keeptitle");
+    if (titleField) titleField.value = this._dayTitle();
     return keep;
   }
 
@@ -2724,6 +2809,13 @@ class DashboardHistoryPanel extends HTMLElement {
           button.addEventListener("click", () => element.close(button.value)),
         ),
     );
+    const keepbox = root.querySelector("dialog.confirm .keepbox");
+    if (keepbox) {
+      keepbox.addEventListener("change", (event) => {
+        const fields = root.querySelector("dialog.confirm .keepfields");
+        if (fields) fields.hidden = !event.target.checked;
+      });
+    }
     const field = root.querySelector("dialog.describe input.text");
     if (field)
       field.addEventListener("keydown", (event) => {
