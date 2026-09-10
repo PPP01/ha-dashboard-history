@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!--
+    Brand icon for dashboard_history (Dark Theme)
+    Solid colors only - guaranteed compatibility across all SVG renderers.
+  -->
+  <!-- Outer History Loop -->
+  <path d="M 64 80 V 182 A 28 28 0 0 0 92 210 H 178 A 32 32 0 0 0 210 178 V 78 A 32 32 0 0 0 178 46 H 130" 
+        fill="none" stroke="#5C9CE6" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Arrow Head -->
+  <polygon points="98,46 136,22 136,70" fill="#5C9CE6"/>
+
+  <!-- Node Connectors -->
+  <line x1="64" y1="96" x2="104" y2="96" stroke="#5C9CE6" stroke-width="10" stroke-linecap="round"/>
+  <line x1="64" y1="164" x2="104" y2="164" stroke="#5C9CE6" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Top Dashboard Card (Active / Present) -->
+  <rect x="104" y="72" width="84" height="48" rx="12" fill="#5C9CE6"/>
+  <rect x="116" y="84" width="34" height="6.5" rx="3.25" fill="#FFFFFF"/>
+  <rect x="116" y="97" width="52" height="6.5" rx="3.25" fill="#BDE0FE"/>
+
+  <!-- Bottom Dashboard Card (History / Past) -->
+  <rect x="104" y="140" width="84" height="48" rx="12" fill="#0D1B2A" stroke="#5C9CE6" stroke-width="3.5"/>
+  <rect x="116" y="152" width="34" height="6.5" rx="3.25" fill="#5C9CE6"/>
+  <rect x="116" y="165" width="52" height="6.5" rx="3.25" fill="#244B7A"/>
+
+  <!-- Commit Nodes -->
+  <circle cx="64" cy="96" r="14" fill="#5C9CE6"/>
+  <circle cx="64" cy="96" r="6" fill="#FFFFFF"/>
+
+  <circle cx="64" cy="164" r="14" fill="#5C9CE6"/>
+  <circle cx="64" cy="164" r="6" fill="#FFFFFF"/>
+</svg>
