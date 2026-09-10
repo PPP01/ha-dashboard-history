@@ -3359,6 +3359,83 @@ def test_a_detail_that_never_arrived_is_not_reported_as_a_refusal(taking_back):
     assert taking_back["unknown"]["saysSo"] is True
 
 
+# -- progressive expansion and in-card loading states -----------------------
+
+_PROGRESSIVE_EXPAND = """
+const el = new Panel();
+const rendered = [];
+el._render = () => {
+  rendered.push({
+    open: el._open,
+    detailLoading: el._loadingDetail,
+    undoLoading: el._loadingUndo,
+    explanation: el._explanation ? el._explanation.heading : null,
+    undo: el._undo ? el._undo.available : null,
+    html: el._open ? el._renderDetail(el._changeAt(el._open)) : "",
+  });
+};
+el._selected = "dash";
+el._changes = [
+  { revision: "rev1", previous: "rev0", message: "edited card", adds: false },
+];
+
+const calls = {};
+el._call = (type, extra) => new Promise((resolve) => {
+  calls[type] = resolve;
+});
+
+// Start expand
+const expandPromise = el._expand("rev1");
+await settle();
+const frame0 = rendered[rendered.length - 1];
+
+// Fast phase: resolve deleted_since and explain
+calls["deleted_since"]({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
+calls["explain"]({ heading: "What this change did", groups: [] });
+await settle();
+const frame1 = rendered[rendered.length - 1];
+
+// Slow phase: resolve undo_change
+calls["undo_change"]({ available: true });
+await expandPromise;
+await settle();
+const frame2 = rendered[rendered.length - 1];
+
+console.log(JSON.stringify({ frame0, frame1, frame2 }));
+"""
+
+
+@pytest.fixture(scope="session")
+def progressive_expand(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "progressive_expand", _PROGRESSIVE_EXPAND)
+
+
+def test_expand_shows_incard_loader_without_error_message(progressive_expand):
+    frame0 = progressive_expand["frame0"]
+    assert frame0["detailLoading"] == "rev1"
+    assert "Loading change details" in frame0["html"]
+    assert "Whether this change can be taken back is not known" not in frame0["html"]
+
+
+def test_expand_renders_explanation_while_undo_is_loading(progressive_expand):
+    frame1 = progressive_expand["frame1"]
+    assert frame1["detailLoading"] is None
+    assert frame1["undoLoading"] == "rev1"
+    assert "Old Card" in frame1["html"]
+    assert "Checking whether this change can be undone" in frame1["html"]
+    assert "Whether this change can be taken back is not known" not in frame1["html"]
+    assert "data-undo=" not in frame1["html"]
+
+
+def test_expand_renders_undo_button_when_undo_resolves(progressive_expand):
+    frame2 = progressive_expand["frame2"]
+    assert frame2["detailLoading"] is None
+    assert frame2["undoLoading"] is None
+    assert 'data-undo="rev1"' in frame2["html"]
+    assert "Undo this change" in frame2["html"]
+    assert "Checking whether this change can be undone" not in frame2["html"]
+
+
 # -- a level the server left out must not take the flow with it ------------
 
 _MISSING_LEVEL = """

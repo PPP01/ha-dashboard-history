@@ -118,12 +118,31 @@ export const STYLE = `
     border-top-color: var(--primary-color, #03a9f4);
     border-radius: 50%;
     animation: dh-spin .9s linear infinite;
+    will-change: transform;
+  }
+  .ring.mini {
+    display: inline-block;
+    vertical-align: middle;
+    width: 14px;
+    height: 14px;
+    margin: 0 8px 0 0;
+    border: 2px solid var(--divider-color, #bdbdbd);
+    border-top-color: var(--primary-color, #03a9f4);
+    border-radius: 50%;
+    animation: dh-spin .9s linear infinite;
+    will-change: transform;
+  }
+  .row-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
   }
   @keyframes dh-spin { to { transform: rotate(360deg); } }
-  /* Somebody who has asked for less movement gets the ring without the
-     movement: it still marks the spot, it just does not turn. */
+  /* Reduced motion: keep the ring turning at a gentle pace rather than
+     stopping it, so an in-flight operation does not look frozen. */
   @media (prefers-reduced-motion: reduce) {
-    .spin .ring { animation: none; }
+    .spin .ring, .ring.mini { animation: dh-spin 2s linear infinite; }
   }
   /* Read out, never shown. */
   .sr {

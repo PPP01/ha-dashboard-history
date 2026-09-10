@@ -180,6 +180,9 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = null; // revision of the expanded change
     this._items = [];
     this._explanation = null;
+    this._undo = null;
+    this._loadingDetail = null;
+    this._loadingUndo = null;
     // How this user has arranged their sidebar, as `frontend/get_user_data`
     // answers it, or null while it has not been read or could not be.
     // See `_loadSidebar`.
@@ -979,13 +982,29 @@ class DashboardHistoryPanel extends HTMLElement {
     if (this._open === revision) {
       this._claim("detail"); // closing it makes any answer in flight stale
       this._open = null;
+      this._clearDetail();
       this._render();
       return;
     }
     const mine = this._claim("detail");
     this._open = revision;
     this._clearDetail();
-    const detail = await this._guard(() => this._detailFor(change), mine);
+    this._loadingDetail = revision;
+    this._loadingUndo = change.previous ? revision : null;
+
+    const detail = await this._guard(async () => {
+      const [missingPromise, explainPromise, undoPromise] = this._detailCalls(change);
+      Promise.all([missingPromise, explainPromise])
+        .then(([missing, explanation]) => {
+          if (!mine()) return;
+          this._items = missing ? missing.items || [] : [];
+          this._explanation = explanation;
+          this._loadingDetail = null;
+          this._render();
+        })
+        .catch(() => {});
+      return await Promise.all([missingPromise, explainPromise, undoPromise]);
+    }, mine);
     // While this row's answers were on their way, somebody opened another
     // row - or closed this one, or opened it again. Its answers belong to
     // that later request, and writing these here would put row "a"'s
@@ -994,27 +1013,32 @@ class DashboardHistoryPanel extends HTMLElement {
     // then these did, and the page settled on the wrong ones.
     if (!mine()) return;
     this._take(detail);
+    this._loadingDetail = null;
+    this._loadingUndo = null;
     this._render();
+  }
+
+  _detailCalls(change) {
+    const missing = change.previous
+      ? this._call("deleted_since", {
+        dashboard: this._selected,
+        revision: change.previous,
+      })
+      : Promise.resolve({ items: [] });
+    const explain = this._call("explain", {
+      dashboard: this._selected,
+      revision: change.revision,
+    });
+    const undo = this._call("undo_change", {
+      dashboard: this._selected,
+      revision: change.revision,
+    });
+    return [missing, explain, undo];
   }
 
   /** The three answers a row's detail is built from. */
   _detailFor(change) {
-    return Promise.all([
-      change.previous
-        ? this._call("deleted_since", {
-          dashboard: this._selected,
-          revision: change.previous,
-        })
-        : Promise.resolve({ items: [] }),
-      this._call("explain", {
-        dashboard: this._selected,
-        revision: change.revision,
-      }),
-      this._call("undo_change", {
-        dashboard: this._selected,
-        revision: change.revision,
-      }),
-    ]);
+    return Promise.all(this._detailCalls(change));
   }
 
   /**
@@ -1030,6 +1054,8 @@ class DashboardHistoryPanel extends HTMLElement {
     this._items = [];
     this._explanation = null;
     this._undo = null;
+    this._loadingDetail = null;
+    this._loadingUndo = null;
   }
 
   _take(answers) {
@@ -2032,6 +2058,11 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _renderDetail(change) {
+    if (this._loadingDetail === change.revision) {
+      return `<div class="detail loading">
+        <p class="muted row-loading"><span class="ring mini"></span> Loading change details…</p>
+      </div>`;
+    }
     // Where there is room, both subjects get a full sentence instead of a
     // chip - the explanation says what the change did, this says where it
     // left the dashboard. "again" carries the case the short form cannot:
@@ -2132,8 +2163,10 @@ class DashboardHistoryPanel extends HTMLElement {
            <button class="act" data-undo="${escape(change.revision)}">Undo this change</button>
          </div>
          <p class="why" style="margin-top:8px">Puts this change back${kept}.</p>`
-      : this._undo
-        ? `<p class="why">This change cannot be taken back exactly:
+      : this._loadingUndo === change.revision
+        ? `<p class="why row-loading"><span class="ring mini"></span> Checking whether this change can be undone…</p>`
+        : this._undo
+          ? `<p class="why">This change cannot be taken back exactly:
              ${escape(this._undo.reason || "no reason given")}.</p>`
         : // Nothing was answered at all - the request for it failed, or
           // it is still out. The sentence above makes a statement about
