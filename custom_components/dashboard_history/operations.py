@@ -1153,10 +1153,10 @@ async def async_explain(
     """
     full = await hass.async_add_executor_job(store.resolve, revision)
     if full is None:
-        return {"groups": [], "note": "", "error": f"unknown revision: {revision}"}
+        return {"groups": [], "note": "", "diff": "", "error": f"unknown revision: {revision}"}
     before = await hass.async_add_executor_job(store.previous_change, key, full)
     if before is None:
-        return {"groups": [], "note": "This is the first recorded state."}
+        return {"groups": [], "note": "This is the first recorded state.", "diff": ""}
 
     # Deliberately not `_state_at`, which reports an absent state as an
     # error. Here an absent state *is* the answer: at a deletion commit
@@ -1166,12 +1166,22 @@ async def async_explain(
     # be the same class of mistake this project has fixed three times.
     old = await hass.async_add_executor_job(store.read_at, key, before)
     new = await hass.async_add_executor_job(store.read_at, key, full)
-    return await hass.async_add_executor_job(_explain_texts, old, new)
+    return await hass.async_add_executor_job(_explain_texts, old, new, key)
 
 
-def _explain_texts(old: str | None, new: str | None) -> dict:
-    """The change between two recorded texts, in words. Off the loop."""
-    return _as_dict(explain_change(load_state(old), load_state(new)))
+def _explain_texts(old: str | None, new: str | None, key: str = "") -> dict:
+    """The change between two recorded texts, in words and diff. Off the loop."""
+    explanation = _as_dict(explain_change(load_state(old), load_state(new)))
+    diff = "".join(
+        difflib.unified_diff(
+            (old or "").splitlines(keepends=True),
+            (new or "").splitlines(keepends=True),
+            fromfile=f"before/{key}" if key else "before",
+            tofile=f"after/{key}" if key else "after",
+        )
+    )
+    explanation["diff"] = diff
+    return explanation
 
 
 async def async_forget(

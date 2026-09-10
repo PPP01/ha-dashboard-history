@@ -183,6 +183,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._undo = null;
     this._loadingDetail = null;
     this._loadingUndo = null;
+    this._diffOpen = false;
     // How this user has arranged their sidebar, as `frontend/get_user_data`
     // answers it, or null while it has not been read or could not be.
     // See `_loadSidebar`.
@@ -1056,6 +1057,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._undo = null;
     this._loadingDetail = null;
     this._loadingUndo = null;
+    this._diffOpen = false;
   }
 
   _take(answers) {
@@ -2179,8 +2181,17 @@ class DashboardHistoryPanel extends HTMLElement {
              known: the answer did not arrive. Any message above says
              why, and the reload button asks again.</p>`;
 
+    const technical =
+      this._explanation && this._explanation.diff != null
+        ? `<details class="raw"${this._diffOpen ? " open" : ""}>
+             <summary>Show the technical details</summary>
+             ${renderDiff(this._explanation.diff)}
+           </details>`
+        : "";
+
     return `<div class="detail">
       ${plain}
+      ${technical}
       ${offer}
       ${list}
       ${this._renderSetBack(change)}
@@ -2544,6 +2555,11 @@ class DashboardHistoryPanel extends HTMLElement {
       element.addEventListener("toggle", () => {
         if (element.open) this._verOpen.add(key);
         else this._verOpen.delete(key);
+      });
+    });
+    root.querySelectorAll(".detail details.raw").forEach((element) => {
+      element.addEventListener("toggle", () => {
+        this._diffOpen = element.open;
       });
     });
     // Every click below is wired the same way, so the wiring is written

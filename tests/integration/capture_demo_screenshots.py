@@ -208,13 +208,19 @@ async def main():
             await page.js(expand_js)
             await page.settle(f'!!{PANEL}.querySelector(".detail")')
             await page.settle(f'{ELEMENT}._busy === 0')
+            # Open the new technical diff inside the detail card
+            await page.js(
+                f'(() => {{ const raw = {PANEL}.querySelector(".detail details.raw"); if (raw) raw.open = true; }})()'
+            )
             await asyncio.sleep(1.0)
             print("Capturing 02-diff-expanded-light.png...")
             await page.shot("02-diff-expanded-light.png")
 
             # 3. Restore Dialog Light
             print("3. Opening undo/restore dialog...")
-            await page.js(f'{PANEL}.querySelector(".detail [data-undo]").click()')
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-undo]") || {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
+            )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
             # Open the raw diff details inside the dialog
@@ -274,13 +280,18 @@ async def main():
             await page.js(expand_js)
             await page.settle(f'!!{PANEL}.querySelector(".detail")')
             await page.settle(f'{ELEMENT}._busy === 0')
+            await page.js(
+                f'(() => {{ const raw = {PANEL}.querySelector(".detail details.raw"); if (raw) raw.open = true; }})()'
+            )
             await asyncio.sleep(1.0)
             print("Capturing 06-diff-expanded-dark.png...")
             await page.shot("06-diff-expanded-dark.png")
 
             # 8. Restore Dialog Dark
             print("8. Opening undo/restore dialog (Dark)...")
-            await page.js(f'{PANEL}.querySelector(".detail [data-undo]").click()')
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-undo]") || {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
+            )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
             await page.js(

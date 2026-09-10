@@ -3391,9 +3391,16 @@ const frame0 = rendered[rendered.length - 1];
 
 // Fast phase: resolve deleted_since and explain
 calls["deleted_since"]({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
-calls["explain"]({ heading: "What this change did", groups: [] });
+calls["explain"]({
+  heading: "What this change did",
+  groups: [],
+  diff: "--- before/dash\\n+++ after/dash\\n@@ -1 +1 @@\\n-old\\n+new\\n",
+});
 await settle();
 const frame1 = rendered[rendered.length - 1];
+
+// User toggles the diff open while undo is still computing
+el._diffOpen = true;
 
 // Slow phase: resolve undo_change
 calls["undo_change"]({ available: true });
@@ -3425,6 +3432,20 @@ def test_expand_renders_explanation_while_undo_is_loading(progressive_expand):
     assert "Checking whether this change can be undone" in frame1["html"]
     assert "Whether this change can be taken back is not known" not in frame1["html"]
     assert "data-undo=" not in frame1["html"]
+
+
+def test_expand_renders_collapsible_technical_diff(progressive_expand):
+    frame1 = progressive_expand["frame1"]
+    assert 'details class="raw"' in frame1["html"]
+    assert "Show the technical details" in frame1["html"]
+    assert '<span class="del">-old</span>' in frame1["html"]
+    assert '<span class="add">+new</span>' in frame1["html"]
+
+
+def test_expand_preserves_diff_open_state_when_undo_resolves(progressive_expand):
+    frame2 = progressive_expand["frame2"]
+    assert 'details class="raw" open' in frame2["html"]
+    assert "Show the technical details" in frame2["html"]
 
 
 def test_expand_renders_undo_button_when_undo_resolves(progressive_expand):

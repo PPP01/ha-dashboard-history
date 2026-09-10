@@ -469,6 +469,12 @@ export const STYLE = `
     font-size: 13px;
     cursor: pointer;
   }
+  .detail details.raw pre {
+    margin-top: 4px;
+    margin-bottom: 8px;
+    max-height: 400px;
+    overflow: auto;
+  }
   pre .add { color: var(--success-color, #0f9d58); }
   pre .del { color: var(--error-color, #db4437); }
   pre .at { color: var(--secondary-text-color, #727272); }
