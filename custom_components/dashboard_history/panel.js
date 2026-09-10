@@ -184,6 +184,10 @@ class DashboardHistoryPanel extends HTMLElement {
     this._loadingDetail = null;
     this._loadingUndo = null;
     this._diffOpen = false;
+    // Answers for rows already expanded once. Keyed by revision, dropped
+    // when the dashboard changes or the history is refreshed after an
+    // outside save - both of which make cached undo previews stale.
+    this._detailCache = new Map();
     // How this user has arranged their sidebar, as `frontend/get_user_data`
     // answers it, or null while it has not been read or could not be.
     // See `_loadSidebar`.
@@ -423,6 +427,7 @@ class DashboardHistoryPanel extends HTMLElement {
       // An expanded row keeps its place, but not its answers: after a
       // change from outside, "Put back" would be offering items worked
       // out against a dashboard that has moved on.
+      this._detailCache.clear();
       const open = this._changeAt(this._open);
       if (!open) {
         this._claim("detail");
@@ -670,6 +675,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._backToTheTop();
     this._open = null;
     this._clearDetail();
+    this._detailCache.clear();
     this._cursor = null;
     this._versions = [];
     this._matching = [];
@@ -989,6 +995,20 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     const mine = this._claim("detail");
     this._open = revision;
+    this._diffOpen = false;
+
+    // A row expanded once keeps its answers until the dashboard changes.
+    const cached = this._detailCache.get(revision);
+    if (cached) {
+      this._items = cached.items;
+      this._explanation = cached.explanation;
+      this._undo = cached.undo;
+      this._loadingDetail = null;
+      this._loadingUndo = null;
+      this._render();
+      return;
+    }
+
     this._clearDetail();
     this._loadingDetail = revision;
     this._loadingUndo = change.previous ? revision : null;
@@ -1025,6 +1045,16 @@ class DashboardHistoryPanel extends HTMLElement {
       });
 
     await this._guard(() => Promise.all([fastPhase, slowPhase]), mine);
+
+    // Keep for the next time this row is opened, unless somebody else
+    // has claimed the slot while the answers were on their way.
+    if (mine() && this._explanation) {
+      this._detailCache.set(revision, {
+        items: this._items,
+        explanation: this._explanation,
+        undo: this._undo,
+      });
+    }
   }
 
   _detailCalls(change) {

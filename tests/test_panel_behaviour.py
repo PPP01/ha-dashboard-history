@@ -3517,6 +3517,71 @@ def test_undo_failure_preserves_explanation_and_clears_loading_undo(expand_undo_
     assert "Whether this change can be taken back is not known" in flat_html
 
 
+# -- detail cache: re-expanding the same row must not re-fetch ---------------
+
+_DETAIL_CACHE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [
+  { revision: "rev1", previous: "rev0", message: "edited card", adds: false },
+];
+
+let callCount = 0;
+el._call = (type, extra) => {
+  callCount++;
+  if (type === "deleted_since") return Promise.resolve({ items: [{ label: "Card", kind: "card", position: 0 }] });
+  if (type === "explain") return Promise.resolve({ groups: [], note: "", diff: "diff" });
+  if (type === "undo_change") return Promise.resolve({ available: true });
+  return Promise.resolve({});
+};
+
+// First expand: must call the backend
+await el._expand("rev1");
+await settle();
+const callsAfterFirst = callCount;
+const cachedAfterFirst = el._detailCache.size;
+
+// Collapse
+await el._expand("rev1");
+await settle();
+
+// Re-expand the same row: should be instant from cache
+callCount = 0;
+await el._expand("rev1");
+await settle();
+const callsAfterReopen = callCount;
+const hasExplanation = !!el._explanation;
+const hasItems = el._items.length > 0;
+
+console.log(JSON.stringify({
+  callsAfterFirst,
+  cachedAfterFirst,
+  callsAfterReopen,
+  hasExplanation,
+  hasItems,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def detail_cache(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "detail_cache", _DETAIL_CACHE)
+
+
+def test_first_expand_fetches_from_backend(detail_cache):
+    assert detail_cache["callsAfterFirst"] == 3
+
+
+def test_first_expand_populates_cache(detail_cache):
+    assert detail_cache["cachedAfterFirst"] == 1
+
+
+def test_reexpand_uses_cache_without_network_calls(detail_cache):
+    assert detail_cache["callsAfterReopen"] == 0
+    assert detail_cache["hasExplanation"] is True
+    assert detail_cache["hasItems"] is True
+
 
 # -- a level the server left out must not take the flow with it ------------
 
