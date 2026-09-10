@@ -3369,7 +3369,7 @@ el._render = () => {
     open: el._open,
     detailLoading: el._loadingDetail,
     undoLoading: el._loadingUndo,
-    explanation: el._explanation ? el._explanation.heading : null,
+    explanation: el._explanation ? Boolean(el._explanation) : false,
     undo: el._undo ? el._undo.available : null,
     html: el._open ? el._renderDetail(el._changeAt(el._open)) : "",
   });
@@ -3392,8 +3392,8 @@ const frame0 = rendered[rendered.length - 1];
 // Fast phase: resolve deleted_since and explain
 calls["deleted_since"]({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
 calls["explain"]({
-  heading: "What this change did",
   groups: [],
+  note: "",
   diff: "--- before/dash\\n+++ after/dash\\n@@ -1 +1 @@\\n-old\\n+new\\n",
 });
 await settle();
@@ -3455,6 +3455,67 @@ def test_expand_renders_undo_button_when_undo_resolves(progressive_expand):
     assert 'data-undo="rev1"' in frame2["html"]
     assert "Undo this change" in frame2["html"]
     assert "Checking whether this change can be undone" not in frame2["html"]
+
+
+# -- undo failure must not wipe out already loaded explanation --------------
+
+_EXPAND_UNDO_FAILURE = """
+const el = new Panel();
+const rendered = [];
+el._render = () => {
+  rendered.push({
+    open: el._open,
+    detailLoading: el._loadingDetail,
+    undoLoading: el._loadingUndo,
+    html: el._open ? el._renderDetail(el._changeAt(el._open)) : "",
+  });
+};
+el._selected = "dash";
+el._changes = [
+  { revision: "rev1", previous: "rev0", message: "edited card", adds: false },
+];
+
+const calls = {};
+el._call = (type, extra) => new Promise((resolve, reject) => {
+  calls[type] = { resolve, reject };
+});
+
+const expandPromise = el._expand("rev1");
+await settle();
+
+// Fast phase succeeds
+calls["deleted_since"].resolve({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
+calls["explain"].resolve({
+  groups: [],
+  note: "",
+  diff: "--- before/dash\\n+++ after/dash\\n@@ -1 +1 @@\\n-old\\n+new\\n",
+});
+await settle();
+
+// Slow phase fails / rejects
+calls["undo_change"].reject(new Error("WebSocket timeout"));
+await expandPromise;
+await settle();
+const frameAfterError = rendered[rendered.length - 1];
+
+console.log(JSON.stringify({ frameAfterError }));
+"""
+
+
+@pytest.fixture(scope="session")
+def expand_undo_failure(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "expand_undo_failure", _EXPAND_UNDO_FAILURE)
+
+
+def test_undo_failure_preserves_explanation_and_clears_loading_undo(expand_undo_failure):
+    frame = expand_undo_failure["frameAfterError"]
+    assert frame["detailLoading"] is None
+    assert frame["undoLoading"] is None
+    assert "Old Card" in frame["html"]
+    assert "Show the technical details" in frame["html"]
+    flat_html = " ".join(frame["html"].split())
+    assert "Whether this change can be taken back is not known" in flat_html
+
 
 
 # -- a level the server left out must not take the flow with it ------------

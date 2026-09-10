@@ -993,30 +993,38 @@ class DashboardHistoryPanel extends HTMLElement {
     this._loadingDetail = revision;
     this._loadingUndo = change.previous ? revision : null;
 
-    const detail = await this._guard(async () => {
-      const [missingPromise, explainPromise, undoPromise] = this._detailCalls(change);
-      Promise.all([missingPromise, explainPromise])
-        .then(([missing, explanation]) => {
-          if (!mine()) return;
-          this._items = missing ? missing.items || [] : [];
-          this._explanation = explanation;
-          this._loadingDetail = null;
-          this._render();
-        })
-        .catch(() => {});
-      return await Promise.all([missingPromise, explainPromise, undoPromise]);
-    }, mine);
-    // While this row's answers were on their way, somebody opened another
-    // row - or closed this one, or opened it again. Its answers belong to
-    // that later request, and writing these here would put row "a"'s
-    // items under the heading of row "b", or an older answer over a newer
-    // one. Measured on 2026-09-03: the later row's answers arrived first,
-    // then these did, and the page settled on the wrong ones.
-    if (!mine()) return;
-    this._take(detail);
-    this._loadingDetail = null;
-    this._loadingUndo = null;
-    this._render();
+    const [missingPromise, explainPromise, undoPromise] = this._detailCalls(change);
+
+    // Fast phase: explanation and deleted cards
+    const fastPhase = Promise.all([missingPromise, explainPromise])
+      .then(([missing, explanation]) => {
+        if (!mine()) return;
+        this._items = missing ? missing.items || [] : [];
+        this._explanation = explanation;
+        this._loadingDetail = null;
+        this._render();
+      })
+      .catch((err) => {
+        if (!mine()) return;
+        this._loadingDetail = null;
+        this._error = err?.message || String(err);
+        this._render();
+      });
+
+    // Slower phase: undo availability and preview
+    const slowPhase = undoPromise
+      .then((undo) => {
+        if (!mine()) return;
+        this._undo = undo;
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!mine()) return;
+        this._loadingUndo = null;
+        this._render();
+      });
+
+    await this._guard(() => Promise.all([fastPhase, slowPhase]), mine);
   }
 
   _detailCalls(change) {

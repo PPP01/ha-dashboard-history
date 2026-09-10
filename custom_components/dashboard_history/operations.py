@@ -1142,19 +1142,12 @@ async def async_describe(
     return {"applied": True, "description": text.strip()}
 
 
-async def async_explain(
-    hass: HomeAssistant, store: HistoryStore, key: str, revision: str
-) -> dict:
-    """What one recorded change did, in words.
-
-    `revision` is the change itself, not the state before it - the panel
-    must not have to work that out, because working it out wrongly is the
-    trap decision 9 of the design record removed rather than signposted.
-    """
-    full = await hass.async_add_executor_job(store.resolve, revision)
+def _explain_sync(store: HistoryStore, key: str, revision: str) -> dict:
+    """The change between two recorded states, in words and diff. Off the loop."""
+    full = store.resolve(revision)
     if full is None:
         return {"groups": [], "note": "", "diff": "", "error": f"unknown revision: {revision}"}
-    before = await hass.async_add_executor_job(store.previous_change, key, full)
+    before = store.previous_change(key, full)
     if before is None:
         return {"groups": [], "note": "This is the first recorded state.", "diff": ""}
 
@@ -1164,12 +1157,24 @@ async def async_explain(
     # nothing is what says "the whole view was deleted". Reporting "did
     # not exist at" for the one change people most want explained would
     # be the same class of mistake this project has fixed three times.
-    old = await hass.async_add_executor_job(store.read_at, key, before)
-    new = await hass.async_add_executor_job(store.read_at, key, full)
-    return await hass.async_add_executor_job(_explain_texts, old, new, key)
+    old = store.read_at(key, before)
+    new = store.read_at(key, full)
+    return _explain_texts(old, new, key)
 
 
-def _explain_texts(old: str | None, new: str | None, key: str = "") -> dict:
+async def async_explain(
+    hass: HomeAssistant, store: HistoryStore, key: str, revision: str
+) -> dict:
+    """What one recorded change did, in words.
+
+    `revision` is the change itself, not the state before it - the panel
+    must not have to work that out, because working it out wrongly is the
+    trap decision 9 of the design record removed rather than signposted.
+    """
+    return await hass.async_add_executor_job(_explain_sync, store, key, revision)
+
+
+def _explain_texts(old: str | None, new: str | None, key: str) -> dict:
     """The change between two recorded texts, in words and diff. Off the loop."""
     explanation = _as_dict(explain_change(load_state(old), load_state(new)))
     diff = "".join(
