@@ -443,6 +443,51 @@ def test_a_browser_that_refuses_to_remember_still_shows_the_panel(no_storage):
     assert no_storage["afterSwitch"] == "advanced"
 
 
+_SEGMENTED_CONTROL = """
+const el = new Panel();
+el._render = () => {};
+
+// Initial simple mode:
+const simpleHtml = el._renderModeSwitch();
+
+// Switch to advanced mode:
+el._setMode("advanced");
+const advancedHtml = el._renderModeSwitch();
+
+console.log(JSON.stringify({
+  simpleHtml,
+  advancedHtml,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def segmented_control(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "segmented_control", _SEGMENTED_CONTROL)
+
+
+def test_segmented_control_renders_radiogroup_with_glider(segmented_control):
+    html = segmented_control["simpleHtml"]
+    assert 'class="segmented-control"' in html
+    assert 'role="radiogroup"' in html
+    assert 'class="segmented-control__glider"' in html
+    assert 'value="simple"' in html
+    assert 'value="advanced"' in html
+
+
+def test_segmented_control_reflects_simple_mode(segmented_control):
+    html = segmented_control["simpleHtml"]
+    assert 'value="simple" checked' in html
+    assert 'value="advanced" checked' not in html
+
+
+def test_segmented_control_reflects_advanced_mode(segmented_control):
+    html = segmented_control["advancedHtml"]
+    assert 'value="advanced" checked' in html
+    assert 'value="simple" checked' not in html
+
+
+
 _VERSIONS_LOADED = """
 const el = new Panel();
 el._render = () => {};

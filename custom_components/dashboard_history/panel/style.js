@@ -7,6 +7,24 @@ export const STYLE = `
     background: var(--primary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
     font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
+    --sc-bg: #f1f5f9;
+    --sc-border: #e2e8f0;
+    --sc-text-muted: #64748b;
+    --sc-text-active: #0f172a;
+    --sc-card-active: #ffffff;
+    --sc-hover-bg: rgba(255, 255, 255, 0.45);
+    --sc-accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :host {
+      --sc-bg: #1e293b;
+      --sc-border: #334155;
+      --sc-text-muted: #94a3b8;
+      --sc-text-active: #f8fafc;
+      --sc-card-active: #0f172a;
+      --sc-hover-bg: rgba(255, 255, 255, 0.05);
+      --sc-accent: #60a5fa;
+    }
   }
   .bar {
     display: flex;
@@ -542,9 +560,103 @@ export const STYLE = `
     cursor: pointer;
   }
   details.more > summary:hover { color: var(--primary-text-color, #212121); }
-  .older { display:flex; justify-content:center; padding:12px 0 4px; }
-  .mode { background:none; border:1px solid var(--divider-color,#444); color:inherit;
-        border-radius:6px; padding:4px 10px; font-size:13px; cursor:pointer; }
+  /* Segmented control: Simple / Advanced switcher */
+  .segmented-control {
+    all: unset;
+    display: inline-flex;
+    vertical-align: middle;
+  }
+  .segmented-control__track {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background-color: var(--sc-bg);
+    border: 1px solid var(--sc-border);
+    border-radius: 8px;
+    padding: 2px;
+    box-sizing: border-box;
+    user-select: none;
+    height: 26px;
+    align-items: center;
+  }
+  .segmented-control__glider {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    left: 2px;
+    width: calc((100% - 4px) / 2);
+    background-color: var(--sc-card-active);
+    border-radius: 6px;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
+    pointer-events: none;
+    z-index: 1;
+    transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .segmented-control__glider {
+      transition: none;
+    }
+  }
+  .segmented-control__track:has(input[value="advanced"]:checked) .segmented-control__glider {
+    transform: translateX(100%);
+  }
+  .segmented-control__option {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    margin: 0;
+    cursor: pointer;
+    height: 100%;
+  }
+  .segmented-control__option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    margin: 0;
+  }
+  .segmented-control__label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    gap: 6px;
+    padding: 0 10px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--sc-text-muted);
+    border-radius: 6px;
+    line-height: 1;
+    transition: color 0.18s ease, background-color 0.18s ease;
+    white-space: nowrap;
+  }
+  .segmented-control__icon {
+    width: 14px;
+    height: 14px;
+    opacity: 0.7;
+    transition: opacity 0.18s ease;
+    flex-shrink: 0;
+  }
+  .segmented-control__option:hover input:not(:checked) + .segmented-control__label {
+    color: var(--sc-text-active);
+    background-color: var(--sc-hover-bg);
+  }
+  .segmented-control__option:hover input:not(:checked) + .segmented-control__label .segmented-control__icon {
+    opacity: 0.95;
+  }
+  .segmented-control__option input:checked + .segmented-control__label {
+    color: var(--sc-text-active);
+    font-weight: 600;
+  }
+  .segmented-control__option input:checked + .segmented-control__label .segmented-control__icon {
+    opacity: 1;
+  }
+  .segmented-control__option input:focus-visible + .segmented-control__label {
+    outline: 2px solid var(--sc-accent);
+    outline-offset: 1px;
+  }
   /* The card the versions wear, so that the box above them is not the
      one thing on the page drawn in another language - and the outline
      the advanced mode puts round its current-state card, out of the

@@ -2533,6 +2533,33 @@ class DashboardHistoryPanel extends HTMLElement {
     });
   }
 
+  _renderModeSwitch() {
+    const isSimple = this._mode === "simple";
+    return `<fieldset class="segmented-control" role="radiogroup" aria-label="View mode">
+        <div class="segmented-control__track">
+          <div class="segmented-control__glider" aria-hidden="true"></div>
+          <label class="segmented-control__option">
+            <input type="radio" name="view-mode" value="simple" ${isSimple ? "checked" : ""}>
+            <span class="segmented-control__label">
+              <svg class="segmented-control__icon" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 2a8 8 0 100 16 8 8 0 000-16zm-1 4a1 1 0 112 0v4a1 1 0 11-2 0V6zm1 8a1 1 0 100-2 1 1 0 000 2z"/>
+              </svg>
+              Simple
+            </span>
+          </label>
+          <label class="segmented-control__option">
+            <input type="radio" name="view-mode" value="advanced" ${!isSimple ? "checked" : ""}>
+            <span class="segmented-control__label">
+              <svg class="segmented-control__icon" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+              </svg>
+              Advanced
+            </span>
+          </label>
+        </div>
+      </fieldset>`;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     // Never while a dialog is open. Everything below replaces the
@@ -2555,8 +2582,7 @@ class DashboardHistoryPanel extends HTMLElement {
       <style>${STYLE}</style>
       <div class="bar">
         <span>Dashboard History</span>
-        <button class="mode" data-mode="${this._mode === "simple" ? "advanced" : "simple"}"
-                >${this._mode === "simple" ? "Advanced view" : "Simple view"}</button>
+        ${this._renderModeSwitch()}
         <span class="which">${escape(this._selectedTitle())}</span>
         ${this._busy ? '<span class="muted" style="font-size:14px">working\u2026</span>' : ""}
         <button class="reload" data-refresh="1" title="Reload the history"
@@ -2678,6 +2704,18 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick("[data-mode]", (element, event) => {
       event.stopPropagation();
       this._setMode(element.dataset.mode);
+    });
+    root.querySelectorAll(".segmented-control input[type='radio']").forEach((radio) => {
+      radio.addEventListener("change", (event) => {
+        const nextMode = event.target.value;
+        if (nextMode === this._mode) return;
+        const hasMotion = !window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+        if (hasMotion) {
+          setTimeout(() => this._setMode(nextMode), 180);
+        } else {
+          this._setMode(nextMode);
+        }
+      });
     });
     root.querySelectorAll("dialog").forEach((element) =>
       element
