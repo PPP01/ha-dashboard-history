@@ -2314,8 +2314,13 @@ class DashboardHistoryPanel extends HTMLElement {
              known: the answer did not arrive. Any message above says
              why, and the reload button asks again.</p>`;
 
+    // `diff` and not `diff != null`: the shapes that carry no change -
+    // an unknown revision, the first recorded state - answer with the
+    // empty string, and offering "Show the technical details" there
+    // opens on "No difference.", which reads as an answer about the
+    // dashboard when it is an answer about the request.
     const technical =
-      this._explanation && this._explanation.diff != null
+      this._explanation && this._explanation.diff
         ? `<details class="raw"${this._diffOpen ? " open" : ""}>
              <summary>Show the technical details</summary>
              ${renderDiff(this._explanation.diff)}
@@ -2673,6 +2678,15 @@ class DashboardHistoryPanel extends HTMLElement {
     // a focused element fires `blur` is not the same in every engine,
     // and this must not depend on the answer.
     const wasTyping = this._inBox;
+    // Same reason, for the one thing in the detail card that scrolls
+    // inside itself: the technical diff, capped at 400px. Replacing the
+    // shadow root builds a fresh <pre> at the top, so a reader who had
+    // scrolled into a long diff was put back at line one by any render
+    // - a save announced from elsewhere, or `_guard` on its way in and
+    // out of the next call. The open/closed state was already carried
+    // across in `_diffOpen`; this is the other half of the same idea.
+    const diffScroll =
+      this.shadowRoot.querySelector(".detail details.raw[open] pre")?.scrollTop ?? 0;
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="bar">
@@ -2721,6 +2735,14 @@ class DashboardHistoryPanel extends HTMLElement {
         this._diffOpen = element.open;
       });
     });
+    if (diffScroll) {
+      const pre = root.querySelector(".detail details.raw[open] pre");
+      // Only where the new diff is long enough to hold the old offset.
+      // A shorter one clamps to its own end by itself, which is the
+      // right answer and not worth a branch; a missing one is the row
+      // having closed, and there is nothing to put back.
+      if (pre) pre.scrollTop = diffScroll;
+    }
     // Every click below is wired the same way, so the wiring is written
     // once and each line says only the two things that differ: what was
     // clicked, and what that does. The element comes first because most

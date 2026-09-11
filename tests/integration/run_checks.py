@@ -1441,9 +1441,58 @@ async def run_explanation(access: str) -> None:
         )
         check(
             "explain answers in shape",
-            "groups" in result and "note" in result and "error" not in result,
+            "groups" in result
+            and "note" in result
+            and "diff" in result
+            and "error" not in result,
             str(sorted(result)),
         )
+        # The diff was added to this answer on 2026-09-10 and nothing
+        # reached it: `operations.py` imports Home Assistant, so the
+        # pytest suite cannot load it, and the panel's own tests feed
+        # themselves a diff written by hand. This is the only place that
+        # can see the real one.
+        diff = result.get("diff") or ""
+        head = diff.splitlines()[:2]
+        check(
+            "the explanation carries a unified diff naming the dashboard",
+            len(head) == 2
+            and head[0] == f"--- before/{key}"
+            and head[1] == f"+++ after/{key}",
+            str(head) if head else "no diff at all",
+        )
+        check(
+            "and that diff says what the words say - it is not empty",
+            any(
+                line.startswith(("+", "-"))
+                and not line.startswith(("+++", "---"))
+                for line in diff.splitlines()
+            ),
+            f"{len(diff)} characters",
+        )
+        # The oldest recorded state has nothing to compare against, and
+        # answers the empty string rather than a diff against nothing.
+        # Only where this page reaches that far back: `history` hands
+        # out one page, and on a long history the oldest is not in it.
+        first = [c for c in changes if not c.get("previous")]
+        if first:
+            oldest = await socket.call(
+                "dashboard_history/explain", dashboard=key, revision=first[0]["revision"]
+            )
+            check(
+                "the first recorded state answers with no diff, not with nothing",
+                oldest.get("diff") == "" and "error" not in oldest,
+                str(sorted(oldest)) + f" diff={oldest.get('diff')!r}",
+            )
+        else:
+            # Said out loud rather than passed over. A page that does
+            # not reach the beginning is the ordinary case on a long
+            # history, and a check that quietly does not run is how a
+            # run of green stops meaning anything.
+            print(
+                "  --   the first recorded state answers with no diff"
+                f"  — not checked: no change without a predecessor in {len(changes)}"
+            )
         named = [
             entry["text"] for group in result["groups"] for entry in group["entries"]
         ]
