@@ -1,10 +1,50 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <!--
-    Brand icon for dashboard_history (Light Theme)
-    Solid colors only - optimized for high contrast on white/light backgrounds.
+    Brand icon for the dashboard_history integration - light theme.
+
+    The glyph is a commit strand: two nodes on a line, each carrying a
+    dashboard card, wrapped in a loop that turns back on itself and
+    ends in an arrow. That turn is the restore, and it is the same
+    stroke rather than an object of its own, because a stroke survives
+    32 px where a thin ring loses its opening - and the opening is the
+    one thing an arrow is for. The upper card is filled and the lower
+    one only outlined, so the pair reads as present above past without
+    a caption. Which is honest about the internals: underneath this is
+    a real git repository, written with dulwich.
+
+    #0288D1  ground   strand, arrow, connectors, nodes, the present
+                      card's fill and the past card's outline
+    #FFFFFF  present  node centres and the present card's first line
+    #B3E5FC  accent   the present card's second line
+    #E1F5FE  past     the past card's fill, a tint of the ground
+    #81D4FA  past     the past card's second line
+
+    On the ground colour: Material Light Blue 700, picked after
+    looking through a long list of other integration icons. The first
+    version used a violet ground and argued for it - deliberately not
+    Home Assistant's own blue, so the integration would stay findable
+    in that list. Seeing the list decided it the other way round: the
+    blues are what it is built from, and sitting inside that family
+    reads as part of Home Assistant rather than as a guest. Standing
+    out was never worth as much as belonging.
+
+    The background is transparent, where the first version filled a
+    rounded violet square. That is what makes a dark variant
+    necessary: a coloured container brings its own contrast along, a
+    transparent one inherits whatever the theme puts behind it. The
+    counterpart is dark_icon.svg, and it does get served - Home
+    Assistant's frontend asks for `${dark_}${type}.png`, dark_icon.png
+    is in the brands component's ALLOWED_IMAGES, and a custom
+    integration's own brand/ files are tried before the CDN.
+
+    Everything is a solid fill. No opacity, no gradients: PNG
+    rasterisers disagree about alpha compositing - ImageMagick's
+    built-in SVG renderer ignores the attribute outright - and an icon
+    that renders differently depending on the tool is a bug waiting to
+    happen. Mix the tone in and write the result, never an alpha step.
   -->
   <!-- Outer History Loop -->
-  <path d="M 64 80 V 182 A 28 28 0 0 0 92 210 H 178 A 32 32 0 0 0 210 178 V 78 A 32 32 0 0 0 178 46 H 130" 
+  <path d="M 64 80 V 182 A 28 28 0 0 0 92 210 H 178 A 32 32 0 0 0 210 178 V 78 A 32 32 0 0 0 178 46 H 130"
         fill="none" stroke="#0288D1" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Arrow Head -->

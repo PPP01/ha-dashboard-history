@@ -1,10 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <!--
-    Brand icon for dashboard_history (Dark Theme)
-    Solid colors only - guaranteed compatibility across all SVG renderers.
+    Brand icon for the dashboard_history integration - dark theme.
+
+    Same glyph as icon.svg, same geometry to the pixel; only the five
+    tones change. The reasoning for the shape, for the blue, and for
+    the no-opacity rule lives in icon.svg and is not repeated here -
+    if this file and that one ever disagree, that one is right.
+
+    What a dark ground changes is which way the contrast runs. The
+    strand lifts from Light Blue 700 to a softer #5C9CE6, because the
+    darker tone loses its edge against a dark panel. The past card
+    inverts: on light it is a pale tint of the ground, here it is
+    nearly black and carried by its outline alone, which keeps it
+    reading as the emptier of the two cards either way round.
+
+    #5C9CE6  ground   strand, arrow, connectors, nodes, the present
+                      card's fill and the past card's outline
+    #FFFFFF  present  node centres and the present card's first line
+    #BDE0FE  accent   the present card's second line
+    #0D1B2A  past     the past card's fill
+    #244B7A  past     the past card's second line
+
+    This file exists because icon.svg dropped the filled container it
+    started with. A transparent background inherits the theme behind
+    it, so one set of tones can no longer serve both. Home Assistant
+    does ask for it: the frontend builds `${dark_}${type}.png`,
+    dark_icon.png is in the brands component's ALLOWED_IMAGES, and a
+    custom integration's own brand/ files are tried before the CDN -
+    checked against 2026.8.3.
   -->
   <!-- Outer History Loop -->
-  <path d="M 64 80 V 182 A 28 28 0 0 0 92 210 H 178 A 32 32 0 0 0 210 178 V 78 A 32 32 0 0 0 178 46 H 130" 
+  <path d="M 64 80 V 182 A 28 28 0 0 0 92 210 H 178 A 32 32 0 0 0 210 178 V 78 A 32 32 0 0 0 178 46 H 130"
         fill="none" stroke="#5C9CE6" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
 
   <!-- Arrow Head -->
