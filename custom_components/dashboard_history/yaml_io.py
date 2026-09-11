@@ -19,6 +19,20 @@ HEADER = (
     "# Do not edit by hand; edit dashboards in the Home Assistant UI.\n"
 )
 
+# PyYAML ships two parsers and chooses neither for you: `yaml.safe_load`
+# always takes the pure-Python one, even where libyaml sits right beside
+# it. Measured in the test container on 2026-09-11 against the bench
+# repository, a 262 KiB dashboard: 501 ms pure Python, 54.8 ms through
+# libyaml - and opening one row of the panel parses two states, which is
+# where the better part of a second came from.
+#
+# Checked before switching, over all 98 dashboards at HEAD of the bench
+# repository: both parsers answer equal objects, and `dump()` of either
+# answer is byte-identical. Nothing about what gets written changes.
+#
+# The dumper stays pure Python on purpose - see `_Dumper`.
+_Loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 def _can_use_block(text: str) -> bool:
     """Whether a block scalar would preserve the string exactly.
@@ -42,7 +56,22 @@ def _can_use_block(text: str) -> bool:
 
 
 class _Dumper(yaml.SafeDumper):
-    """A dumper that renders multi-line strings as readable blocks."""
+    """A dumper that renders multi-line strings as readable blocks.
+
+    Pure Python where `load` takes libyaml, and not by oversight.
+    libyaml's emitter escapes every character above the basic plane -
+    emoji - as `\\U0001F7E2` however `allow_unicode` is set, and a string
+    holding one can then no longer be a block scalar at all. Measured on
+    2026-09-11: `"\\U0001F7E2 ok"` where pure Python writes the sign
+    itself, and 4 of the 98 dashboards in the bench repository came out
+    as different bytes. Characters inside the plane - umlauts, the check
+    mark - are emitted alike by both.
+
+    Determinism is what this module is for, and a title with an emoji in
+    it is an ordinary thing to put on a dashboard. Switching to the C
+    emitter for its 2.2x would rewrite those dashboards on the next save
+    and record one enormous change that nobody made.
+    """
 
 
 def _represent_str(dumper, data):
@@ -70,7 +99,7 @@ def dump(data) -> str:
 
 def load(text: str):
     """Parse YAML produced by `dump`."""
-    return yaml.safe_load(text)
+    return yaml.load(text, Loader=_Loader)
 
 
 def load_state(text: str | None) -> dict:

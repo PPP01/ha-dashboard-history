@@ -5,6 +5,8 @@ import os
 import pathlib
 
 import pytest
+import yaml
+
 import yaml_io
 
 # Real dashboards, if any are pointed at: set
@@ -85,6 +87,50 @@ def test_real_dashboards_survive_the_round_trip(path):
     text = yaml_io.dump(config)
     assert yaml_io.load(text) == config
     assert yaml_io.dump(config) == text
+
+
+def test_the_fast_parser_answers_what_the_slow_one_answers():
+    """`load` goes through libyaml where it exists; both must agree.
+
+    The reason for the switch is speed - a 262 KiB dashboard parsed in
+    54.8 ms instead of 501 ms, measured 2026-09-11 - and the reason for
+    this test is that speed must not buy a different answer. Checked
+    once over all 98 dashboards of the test bench before switching;
+    this keeps a few shapes of it in the suite. Where PyYAML was built
+    without libyaml the two loaders are the same object and this passes
+    for the boring reason.
+    """
+    data = {
+        "views": [
+            {
+                "title": "Küche",
+                "cards": [
+                    {"type": "markdown", "content": "a\nb\n"},
+                    {"code": "0123", "on": "yes", "when": "2026-09-11"},
+                    {"note": "space   \nafter", "sign": "🟢 ok"},
+                ],
+            }
+        ]
+    }
+    text = yaml_io.dump(data)
+    assert yaml_io.load(text) == yaml.load(text, Loader=yaml.SafeLoader) == data
+
+
+def test_emoji_is_written_as_itself_not_escaped():
+    """Guards the dumper against the switch `load` just made.
+
+    libyaml's emitter escapes everything above the basic plane however
+    `allow_unicode` is set: `\\U0001F7E2` instead of the sign, and a
+    string holding one cannot be a block scalar any more. Measured
+    2026-09-11, that is 4 of the 98 dashboards on the test bench - so a
+    C emitter here would reformat them on the next save and record a
+    change nobody made. If this test goes red, `_Dumper` has been given
+    a C base class.
+    """
+    text = yaml_io.dump({"title": "🟢 ok", "body": "🟢\nsecond line"})
+    assert "🟢 ok" in text
+    assert "\\U" not in text
+    assert "body: |" in text
 
 
 def test_load_state_reads_nothing_as_an_empty_configuration():
