@@ -1,10 +1,51 @@
-"""Capture publication-ready screenshots from the clean demo instance."""
+"""Capture the screenshots the README shows, from the demo instance.
+
+Documentation, not a test. Nothing here asserts anything and pytest
+never collects it, which is why it sits in tools/ and not beside
+run_checks.py. Its one job is the job a screenshot has to survive: the
+panel changes, and the picture has to change with it. An image nobody
+can regenerate is worse than no image at all.
+
+    python3 tools/capture_demo_screenshots.py
+
+WHAT IT NEEDS - and this part is not in the repository yet:
+
+A second Home Assistant, separate from the throwaway one in
+docker/compose.yaml. That one belongs to run_checks.py, which edits and
+deletes as it goes; a screenshot wants a history that reads tidily.
+This script expects the demo instance on http://127.0.0.1:8125 with
+
+  - three dashboards, url_path `home-overview`, `living-room` and
+    `dashboard-standard`,
+  - `living-room` carrying at least three recorded changes and two
+    named versions, v1.0.0 and v1.1.0,
+  - a long-lived access token in <demo>/token.txt.
+
+DASHBOARD_HISTORY_DEMO points at that directory; the default is
+../ha-dashboard-history-demo, beside this repository. Building the
+instance from the repository the way make_probe_dashboard.py builds
+its probe is still open work. Until then this script says what it is
+missing rather than photographing a blank page.
+
+Overridable, all of it, because the first version wrote one machine's
+home directory into a public repository:
+
+    DASHBOARD_HISTORY_DEMO      the demo instance's directory
+    DASHBOARD_HISTORY_DEMO_URL  where it answers  (default :8125)
+    DASHBOARD_HISTORY_CDP_PORT  Chrome's debug port  (default 9335)
+    DASHBOARD_HISTORY_SHOTS     where images land  (default docs/images)
+
+It opens restore dialogs and closes every one of them with `cancel`,
+so it writes nothing - but it drives a live panel, and this
+repository's rule about the real installation holds here too.
+"""
 
 import asyncio
 import base64
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
@@ -12,13 +53,34 @@ import urllib.request
 
 import websockets
 
-BASE = "http://127.0.0.1:8125"
-PORT = 9335
-TOKEN_PATH = pathlib.Path("/home/patric/apache/projekte/ha-dashboard-history-demo/token.txt")
-PROFILE = pathlib.Path("/home/patric/apache/projekte/ha-dashboard-history-demo/chrome-profile")
-OUTPUT_DIR = pathlib.Path("/home/patric/apache/projekte/ha-dashboard-history-demo/shots")
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+DEMO = pathlib.Path(
+    os.environ.get("DASHBOARD_HISTORY_DEMO") or ROOT.parent / "ha-dashboard-history-demo"
+)
 
-TOKEN = TOKEN_PATH.read_text().strip()
+BASE = os.environ.get("DASHBOARD_HISTORY_DEMO_URL", "http://127.0.0.1:8125")
+PORT = int(os.environ.get("DASHBOARD_HISTORY_CDP_PORT", "9335"))
+TOKEN_PATH = DEMO / "token.txt"
+PROFILE = DEMO / "chrome-profile"
+OUTPUT_DIR = pathlib.Path(
+    os.environ.get("DASHBOARD_HISTORY_SHOTS") or ROOT / "docs" / "images"
+)
+
+
+def read_token():
+    """Read the token when the run starts, not when the module loads.
+
+    At module level a missing file ends the process with a bare
+    FileNotFoundError before anything can say which file or why.
+    """
+    try:
+        return TOKEN_PATH.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        sys.exit(
+            f"No access token at {TOKEN_PATH}.\n"
+            f"Put a long-lived token there, or set DASHBOARD_HISTORY_DEMO "
+            f"to the demo instance's directory."
+        )
 
 PANEL = (
     "(() => { const walk = (root) => {"
@@ -72,15 +134,28 @@ class CDPSession:
         return result["result"].get("value")
 
     async def settle(self, expression, seconds=15):
+        """Wait for `expression` to go true, and give up loudly.
+
+        This returned False once, and not one of its callers looked.
+        A panel that never rendered was therefore photographed blank,
+        and the run still ended on "All screenshots captured
+        successfully!". Every expression below reaches into the
+        panel's own internals - `_select`, `_setMode`, `_busy` - so a
+        rename in panel.js is exactly how that happens.
+        """
         deadline = time.time() + seconds
+        last = None
         while time.time() < deadline:
             try:
                 if await self.js(expression):
                     return True
-            except RuntimeError:
-                pass
+            except RuntimeError as trouble:
+                last = trouble
             await asyncio.sleep(0.3)
-        return False
+        raise TimeoutError(
+            f"waited {seconds}s for: {expression}"
+            + (f"\nlast error: {last}" if last else "")
+        )
 
     async def shot(self, name):
         result = await self.send("Page.captureScreenshot", {"format": "png"})
@@ -90,7 +165,11 @@ class CDPSession:
 
 
 async def main():
+    if shutil.which("google-chrome") is None:
+        sys.exit("google-chrome is not on PATH; this script drives it over CDP.")
+    token = read_token()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Demo instance: {BASE}   images: {OUTPUT_DIR}")
     chrome = subprocess.Popen(
         [
             "google-chrome",
@@ -151,7 +230,7 @@ async def main():
                 "(() => { const t = "
                 + json.dumps(
                     {
-                        "access_token": TOKEN,
+                        "access_token": token,
                         "token_type": "Bearer",
                         "expires_in": 3600,
                         "clientId": None,
