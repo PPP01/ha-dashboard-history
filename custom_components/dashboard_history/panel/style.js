@@ -523,6 +523,17 @@ export const STYLE = `
   pre .del { color: var(--error-color, #db4437); }
   pre .at { color: var(--secondary-text-color, #727272); }
   details.ver { margin-bottom: 12px; }
+  /* Centred, and deliberately not on the baseline like .vhead further
+     down, whose comment argues the other way for the same pairing of a
+     monospace number with a proportional title. The difference is what
+     else stands in the line: there it is a title and a date, here a
+     chevron and two buttons, and those have no baseline worth sharing.
+     One rule departs from the other on purpose; neither is a leftover.
+
+     list-style as well as display:flex. Flex is what actually removes
+     the native triangle in the engines this was drawn in, but that is
+     an assumption about engines, and the two other summaries in this
+     file say it outright rather than rely on it. */
   details.ver > summary {
     display: flex;
     align-items: center;
@@ -534,15 +545,22 @@ export const STYLE = `
     border-left: 4px solid var(--accent-color, #ff9800);
     cursor: pointer;
     user-select: none;
+    list-style: none;
   }
+  details.ver > summary::-webkit-details-marker { display: none; }
+  /* The same triangle the two other chevrons in this panel use, written
+     the same way: 25B8 is the small one, and an escape rather than the
+     character itself keeps this file to plain ASCII. It arrived as a
+     literal U+25B6 - the large triangle - which was the only byte above
+     ASCII in the whole stylesheet and a second glyph for one job. */
   details.ver > summary::before {
-    content: "▶";
-    font-size: 9px;
+    content: "\\25B8";
+    display: inline-block;
+    width: 9px;
+    margin-right: 2px;
     color: var(--secondary-text-color, #727272);
-    margin-right: -4px;
     transition: transform .15s ease;
     transform-origin: center;
-    display: inline-block;
   }
   details.ver[open] > summary::before {
     transform: rotate(90deg);
