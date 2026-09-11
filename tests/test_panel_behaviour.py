@@ -3816,6 +3816,103 @@ def test_undo_failure_leaves_a_message_the_row_can_point_at(expand_undo_failure)
     assert expand_undo_failure["error"] == "WebSocket timeout"
 
 
+# -- what the detail cache is allowed to remember --------------------------
+
+_CACHE_LIMITS = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [
+  { revision: "rev1", previous: "rev0", message: "edited card", adds: false },
+];
+
+const asked = [];
+let held = {};
+el._call = (type) => new Promise((resolve, reject) => {
+  asked.push(type);
+  held[type] = { resolve, reject };
+});
+
+// First expand: the explanation arrives, the undo does not.
+const first = el._expand("rev1");
+await settle();
+held["deleted_since"].resolve({ items: [] });
+held["explain"].resolve({ groups: [], note: "", diff: "-a\\n+b\\n" });
+await settle();
+held["undo_change"].reject(new Error("WebSocket timeout"));
+await first;
+await settle();
+const cachedAfterFailure = el._detailCache.has("rev1");
+
+// Collapse, then open it again and count what that costs.
+await el._expand("rev1");
+await settle();
+const countBefore = asked.length;
+held = {};
+const again = el._expand("rev1");
+await settle();
+const askedOnReExpand = asked.length - countBefore;
+held["deleted_since"]?.resolve({ items: [] });
+held["explain"]?.resolve({ groups: [], note: "", diff: "" });
+held["undo_change"]?.resolve({ available: true });
+await again;
+await settle();
+const cachedOnceItAnswered = el._detailCache.has("rev1");
+
+// A second panel, opening far more rows than the cache may hold.
+const many = new Panel();
+many._render = () => {};
+many._selected = "dash";
+many._changes = [];
+for (let i = 0; i < 40; i++)
+  many._changes.push({ revision: "r" + i, previous: "p" + i, message: "m", adds: false });
+many._call = (type) =>
+  Promise.resolve(
+    type === "deleted_since"
+      ? { items: [] }
+      : type === "explain"
+        ? { groups: [], note: "", diff: "x" }
+        : { available: true },
+  );
+for (const change of many._changes) {
+  await many._expand(change.revision);
+  await settle();
+}
+
+console.log(JSON.stringify({
+  cachedAfterFailure,
+  askedOnReExpand,
+  cachedOnceItAnswered,
+  size: many._detailCache.size,
+  keptNewest: many._detailCache.has("r39"),
+  droppedOldest: !many._detailCache.has("r0"),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def cache_limits(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "cache_limits", _CACHE_LIMITS)
+
+
+def test_a_failed_undo_is_not_remembered_as_an_answer(cache_limits):
+    # Storing it turned one dropped WebSocket call into a row that had
+    # no undo until the whole history was reloaded: re-opening asked
+    # nothing and repeated "the answer did not arrive", pointing at a
+    # banner the next action had already cleared.
+    assert cache_limits["cachedAfterFailure"] is False
+    assert cache_limits["askedOnReExpand"] == 3
+    assert cache_limits["cachedOnceItAnswered"] is True
+
+
+def test_the_detail_cache_holds_a_page_and_no_more(cache_limits):
+    # An entry carries the technical diff, which is as large as the
+    # dashboard for a change that rewrites it.
+    assert cache_limits["size"] == 25
+    assert cache_limits["keptNewest"] is True
+    assert cache_limits["droppedOldest"] is True
+
+
 # -- detail cache: re-expanding the same row must not re-fetch ---------------
 
 _DETAIL_CACHE = """

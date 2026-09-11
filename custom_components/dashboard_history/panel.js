@@ -37,6 +37,16 @@ const PARTS = new URL(import.meta.url).search;
 // offered nothing to get them back with.
 const PAGE = 25;
 
+// How many rows' answers are held at once. A page's worth, because a
+// page is what somebody works through before moving on, and the cache
+// is dropped wholesale at the next dashboard switch or refresh anyway.
+// Bounded rather than open-ended because an entry is not small any
+// more: since the technical diff joined `explain`, an answer is a few
+// hundred bytes for an ordinary edit and as large as the dashboard for
+// one that rewrites it - 270 KB, measured against the largest real one
+// on 2026-09-11.
+const DETAILS_KEPT = PAGE;
+
 // Deliberately `let`, and deliberately no top-level await. The element
 // must be defined in this module's FIRST synchronous pass. Home
 // Assistant creates the panel element as soon as the module is
@@ -1045,12 +1055,14 @@ class DashboardHistoryPanel extends HTMLElement {
       });
 
     // Slower phase: undo availability and preview
+    let undoFailed = false;
     const slowPhase = undoPromise
       .then((undo) => {
         if (!mine()) return;
         this._undo = undo;
       })
       .catch((err) => {
+        undoFailed = true;
         if (!mine()) return;
         // Written down, not dropped. Without the answer the row falls
         // back to "the answer did not arrive. Any message above says
@@ -1076,12 +1088,25 @@ class DashboardHistoryPanel extends HTMLElement {
 
     // Keep for the next time this row is opened, unless somebody else
     // has claimed the slot while the answers were on their way.
-    if (mine() && this._explanation) {
+    //
+    // And not where the undo failed. Caching that stored a network
+    // error as though it were an answer: re-opening the row asked
+    // nothing, showed "the answer did not arrive" again, and pointed
+    // at a banner the next action had already cleared. One hiccup took
+    // the undo off a row until the whole history was reloaded. A
+    // failed explanation was never cached - `_explanation` stays null
+    // - and this is the same rule for the other half.
+    if (mine() && this._explanation && !undoFailed) {
       this._detailCache.set(revision, {
         items: this._items,
         explanation: this._explanation,
         undo: this._undo,
       });
+      // Oldest out. A Map hands its keys back in insertion order, so
+      // the first one is the row opened longest ago.
+      while (this._detailCache.size > DETAILS_KEPT) {
+        this._detailCache.delete(this._detailCache.keys().next().value);
+      }
     }
   }
 
