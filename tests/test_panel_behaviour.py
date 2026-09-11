@@ -66,6 +66,7 @@ const node = () => {
       remove(...cs) { cs.forEach((c) => this._classes.delete(c)); },
       contains(c) { return this._classes.has(c); },
     },
+    _attrs: {},
     querySelector(selector) {
       if (selector === "dialog[open]") {
         for (const key of Object.keys(it._seen)) {
@@ -77,14 +78,21 @@ const node = () => {
     },
     querySelectorAll(selector) { return [it.querySelector(selector)]; },
     addEventListener(name, run) { it._on[name] = run; },
-    // Three no-ops rather than three more properties: the version
+    // `setAttribute` remembers, the other two are no-ops: the version
     // dialog presses its level buttons into shape with `setAttribute`
     // and puts the cursor in the title field, and the description
     // dialog selects the text it prefilled. A stand-in that cannot be
     // told any of it makes those flows untestable for a reason that
     // has nothing to do with what they do. (Scenarios older than this
     // hand their own in; those still work, and are left alone.)
-    setAttribute() {},
+    //
+    // Written down rather than dropped, since 2026-09-11: what a
+    // control announces to somebody who cannot see it - aria-expanded
+    // on the confirmation dialog's two panel buttons - is state like
+    // any other, and a stand-in that forgets it makes the one kind of
+    // regression that no screenshot shows untestable as well.
+    setAttribute(name, value) { it._attrs[name] = String(value); },
+    getAttribute(name) { return name in it._attrs ? it._attrs[name] : null; },
     focus() {},
     select() {},
     showModal() { it.open = true; },
@@ -1215,6 +1223,8 @@ const initial = {
   infoActive: infoBtn.classList.contains("active"),
   rawOpen: raw.open,
   infoHidden: infoPanel.hidden,
+  diffExpanded: diffBtn.getAttribute("aria-expanded"),
+  infoExpanded: infoBtn.getAttribute("aria-expanded"),
 };
 
 diffBtn._on.click();
@@ -1223,6 +1233,8 @@ const afterDiffClick = {
   infoActive: infoBtn.classList.contains("active"),
   rawOpen: raw.open,
   infoHidden: infoPanel.hidden,
+  diffExpanded: diffBtn.getAttribute("aria-expanded"),
+  infoExpanded: infoBtn.getAttribute("aria-expanded"),
 };
 
 diffBtn._on.click();
@@ -1231,6 +1243,8 @@ const afterDiffToggleOff = {
   infoActive: infoBtn.classList.contains("active"),
   rawOpen: raw.open,
   infoHidden: infoPanel.hidden,
+  diffExpanded: diffBtn.getAttribute("aria-expanded"),
+  infoExpanded: infoBtn.getAttribute("aria-expanded"),
 };
 
 infoBtn._on.click();
@@ -1239,6 +1253,8 @@ const afterInfoClick = {
   infoActive: infoBtn.classList.contains("active"),
   rawOpen: raw.open,
   infoHidden: infoPanel.hidden,
+  diffExpanded: diffBtn.getAttribute("aria-expanded"),
+  infoExpanded: infoBtn.getAttribute("aria-expanded"),
 };
 
 diffBtn._on.click();
@@ -1247,6 +1263,17 @@ const afterSwitchToDiff = {
   infoActive: infoBtn.classList.contains("active"),
   rawOpen: raw.open,
   infoHidden: infoPanel.hidden,
+  diffExpanded: diffBtn.getAttribute("aria-expanded"),
+  infoExpanded: infoBtn.getAttribute("aria-expanded"),
+};
+
+const markup = dialog.querySelector(".body").innerHTML;
+const controls = {
+  diff: markup.includes('aria-controls="confirm-diff-panel"'),
+  info: markup.includes('aria-controls="confirm-info-panel"'),
+  diffPanelHasId: markup.includes('id="confirm-diff-panel"'),
+  infoPanelHasId: markup.includes('id="confirm-info-panel"'),
+  noPressed: !markup.includes("aria-pressed"),
 };
 
 dialog.close("cancel");
@@ -1258,6 +1285,7 @@ console.log(JSON.stringify({
   afterDiffToggleOff,
   afterInfoClick,
   afterSwitchToDiff,
+  controls,
 }));
 """
 
@@ -1265,6 +1293,32 @@ console.log(JSON.stringify({
 @pytest.fixture(scope="session")
 def confirm_segmented(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "confirm_segmented", _CONFIRM_SEGMENTED)
+
+
+def test_the_panel_buttons_say_that_they_disclose(confirm_segmented):
+    # These two replaced a <summary>, whose display:none took its
+    # semantics with it: a native disclosure says that it opens
+    # something and what. They carried `aria-pressed`, which announces
+    # a switch that is on and names nothing - right for the version
+    # dialog's patch/minor/major choice, wrong here.
+    assert confirm_segmented["controls"]["noPressed"] is True
+    assert confirm_segmented["controls"]["diff"] is True
+    assert confirm_segmented["controls"]["info"] is True
+    assert confirm_segmented["controls"]["diffPanelHasId"] is True
+    assert confirm_segmented["controls"]["infoPanelHasId"] is True
+
+
+def test_the_disclosed_state_travels_with_the_panels(confirm_segmented):
+    steps = [
+        ("initial", "false", "false"),
+        ("afterDiffClick", "true", "false"),
+        ("afterDiffToggleOff", "false", "false"),
+        ("afterInfoClick", "false", "true"),
+        ("afterSwitchToDiff", "true", "false"),
+    ]
+    for frame, diff, info in steps:
+        assert confirm_segmented[frame]["diffExpanded"] == diff, frame
+        assert confirm_segmented[frame]["infoExpanded"] == info, frame
 
 
 def test_confirm_segmented_bar_starts_collapsed(confirm_segmented):

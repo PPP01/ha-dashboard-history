@@ -877,9 +877,16 @@ export const STYLE = `
   .confirm-info-panel[hidden] {
     display: none;
   }
+  /* Tinted from the theme's own accent rather than from a fixed blue:
+     the left edge below already reads --primary-color, so on a theme
+     that sets another one the fill and the edge used to disagree. The
+     flat rgba stays as the line before, for a browser without
+     color-mix - there it is the old appearance, not a missing one. */
   .info-callout {
     background: rgba(3, 169, 244, 0.08);
+    background: color-mix(in srgb, var(--primary-color, #03a9f4) 8%, transparent);
     border: 1px solid rgba(3, 169, 244, 0.25);
+    border: 1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 25%, transparent);
     border-left: 4px solid var(--primary-color, #03a9f4);
     border-radius: 6px;
     padding: 10px 14px;
