@@ -233,6 +233,10 @@ class DashboardHistoryPanel extends HTMLElement {
     this._busy = 0;
     // A render that fell due while a dialog was open. See `_render`.
     this._renderOwed = false;
+    // The 180 ms the glider is given to slide before the panel is
+    // rebuilt under it. Held so it can be called off - see
+    // `disconnectedCallback`.
+    this._modeSlide = null;
     this._error = null;
     this._loaded = false;
     // One ticket counter per slot the page can fill - the change list,
@@ -268,6 +272,36 @@ class DashboardHistoryPanel extends HTMLElement {
    * refuses to store still shows the other mode for as long as the page
    * is open, which is the part somebody just asked for.
    */
+  /**
+   * Switch the mode, but let the glider arrive first.
+   *
+   * Rebuilding the panel replaces the switch along with everything
+   * else, and a glider replaced mid-slide never slides: it is simply
+   * drawn at the far end. 180 ms buys the animation its own time.
+   *
+   * Held in `_modeSlide` rather than left to run. Two things overtake
+   * it - a second click inside the window, and leaving the panel - and
+   * `_setMode` is not free at the end of it: with a word in the search
+   * box it puts the search again, which walks the whole history, about
+   * half a second per thousand commits. Running that for a page nobody
+   * is on is the case `disconnectedCallback` was already cancelling a
+   * keystroke for.
+   *
+   * `globalThis` and not `window`: the same reach in a browser, and
+   * the panel's own tests run this in Node, where `window` is not a
+   * name at all and `window.matchMedia?.()` throws before the optional
+   * call can help.
+   */
+  _modeAfterSlide(mode) {
+    const reduced = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (reduced) return this._setMode(mode);
+    clearTimeout(this._modeSlide);
+    this._modeSlide = setTimeout(() => {
+      this._modeSlide = null;
+      this._setMode(mode);
+    }, 180);
+  }
+
   _setMode(mode) {
     if (!MODES.includes(mode)) return;
     this._mode = mode;
@@ -350,6 +384,10 @@ class DashboardHistoryPanel extends HTMLElement {
     // the same reason `7d37e9c` cancels a mark in flight on unload.
     clearTimeout(this._typing);
     this._typing = null;
+    // And the mode switch's 180 ms, for the same reason: it ends on
+    // `_setMode`, which puts a standing search again.
+    clearTimeout(this._modeSlide);
+    this._modeSlide = null;
   }
 
   /**
@@ -2879,12 +2917,7 @@ class DashboardHistoryPanel extends HTMLElement {
       radio.addEventListener("change", (event) => {
         const nextMode = event.target.value;
         if (nextMode === this._mode) return;
-        const hasMotion = !window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-        if (hasMotion) {
-          setTimeout(() => this._setMode(nextMode), 180);
-        } else {
-          this._setMode(nextMode);
-        }
+        this._modeAfterSlide(nextMode);
       });
     });
     root.querySelectorAll("dialog").forEach((element) =>

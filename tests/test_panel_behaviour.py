@@ -506,6 +506,74 @@ def test_segmented_control_reflects_advanced_mode(segmented_control):
     assert 'value="simple" checked' not in html
 
 
+# -- the glider's 180 ms must not outlive the panel ------------------------
+
+_MODE_SLIDE = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "simple";
+
+// Clicked, then the panel is left before the glider has arrived.
+el._modeAfterSlide("advanced");
+const modeRightAfterClick = el._mode;
+const timerWasHeld = el._modeSlide !== null;
+el.disconnectedCallback();
+const timerWasCleared = el._modeSlide === null;
+await new Promise((r) => setTimeout(r, 300));
+const modeAfterLeaving = el._mode;
+
+// Nobody leaves: the switch lands.
+const stays = new Panel();
+stays._render = () => {};
+stays._mode = "simple";
+stays._modeAfterSlide("advanced");
+await new Promise((r) => setTimeout(r, 300));
+const modeAfterWaiting = stays._mode;
+
+// Two clicks inside the window are one switch, not two.
+const twice = new Panel();
+twice._render = () => {};
+twice._mode = "simple";
+const switched = [];
+twice._setMode = (m) => switched.push(m);
+twice._modeAfterSlide("advanced");
+twice._modeAfterSlide("simple");
+await new Promise((r) => setTimeout(r, 300));
+
+console.log(JSON.stringify({
+  modeRightAfterClick,
+  timerWasHeld,
+  timerWasCleared,
+  modeAfterLeaving,
+  modeAfterWaiting,
+  switched,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def mode_slide(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "mode_slide", _MODE_SLIDE)
+
+
+def test_the_mode_switch_waits_for_its_glider(mode_slide):
+    assert mode_slide["modeRightAfterClick"] == "simple"
+    assert mode_slide["timerWasHeld"] is True
+    assert mode_slide["modeAfterWaiting"] == "advanced"
+
+
+def test_leaving_the_panel_calls_off_a_pending_mode_switch(mode_slide):
+    # `_setMode` puts a standing search again, and that walks the whole
+    # history. Running it for a page nobody is on is what
+    # `disconnectedCallback` already cancelled a keystroke for.
+    assert mode_slide["timerWasCleared"] is True
+    assert mode_slide["modeAfterLeaving"] == "simple"
+
+
+def test_two_clicks_inside_the_window_make_one_switch(mode_slide):
+    assert mode_slide["switched"] == ["simple"]
+
+
 
 _VERSIONS_LOADED = """
 const el = new Panel();

@@ -7,24 +7,29 @@ export const STYLE = `
     background: var(--primary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
     font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
-    --sc-bg: #f1f5f9;
-    --sc-border: #e2e8f0;
-    --sc-text-muted: #64748b;
-    --sc-text-active: #0f172a;
-    --sc-card-active: #ffffff;
-    --sc-hover-bg: rgba(255, 255, 255, 0.45);
-    --sc-accent: #2563eb;
-  }
-  @media (prefers-color-scheme: dark) {
-    :host {
-      --sc-bg: #1e293b;
-      --sc-border: #334155;
-      --sc-text-muted: #94a3b8;
-      --sc-text-active: #f8fafc;
-      --sc-card-active: #0f172a;
-      --sc-hover-bg: rgba(255, 255, 255, 0.05);
-      --sc-accent: #60a5fa;
-    }
+    /* The mode switch in the bar. It arrived with seven fixed colours
+       and a prefers-color-scheme block - the only such block this file
+       ever had - so it followed the operating system while everything
+       around it followed the Home Assistant theme. The two come apart
+       the moment somebody pins a theme the system does not agree with:
+       measured on 2026-09-11, a dark theme under a light system drew a
+       pale switch on a dark bar, and a light theme under a dark system
+       the other way round.
+
+       The same variables the dialogs' segmented bar reads, so the two
+       controls in this panel stay one thing. The fallbacks are the
+       light values it had before, so a Home Assistant that sets none
+       of these looks exactly as it did. */
+    --sc-bg: var(--secondary-background-color, #f1f5f9);
+    --sc-border: var(--divider-color, #e2e8f0);
+    --sc-text-muted: var(--secondary-text-color, #64748b);
+    --sc-text-active: var(--primary-text-color, #0f172a);
+    --sc-card-active: var(--card-background-color, #ffffff);
+    /* Neutral grey rather than white: a lift of the unselected half
+       that reads on a pale bar and on a dark one, with no second
+       value to keep in step. */
+    --sc-hover-bg: rgba(127, 127, 127, 0.16);
+    --sc-accent: var(--primary-color, #2563eb);
   }
   .bar {
     display: flex;
