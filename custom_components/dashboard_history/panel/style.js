@@ -124,31 +124,38 @@ export const STYLE = `
      somebody has scrolled to, the ring is in front of them rather than
      in the middle of a column they cannot see. Above the veil because
      it is a later sibling of the ::before that draws it. */
-  .spin .ring {
-    position: sticky;
-    top: 84px;
-    display: block;
+  /* What both rings are, said once. The base used to be .spin .ring,
+     which the in-card ring cannot reach - it sits inside a card, not
+     inside the veil - so the accent colour, the radius and the turn
+     stood twice, and the reduced-motion query below had to name two
+     selectors to find them. Size and placement are all that differs,
+     and that is what the two rules under this one carry. */
+  .ring {
     box-sizing: border-box;
-    width: 40px;
-    height: 40px;
-    margin: 28px auto 0;
     border: 4px solid var(--divider-color, #bdbdbd);
     border-top-color: var(--primary-color, #03a9f4);
     border-radius: 50%;
     animation: dh-spin .9s linear infinite;
     will-change: transform;
   }
+  .spin .ring {
+    position: sticky;
+    top: 84px;
+    display: block;
+    width: 40px;
+    height: 40px;
+    margin: 28px auto 0;
+  }
+  /* In a row rather than over the page: beside the words that say what
+     is being waited for. Only the border width here, so the colours
+     stay in the one place above. */
   .ring.mini {
     display: inline-block;
     vertical-align: middle;
     width: 14px;
     height: 14px;
     margin: 0 8px 0 0;
-    border: 2px solid var(--divider-color, #bdbdbd);
-    border-top-color: var(--primary-color, #03a9f4);
-    border-radius: 50%;
-    animation: dh-spin .9s linear infinite;
-    will-change: transform;
+    border-width: 2px;
   }
   .row-loading {
     display: flex;
@@ -160,7 +167,7 @@ export const STYLE = `
   /* Reduced motion: keep the ring turning at a gentle pace rather than
      stopping it, so an in-flight operation does not look frozen. */
   @media (prefers-reduced-motion: reduce) {
-    .spin .ring, .ring.mini { animation: dh-spin 2s linear infinite; }
+    .ring { animation-duration: 2s; }
   }
   /* Read out, never shown. */
   .sr {

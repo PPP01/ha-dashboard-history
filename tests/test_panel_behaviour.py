@@ -1314,8 +1314,11 @@ def test_a_row_is_opened_by_its_revision_and_asks_against_its_own_predecessor(
 
 def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
     # There genuinely is nothing there, and asking would be asking about
-    # a revision that does not exist.
-    assert addressing["first"]["types"] == ["explain", "undo_change"]
+    # a revision that does not exist. `undo_change` is left out for a
+    # second reason: `_renderDetail` returns before the undo section for
+    # a change with no predecessor, so the answer had nowhere to go -
+    # and it is the expensive one, 1.2 to 1.5 s on a large dashboard.
+    assert addressing["first"]["types"] == ["explain"]
 
 
 _SEARCH = """
@@ -3675,6 +3678,65 @@ def test_expand_renders_undo_button_when_undo_resolves(progressive_expand):
     assert 'data-undo="rev1"' in frame2["html"]
     assert "Undo this change" in frame2["html"]
     assert "Checking whether this change can be undone" not in frame2["html"]
+
+
+# -- the oldest change asks for nothing it cannot show ---------------------
+
+_FIRST_RECORDED_EXPAND = """
+const el = new Panel();
+const rendered = [];
+el._render = () => {
+  rendered.push({
+    detailLoading: el._loadingDetail,
+    undoLoading: el._loadingUndo,
+    html: el._open ? el._renderDetail(el._changeAt(el._open)) : "",
+  });
+};
+el._selected = "dash";
+// A dashboard's oldest recorded change. store.py answers `previous`
+// None for exactly one entry - "the last entry of the walk has nobody
+// behind it" - and `_renderDetail` returns before the undo section for
+// it, so neither `deleted_since` nor `undo_change` has anywhere to go.
+el._changes = [
+  { revision: "rev1", previous: null, message: "edited card", adds: false },
+];
+
+const asked = [];
+const calls = {};
+el._call = (type, extra) => new Promise((resolve) => {
+  asked.push(type);
+  calls[type] = resolve;
+});
+
+const expanding = el._expand("rev1");
+await settle();
+
+calls["explain"]({ heading: "What this change did", groups: [] });
+await expanding;
+await settle();
+const done = rendered[rendered.length - 1];
+
+console.log(JSON.stringify({ asked, done, undo: el._undo }));
+"""
+
+
+@pytest.fixture(scope="session")
+def first_recorded_expand(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "first_recorded_expand", _FIRST_RECORDED_EXPAND
+    )
+
+
+def test_the_oldest_change_says_there_is_nothing_before_it(first_recorded_expand):
+    done = first_recorded_expand["done"]
+    assert "This is the first" in done["html"]
+    assert done["detailLoading"] is None
+    assert done["undoLoading"] is None
+    # Never the undo offer, and never the notice that stands in for a
+    # missing answer: there is no answer owed here.
+    assert "Undo this change" not in done["html"]
+    assert "Whether this change can be taken back is not known" not in done["html"]
+    assert first_recorded_expand["undo"] is None
 
 
 # -- undo failure must not wipe out already loaded explanation --------------

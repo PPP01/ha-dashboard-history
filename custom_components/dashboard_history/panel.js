@@ -1068,10 +1068,20 @@ class DashboardHistoryPanel extends HTMLElement {
       dashboard: this._selected,
       revision: change.revision,
     });
-    const undo = this._call("undo_change", {
-      dashboard: this._selected,
-      revision: change.revision,
-    });
+    // Asked only where the answer has somewhere to go. `_renderDetail`
+    // returns before the undo section when a change has no predecessor
+    // - "the first recorded state, so there is nothing before it to
+    // compare against" - and `_renderSetBack`, the only other reader of
+    // `_undo`, is reached from below that return. So the oldest change
+    // of a dashboard used to have its undo computed and thrown away:
+    // measured at 1.2-1.5 s on a 28-view dashboard, which is the cost
+    // this row was split into two phases to avoid in the first place.
+    const undo = change.previous
+      ? this._call("undo_change", {
+        dashboard: this._selected,
+        revision: change.revision,
+      })
+      : Promise.resolve(null);
     return [missing, explain, undo];
   }
 
