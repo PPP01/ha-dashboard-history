@@ -1020,6 +1020,14 @@ class DashboardHistoryPanel extends HTMLElement {
 
     const [missingPromise, explainPromise, undoPromise] = this._detailCalls(change);
 
+    // Both phases below ask `mine()` before they write anything. A row
+    // opened while this one's answers are still out takes the slot,
+    // and what arrives afterwards belongs to nobody: `_claim` holds
+    // the ticket and the case it was built for. Measured on
+    // 2026-09-03, before there were two phases: the later row's
+    // answers arrived first, these arrived second, and the page
+    // settled on the wrong ones.
+
     // Fast phase: explanation and deleted cards
     const fastPhase = Promise.all([missingPromise, explainPromise])
       .then(([missing, explanation]) => {
@@ -1042,7 +1050,22 @@ class DashboardHistoryPanel extends HTMLElement {
         if (!mine()) return;
         this._undo = undo;
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (!mine()) return;
+        // Written down, not dropped. Without the answer the row falls
+        // back to "the answer did not arrive. Any message above says
+        // why" - a sentence that is only true while something up
+        // there does say it. The rejection used to reach `_guard`,
+        // which set the banner; separating the undo from the
+        // explanation so one failure could not wipe the other took
+        // the banner away with it, and left the row pointing at
+        // nothing.
+        //
+        // Only where the line is still free: if the explanation
+        // failed as well, that is the cause worth reading, and this
+        // one would be standing on top of it.
+        if (!this._error) this._error = err?.message || String(err);
+      })
       .finally(() => {
         if (!mine()) return;
         this._loadingUndo = null;

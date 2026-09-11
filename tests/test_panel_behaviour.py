@@ -3749,6 +3749,7 @@ el._render = () => {
     open: el._open,
     detailLoading: el._loadingDetail,
     undoLoading: el._loadingUndo,
+    error: el._error,
     html: el._open ? el._renderDetail(el._changeAt(el._open)) : "",
   });
 };
@@ -3780,7 +3781,11 @@ await expandPromise;
 await settle();
 const frameAfterError = rendered[rendered.length - 1];
 
-console.log(JSON.stringify({ frameAfterError }));
+console.log(JSON.stringify({
+  frameAfterError,
+  error: el._error,
+  errorWasRenderedWith: rendered.map((f) => f.error).filter(Boolean).length,
+}));
 """
 
 
@@ -3797,6 +3802,18 @@ def test_undo_failure_preserves_explanation_and_clears_loading_undo(expand_undo_
     assert "Show the technical details" in frame["html"]
     flat_html = " ".join(frame["html"].split())
     assert "Whether this change can be taken back is not known" in flat_html
+
+
+def test_undo_failure_leaves_a_message_the_row_can_point_at(expand_undo_failure):
+    # The row's fallback says "the answer did not arrive. Any message
+    # above says why". That sentence is a promise about the banner, and
+    # for a while it was not kept: isolating the undo failure from the
+    # explanation swallowed the rejection, so the row sent the reader
+    # to a message that was never written.
+    frame = expand_undo_failure["frameAfterError"]
+    flat_html = " ".join(frame["html"].split())
+    assert "Any message above says" in flat_html
+    assert expand_undo_failure["error"] == "WebSocket timeout"
 
 
 # -- detail cache: re-expanding the same row must not re-fetch ---------------
