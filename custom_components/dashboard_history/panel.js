@@ -652,6 +652,11 @@ class DashboardHistoryPanel extends HTMLElement {
   _backToTheTop() {
     try {
       const main = this.shadowRoot?.querySelector(".main");
+      // On its own this moves nothing: .main never scrolls, because
+      // the host sizes to its content - the note beside its rule in
+      // style.js has the measurements. `scrollIntoView` below is what
+      // does the work. Kept as the correct half of the pair for the
+      // day the column is given a height of its own.
       if (main) main.scrollTop = 0;
       this.scrollIntoView?.({ block: "start" });
     } catch {

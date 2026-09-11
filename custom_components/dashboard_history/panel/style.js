@@ -94,6 +94,20 @@ export const STYLE = `
     display: flex;
     min-width: 0;
   }
+  /* The overflow here, and the one on .side, read like a statement
+     about scrolling and are not one. The host sizes to its content
+     rather than to the window, so .layout's height is measured
+     against a height the content itself set, and neither column ever
+     holds more than fits: both answer clientHeight == scrollHeight at
+     every window size. Measured in Chrome on 2026-09-11 at 900, 300
+     and 200 px tall - at 200 it is the *document* that scrolls, which
+     is what the sticky bar is for.
+
+     Kept rather than deleted: they are the right declarations the day
+     this panel is given a height of its own, and they cost nothing
+     until then. The note is here so nobody reasons from them. The one
+     thing in this panel that really scrolls inside itself is the diff
+     in a detail card, which is why _render puts its offset back. */
   .main { flex: 1 1 auto; overflow-y: auto; padding: 16px; }
   /* Over the main column only. The sidebar stays live underneath, and
      so does everything else: pointer-events none means this says
