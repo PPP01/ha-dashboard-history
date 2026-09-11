@@ -499,13 +499,27 @@ export const STYLE = `
   details.ver { margin-bottom: 12px; }
   details.ver > summary {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 12px;
-    padding: 10px 16px;
+    padding: 10px 16px 10px 12px;
     border-radius: 8px;
     background: var(--card-background-color, #fff);
     box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
+    border-left: 4px solid var(--accent-color, #ff9800);
     cursor: pointer;
+    user-select: none;
+  }
+  details.ver > summary::before {
+    content: "▶";
+    font-size: 9px;
+    color: var(--secondary-text-color, #727272);
+    margin-right: -4px;
+    transition: transform .15s ease;
+    transform-origin: center;
+    display: inline-block;
+  }
+  details.ver[open] > summary::before {
+    transform: rotate(90deg);
   }
   details.ver > summary .name {
     font-family: monospace;
@@ -517,7 +531,11 @@ export const STYLE = `
     color: var(--secondary-text-color, #727272);
     font-size: 13px;
   }
-  details.ver > .inner { padding: 12px 0 0 16px; }
+  details.ver > .inner {
+    padding: 12px 0 0 16px;
+    border-left: 2px solid var(--divider-color, #e0e0e0);
+    margin-left: 14px;
+  }
   details.ver .also {
     display: block;
     margin-top: 2px;
