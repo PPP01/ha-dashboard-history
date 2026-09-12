@@ -330,9 +330,33 @@ async def main():
             await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
             await asyncio.sleep(0.5)
 
-            # Open Put back dialog
+            # Open Put back dialog - via compare mode. Task 5 removed the
+            # row-level [data-restore] control entirely; put back now only
+            # exists inside the compare dialog, reached by picking two
+            # states and finding something the historical side had that
+            # today's does not (spec decision 19/vorhaben J). "Current
+            # state" sits first among the checkboxes; among the rest, the
+            # first row still offering "Back to this version" is one the
+            # panel already knows differs from today - the same heuristic
+            # tests/integration/look_at_panel.py uses for the same reason.
+            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-restore]"); if (btn) btn.click(); }})()'
+                f"(() => {{ const boxes = [...{PANEL}.querySelectorAll('.compare-check')];"
+                " boxes[0].click();"
+                " const differs = boxes.slice(1).find("
+                "   (box) => box.closest('.penholder')?.querySelector('[data-state]'));"
+                " (differs || boxes[boxes.length - 1]).click(); })()"
+            )
+            # `dialog.showModal()` runs synchronously, before the `compare`
+            # and `deleted_since` calls it waits on - settling on `[open]`
+            # alone would catch the dialog on its "Comparing..." spinner.
+            await page.settle(
+                f'!!{PANEL}.querySelector("dialog.compare[open]") &&'
+                f' !{PANEL}.querySelector("dialog.compare .row-loading")',
+                10,
+            )
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector("dialog.compare [data-compare-restore]"); if (btn) btn.click(); }})()'
             )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
@@ -348,8 +372,13 @@ async def main():
             print("Capturing 03d-put-back-info-light.png...")
             await page.shot("03d-put-back-info-light.png")
 
-            # Close dialog
+            # Close both dialogs - compare mode's own dialog is still open
+            # behind the confirm one, and would otherwise hold every later
+            # render back (`_render` bails out for as long as any dialog
+            # is open), silently freezing the rest of this script's shots.
             await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
+            await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
+            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await asyncio.sleep(0.5)
 
             # 4. Simple Mode Light
@@ -439,9 +468,23 @@ async def main():
             await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
             await asyncio.sleep(0.5)
 
-            # Open Put back dialog (Dark)
+            # Open Put back dialog (Dark) - via compare mode, the same way
+            # the light section above does; see the comment there for why.
+            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-restore]"); if (btn) btn.click(); }})()'
+                f"(() => {{ const boxes = [...{PANEL}.querySelectorAll('.compare-check')];"
+                " boxes[0].click();"
+                " const differs = boxes.slice(1).find("
+                "   (box) => box.closest('.penholder')?.querySelector('[data-state]'));"
+                " (differs || boxes[boxes.length - 1]).click(); })()"
+            )
+            await page.settle(
+                f'!!{PANEL}.querySelector("dialog.compare[open]") &&'
+                f' !{PANEL}.querySelector("dialog.compare .row-loading")',
+                10,
+            )
+            await page.js(
+                f'(() => {{ const btn = {PANEL}.querySelector("dialog.compare [data-compare-restore]"); if (btn) btn.click(); }})()'
             )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
@@ -458,6 +501,7 @@ async def main():
             await page.shot("07d-put-back-info-dark.png")
 
             await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
+            await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
 
             print("\nAll screenshots captured successfully!")
 

@@ -122,4 +122,11 @@ export const DIALOGS = `
       <button class="act ghost" value="cancel">Cancel</button>
       <button class="act" value="remove">Remove version</button>
     </div>
+  </dialog>
+  <dialog class="compare">
+    <h2>Compare two states</h2>
+    <div class="body" data-compare-body></div>
+    <div class="actions">
+      <button class="act ghost" value="close">Close</button>
+    </div>
   </dialog>`;

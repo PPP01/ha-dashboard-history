@@ -58,7 +58,7 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, joinNames;
-let sections, someNames, renderRow, versionHead;
+let sections, someNames, renderRow, versionHead, currentStateRow;
 let DIALOGS;
 let renderSimple;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -73,7 +73,7 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
@@ -188,7 +188,12 @@ class DashboardHistoryPanel extends HTMLElement {
     this._loadingOlder = false;
     this._selected = null;
     this._open = null; // revision of the expanded change
-    this._items = [];
+    this._compareMode = false;
+    this._compareSelection = [];
+    // The cards `_openCompare` found missing on the historical side, kept
+    // as data rather than re-read from the dialog's own rendered markup -
+    // see `_openCompare` and the `[data-compare-restore]` handler.
+    this._compareMissing = [];
     this._explanation = null;
     this._undo = null;
     this._loadingDetail = null;
@@ -320,6 +325,155 @@ class DashboardHistoryPanel extends HTMLElement {
     // keystroke set the search going.
     if (this._query.trim()) return this._search(this._query);
     this._render();
+  }
+
+  /** Turns the compare mode's checkboxes on or off, clearing any pick. */
+  _toggleCompareMode() {
+    this._compareMode = !this._compareMode;
+    this._compareSelection = [];
+    this._render();
+  }
+
+  /**
+   * One pick in the compare mode. `revision` is `null` for "Current
+   * state" - the one pick that is not a recorded revision at all.
+   *
+   * A third pick evicts the oldest of the two standing picks (FIFO),
+   * never an error: comparing is exploratory, and blocking a third
+   * click would only make somebody uncheck one first for no reason.
+   * Picking an already-selected revision again removes just that one.
+   */
+  _toggleCompareRevision(revision, label) {
+    const at = this._compareSelection.findIndex((s) => s.revision === revision);
+    if (at >= 0) {
+      this._compareSelection.splice(at, 1);
+    } else {
+      this._compareSelection.push({ revision, label });
+      if (this._compareSelection.length > 2) this._compareSelection.shift();
+    }
+    this._render();
+    if (this._compareSelection.length === 2) this._openCompare();
+  }
+
+  /**
+   * The jump a refused undo offers into compare mode: the row's own
+   * predecessor against the current state, the same pair the removed
+   * row-level list used to show automatically.
+   *
+   * Sets the end state directly rather than calling
+   * `_toggleCompareMode`/`_toggleCompareRevision` in sequence - doing
+   * that with a *different* pick already standing would fire
+   * `_openCompare` once with the wrong pair and once more on top of
+   * the dialog that first call already opened.
+   */
+  _jumpToCompareFrom(previousRevision) {
+    if (!previousRevision) return;
+    const row = this._changeAt(previousRevision);
+    this._compareMode = true;
+    this._compareSelection = [
+      { revision: previousRevision, label: row?.description || row?.message || "" },
+      { revision: null, label: "Current state" },
+    ];
+    this._render();
+    this._openCompare();
+  }
+
+  /**
+   * Opens the compare dialog for the two current picks.
+   *
+   * Sends both picks to `compare` in whatever order they were selected
+   * - the backend works out which one is actually older, not this
+   * method. A picked row can outlive a refresh that dropped it from
+   * `_changes` (spec decision 19's own edge case), so `_changes`
+   * cannot be trusted here the way an earlier draft of this method
+   * trusted it. `revision_a`/`revision_b` come back reassigned into
+   * chronological order; matching them against the two local picks
+   * says which label and date belong on which side.
+   */
+  async _openCompare() {
+    const [first, second] = this._compareSelection;
+    const dialog = this.shadowRoot.querySelector("dialog.compare");
+    const body = dialog.querySelector("[data-compare-body]");
+    body.innerHTML = `<p class="muted row-loading"><span class="ring mini"></span> Comparing…</p>`;
+    dialog.returnValue = "";
+    dialog.showModal();
+
+    const compareArgs = { dashboard: this._selected };
+    if (first.revision !== null) compareArgs.revision_a = first.revision;
+    if (second.revision !== null) compareArgs.revision_b = second.revision;
+    const comparison = await this._call("compare", compareArgs);
+
+    if (comparison.error) {
+      body.innerHTML = `<p class="why">${escape(comparison.error)}</p>`;
+      await this._answerFrom(dialog);
+      return;
+    }
+
+    const older = first.revision === comparison.revision_a ? first : second;
+    const newer = older === first ? second : first;
+
+    // Spec decision 19/9: naming date and automatic message on each
+    // side is not decoration - it is what removes the "one row too
+    // early" trap decision 9 removed for the single-change case.
+    // Without it, nothing here says which picked row ended up which
+    // side of the sentence below.
+    // Not escaped here: the whole heading this builds into is escaped
+    // once, wholesale, by `renderPlain` (`<h3>${escape(heading)}</h3>`)
+    // - escaping the label again here as well doubled every `&` in it
+    // to `&amp;amp;`. The literal double quotes around the label still
+    // come out as `&quot;`, from that one, outer escape.
+    const describe = (entry, time) =>
+      entry.revision === null
+        ? "Current state"
+        : `the state after "${entry.label}" (${escape(when(time))})`;
+
+    let missingHtml = "";
+    // Put back only where one side is the current state - the other
+    // side is then the reference `deleted_since` and `restore_deleted`
+    // already work against, unchanged.
+    const historicalSide = newer.revision === null ? older : null;
+    if (historicalSide) {
+      const missing = await this._call("deleted_since", {
+        dashboard: this._selected,
+        revision: historicalSide.revision,
+      });
+      const items = missing.items || [];
+      missingHtml = items.length
+        ? `<p class="why" style="margin-top:16px">Missing since then, still gone:</p>` +
+          items
+            .map(
+              (item) => `
+          <div class="item">
+            <span class="label">${escape(item.label)}
+              <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
+            </span>
+            <button class="act" data-compare-restore="${item.position}">Put back</button>
+          </div>`,
+            )
+            .join("")
+        : `<p class="muted">Nothing from before this state is missing today.</p>`;
+      dialog.dataset.compareReference = historicalSide.revision;
+      // Retained for the click handler below: `.label`'s rendered
+      // markup nests a `.where` badge inside it, so reading the
+      // button's own item back out of `.textContent` would run the
+      // two together (`"Gone card card · view a"`) instead of naming
+      // the clean label `_restoreItem`'s dialog title shows.
+      this._compareMissing = items;
+    } else {
+      delete dialog.dataset.compareReference;
+    }
+
+    const diff = comparison.diff || "";
+    body.innerHTML = diff
+      ? renderPlain(
+          comparison,
+          `What changed between ${describe(older, comparison.time_a)} and ${describe(newer, comparison.time_b)}`,
+        ) +
+        `<details class="raw"><summary>Show the technical details</summary>${renderDiff(diff)}</details>` +
+        missingHtml
+      : `<p class="muted">No difference between these two states.</p>`;
+
+    await this._answerFrom(dialog);
   }
 
   set hass(hass) {
@@ -729,6 +883,16 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = null;
     this._clearDetail();
     this._detailCache.clear();
+    // A pick made while viewing one dashboard must not survive a switch
+    // to another: found by the final review, a standing selection from
+    // dashboard A - one checkbox click away from completing a compare,
+    // or "current state" already picked and one click away from
+    // reopening the dialog - would otherwise pair up with a pick made
+    // on B, comparing B's freshly-picked state against A's leftover
+    // commit and labelling the whole thing with A's message and date.
+    this._compareMode = false;
+    this._compareSelection = [];
+    this._compareMissing = [];
     this._cursor = null;
     this._versions = [];
     this._matching = [];
@@ -1053,7 +1217,6 @@ class DashboardHistoryPanel extends HTMLElement {
     // A row expanded once keeps its answers until the dashboard changes.
     const cached = this._detailCache.get(revision);
     if (cached) {
-      this._items = cached.items;
       this._explanation = cached.explanation;
       this._undo = cached.undo;
       this._loadingDetail = null;
@@ -1066,7 +1229,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._loadingDetail = revision;
     this._loadingUndo = change.previous ? revision : null;
 
-    const [missingPromise, explainPromise, undoPromise] = this._detailCalls(change);
+    const [explainPromise, undoPromise] = this._detailCalls(change);
 
     // Both phases below ask `mine()` before they write anything. A row
     // opened while this one's answers are still out takes the slot,
@@ -1076,11 +1239,10 @@ class DashboardHistoryPanel extends HTMLElement {
     // answers arrived first, these arrived second, and the page
     // settled on the wrong ones.
 
-    // Fast phase: explanation and deleted cards
-    const fastPhase = Promise.all([missingPromise, explainPromise])
-      .then(([missing, explanation]) => {
+    // Fast phase: explanation
+    const fastPhase = explainPromise
+      .then((explanation) => {
         if (!mine()) return;
-        this._items = missing ? missing.items || [] : [];
         this._explanation = explanation;
         this._loadingDetail = null;
         this._render();
@@ -1136,7 +1298,6 @@ class DashboardHistoryPanel extends HTMLElement {
     // - and this is the same rule for the other half.
     if (mine() && this._explanation && !undoFailed) {
       this._detailCache.set(revision, {
-        items: this._items,
         explanation: this._explanation,
         undo: this._undo,
       });
@@ -1149,12 +1310,6 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _detailCalls(change) {
-    const missing = change.previous
-      ? this._call("deleted_since", {
-        dashboard: this._selected,
-        revision: change.previous,
-      })
-      : Promise.resolve({ items: [] });
     const explain = this._call("explain", {
       dashboard: this._selected,
       revision: change.revision,
@@ -1180,10 +1335,10 @@ class DashboardHistoryPanel extends HTMLElement {
         revision: change.revision,
       })
       : Promise.resolve(null);
-    return [missing, explain, undo];
+    return [explain, undo];
   }
 
-  /** The three answers a row's detail is built from. */
+  /** The two answers a row's detail is built from. */
   _detailFor(change) {
     return Promise.all(this._detailCalls(change));
   }
@@ -1198,7 +1353,6 @@ class DashboardHistoryPanel extends HTMLElement {
    * would have been added to two.
    */
   _clearDetail() {
-    this._items = [];
     this._explanation = null;
     this._undo = null;
     this._loadingDetail = null;
@@ -1207,8 +1361,7 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _take(answers) {
-    const [missing, explanation, undo] = answers || [null, null, null];
-    this._items = missing ? missing.items || [] : [];
+    const [explanation, undo] = answers || [null, null];
     this._explanation = explanation;
     this._undo = undo || null;
   }
@@ -2081,15 +2234,10 @@ class DashboardHistoryPanel extends HTMLElement {
     await this._loadDashboards();
   }
 
-  _restoreItem(change, item) {
+  _restoreItem(revision, item) {
     this._confirm(`Put back: ${item.label}`, (confirm, keep, dashboard) => [
       "restore_deleted",
-      {
-        dashboard,
-        revision: change.previous,
-        position: item.position,
-        confirm,
-      },
+      { dashboard, revision, position: item.position, confirm },
     ]);
   }
 
@@ -2329,76 +2477,21 @@ class DashboardHistoryPanel extends HTMLElement {
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
         ${this._renderMakeVersion(change)}</div>`;
-    // Which of the missing items the undo takes care of. Two reasons,
-    // and only these two - decision 15:
-    //
-    // "covered": the undo restores exactly this one item and does
-    // nothing else. That is one shape only, a change that deleted a
-    // single thing, and it is the shape somebody reported as confusing
-    // because the two buttons there really do the same work.
-    //
-    // "trap": the change also *added* something. Then a plain put-back
-    // is not merely redundant, it is wrong: an edit whose key field was
-    // touched reads as one removal plus one addition, and adding the old
-    // card back leaves both versions standing. Measured, not feared.
     const undo = this._undo?.available ? this._undo : null;
-    // Read off the row, not out of its wording. `adds` is worked out by
-    // the module that writes the message, next to the counting that
-    // produces it. This was `/\d+ added/` over `change.message` until
-    // today: a panel reading generated text, which the design record
-    // names by hand as the shape logic here must not take - and wrong
-    // besides, because a dashboard renamed to `3 added` produces
-    // `home: renamed to "3 added"` and read as a trap on a change that
-    // touched no card at all.
-    //
-    // The flag is deliberately wider than the regex was. `2 views
-    // added` counts now, where the word in between used to hide it: a
-    // view that appeared is as much a thing a plain put-back leaves
-    // standing as a card that did. So a few changes that used to offer
-    // the item rows no longer do, and that is the correct reading
-    // rather than a loss.
-    const added = Boolean(change.adds);
-    const mine = new Set(
-      (this._explanation?.groups || [])
-        .flatMap((group) => group.entries)
-        .filter((entry) => entry.kind === "removed")
-        .map((entry) => entry.label),
-    );
-    // A missing view's label carries a "view: " lead-in the explanation's
-    // entry does not (deleted_since names it for a list of mixed cards and
-    // views; explain already sits under a view heading and does not need
-    // to say so again). Comparing the two forms as they stand would leave
-    // a removed-and-re-added view uncovered - exactly the trap, on the
-    // one item shape most likely to hit it.
-    const bareLabel = (label) => label.replace(/^view: /, "");
-    const swallowed = (item) =>
-      undo && mine.has(bareLabel(item.label)) && (added || mine.size === 1);
-    const own = this._items.filter((item) => !swallowed(item));
-
-    const rows = own
-      .map(
-        (item) => `
-        <div class="item">
-          <span class="label">${escape(item.label)}
-            <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
-          </span>
-          <button class="act" data-restore="${item.position}">Put back</button>
-        </div>`,
-      )
-      .join("");
-    // Named when the undo has taken the rest off the list: otherwise the
-    // remaining rows read as "this change deleted these", which is then
-    // exactly wrong.
-    const heading =
-      own.length && own.length < this._items.length
-        ? `<p class="why" style="margin-top:16px">Also missing since then,
-             from later changes:</p>`
-        : "";
-    const list = rows
-      ? heading + rows
-      : undo
+    // The compare bar itself already hides "current state" for a
+    // dashboard Home Assistant does not currently have (`_renderMain`,
+    // spec decision 19's edge case: put-back only ever writes into a
+    // live state) - this jump ends up picking exactly that "current
+    // state", so offering it here for the same dashboard would open a
+    // door the compare bar was built to keep closed.
+    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    const compareFromOffer =
+      dashboard?.exists === false
         ? ""
-        : `<p class="muted">Nothing from before this change is missing today.</p>`;
+        : `<div class="backto">
+               <button class="act ghost" data-compare-from="${escape(change.previous || "")}"
+                       >Compare with the current state</button>
+             </div>`;
 
     // Left out where the number is not known - a row from outside the
     // loaded window has no place in it to count from, and a guessed
@@ -2415,7 +2508,8 @@ class DashboardHistoryPanel extends HTMLElement {
         ? `<p class="why row-loading"><span class="ring mini"></span> Checking whether this change can be undone…</p>`
         : this._undo
           ? `<p class="why">This change cannot be taken back exactly:
-             ${escape(this._undo.reason || "no reason given")}.</p>`
+             ${escape(this._undo.reason || "no reason given")}.</p>
+             ${compareFromOffer}`
         : // Nothing was answered at all - the request for it failed, or
           // it is still out. The sentence above makes a statement about
           // the change itself, and this is the one case where the panel
@@ -2444,7 +2538,6 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${technical}
       ${offer}
-      ${list}
       ${this._renderSetBack(change)}
       ${this._renderMakeVersion(change)}
     </div>`;
@@ -2540,6 +2633,8 @@ class DashboardHistoryPanel extends HTMLElement {
       section,
       top,
       here: this._changes[top]?.same_as_now,
+      compareMode: this._compareMode,
+      compareChecked: this._compareSelection.some((s) => s.revision === section.versions[0].name),
     });
   }
 
@@ -2644,20 +2739,33 @@ class DashboardHistoryPanel extends HTMLElement {
           open: this._verOpen,
         })
       );
+    // "Current state" is left out for a dashboard Home Assistant does
+    // not currently have: there is nothing there to compare against,
+    // and Put-back only ever writes into a live state (spec decision
+    // 19's edge case table).
+    const compareBar = `<div class="compare-bar">
+           <button class="act ghost" data-compare-toggle="1">
+             ${this._compareMode ? "Exit compare mode" : "Compare mode"}
+           </button>
+         </div>
+         ${this._compareMode && dashboard?.exists !== false
+        ? currentStateRow(this._compareSelection.some((s) => s.revision === null))
+        : ""}`;
+    const topBar = banner + compareBar;
     const shown = this._shown();
     // Nobody has answered yet: the walk is out, or the query is too
     // short to send. The note above the list says which, and a sentence
     // here would contradict it - which is exactly what "Nothing
     // matches." did, for the seconds a walk over a grown history takes.
-    if (shown === null) return banner;
+    if (shown === null) return topBar;
     if (!shown.length)
-      return `${banner}<p class="empty muted">${query
+      return `${topBar}<p class="empty muted">${query
         ? "Nothing matches."
         : "No changes recorded for this dashboard."}</p>`;
     // Solely while searching: the list is flat and "Load older" is gone,
     // because a page belongs to a list that goes on, not to one a search
     // just cut down to whatever matched.
-    if (query) return banner + shown.map((c) => this._renderRow(c)).join("");
+    if (query) return topBar + shown.map((c) => this._renderRow(c)).join("");
 
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
@@ -2686,7 +2794,7 @@ class DashboardHistoryPanel extends HTMLElement {
            <button class="act ghost" data-older="1">Load older changes</button>
          </div>`
       : "";
-    return banner + parts.join("") + older;
+    return topBar + parts.join("") + older;
   }
 
   /**
@@ -2743,6 +2851,8 @@ class DashboardHistoryPanel extends HTMLElement {
       spokenFor,
       matching: newest ? this._matchingElsewhere(change) : [],
       detail: this._open === change.revision ? this._renderDetail(change) : "",
+      compareMode: this._compareMode,
+      compareChecked: this._compareSelection.some((s) => s.revision === change.revision),
     });
   }
 
@@ -2878,13 +2988,6 @@ class DashboardHistoryPanel extends HTMLElement {
       );
     onClick(".dash", (element) => this._select(element.dataset.key));
     onClick(".change", (element) => this._expand(element.dataset.revision));
-    onClick("[data-restore]", (element) => {
-      const change = this._changeAt(this._open);
-      const item = this._items.find(
-        (candidate) => candidate.position === Number(element.dataset.restore),
-      );
-      if (change && item) this._restoreItem(change, item);
-    });
     onClick("[data-state]", (element, event) => {
       // Or the click reaches the row underneath and collapses it. The
       // summary's own toggle is dealt with in `onClick` above.
@@ -2934,6 +3037,44 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick("[data-mode]", (element, event) => {
       event.stopPropagation();
       this._setMode(element.dataset.mode);
+    });
+    onClick("[data-compare-toggle]", () => this._toggleCompareMode());
+    onClick(".compare-check", (element, event) => {
+      event.stopPropagation();
+      const revision = element.dataset.compare || null;
+      this._toggleCompareRevision(revision, element.dataset.compareLabel || "");
+    });
+    onClick("[data-compare-from]", (element, event) => {
+      event.stopPropagation();
+      this._jumpToCompareFrom(element.dataset.compareFrom);
+    });
+    // `[data-compare-restore]` buttons are not in the DOM at the moment
+    // this generic pass runs - they are injected later, into
+    // `[data-compare-body]`, by `_openCompare`'s own `body.innerHTML =`
+    // write, which happens after a click while no full `_render()` runs
+    // (a dialog's content must not be torn down under the user - see
+    // `_renderOwed`). A listener attached directly to the buttons above
+    // would therefore bind to nothing and never fire.
+    //
+    // `[data-compare-body]` itself is static markup, part of `DIALOGS`
+    // from the very first render, so this pass reaches it the ordinary
+    // way; delegating from there with `closest` catches a button however
+    // long after this wiring pass it was injected. Same idea as the
+    // `.levels` button group above, applied to the generic block: one
+    // listener on the container rather than one per button that does
+    // not exist yet.
+    onClick("[data-compare-body]", (element, event) => {
+      const button = event.target.closest("[data-compare-restore]");
+      if (!button) return;
+      const dialog = element.closest("dialog.compare");
+      const revision = dialog?.dataset.compareReference;
+      if (!revision) return;
+      const position = Number(button.dataset.compareRestore);
+      const item = (this._compareMissing || []).find(
+        (candidate) => candidate.position === position,
+      );
+      if (!item) return;
+      this._restoreItem(revision, item);
     });
     root.querySelectorAll(".segmented-control input[type='radio']").forEach((radio) => {
       radio.addEventListener("change", (event) => {

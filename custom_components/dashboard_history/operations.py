@@ -1218,6 +1218,118 @@ async def async_explain(
     return await hass.async_add_executor_job(_explain_sync, store, key, revision)
 
 
+async def async_compare(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    key: str,
+    revision_a: str | None = None,
+    revision_b: str | None = None,
+) -> dict:
+    """The difference between two states of one dashboard, any two at all.
+
+    Unlike `async_explain`, which always compares a change against its
+    own predecessor, this takes two revisions with no assumed relation
+    between them - adjacent, far apart, or either one the dashboard's
+    current live state. `_explain_texts` already makes no such
+    assumption; only the caller above it did.
+
+    `None` on a side means the current live state. It is not a
+    revision - nothing committed it. At least one side must be an
+    actual revision: comparing "now" against "now" is not a question
+    this operation has an answer for.
+
+    Deliberately not `_state_at` for a real revision: that reports an
+    absent state as an error, and an absent state *is* a legitimate
+    answer here - the deletion row of a deleted dashboard, which the
+    spec's edge-case table says must stay comparable. `_explain_sync`
+    made the same choice for the same reason; this mirrors it.
+
+    The panel sends its two picks in whatever order somebody clicked
+    them, and cannot always tell which is older itself - a picked row
+    can survive a refresh that removed it from what is loaded (spec,
+    same table). Ordering by chronology is therefore done here, not in
+    the panel: `revision_a`/`revision_b` in the answer are the caller's
+    own values, but reassigned so the older side is always `a`. Getting
+    this backwards reads the whole explanation in reverse - "X added"
+    for a card the dashboard actually lost - which is the trap decision
+    9 removed for the single-change case and re-opens here if skipped.
+    """
+    if revision_a is None and revision_b is None:
+        return {
+            "groups": [],
+            "note": "",
+            "diff": "",
+            "error": "nothing to compare: both sides are the current state",
+        }
+
+    async def resolved(revision):
+        if revision is None:
+            live = await async_get_config(hass, key)
+            if live is None:
+                return None, None, f"{key} does not exist right now"
+            text = await hass.async_add_executor_job(dump, live)
+            return None, text, None
+        full = await hass.async_add_executor_job(store.resolve, revision)
+        if full is None:
+            return None, None, f"unknown revision: {revision}"
+        text = await hass.async_add_executor_job(store.read_at, key, full)
+        return full, text, None
+
+    full_a, text_a, error = await resolved(revision_a)
+    if error is not None:
+        return {"groups": [], "note": "", "diff": "", "error": error}
+    full_b, text_b, error = await resolved(revision_b)
+    if error is not None:
+        return {"groups": [], "note": "", "diff": "", "error": error}
+
+    # Whichever side(s) are real revisions, not only where both are.
+    # The "current state" pair - the only pair that ever offers put-back,
+    # and the one a refused undo's jump into compare mode prefills - has
+    # exactly one real side and one `None` ("current") side, and that
+    # real side still needs its own commit time: left at `{}`, `when()`
+    # in the panel falls back to the Unix epoch and shows it as
+    # 01.01.1970.
+    real = [full for full in (full_a, full_b) if full is not None]
+    times = (
+        await hass.async_add_executor_job(store.commit_times, real) if real else {}
+    )
+
+    def newer(x_full, y_full):
+        if x_full is None:  # "current" - always the newest
+            return True
+        if y_full is None:
+            return False
+        return times.get(x_full, 0) > times.get(y_full, 0)
+
+    if newer(full_a, full_b):
+        full_a, full_b = full_b, full_a
+        text_a, text_b = text_b, text_a
+        revision_a, revision_b = revision_b, revision_a
+
+    result = {
+        "revision_a": revision_a,
+        "revision_b": revision_b,
+        "time_a": times.get(full_a),
+        "time_b": times.get(full_b),
+    }
+
+    # Where both sides are real revisions, whether they hold the same
+    # state is a question this store already answers - decision 13 asks
+    # that the next place this comes up not become a second comparison
+    # method beside it. Where one side is "current", `same_state` has
+    # nothing to compare (no commit for a live state), and the diff
+    # `_explain_texts` builds anyway is trusted instead: both texts
+    # already resolved without error above, so an empty diff here is
+    # never the accidental kind - only ever genuine equality.
+    if full_a is not None and full_b is not None:
+        same = await hass.async_add_executor_job(store.same_state, key, full_a, full_b)
+        if same:
+            return {**result, "groups": [], "note": "", "diff": ""}
+
+    explanation = await hass.async_add_executor_job(_explain_texts, text_a, text_b, key)
+    return {**result, **explanation}
+
+
 def _explain_texts(old: str | None, new: str | None, key: str) -> dict:
     """The change between two recorded texts, in words and diff. Off the loop."""
     explanation = _as_dict(explain_change(load_state(old), load_state(new)))

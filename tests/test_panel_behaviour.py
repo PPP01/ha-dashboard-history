@@ -33,8 +33,7 @@ globalThis.customElements = {
 await import(%(url)s);
 const settle = () => new Promise((r) => setTimeout(r, 0));
 const answer = (call, mark) => {
-  if (call.type === "deleted_since") call.resolve({ items: [{ label: mark }] });
-  else if (call.type === "explain") call.resolve({ groups: [], note: mark });
+  if (call.type === "explain") call.resolve({ groups: [], note: mark });
   else call.resolve({ available: false, reason: mark });
 };
 
@@ -47,12 +46,28 @@ const answer = (call, mark) => {
  * does - `[data-keep]`, then `.keepbox`, never `.keepbox` straight from
  * the dialog - and that is the feature: a test that found a node the
  * code never touched would pass while proving nothing.
+ *
+ * The "remembered per selector" cache (`_seen`) is shared by the whole
+ * tree, not kept one dictionary per node - `node(shared)` passes the
+ * caller's own `_seen` down to whatever it hands back. A real
+ * `querySelector` always resolves to the one live element no matter
+ * which ancestor asks: `root.querySelectorAll(x)` and
+ * `nested.querySelector(x)` find the same node when `x` matches only
+ * once, wherever `nested` sits under `root`. Found by the 2026-09-12
+ * review: with one cache per calling node instead, a click listener
+ * the generic wiring attached via `root.querySelectorAll("[data-
+ * compare-body]")` and the container `_openCompare` wrote its content
+ * into via `dialog.querySelector("[data-compare-body]")` were two
+ * disconnected phantom nodes - the listener bound to one, the content
+ * went into the other - and the existing test never noticed, because
+ * it queried the selector the listener was bound to and never went
+ * anywhere near the one `_openCompare` actually populated.
  */
-const node = () => {
+const node = (shared) => {
   const it = {
     textContent: "", innerHTML: "", value: "", checked: false,
     hidden: false, returnValue: "", open: false, dataset: {},
-    _seen: {}, _on: {},
+    _seen: shared || {}, _on: {},
     classList: {
       _classes: new Set(),
       toggle(c, force) {
@@ -74,10 +89,22 @@ const node = () => {
         }
         return null;
       }
-      return (it._seen[selector] ||= node());
+      return (it._seen[selector] ||= node(it._seen));
     },
     querySelectorAll(selector) { return [it.querySelector(selector)]; },
     addEventListener(name, run) { it._on[name] = run; },
+    // No real tree to walk, so a scenario that needs an ancestor sets it
+    // by hand on `_closest` before firing the click - `element._closest =
+    // { "dialog.compare": dialog }` - and an unset selector answers null,
+    // same as an ordinary miss. Added once a click handler wired through
+    // `onClick` (which always asks `.closest("summary")` first) needed
+    // firing for real rather than calling the method it wires straight.
+    _closest: {},
+    closest(selector) {
+      return Object.prototype.hasOwnProperty.call(it._closest, selector)
+        ? it._closest[selector]
+        : null;
+    },
     // `setAttribute` remembers, the other two are no-ops: the version
     // dialog presses its level buttons into shape with `setAttribute`
     // and puts the cursor in the title field, and the description
@@ -153,18 +180,18 @@ el._call = (type, extra) =>
 // Row "a" is opened, then row "b" before "a" has answered.
 el._expand("a");
 el._expand("b");
-const forA = calls.slice(0, 3);
-const forB = calls.slice(3, 6);
+const forA = calls.slice(0, 2);
+const forB = calls.slice(2, 4);
 
 // "b" answers first...
 forB.forEach((call) => answer(call, "B"));
 await settle();
-const afterB = { open: el._open, items: el._items.map((i) => i.label), busy: !!el._busy };
+const afterB = { open: el._open, explanation: el._explanation?.note, busy: !!el._busy };
 
 // ...and "a" answers last, for a row nobody is looking at any more.
 forA.forEach((call) => answer(call, "A"));
 await settle();
-const afterA = { open: el._open, items: el._items.map((i) => i.label), busy: !!el._busy };
+const afterA = { open: el._open, explanation: el._explanation?.note, busy: !!el._busy };
 
 console.log(JSON.stringify({ afterB, afterA }));
 """
@@ -177,9 +204,9 @@ def outcome(tmp_path_factory):
 
 def test_a_late_answer_for_a_row_no_longer_open_is_dropped(outcome):
     # Measured on 2026-09-03: the answer for "a" landed after "b" had
-    # been chosen and drawn, and the row marked "b" showed "a"'s items.
+    # been chosen and drawn, and the row marked "b" showed "a"'s answer.
     assert outcome["afterA"]["open"] == "b"
-    assert outcome["afterA"]["items"] == ["B"]
+    assert outcome["afterA"]["explanation"] == "B"
 
 
 def test_the_page_stays_busy_while_an_earlier_request_is_still_in_flight(outcome):
@@ -238,15 +265,15 @@ two._call = (type, extra) =>
 two._expand("a");
 two._expand("b");
 two._expand("a");
-const firstA = opened.slice(0, 3);
-const forB = opened.slice(3, 6);
-const secondA = opened.slice(6, 9);
+const firstA = opened.slice(0, 2);
+const forB = opened.slice(2, 4);
+const secondA = opened.slice(4, 6);
 secondA.forEach((call) => answer(call, "A2"));
 forB.forEach((call) => answer(call, "B"));
 await settle();
 firstA.forEach((call) => answer(call, "A1"));
 await settle();
-const repeat = { open: two._open, items: two._items.map((i) => i.label) };
+const repeat = { open: two._open, explanation: two._explanation?.note };
 
 console.log(JSON.stringify({ lateFailure, repeat }));
 """
@@ -265,7 +292,7 @@ def test_a_late_failure_of_a_superseded_request_shows_no_error(generations):
 
 def test_reopening_the_same_row_keeps_the_newer_answer(generations):
     assert generations["repeat"]["open"] == "a"
-    assert generations["repeat"]["items"] == ["A2"]
+    assert generations["repeat"]["explanation"] == "A2"
 
 
 # Answered by *type*, never by position, and tolerantly: task 5 gives
@@ -745,7 +772,6 @@ await openOn("dash", [{ revision: "a", previous: "b" }], null);
 // its place only if the panel can find it again by revision - by index
 // it would now be one further down.
 el._open = "a";
-el._items = ["stale"];
 
 const again = el._refresh();
 await settle();
@@ -760,12 +786,9 @@ reply("history", {
 });
 reply("versions", { versions: [] });
 await settle();
-// The detail is fetched again. Two different questions about two
-// different revisions: what was deleted asks against the row's
-// predecessor, what happened asks about the row itself.
-const deletedSince = calls.find((c) => c.type === "deleted_since")?.extra.revision;
+// The detail is fetched again rather than kept, and explain asks
+// against the row's own revision.
 const explained = calls.find((c) => c.type === "explain")?.extra.revision;
-reply("deleted_since", { items: ["fresh"], available: true });
 reply("explain", { groups: [] });
 reply("undo_change", { available: false });
 await again;
@@ -773,9 +796,7 @@ await again;
 console.log(JSON.stringify({
   open: el._open,
   rows: el._changes.map((c) => c.revision),
-  deletedSince,
   explained,
-  items: el._items,
 }));
 """
 
@@ -790,18 +811,7 @@ def test_an_open_row_survives_a_refresh_that_moved_it(refresh_open):
     # same row; found by index it would be the new one above it.
     assert refresh_open["rows"] == ["new", "a"]
     assert refresh_open["open"] == "a"
-    # And its answers are fetched again rather than kept: after a change
-    # from outside, "Put back" would offer items worked out against a
-    # dashboard that has moved on.
-    #
-    # Two questions, two revisions, and this is where addressing by
-    # position used to go wrong. What was deleted is asked against the
-    # row's own predecessor `b`; what happened is asked about the row
-    # itself. By index after the refresh, `a` sits at 1 and the row
-    # below it at 2 - neither of which is `b`.
-    assert refresh_open["deletedSince"] == "b"
     assert refresh_open["explained"] == "a"
-    assert refresh_open["items"] == ["fresh"]
 
 
 _KEEP = """
@@ -1403,7 +1413,6 @@ el._call = (type, extra) => {
 await el._expand("b");
 const bottom = {
   types: asked.map((c) => c.type).sort(),
-  against: asked.find((c) => c.type === "deleted_since")?.extra.revision,
   open: el._open,
 };
 
@@ -1427,11 +1436,10 @@ def test_a_row_is_opened_by_its_revision_and_asks_against_its_own_predecessor(
     addressing,
 ):
     # Worked out from the row below, the bottom row of every page said
-    # "there is nothing before this" and offered no deleted cards to put
-    # back. The predecessor is in the row now, so it asks against it.
+    # "there is nothing before this" and offered no undo. The
+    # predecessor is in the row now, so undo is asked too.
     assert addressing["bottom"]["open"] == "b"
-    assert addressing["bottom"]["against"] == "c"
-    assert addressing["bottom"]["types"] == ["deleted_since", "explain", "undo_change"]
+    assert addressing["bottom"]["types"] == ["explain", "undo_change"]
 
 
 def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
@@ -1441,6 +1449,380 @@ def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
     # a change with no predecessor, so the answer had nowhere to go -
     # and it is the expensive one, 1.2 to 1.5 s on a large dashboard.
     assert addressing["first"]["types"] == ["explain"]
+
+
+_COMPARE_SELECT = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "advanced";
+el._changes = [];
+// Reaching two picks fires _openCompare() once task 3 lands - a
+// never-settling call and stand-ins for shadowRoot/_changes keep that
+// harmless here, since this scenario only inspects the synchronous
+// selection state and never awaits anything.
+el._call = () => new Promise(() => {});
+el.shadowRoot = node();
+
+el._toggleCompareMode();
+const afterOn = el._compareMode;
+
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision("b", "2 moved");
+const twoSelected = [...el._compareSelection];
+
+// A third pick evicts the oldest, not the newest.
+el._toggleCompareRevision("c", "1 added");
+const afterThird = [...el._compareSelection];
+
+// Picking an already-selected one again clears just that one.
+el._toggleCompareRevision("c", "1 added");
+const afterToggleOff = [...el._compareSelection];
+
+el._toggleCompareMode();
+const afterOff = { mode: el._compareMode, selection: [...el._compareSelection] };
+
+console.log(JSON.stringify({ afterOn, twoSelected, afterThird, afterToggleOff, afterOff }));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_select(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_select", _COMPARE_SELECT)
+
+
+def test_compare_mode_selection_keeps_at_most_two(compare_select):
+    assert compare_select["afterOn"] is True
+    assert [s["revision"] for s in compare_select["twoSelected"]] == ["a", "b"]
+    # "a" was the oldest pick; the third eviction drops it, not "b".
+    assert [s["revision"] for s in compare_select["afterThird"]] == ["b", "c"]
+    assert [s["revision"] for s in compare_select["afterToggleOff"]] == ["b"]
+    # Turning compare mode off clears the selection - reopening starts fresh.
+    assert compare_select["afterOff"] == {"mode": False, "selection": []}
+
+
+_COMPARE_CLEARED_ON_SWITCH = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "advanced";
+el._changes = [];
+el._call = () => Promise.resolve({ changes: [], next_cursor: null, versions: [] });
+el.shadowRoot = node();
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+// A standing pick that never reached two - one checkbox click on the
+// next dashboard away from completing a compare against whatever it
+// shows - plus leftover `_compareMissing` from an earlier dialog,
+// which only `_openCompare` ever populates and only a switch should
+// ever clear again.
+el._compareMissing = [{ position: 0, kind: "card", label: "Gone card" }];
+
+await el._select("other");
+
+console.log(JSON.stringify({
+  mode: el._compareMode,
+  selection: el._compareSelection,
+  missing: el._compareMissing,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_cleared_on_switch(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_cleared_on_switch", _COMPARE_CLEARED_ON_SWITCH
+    )
+
+
+def test_switching_dashboards_clears_a_standing_compare_pick(compare_cleared_on_switch):
+    # Found by the final review: a pick made while viewing one dashboard
+    # survived a switch to another untouched, so one checkbox click on
+    # the new dashboard could complete a stale two-item selection and
+    # compare its fresh pick against the old dashboard's leftover
+    # commit - mislabelled with the old dashboard's message and date -
+    # or, with "current state" already picked, pop the dialog open on
+    # the very next click.
+    assert compare_cleared_on_switch["mode"] is False
+    assert compare_cleared_on_switch["selection"] == []
+    assert compare_cleared_on_switch["missing"] == []
+
+
+_COMPARE_OPEN = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+const compareCall = calls.find((c) => c.type === "compare");
+// The backend decides order, not this scenario - "a" comes back as
+// revision_a because it really is the older side. A non-empty diff:
+// an empty one would mean the two states are byte-identical, and then
+// deleted_since could not honestly report anything missing either.
+compareCall.resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+const missingCall = calls.find((c) => c.type === "deleted_since");
+missingCall.resolve({ items: [{ position: 0, kind: "card", label: "Gone card", view: "a" }] });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+const body = dialog.querySelector("[data-compare-body]");
+
+console.log(JSON.stringify({
+  compareArgs: compareCall.extra,
+  missingArgs: missingCall.extra,
+  bodyHtml: body.innerHTML,
+  dialogOpen: dialog.open,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_open(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_open", _COMPARE_OPEN)
+
+
+def test_compare_dialog_opens_on_two_picks_and_offers_put_back(compare_open):
+    # "a" was picked first, "current" second - the backend's revision_a
+    # says "a" is genuinely the older side, and the dialog trusts that
+    # rather than re-deriving order from `_changes` itself.
+    assert compare_open["compareArgs"] == {"dashboard": "dash", "revision_a": "a"}
+    assert compare_open["missingArgs"] == {"dashboard": "dash", "revision": "a"}
+    # Spec decision 19/9: each side names its own automatic message, not
+    # a bare "between X and Y" that could be either of the two rows.
+    # `renderPlain` escapes its whole heading, so the quotes `describe()`
+    # wraps the label in come back as `&quot;` - correct once a browser
+    # renders it, and the form this check has to look for in the raw
+    # markup.
+    assert "&quot;1 removed&quot;" in compare_open["bodyHtml"]
+    assert "Current state" in compare_open["bodyHtml"]
+    assert "Gone card" in compare_open["bodyHtml"]
+    assert "Put back" in compare_open["bodyHtml"]
+    assert compare_open["dialogOpen"] is True
+
+
+_COMPARE_RESTORE_CLICK = """
+const el = new Panel();
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [];
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._versions = [];
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+// `_render` runs for real in this scenario, unlike most others in this
+// file: the delegated `[data-compare-body]` listener is wired inside
+// it, and a stubbed no-op would leave nothing to click.
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+calls.find((c) => c.type === "compare").resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+// A label the old row-level handler never had to deal with: rendered,
+// `.label` nests a `.where` badge inside it, so reading the item back
+// out of `.textContent` would run the two together.
+calls.find((c) => c.type === "deleted_since").resolve({
+  items: [{ position: 0, kind: "card", label: "Gone card", view: "a" }],
+});
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+
+// The button itself is never real here - this stand-in does not parse
+// the markup `_openCompare` writes into `[data-compare-body]`, so a
+// button built by `querySelector` alone would prove nothing either
+// way. Built by hand instead, the way a real one would be found by
+// `event.target.closest(...)` once a click on it bubbles up.
+const button = node();
+button.dataset.compareRestore = "0";
+button._closest["[data-compare-restore]"] = button;
+
+// Found from the shadow root - exactly what the delegated wiring
+// itself queries (`onClick("[data-compare-body]", ...)` in `_render`).
+// Before the 2026-09-12 fix, this container and the one
+// `_openCompare` writes its content into (reached via
+// `dialog.querySelector(...)`) were two disconnected phantom nodes,
+// and a test that grabbed a node for `[data-compare-restore]` straight
+// from the root - as this one used to - found *a* node with a
+// listener on it regardless, without ever proving the listener sat on
+// the element a real click could actually reach. Querying the
+// container here is what closes that gap: if the click listener were
+// still bound to the wrong selector, `container._on.click` would not
+// exist and this scenario would throw before it could log anything.
+const container = el.shadowRoot.querySelector("[data-compare-body]");
+// No real tree here to walk upward through, so the one ancestor the
+// handler asks `.closest` for is handed to it directly - see `closest`
+// on the stand-in node.
+container._closest["dialog.compare"] = dialog;
+
+let restoreArgs = null;
+el._restoreItem = (revision, item) => { restoreArgs = { revision, item }; };
+
+// A real click on the button bubbles up to the container the
+// delegated listener is bound to; nothing here has a real tree to
+// bubble through, so the event is fired on the container directly,
+// carrying the button as `event.target` the way the browser would
+// deliver it.
+container._on.click({ target: button });
+
+console.log(JSON.stringify({ restoreArgs }));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_restore_click(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_restore_click", _COMPARE_RESTORE_CLICK)
+
+
+def test_put_back_from_the_compare_dialog_names_the_clean_label(compare_restore_click):
+    # Found by review: the button's item was read back out of the
+    # dialog's own rendered `.label` text, which nests a `.where` badge
+    # inside it - so `.textContent` ran the two together into "Gone
+    # card card - view a" instead of "Gone card". The handler looks the
+    # item up by position in the retained `_compareMissing` array
+    # instead, the same way the old row-level handler looks its item up
+    # in `_items` rather than in what was drawn.
+    assert compare_restore_click["restoreArgs"] == {
+        "revision": "a",
+        "item": {"position": 0, "kind": "card", "label": "Gone card", "view": "a"},
+    }
+
+
+_UNDO_REFUSED_LINKS_TO_COMPARE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "b", previous: "a", message: "1 removed" }];
+el._open = "b";
+el._explanation = { groups: [], note: "" };
+el._undo = { available: false, reason: "a section has no path to recognise it by" };
+el._loadingDetail = null;
+el._loadingUndo = null;
+
+const html = el._renderDetail(el._changes[0]);
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def undo_refused_links_to_compare(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "undo_refused_links_to_compare", _UNDO_REFUSED_LINKS_TO_COMPARE
+    )
+
+
+def test_undo_refusal_offers_a_way_into_compare_mode(undo_refused_links_to_compare):
+    html = undo_refused_links_to_compare["html"]
+    assert "cannot be taken back exactly" in html
+    assert 'data-compare-from="a"' in html
+
+
+_UNDO_REFUSED_ON_A_DELETED_DASHBOARD = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+// The compare bar itself already hides "current state" for a dashboard
+// Home Assistant does not currently have (`_renderMain`) - the jump a
+// refused undo offers ends up picking exactly that "current state",
+// so it must not be offered here either.
+el._dashboards = [{ key: "dash", title: "Dash", exists: false }];
+el._changes = [{ revision: "b", previous: "a", message: "1 removed" }];
+el._open = "b";
+el._explanation = { groups: [], note: "" };
+el._undo = { available: false, reason: "a section has no path to recognise it by" };
+el._loadingDetail = null;
+el._loadingUndo = null;
+
+const html = el._renderDetail(el._changes[0]);
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def undo_refused_on_a_deleted_dashboard(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory,
+        "undo_refused_on_a_deleted_dashboard",
+        _UNDO_REFUSED_ON_A_DELETED_DASHBOARD,
+    )
+
+
+def test_the_compare_jump_is_not_offered_for_a_deleted_dashboard(
+    undo_refused_on_a_deleted_dashboard,
+):
+    html = undo_refused_on_a_deleted_dashboard["html"]
+    # The refusal itself is still said - only the door into a "current
+    # state" that does not exist is closed.
+    assert "cannot be taken back exactly" in html
+    assert "data-compare-from" not in html
+
+
+_COMPARE_FROM_CLICK = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [
+  { revision: "z", previous: "y", message: "unrelated" },
+  { revision: "b", previous: "a", message: "1 removed" },
+];
+let openCount = 0;
+el._openCompare = () => { openCount += 1; return Promise.resolve(); };
+
+// Compare mode is already on, with an unrelated row already picked -
+// exactly the state a naive toggle-based jump would mishandle: one
+// _toggleCompareRevision call away from firing _openCompare with the
+// wrong pair already.
+el._toggleCompareMode();
+el._toggleCompareRevision("z", "unrelated");
+
+el._jumpToCompareFrom("a");
+
+console.log(JSON.stringify({
+  openCount,
+  mode: el._compareMode,
+  selection: el._compareSelection.map((s) => s.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_from_click(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_from_click", _COMPARE_FROM_CLICK)
+
+
+def test_jump_to_compare_from_replaces_any_standing_selection(compare_from_click):
+    # Exactly the predecessor and "current state" - the unrelated "z"
+    # pick from before the call is gone, not merged into a triple, and
+    # _openCompare fires exactly once rather than once with the wrong
+    # pair and once more on top of the dialog that first call opened.
+    assert compare_from_click["mode"] is True
+    assert compare_from_click["selection"] == ["a", None]
+    assert compare_from_click["openCount"] == 1
 
 
 _SEARCH = """
@@ -1569,7 +1951,6 @@ el._call = (type, extra) => {
 
 await el._expand("deep");
 const opened = { open: el._open, shown: el._shown().map((c) => c.revision) };
-const against = asked.find((c) => c.type === "deleted_since")?.extra.revision;
 
 // The same row, described. `_describe` reads the row through the same
 // lookup, so a hit nobody can open is also a hit nobody can annotate.
@@ -1586,7 +1967,7 @@ const describing = box.open;
 box.close("");
 await asking;
 
-console.log(JSON.stringify({ opened, against, describing }));
+console.log(JSON.stringify({ opened, describing }));
 """
 
 
@@ -1602,8 +1983,6 @@ def test_a_row_the_server_found_can_be_opened(found_row):
     # word: the row is there, the click does nothing, nothing says why.
     assert found_row["opened"]["shown"] == ["deep"]
     assert found_row["opened"]["open"] == "deep"
-    # And it asks against its own predecessor, which came with the hit.
-    assert found_row["against"] == "deeper"
 
 
 def test_a_row_the_server_found_can_be_described(found_row):
@@ -3609,10 +3988,8 @@ def test_leaving_the_panel_cancels_the_keystroke_still_in_flight(caret):
 
 # -- what a row says about being taken back --------------------------------
 #
-# Two findings in one place. Whether a plain put-back would be a trap is
-# now read off the row instead of sniffed out of its generated message;
-# and a detail that never arrived says so, rather than reporting a
-# refusal the panel cannot know about.
+# A detail that never arrived says so, rather than reporting a refusal
+# the panel cannot know about.
 
 _TAKING_BACK = """
 const el = new Panel();
@@ -3623,33 +4000,15 @@ el._explanation = { groups: [{ entries: [
   { kind: "removed", label: "Weather" },
   { kind: "removed", label: "Clock" },
 ] }] };
-el._items = [
-  { label: "Weather", position: 0, kind: "card" },
-  { label: "Clock", position: 1, kind: "card" },
-];
 el._undo = { available: true, equals_state_before: false };
 
 const row = (adds, message) =>
   el._renderDetail({ revision: "a", previous: "b", adds, message });
-const offers = (html) => (html.match(/data-restore=/g) || []).length;
 // Sentences in this file are written across several lines, indented to
 // sit in their template. A test that searched for one as it stands
 // would go red the next time somebody reflows a paragraph - a cosmetic
 // edit failing a case about meaning.
 const flat = (html) => html.replace(/\\s+/g, " ");
-
-// Two cards gone and nothing added: putting one back is unambiguous, so
-// the rows stay beside the undo.
-const removalsOnly = offers(row(false, "2 cards removed"));
-// The same change, but it added something too. A put-back would leave
-// the added card standing next to the one it restores.
-const trap = offers(row(true, "1 card removed, 1 card added"));
-// The live false positive of the regex this replaced: a dashboard
-// renamed to `3 added` touched no card at all.
-const renamed = offers(row(false, 'dash: renamed to "3 added"'));
-// And the case the regex missed, because of the word in between. A view
-// that appeared is as much a thing a put-back leaves standing.
-const views = offers(row(true, "1 card removed, 2 views added"));
 
 // The undo the server said yes to. The control for the two sentences
 // below: without it, "does not claim a refusal" would also be true of a
@@ -3665,7 +4024,6 @@ el._undo = null;
 const unknown = row(false, "2 cards removed");
 
 console.log(JSON.stringify({
-  removalsOnly, trap, renamed, views,
   available: {
     offers: available.includes("data-undo="),
     saysNothingCannot: !flat(available).includes("cannot be taken back"),
@@ -3687,17 +4045,6 @@ console.log(JSON.stringify({
 @pytest.fixture(scope="session")
 def taking_back(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "taking_back", _TAKING_BACK)
-
-
-def test_a_trap_is_read_from_the_row_and_not_from_its_wording(taking_back):
-    # `adds` decides, and only `adds`. The four messages here are chosen
-    # so that the regex this replaced gets two of them wrong: it read
-    # `renamed to "3 added"` as a trap, and it missed `2 views added`
-    # because of the word in between.
-    assert taking_back["removalsOnly"] == 2
-    assert taking_back["trap"] == 0
-    assert taking_back["renamed"] == 2
-    assert taking_back["views"] == 0
 
 
 def test_an_undo_the_server_allows_is_offered_as_a_button(taking_back):
@@ -3756,8 +4103,7 @@ const expandPromise = el._expand("rev1");
 await settle();
 const frame0 = rendered[rendered.length - 1];
 
-// Fast phase: resolve deleted_since and explain
-calls["deleted_since"]({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
+// Fast phase: resolve explain
 calls["explain"]({
   groups: [],
   note: "",
@@ -3795,7 +4141,6 @@ def test_expand_renders_explanation_while_undo_is_loading(progressive_expand):
     frame1 = progressive_expand["frame1"]
     assert frame1["detailLoading"] is None
     assert frame1["undoLoading"] == "rev1"
-    assert "Old Card" in frame1["html"]
     assert "Checking whether this change can be undone" in frame1["html"]
     assert "Whether this change can be taken back is not known" not in frame1["html"]
     assert "data-undo=" not in frame1["html"]
@@ -3920,7 +4265,6 @@ const expandPromise = el._expand("rev1");
 await settle();
 
 // Fast phase succeeds
-calls["deleted_since"].resolve({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
 calls["explain"].resolve({
   groups: [],
   note: "",
@@ -3951,7 +4295,6 @@ def test_undo_failure_preserves_explanation_and_clears_loading_undo(expand_undo_
     frame = expand_undo_failure["frameAfterError"]
     assert frame["detailLoading"] is None
     assert frame["undoLoading"] is None
-    assert "Old Card" in frame["html"]
     assert "Show the technical details" in frame["html"]
     flat_html = " ".join(frame["html"].split())
     assert "Whether this change can be taken back is not known" in flat_html
@@ -3989,7 +4332,6 @@ el._call = (type) => new Promise((resolve, reject) => {
 // First expand: the explanation arrives, the undo does not.
 const first = el._expand("rev1");
 await settle();
-held["deleted_since"].resolve({ items: [] });
 held["explain"].resolve({ groups: [], note: "", diff: "-a\\n+b\\n" });
 await settle();
 held["undo_change"].reject(new Error("WebSocket timeout"));
@@ -4005,7 +4347,6 @@ held = {};
 const again = el._expand("rev1");
 await settle();
 const askedOnReExpand = asked.length - countBefore;
-held["deleted_since"]?.resolve({ items: [] });
 held["explain"]?.resolve({ groups: [], note: "", diff: "" });
 held["undo_change"]?.resolve({ available: true });
 await again;
@@ -4021,11 +4362,9 @@ for (let i = 0; i < 40; i++)
   many._changes.push({ revision: "r" + i, previous: "p" + i, message: "m", adds: false });
 many._call = (type) =>
   Promise.resolve(
-    type === "deleted_since"
-      ? { items: [] }
-      : type === "explain"
-        ? { groups: [], note: "", diff: "x" }
-        : { available: true },
+    type === "explain"
+      ? { groups: [], note: "", diff: "x" }
+      : { available: true },
   );
 for (const change of many._changes) {
   await many._expand(change.revision);
@@ -4054,7 +4393,7 @@ def test_a_failed_undo_is_not_remembered_as_an_answer(cache_limits):
     # nothing and repeated "the answer did not arrive", pointing at a
     # banner the next action had already cleared.
     assert cache_limits["cachedAfterFailure"] is False
-    assert cache_limits["askedOnReExpand"] == 3
+    assert cache_limits["askedOnReExpand"] == 2
     assert cache_limits["cachedOnceItAnswered"] is True
 
 
@@ -4079,7 +4418,6 @@ el._changes = [
 let callCount = 0;
 el._call = (type, extra) => {
   callCount++;
-  if (type === "deleted_since") return Promise.resolve({ items: [{ label: "Card", kind: "card", position: 0 }] });
   if (type === "explain") return Promise.resolve({ groups: [], note: "", diff: "diff" });
   if (type === "undo_change") return Promise.resolve({ available: true });
   return Promise.resolve({});
@@ -4101,14 +4439,12 @@ await el._expand("rev1");
 await settle();
 const callsAfterReopen = callCount;
 const hasExplanation = !!el._explanation;
-const hasItems = el._items.length > 0;
 
 console.log(JSON.stringify({
   callsAfterFirst,
   cachedAfterFirst,
   callsAfterReopen,
   hasExplanation,
-  hasItems,
 }));
 """
 
@@ -4119,7 +4455,7 @@ def detail_cache(tmp_path_factory):
 
 
 def test_first_expand_fetches_from_backend(detail_cache):
-    assert detail_cache["callsAfterFirst"] == 3
+    assert detail_cache["callsAfterFirst"] == 2
 
 
 def test_first_expand_populates_cache(detail_cache):
@@ -4129,7 +4465,6 @@ def test_first_expand_populates_cache(detail_cache):
 def test_reexpand_uses_cache_without_network_calls(detail_cache):
     assert detail_cache["callsAfterReopen"] == 0
     assert detail_cache["hasExplanation"] is True
-    assert detail_cache["hasItems"] is True
 
 
 # -- a level the server left out must not take the flow with it ------------
