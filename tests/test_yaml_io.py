@@ -1,5 +1,6 @@
 """Tests for the deterministic YAML representation."""
 
+import copy
 import json
 import os
 import pathlib
@@ -131,6 +132,71 @@ def test_emoji_is_written_as_itself_not_escaped():
     assert "🟢 ok" in text
     assert "\\U" not in text
     assert "body: |" in text
+
+
+def test_equal_dumps_always_come_from_equal_objects():
+    """The one direction `operations.py`'s undo path can rely on.
+
+    Round-trip fidelity makes this true unconditionally: if `dump(a)`
+    and `dump(b)` are the same text `T`, then `load(T) == a` and
+    `load(T) == b` both hold, so `a == b` - `load` cannot answer two
+    different things for one text. `async_undo_change` uses the
+    contrapositive of this to decide "this change is already taken
+    back" without dumping either side - see the note there and in
+    `test_restore.py` for what makes that safe in that one call.
+    """
+    samples = [
+        {},
+        {"a": 1},
+        {"views": [{"title": "A"}]},
+        {"views": [{"title": "A"}]},
+        {"views": [{"title": "B"}]},
+        {"style": "a\nb\nc"},
+        {"code": "0123"},
+        {"title": "🟢 ok"},
+    ]
+    for a in samples:
+        for b in samples:
+            if yaml_io.dump(a) == yaml_io.dump(b):
+                assert a == b
+
+
+def test_equal_objects_do_not_always_dump_to_equal_text():
+    """The gap the other direction has, and why it is not a small one.
+
+    Python dict equality does not care about key order; `dump()`, with
+    `sort_keys=False`, renders each dict's keys in the order it holds
+    them. Two dicts that compare equal can therefore dump to different
+    text - determinism only promises that dumping *one* object twice
+    gives the same text both times, never that two separately built,
+    equal objects will. Documented here so nobody reaches for this
+    module's docstring and concludes the general converse of the test
+    above; `async_undo_change` does not need it, and says why not.
+    """
+    a = {"a": 1, "b": 2}
+    b = {"b": 2, "a": 1}
+    assert a == b
+    assert yaml_io.dump(a) != yaml_io.dump(b)
+
+
+@pytest.mark.skipif(not REAL_DASHBOARDS, reason="no real dashboards available")
+@pytest.mark.parametrize("path", REAL_DASHBOARDS, ids=lambda p: p.name)
+def test_a_changed_real_dashboard_dumps_to_different_text(path):
+    """The direction the synthetic cases above cannot prove by themselves:
+    that a real dashboard's own shape does not hide two different
+    configurations behind one rendered text. One character changed in
+    the first view's title is enough - if that ever dumped to the same
+    text as the original, the short-circuit in `async_undo_change`
+    would call a real change "already taken back".
+    """
+    config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
+    views = config.get("views") or []
+    if not views:
+        pytest.skip("no views to change")
+    mutated = copy.deepcopy(config)
+    mutated["views"][0]["title"] = (mutated["views"][0].get("title") or "") + " "
+    assert mutated != config
+    assert yaml_io.dump(mutated) != yaml_io.dump(config)
 
 
 def test_load_state_reads_nothing_as_an_empty_configuration():

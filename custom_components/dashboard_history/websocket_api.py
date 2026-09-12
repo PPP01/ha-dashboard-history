@@ -129,12 +129,24 @@ _COMMANDS = (
     ),
     _command(
         f"{DOMAIN}/undo_change",
-        {**_DASHBOARD, **_REVISION, vol.Optional("confirm", default=False): bool},
+        {
+            **_DASHBOARD,
+            **_REVISION,
+            vol.Optional("confirm", default=False): bool,
+            # Left false by the row that only asks whether an undo
+            # exists, on every expansion. The confirmation dialog is
+            # the one caller that sets it, to get the diff and the
+            # explanation it is about to show - see the note at
+            # `async_undo_change` for why that is worth a field of its
+            # own rather than always being computed.
+            vol.Optional("preview", default=False): bool,
+        },
         operations.async_undo_change,
         lambda msg: {
             "key": msg["dashboard"],
             "revision": msg["revision"],
             "confirm": msg["confirm"],
+            "preview": msg["preview"],
         },
     ),
     _command(

@@ -1167,6 +1167,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // of a dashboard used to have its undo computed and thrown away:
     // measured at 1.2-1.5 s on a 28-view dashboard, which is the cost
     // this row was split into two phases to avoid in the first place.
+    // `preview` deliberately left out - it defaults to false server-side.
+    // This row never shows a diff for its own sake; `_undo` here is read
+    // for `available`, `reason` and `equals_state_before` alone. Asking
+    // for the preview too would dump the dashboard twice on every row
+    // opened, for a dialog that opens on a click `_undoChange` sends
+    // separately - measured on 2026-09-12 at 613 ms against roughly
+    // 120 ms without it, on a dashboard the size of "Standard".
     const undo = change.previous
       ? this._call("undo_change", {
         dashboard: this._selected,
@@ -2111,7 +2118,11 @@ class DashboardHistoryPanel extends HTMLElement {
   _undoChange(revision) {
     this._confirm("Undo this change", (confirm, keep, dashboard) => [
       "undo_change",
-      { dashboard, revision, confirm },
+      // `preview` only on the call that shows one - the first, before
+      // the write. The second call, with `confirm` true, already has
+      // the diff this dialog is displaying; asking for it again would
+      // pay for the same two dumps a second time for nothing shown.
+      { dashboard, revision, confirm, preview: !confirm },
     ]);
   }
 

@@ -695,6 +695,7 @@ async def async_undo_change(
     key: str,
     revision: str,
     confirm: bool = False,
+    preview: bool = False,
 ) -> dict:
     """Take one change back and keep everything since - if that is exact.
 
@@ -705,6 +706,26 @@ async def async_undo_change(
     can save between seeing the preview and pressing the button, and
     writing a preview computed before that would throw their work away
     with a proof that was true a minute ago.
+
+    `preview` decides whether the diff and the plain-language
+    explanation are computed at all. The row that asks this on every
+    expansion - `_expand` in the panel, not a click on "Undo this
+    change" - only ever reads `available`, `reason` and
+    `equals_state_before`, and leaves `preview` at its default of
+    `False`. Building the other two means two YAML dumps of a state
+    that can run into the thousands of cards, and issue #5 measured
+    that at 613 ms against 118 ms without them on a dashboard the size
+    of "Standard" - cost every row expansion paid for a dialog that may
+    never open. Only the confirmation dialog sets `preview: True`, on
+    the one call it makes before the write.
+
+    `confirm` needs the live state dumped regardless of `preview`:
+    `_keep_the_live_state` below wants that text to snapshot what is
+    about to be overwritten, whether or not this same call is also
+    asked to show a diff. The dialog's second call sets `confirm: True`
+    and leaves `preview` at its default - it already showed the diff on
+    the call before this one, and showing it twice would cost the same
+    two dumps again for a screen already drawn.
     """
     full, text, error = await _state_at(hass, store, key, revision)
     if error is not None:
@@ -739,27 +760,50 @@ async def async_undo_change(
     except LookupError as err:
         return {"available": False, "reason": str(err)}
 
-    # In an executor, and not out of habit: since the row itself asks for
-    # the undo, this runs on every expansion of a change rather than only
-    # on a button click - so a dashboard with a few hundred cards would
-    # be dumping YAML and matching cards on the event loop each time.
-    diff, explanation, live_text = await hass.async_add_executor_job(
-        _preview, current, result, key
-    )
-    if not diff:
+    if result == current:
+        # What an empty diff used to stand for - `if not diff` - without
+        # dumping either side to find out. Not a general equivalence:
+        # Python dict equality does not see key order, `dump()` does,
+        # so two equal objects built independently can render as
+        # different text - test_yaml_io.py proves that gap rather than
+        # papering over it. It does not open here, because `result`
+        # never *is* built independently of `current`: `apply_undo`
+        # either applies no step at all, in which case `result` is a
+        # plain `copy.deepcopy(current)` and the two dump identically
+        # by construction, or every step moves a whole card or view
+        # verbatim - never merges or rebuilds one - so nothing gets a
+        # key order `current` did not already give it. See
+        # test_restore.py for the case checked directly against
+        # `apply_undo`.
         return {"available": False, "reason": "this change is already taken back"}
 
     answer = {
         "available": True,
         "applied": False,
-        "preview": diff,
-        "explanation": explanation,
         # Lets the panel drop the coarse "back to the state before this
         # change" button where it would write exactly the same thing.
         # Worked out here because it is a comparison, and a comparison in
         # the panel is logic in the panel.
         "equals_state_before": result == before_state,
     }
+
+    # In an executor, and not out of habit: since the row itself asks for
+    # this on every expansion of a change, running it on the event loop
+    # would stall Home Assistant for as long as a dashboard with a few
+    # hundred cards takes to dump twice and diff - which is exactly what
+    # ran here unconditionally until issue #5's second half. `preview`
+    # keeps that cost for the one caller that shows it; `confirm` alone
+    # still needs the live text below, one dump rather than the pair.
+    live_text = None
+    if preview:
+        diff, explanation, live_text = await hass.async_add_executor_job(
+            _preview, current, result, key
+        )
+        answer["preview"] = diff
+        answer["explanation"] = explanation
+    elif confirm:
+        live_text = await hass.async_add_executor_job(dump, current)
+
     if not confirm:
         return answer
     # The state about to be overwritten, kept first - the same net the

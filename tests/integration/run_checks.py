@@ -1746,6 +1746,9 @@ async def run_undo(access: str) -> None:
         the_edit = await newest(socket)
         await save(socket, [keep, edited, later])
 
+        # `preview` left out: the row-open shape, which now answers
+        # without the two YAML dumps a real preview costs (issue #5's
+        # second half). It must still say enough to draw the row.
         answer = await socket.call(
             "dashboard_history/undo_change", dashboard=key, revision=the_edit
         )
@@ -1755,7 +1758,20 @@ async def run_undo(access: str) -> None:
             answer.get("reason", ""),
         )
         check(
-            "the preview writes nothing without confirm",
+            "the row-open shape carries no preview or explanation",
+            "preview" not in answer and "explanation" not in answer,
+            str(sorted(answer.keys())),
+        )
+
+        # The confirmation dialog's shape: the same call, `preview=True`.
+        answer = await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=the_edit,
+            preview=True,
+        )
+        check(
+            "asked for a preview, the dialog's shape carries one",
             answer.get("applied") is False and bool(answer.get("preview")),
         )
         live = await socket.call("lovelace/config", url_path=key)

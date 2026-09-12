@@ -1882,11 +1882,20 @@ sent.length = 0;
 el._undoChange("b");
 await settle();
 el._selected = "garden";
+// The two `undo_change` calls this one flow sends: the preview before
+// the write, the write itself. `preview` belongs on the first alone -
+// the dialog it fills in has just been read off `reply` above; asking
+// again on the write would pay for the same two dumps a second time
+// for a screen already drawn. See operations.py on `async_undo_change`.
+const undoPreviewFlag = sent.find(
+  (c) => c.type === "undo_change" && !c.extra.confirm,
+)?.extra?.preview;
 reply("undo_change", PREVIEW);
 await settle();
 el.shadowRoot.querySelector("dialog.confirm").close("apply");
 await settle();
 const undoneOn = confirming("undo_change")[0].extra.dashboard;
+const undoWriteFlag = confirming("undo_change")[0].extra.preview;
 reply("undo_change", { applied: true });
 await settle();
 
@@ -1933,6 +1942,7 @@ console.log(JSON.stringify({
   previewFor, restoreAfterSwitch, forgetAfterSwitch, versionAfterSwitch,
   openedNormally, restoredTo, carriedTo,
   versionOpened, versionedOn, itemWentTo, undoneOn,
+  undoPreviewFlag, undoWriteFlag,
   named: dialogSaid.includes("Kitchen"), forgotten,
 }));
 """
@@ -2010,6 +2020,16 @@ def test_every_flow_that_writes_carries_its_own_dashboard(wrong_dashboard):
     # through `_confirm`, so it is guarded on its own.
     assert wrong_dashboard["versionOpened"] is True
     assert wrong_dashboard["versionedOn"] == "kitchen"
+
+
+def test_undo_asks_for_a_preview_only_before_the_write(wrong_dashboard):
+    # Issue #5's second half: the diff and explanation cost two YAML
+    # dumps, and only the call that fills the dialog needs them. The
+    # first `undo_change` this flow sends is the preview, the second
+    # the write - see operations.py's `async_undo_change` for why the
+    # write does not ask again for a diff it already showed.
+    assert wrong_dashboard["undoPreviewFlag"] is True
+    assert wrong_dashboard["undoWriteFlag"] is False
 
 
 def test_a_dashboard_picked_while_the_numbers_are_out_cancels_the_version(
@@ -3725,8 +3745,10 @@ el._changes = [
 ];
 
 const calls = {};
+let undoExtra = null;
 el._call = (type, extra) => new Promise((resolve) => {
   calls[type] = resolve;
+  if (type === "undo_change") undoExtra = extra;
 });
 
 // Start expand
@@ -3753,7 +3775,7 @@ await expandPromise;
 await settle();
 const frame2 = rendered[rendered.length - 1];
 
-console.log(JSON.stringify({ frame0, frame1, frame2 }));
+console.log(JSON.stringify({ frame0, frame1, frame2, undoExtra }));
 """
 
 
@@ -3800,6 +3822,15 @@ def test_expand_renders_undo_button_when_undo_resolves(progressive_expand):
     assert 'data-undo="rev1"' in frame2["html"]
     assert "Undo this change" in frame2["html"]
     assert "Checking whether this change can be undone" not in frame2["html"]
+
+
+def test_a_row_opening_does_not_ask_for_a_preview(progressive_expand):
+    # The row reads only `available`, `reason` and `equals_state_before`
+    # from this answer - `preview` left at its server-side default of
+    # false keeps the two YAML dumps for the dialog that may show them,
+    # not for every row opened. See operations.py's `async_undo_change`
+    # and the companion assertion in the confirm-dialog flow above.
+    assert progressive_expand["undoExtra"].get("preview") is not True
 
 
 # -- the oldest change asks for nothing it cannot show ---------------------

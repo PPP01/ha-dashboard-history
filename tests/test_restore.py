@@ -3,6 +3,7 @@
 import analyze
 import pytest
 import restore
+import yaml_io
 
 A = {"type": "tile", "entity": "light.a"}
 B = {"type": "tile", "entity": "light.b"}
@@ -374,3 +375,31 @@ def test_an_undo_refuses_to_write_into_a_doubled_path():
     }
     with pytest.raises(LookupError, match="share one URL path"):
         restore.apply_undo(today, plan)
+
+
+def test_an_already_undone_change_dumps_identically_too():
+    """What `async_undo_change` relies on to skip both YAML dumps when
+    nothing needs to change.
+
+    Mirrors `test_a_deleted_card_already_back_needs_no_step` in
+    test_analyze.py: the card the change removed is already back, so
+    the plan has no steps at all, and `apply_undo` answers with a
+    plain `copy.deepcopy(current)`. That is not just equal to `current`
+    under `==` - it is byte-for-byte the same dashboard once dumped,
+    because nothing was rebuilt to produce it. test_yaml_io.py shows
+    why the second half needs proving on its own rather than assumed
+    from the first: Python equality does not see a dict's key order,
+    `dump()` does. This is the one path that would notice if
+    `apply_undo` ever started rebuilding a card instead of relocating
+    it untouched.
+    """
+    a = {"type": "tile", "entity": "light.a"}
+    b = {"type": "tile", "entity": "light.b"}
+    before = _config([a, b])
+    after = _config([a])
+    current = _config([a, b])
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.steps == ()
+    result = restore.apply_undo(current, plan)
+    assert result == current
+    assert yaml_io.dump(result) == yaml_io.dump(current)
