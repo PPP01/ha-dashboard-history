@@ -357,6 +357,29 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * The jump a refused undo offers into compare mode: the row's own
+   * predecessor against the current state, the same pair the removed
+   * row-level list used to show automatically.
+   *
+   * Sets the end state directly rather than calling
+   * `_toggleCompareMode`/`_toggleCompareRevision` in sequence - doing
+   * that with a *different* pick already standing would fire
+   * `_openCompare` once with the wrong pair and once more on top of
+   * the dialog that first call already opened.
+   */
+  _jumpToCompareFrom(previousRevision) {
+    if (!previousRevision) return;
+    const row = this._changeAt(previousRevision);
+    this._compareMode = true;
+    this._compareSelection = [
+      { revision: previousRevision, label: row?.description || row?.message || "" },
+      { revision: null, label: "Current state" },
+    ];
+    this._render();
+    this._openCompare();
+  }
+
+  /**
    * Opens the compare dialog for the two current picks.
    *
    * Sends both picks to `compare` in whatever order they were selected
@@ -2537,7 +2560,11 @@ class DashboardHistoryPanel extends HTMLElement {
         ? `<p class="why row-loading"><span class="ring mini"></span> Checking whether this change can be undone…</p>`
         : this._undo
           ? `<p class="why">This change cannot be taken back exactly:
-             ${escape(this._undo.reason || "no reason given")}.</p>`
+             ${escape(this._undo.reason || "no reason given")}.</p>
+             <div class="backto">
+               <button class="act ghost" data-compare-from="${escape(change.previous || "")}"
+                       >Compare with the current state</button>
+             </div>`
         : // Nothing was answered at all - the request for it failed, or
           // it is still out. The sentence above makes a statement about
           // the change itself, and this is the one case where the panel
@@ -3079,6 +3106,10 @@ class DashboardHistoryPanel extends HTMLElement {
       event.stopPropagation();
       const revision = element.dataset.compare || null;
       this._toggleCompareRevision(revision, element.dataset.compareLabel || "");
+    });
+    onClick("[data-compare-from]", (element, event) => {
+      event.stopPropagation();
+      this._jumpToCompareFrom(element.dataset.compareFrom);
     });
     onClick("[data-compare-restore]", (element) => {
       const dialog = element.closest("dialog.compare");

@@ -1644,6 +1644,78 @@ def test_put_back_from_the_compare_dialog_names_the_clean_label(compare_restore_
     }
 
 
+_UNDO_REFUSED_LINKS_TO_COMPARE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "b", previous: "a", message: "1 removed" }];
+el._open = "b";
+el._explanation = { groups: [], note: "" };
+el._undo = { available: false, reason: "a section has no path to recognise it by" };
+el._loadingDetail = null;
+el._loadingUndo = null;
+
+const html = el._renderDetail(el._changes[0]);
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def undo_refused_links_to_compare(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "undo_refused_links_to_compare", _UNDO_REFUSED_LINKS_TO_COMPARE
+    )
+
+
+def test_undo_refusal_offers_a_way_into_compare_mode(undo_refused_links_to_compare):
+    html = undo_refused_links_to_compare["html"]
+    assert "cannot be taken back exactly" in html
+    assert 'data-compare-from="a"' in html
+
+
+_COMPARE_FROM_CLICK = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [
+  { revision: "z", previous: "y", message: "unrelated" },
+  { revision: "b", previous: "a", message: "1 removed" },
+];
+let openCount = 0;
+el._openCompare = () => { openCount += 1; return Promise.resolve(); };
+
+// Compare mode is already on, with an unrelated row already picked -
+// exactly the state a naive toggle-based jump would mishandle: one
+// _toggleCompareRevision call away from firing _openCompare with the
+// wrong pair already.
+el._toggleCompareMode();
+el._toggleCompareRevision("z", "unrelated");
+
+el._jumpToCompareFrom("a");
+
+console.log(JSON.stringify({
+  openCount,
+  mode: el._compareMode,
+  selection: el._compareSelection.map((s) => s.revision),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_from_click(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_from_click", _COMPARE_FROM_CLICK)
+
+
+def test_jump_to_compare_from_replaces_any_standing_selection(compare_from_click):
+    # Exactly the predecessor and "current state" - the unrelated "z"
+    # pick from before the call is gone, not merged into a triple, and
+    # _openCompare fires exactly once rather than once with the wrong
+    # pair and once more on top of the dialog that first call opened.
+    assert compare_from_click["mode"] is True
+    assert compare_from_click["selection"] == ["a", None]
+    assert compare_from_click["openCount"] == 1
+
+
 _SEARCH = """
 const el = new Panel();
 el._render = () => {};
