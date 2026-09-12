@@ -1,5 +1,84 @@
 # Changelog
 
+## v0.4.0
+
+A deliberate way to compare two states, and a steadier panel around it.
+No change to the Home Assistant version floor — still **2024.11 or
+newer**.
+
+### Compare mode, in place of a guess
+
+- Replaces the row-level "Also missing since then" list, which
+  reappeared under every row a deletion could reach and repeated
+  itself down the whole history. Tick any two rows instead — including
+  **Current state** — and see what changed between them: plain
+  language first, the technical diff a click away.
+- **Put back** is offered wherever one side of the comparison is the
+  current state. Which side is actually older is decided by the
+  history itself, never guessed from the order the two rows were
+  ticked in — and where both land in the same second, the repository's
+  own tie-free commit order settles it instead of a timestamp that
+  cannot.
+- What is still missing is now **grouped by the view it came from**,
+  the same way the plain-language diff above it already groups its own
+  lines — one heading per view, not a repeated badge on every row.
+- Putting an item back closes the dialog rather than leaving stale
+  positions behind for a second click to land on the wrong one.
+- A targeted undo that has to refuse — the card it would take back
+  cannot be proven to sit exactly once, unchanged, in today's state —
+  now points at compare mode instead of ending in a dead end.
+
+### A steadier panel
+
+- **Simple** and **Advanced** are a real segmented control now, not a
+  single toggle button, and it follows the panel's own theme rather
+  than the operating system's.
+- Version sections stand apart from ordinary changes at a glance: an
+  accent border, a disclosure chevron, a guide line for the changes
+  nested under an open one — drawn with the one chevron the panel uses
+  everywhere else, not a second glyph of its own.
+- The confirmation dialogs for restore, undo and put-back share one
+  simplified layout: a two-segment toggle for the technical diff and
+  the current-state note, and the version-naming field appears only
+  once you ask to keep the state you are leaving.
+- Dialog toggle buttons now tell assistive technology what they open
+  (`aria-expanded` and `aria-controls`), instead of announcing a bare
+  "pressed" state with no subject.
+
+### Faster
+
+- Dashboards are parsed through libyaml instead of pure Python's own
+  parser — measured 8 to 9 times faster on a real dashboard, which
+  speeds up every one of the panel's own slow calls at once, since all
+  of them parse the same YAML.
+- An undo's full preview — the diff and the plain-language explanation
+  — is computed only where it is actually shown, not on every row you
+  merely expand.
+- Expanding a row now caches its answers; collapsing and reopening the
+  same row costs no further round trip.
+- A failing `undo_change` no longer blocks the explanation rendering
+  beside it, or the other way around.
+
+### A few things that were quietly wrong
+
+- Undo used to be asked for even on the oldest recorded change, where
+  the answer could never be anything but "no".
+- A dropped network call was remembered as though it were a real
+  answer — asking again now genuinely asks again, rather than
+  repeating the same "the answer did not arrive" forever.
+- When an undo's answer truly did not arrive, the row said "no reason
+  given" instead of the actual cause already sitting in the banner
+  above it.
+- The technical diff no longer opens on "No difference" for a change
+  that plainly has one, and it keeps its scroll position across a
+  background re-render instead of jumping back to the top.
+- The loading spinner no longer freezes under reduced motion.
+
+### A new brand icon
+
+Solid colors on a transparent ground, with dedicated light and dark
+variants, replacing the old solid-purple one.
+
 ## v0.3.0
 
 The release that turns a recorded history into one you can navigate
