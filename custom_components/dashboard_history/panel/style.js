@@ -998,4 +998,7 @@ export const STYLE = `
       justify-content: flex-end;
     }
   }
+  .compare-bar { display: flex; justify-content: flex-end; padding: 8px 0; }
+  .compare-check { margin-right: 8px; width: 16px; height: 16px; flex-shrink: 0; }
+  .current-pick .change { background: var(--secondary-background-color, #eee); }
 `;

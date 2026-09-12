@@ -85,7 +85,7 @@ export function someNames(names) {
  * working it out needs the change list and this function has only the
  * section.
  */
-export function versionHead({ section, here, top }) {
+export function versionHead({ section, here, top, compareMode = false, compareChecked = false }) {
   const [first, ...also] = section.versions;
   const count = section.rows.length;
   const extra = also
@@ -111,6 +111,11 @@ export function versionHead({ section, here, top }) {
                >Back to this version</button>`;
   return `
     <summary class="penholder">
+      ${compareMode
+      ? `<input type="checkbox" class="compare-check" data-compare="${escape(first.name)}"
+                 data-compare-label="${escape(first.title || first.name)}"
+                 ${compareChecked ? "checked" : ""}>`
+      : ""}
       <span class="name">${escape(first.name.split("/").pop())}</span>
       <span class="grow">${escape(first.title || first.name)}${extra}</span>
       <span class="count">${count} change${count === 1 ? "" : "s"}</span>
@@ -188,7 +193,15 @@ export function bin(version) {
  * `matching` are versions holding what this row's state holds without
  * sitting on it; `detail` is the already-built detail block, or "".
  */
-export function renderRow({ change, newest = false, spokenFor = false, matching = [], detail = "" }) {
+export function renderRow({
+  change,
+  newest = false,
+  spokenFor = false,
+  matching = [],
+  detail = "",
+  compareMode = false,
+  compareChecked = false,
+}) {
   const chip =
     spokenFor || !change.same_as_now
       ? ""
@@ -213,6 +226,11 @@ export function renderRow({ change, newest = false, spokenFor = false, matching 
   return `
       <div class="card">
         <div class="change penholder" data-revision="${escape(change.revision)}">
+          ${compareMode
+      ? `<input type="checkbox" class="compare-check" data-compare="${escape(change.revision)}"
+                 data-compare-label="${escape(change.description || change.message)}"
+                 ${compareChecked ? "checked" : ""}>`
+      : ""}
           <span class="what">${escape(change.description || change.message)}${chip}${named}
             ${change.description ? `<span class="auto">${escape(change.message)}</span>` : ""}
           </span>
@@ -222,5 +240,22 @@ export function renderRow({ change, newest = false, spokenFor = false, matching 
                   title="Describe this change">✎</button>
         </div>
         ${detail}
+      </div>`;
+}
+
+/**
+ * The compare mode's one pick that is not a row: "Current state".
+ * Pinned above the list rather than drawn from `_changes[0]`, because
+ * the newest entry is not always the current state (decision 9) - and
+ * unlike every row, this pick's `data-compare` carries no revision.
+ */
+export function currentStateRow(checked) {
+  return `
+      <div class="card current-pick">
+        <div class="change penholder">
+          <input type="checkbox" class="compare-check" data-compare=""
+                 data-compare-label="Current state" ${checked ? "checked" : ""}>
+          <span class="what">Current state</span>
+        </div>
       </div>`;
 }

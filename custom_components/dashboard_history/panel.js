@@ -58,7 +58,7 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, joinNames;
-let sections, someNames, renderRow, versionHead;
+let sections, someNames, renderRow, versionHead, currentStateRow;
 let DIALOGS;
 let renderSimple;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -73,7 +73,7 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
@@ -189,6 +189,8 @@ class DashboardHistoryPanel extends HTMLElement {
     this._selected = null;
     this._open = null; // revision of the expanded change
     this._items = [];
+    this._compareMode = false;
+    this._compareSelection = [];
     this._explanation = null;
     this._undo = null;
     this._loadingDetail = null;
@@ -319,6 +321,33 @@ class DashboardHistoryPanel extends HTMLElement {
     // mode never asks, so `_found` was still `null`, and only a further
     // keystroke set the search going.
     if (this._query.trim()) return this._search(this._query);
+    this._render();
+  }
+
+  /** Turns the compare mode's checkboxes on or off, clearing any pick. */
+  _toggleCompareMode() {
+    this._compareMode = !this._compareMode;
+    this._compareSelection = [];
+    this._render();
+  }
+
+  /**
+   * One pick in the compare mode. `revision` is `null` for "Current
+   * state" - the one pick that is not a recorded revision at all.
+   *
+   * A third pick evicts the oldest of the two standing picks (FIFO),
+   * never an error: comparing is exploratory, and blocking a third
+   * click would only make somebody uncheck one first for no reason.
+   * Picking an already-selected revision again removes just that one.
+   */
+  _toggleCompareRevision(revision, label) {
+    const at = this._compareSelection.findIndex((s) => s.revision === revision);
+    if (at >= 0) {
+      this._compareSelection.splice(at, 1);
+    } else {
+      this._compareSelection.push({ revision, label });
+      if (this._compareSelection.length > 2) this._compareSelection.shift();
+    }
     this._render();
   }
 
@@ -2540,6 +2569,8 @@ class DashboardHistoryPanel extends HTMLElement {
       section,
       top,
       here: this._changes[top]?.same_as_now,
+      compareMode: this._compareMode,
+      compareChecked: this._compareSelection.some((s) => s.revision === section.versions[0].name),
     });
   }
 
@@ -2644,20 +2675,33 @@ class DashboardHistoryPanel extends HTMLElement {
           open: this._verOpen,
         })
       );
+    // "Current state" is left out for a dashboard Home Assistant does
+    // not currently have: there is nothing there to compare against,
+    // and Put-back only ever writes into a live state (spec decision
+    // 19's edge case table).
+    const compareBar = `<div class="compare-bar">
+           <button class="act ghost" data-compare-toggle="1">
+             ${this._compareMode ? "Exit compare mode" : "Compare mode"}
+           </button>
+         </div>
+         ${this._compareMode && dashboard?.exists !== false
+        ? currentStateRow(this._compareSelection.some((s) => s.revision === null))
+        : ""}`;
+    const topBar = banner + compareBar;
     const shown = this._shown();
     // Nobody has answered yet: the walk is out, or the query is too
     // short to send. The note above the list says which, and a sentence
     // here would contradict it - which is exactly what "Nothing
     // matches." did, for the seconds a walk over a grown history takes.
-    if (shown === null) return banner;
+    if (shown === null) return topBar;
     if (!shown.length)
-      return `${banner}<p class="empty muted">${query
+      return `${topBar}<p class="empty muted">${query
         ? "Nothing matches."
         : "No changes recorded for this dashboard."}</p>`;
     // Solely while searching: the list is flat and "Load older" is gone,
     // because a page belongs to a list that goes on, not to one a search
     // just cut down to whatever matched.
-    if (query) return banner + shown.map((c) => this._renderRow(c)).join("");
+    if (query) return topBar + shown.map((c) => this._renderRow(c)).join("");
 
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
@@ -2686,7 +2730,7 @@ class DashboardHistoryPanel extends HTMLElement {
            <button class="act ghost" data-older="1">Load older changes</button>
          </div>`
       : "";
-    return banner + parts.join("") + older;
+    return topBar + parts.join("") + older;
   }
 
   /**
@@ -2743,6 +2787,8 @@ class DashboardHistoryPanel extends HTMLElement {
       spokenFor,
       matching: newest ? this._matchingElsewhere(change) : [],
       detail: this._open === change.revision ? this._renderDetail(change) : "",
+      compareMode: this._compareMode,
+      compareChecked: this._compareSelection.some((s) => s.revision === change.revision),
     });
   }
 
@@ -2934,6 +2980,12 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick("[data-mode]", (element, event) => {
       event.stopPropagation();
       this._setMode(element.dataset.mode);
+    });
+    onClick("[data-compare-toggle]", () => this._toggleCompareMode());
+    onClick(".compare-check", (element, event) => {
+      event.stopPropagation();
+      const revision = element.dataset.compare || null;
+      this._toggleCompareRevision(revision, element.dataset.compareLabel || "");
     });
     root.querySelectorAll(".segmented-control input[type='radio']").forEach((radio) => {
       radio.addEventListener("change", (event) => {

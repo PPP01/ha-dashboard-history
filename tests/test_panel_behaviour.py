@@ -1443,6 +1443,55 @@ def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
     assert addressing["first"]["types"] == ["explain"]
 
 
+_COMPARE_SELECT = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "advanced";
+el._changes = [];
+// Reaching two picks fires _openCompare() once task 3 lands - a
+// never-settling call and stand-ins for shadowRoot/_changes keep that
+// harmless here, since this scenario only inspects the synchronous
+// selection state and never awaits anything.
+el._call = () => new Promise(() => {});
+el.shadowRoot = node();
+
+el._toggleCompareMode();
+const afterOn = el._compareMode;
+
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision("b", "2 moved");
+const twoSelected = [...el._compareSelection];
+
+// A third pick evicts the oldest, not the newest.
+el._toggleCompareRevision("c", "1 added");
+const afterThird = [...el._compareSelection];
+
+// Picking an already-selected one again clears just that one.
+el._toggleCompareRevision("c", "1 added");
+const afterToggleOff = [...el._compareSelection];
+
+el._toggleCompareMode();
+const afterOff = { mode: el._compareMode, selection: [...el._compareSelection] };
+
+console.log(JSON.stringify({ afterOn, twoSelected, afterThird, afterToggleOff, afterOff }));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_select(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_select", _COMPARE_SELECT)
+
+
+def test_compare_mode_selection_keeps_at_most_two(compare_select):
+    assert compare_select["afterOn"] is True
+    assert [s["revision"] for s in compare_select["twoSelected"]] == ["a", "b"]
+    # "a" was the oldest pick; the third eviction drops it, not "b".
+    assert [s["revision"] for s in compare_select["afterThird"]] == ["b", "c"]
+    assert [s["revision"] for s in compare_select["afterToggleOff"]] == ["b"]
+    # Turning compare mode off clears the selection - reopening starts fresh.
+    assert compare_select["afterOff"] == {"mode": False, "selection": []}
+
+
 _SEARCH = """
 const el = new Panel();
 el._render = () => {};
