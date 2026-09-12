@@ -188,7 +188,6 @@ class DashboardHistoryPanel extends HTMLElement {
     this._loadingOlder = false;
     this._selected = null;
     this._open = null; // revision of the expanded change
-    this._items = [];
     this._compareMode = false;
     this._compareSelection = [];
     // The cards `_openCompare` found missing on the historical side, kept
@@ -1203,7 +1202,6 @@ class DashboardHistoryPanel extends HTMLElement {
     // A row expanded once keeps its answers until the dashboard changes.
     const cached = this._detailCache.get(revision);
     if (cached) {
-      this._items = cached.items;
       this._explanation = cached.explanation;
       this._undo = cached.undo;
       this._loadingDetail = null;
@@ -1216,7 +1214,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._loadingDetail = revision;
     this._loadingUndo = change.previous ? revision : null;
 
-    const [missingPromise, explainPromise, undoPromise] = this._detailCalls(change);
+    const [explainPromise, undoPromise] = this._detailCalls(change);
 
     // Both phases below ask `mine()` before they write anything. A row
     // opened while this one's answers are still out takes the slot,
@@ -1226,11 +1224,10 @@ class DashboardHistoryPanel extends HTMLElement {
     // answers arrived first, these arrived second, and the page
     // settled on the wrong ones.
 
-    // Fast phase: explanation and deleted cards
-    const fastPhase = Promise.all([missingPromise, explainPromise])
-      .then(([missing, explanation]) => {
+    // Fast phase: explanation
+    const fastPhase = explainPromise
+      .then((explanation) => {
         if (!mine()) return;
-        this._items = missing ? missing.items || [] : [];
         this._explanation = explanation;
         this._loadingDetail = null;
         this._render();
@@ -1286,7 +1283,6 @@ class DashboardHistoryPanel extends HTMLElement {
     // - and this is the same rule for the other half.
     if (mine() && this._explanation && !undoFailed) {
       this._detailCache.set(revision, {
-        items: this._items,
         explanation: this._explanation,
         undo: this._undo,
       });
@@ -1299,12 +1295,6 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _detailCalls(change) {
-    const missing = change.previous
-      ? this._call("deleted_since", {
-        dashboard: this._selected,
-        revision: change.previous,
-      })
-      : Promise.resolve({ items: [] });
     const explain = this._call("explain", {
       dashboard: this._selected,
       revision: change.revision,
@@ -1330,10 +1320,10 @@ class DashboardHistoryPanel extends HTMLElement {
         revision: change.revision,
       })
       : Promise.resolve(null);
-    return [missing, explain, undo];
+    return [explain, undo];
   }
 
-  /** The three answers a row's detail is built from. */
+  /** The two answers a row's detail is built from. */
   _detailFor(change) {
     return Promise.all(this._detailCalls(change));
   }
@@ -1348,7 +1338,6 @@ class DashboardHistoryPanel extends HTMLElement {
    * would have been added to two.
    */
   _clearDetail() {
-    this._items = [];
     this._explanation = null;
     this._undo = null;
     this._loadingDetail = null;
@@ -1357,8 +1346,7 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _take(answers) {
-    const [missing, explanation, undo] = answers || [null, null, null];
-    this._items = missing ? missing.items || [] : [];
+    const [explanation, undo] = answers || [null, null];
     this._explanation = explanation;
     this._undo = undo || null;
   }
@@ -2474,76 +2462,7 @@ class DashboardHistoryPanel extends HTMLElement {
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
         ${this._renderMakeVersion(change)}</div>`;
-    // Which of the missing items the undo takes care of. Two reasons,
-    // and only these two - decision 15:
-    //
-    // "covered": the undo restores exactly this one item and does
-    // nothing else. That is one shape only, a change that deleted a
-    // single thing, and it is the shape somebody reported as confusing
-    // because the two buttons there really do the same work.
-    //
-    // "trap": the change also *added* something. Then a plain put-back
-    // is not merely redundant, it is wrong: an edit whose key field was
-    // touched reads as one removal plus one addition, and adding the old
-    // card back leaves both versions standing. Measured, not feared.
     const undo = this._undo?.available ? this._undo : null;
-    // Read off the row, not out of its wording. `adds` is worked out by
-    // the module that writes the message, next to the counting that
-    // produces it. This was `/\d+ added/` over `change.message` until
-    // today: a panel reading generated text, which the design record
-    // names by hand as the shape logic here must not take - and wrong
-    // besides, because a dashboard renamed to `3 added` produces
-    // `home: renamed to "3 added"` and read as a trap on a change that
-    // touched no card at all.
-    //
-    // The flag is deliberately wider than the regex was. `2 views
-    // added` counts now, where the word in between used to hide it: a
-    // view that appeared is as much a thing a plain put-back leaves
-    // standing as a card that did. So a few changes that used to offer
-    // the item rows no longer do, and that is the correct reading
-    // rather than a loss.
-    const added = Boolean(change.adds);
-    const mine = new Set(
-      (this._explanation?.groups || [])
-        .flatMap((group) => group.entries)
-        .filter((entry) => entry.kind === "removed")
-        .map((entry) => entry.label),
-    );
-    // A missing view's label carries a "view: " lead-in the explanation's
-    // entry does not (deleted_since names it for a list of mixed cards and
-    // views; explain already sits under a view heading and does not need
-    // to say so again). Comparing the two forms as they stand would leave
-    // a removed-and-re-added view uncovered - exactly the trap, on the
-    // one item shape most likely to hit it.
-    const bareLabel = (label) => label.replace(/^view: /, "");
-    const swallowed = (item) =>
-      undo && mine.has(bareLabel(item.label)) && (added || mine.size === 1);
-    const own = this._items.filter((item) => !swallowed(item));
-
-    const rows = own
-      .map(
-        (item) => `
-        <div class="item">
-          <span class="label">${escape(item.label)}
-            <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
-          </span>
-          <button class="act" data-restore="${item.position}">Put back</button>
-        </div>`,
-      )
-      .join("");
-    // Named when the undo has taken the rest off the list: otherwise the
-    // remaining rows read as "this change deleted these", which is then
-    // exactly wrong.
-    const heading =
-      own.length && own.length < this._items.length
-        ? `<p class="why" style="margin-top:16px">Also missing since then,
-             from later changes:</p>`
-        : "";
-    const list = rows
-      ? heading + rows
-      : undo
-        ? ""
-        : `<p class="muted">Nothing from before this change is missing today.</p>`;
 
     // Left out where the number is not known - a row from outside the
     // loaded window has no place in it to count from, and a guessed
@@ -2593,7 +2512,6 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${technical}
       ${offer}
-      ${list}
       ${this._renderSetBack(change)}
       ${this._renderMakeVersion(change)}
     </div>`;
@@ -3044,13 +2962,6 @@ class DashboardHistoryPanel extends HTMLElement {
       );
     onClick(".dash", (element) => this._select(element.dataset.key));
     onClick(".change", (element) => this._expand(element.dataset.revision));
-    onClick("[data-restore]", (element) => {
-      const change = this._changeAt(this._open);
-      const item = this._items.find(
-        (candidate) => candidate.position === Number(element.dataset.restore),
-      );
-      if (change?.previous && item) this._restoreItem(change.previous, item);
-    });
     onClick("[data-state]", (element, event) => {
       // Or the click reaches the row underneath and collapses it. The
       // summary's own toggle is dealt with in `onClick` above.

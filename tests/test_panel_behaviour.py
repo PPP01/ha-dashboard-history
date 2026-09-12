@@ -33,8 +33,7 @@ globalThis.customElements = {
 await import(%(url)s);
 const settle = () => new Promise((r) => setTimeout(r, 0));
 const answer = (call, mark) => {
-  if (call.type === "deleted_since") call.resolve({ items: [{ label: mark }] });
-  else if (call.type === "explain") call.resolve({ groups: [], note: mark });
+  if (call.type === "explain") call.resolve({ groups: [], note: mark });
   else call.resolve({ available: false, reason: mark });
 };
 
@@ -165,18 +164,18 @@ el._call = (type, extra) =>
 // Row "a" is opened, then row "b" before "a" has answered.
 el._expand("a");
 el._expand("b");
-const forA = calls.slice(0, 3);
-const forB = calls.slice(3, 6);
+const forA = calls.slice(0, 2);
+const forB = calls.slice(2, 4);
 
 // "b" answers first...
 forB.forEach((call) => answer(call, "B"));
 await settle();
-const afterB = { open: el._open, items: el._items.map((i) => i.label), busy: !!el._busy };
+const afterB = { open: el._open, explanation: el._explanation?.note, busy: !!el._busy };
 
 // ...and "a" answers last, for a row nobody is looking at any more.
 forA.forEach((call) => answer(call, "A"));
 await settle();
-const afterA = { open: el._open, items: el._items.map((i) => i.label), busy: !!el._busy };
+const afterA = { open: el._open, explanation: el._explanation?.note, busy: !!el._busy };
 
 console.log(JSON.stringify({ afterB, afterA }));
 """
@@ -189,9 +188,9 @@ def outcome(tmp_path_factory):
 
 def test_a_late_answer_for_a_row_no_longer_open_is_dropped(outcome):
     # Measured on 2026-09-03: the answer for "a" landed after "b" had
-    # been chosen and drawn, and the row marked "b" showed "a"'s items.
+    # been chosen and drawn, and the row marked "b" showed "a"'s answer.
     assert outcome["afterA"]["open"] == "b"
-    assert outcome["afterA"]["items"] == ["B"]
+    assert outcome["afterA"]["explanation"] == "B"
 
 
 def test_the_page_stays_busy_while_an_earlier_request_is_still_in_flight(outcome):
@@ -250,15 +249,15 @@ two._call = (type, extra) =>
 two._expand("a");
 two._expand("b");
 two._expand("a");
-const firstA = opened.slice(0, 3);
-const forB = opened.slice(3, 6);
-const secondA = opened.slice(6, 9);
+const firstA = opened.slice(0, 2);
+const forB = opened.slice(2, 4);
+const secondA = opened.slice(4, 6);
 secondA.forEach((call) => answer(call, "A2"));
 forB.forEach((call) => answer(call, "B"));
 await settle();
 firstA.forEach((call) => answer(call, "A1"));
 await settle();
-const repeat = { open: two._open, items: two._items.map((i) => i.label) };
+const repeat = { open: two._open, explanation: two._explanation?.note };
 
 console.log(JSON.stringify({ lateFailure, repeat }));
 """
@@ -277,7 +276,7 @@ def test_a_late_failure_of_a_superseded_request_shows_no_error(generations):
 
 def test_reopening_the_same_row_keeps_the_newer_answer(generations):
     assert generations["repeat"]["open"] == "a"
-    assert generations["repeat"]["items"] == ["A2"]
+    assert generations["repeat"]["explanation"] == "A2"
 
 
 # Answered by *type*, never by position, and tolerantly: task 5 gives
@@ -757,7 +756,6 @@ await openOn("dash", [{ revision: "a", previous: "b" }], null);
 // its place only if the panel can find it again by revision - by index
 // it would now be one further down.
 el._open = "a";
-el._items = ["stale"];
 
 const again = el._refresh();
 await settle();
@@ -772,12 +770,9 @@ reply("history", {
 });
 reply("versions", { versions: [] });
 await settle();
-// The detail is fetched again. Two different questions about two
-// different revisions: what was deleted asks against the row's
-// predecessor, what happened asks about the row itself.
-const deletedSince = calls.find((c) => c.type === "deleted_since")?.extra.revision;
+// The detail is fetched again rather than kept, and explain asks
+// against the row's own revision.
 const explained = calls.find((c) => c.type === "explain")?.extra.revision;
-reply("deleted_since", { items: ["fresh"], available: true });
 reply("explain", { groups: [] });
 reply("undo_change", { available: false });
 await again;
@@ -785,9 +780,7 @@ await again;
 console.log(JSON.stringify({
   open: el._open,
   rows: el._changes.map((c) => c.revision),
-  deletedSince,
   explained,
-  items: el._items,
 }));
 """
 
@@ -802,18 +795,7 @@ def test_an_open_row_survives_a_refresh_that_moved_it(refresh_open):
     # same row; found by index it would be the new one above it.
     assert refresh_open["rows"] == ["new", "a"]
     assert refresh_open["open"] == "a"
-    # And its answers are fetched again rather than kept: after a change
-    # from outside, "Put back" would offer items worked out against a
-    # dashboard that has moved on.
-    #
-    # Two questions, two revisions, and this is where addressing by
-    # position used to go wrong. What was deleted is asked against the
-    # row's own predecessor `b`; what happened is asked about the row
-    # itself. By index after the refresh, `a` sits at 1 and the row
-    # below it at 2 - neither of which is `b`.
-    assert refresh_open["deletedSince"] == "b"
     assert refresh_open["explained"] == "a"
-    assert refresh_open["items"] == ["fresh"]
 
 
 _KEEP = """
@@ -1415,7 +1397,6 @@ el._call = (type, extra) => {
 await el._expand("b");
 const bottom = {
   types: asked.map((c) => c.type).sort(),
-  against: asked.find((c) => c.type === "deleted_since")?.extra.revision,
   open: el._open,
 };
 
@@ -1439,11 +1420,10 @@ def test_a_row_is_opened_by_its_revision_and_asks_against_its_own_predecessor(
     addressing,
 ):
     # Worked out from the row below, the bottom row of every page said
-    # "there is nothing before this" and offered no deleted cards to put
-    # back. The predecessor is in the row now, so it asks against it.
+    # "there is nothing before this" and offered no undo. The
+    # predecessor is in the row now, so undo is asked too.
     assert addressing["bottom"]["open"] == "b"
-    assert addressing["bottom"]["against"] == "c"
-    assert addressing["bottom"]["types"] == ["deleted_since", "explain", "undo_change"]
+    assert addressing["bottom"]["types"] == ["explain", "undo_change"]
 
 
 def test_the_first_recorded_state_asks_about_nothing_before_it(addressing):
@@ -1842,7 +1822,6 @@ el._call = (type, extra) => {
 
 await el._expand("deep");
 const opened = { open: el._open, shown: el._shown().map((c) => c.revision) };
-const against = asked.find((c) => c.type === "deleted_since")?.extra.revision;
 
 // The same row, described. `_describe` reads the row through the same
 // lookup, so a hit nobody can open is also a hit nobody can annotate.
@@ -1859,7 +1838,7 @@ const describing = box.open;
 box.close("");
 await asking;
 
-console.log(JSON.stringify({ opened, against, describing }));
+console.log(JSON.stringify({ opened, describing }));
 """
 
 
@@ -1875,8 +1854,6 @@ def test_a_row_the_server_found_can_be_opened(found_row):
     # word: the row is there, the click does nothing, nothing says why.
     assert found_row["opened"]["shown"] == ["deep"]
     assert found_row["opened"]["open"] == "deep"
-    # And it asks against its own predecessor, which came with the hit.
-    assert found_row["against"] == "deeper"
 
 
 def test_a_row_the_server_found_can_be_described(found_row):
@@ -3882,10 +3859,8 @@ def test_leaving_the_panel_cancels_the_keystroke_still_in_flight(caret):
 
 # -- what a row says about being taken back --------------------------------
 #
-# Two findings in one place. Whether a plain put-back would be a trap is
-# now read off the row instead of sniffed out of its generated message;
-# and a detail that never arrived says so, rather than reporting a
-# refusal the panel cannot know about.
+# A detail that never arrived says so, rather than reporting a refusal
+# the panel cannot know about.
 
 _TAKING_BACK = """
 const el = new Panel();
@@ -3896,33 +3871,15 @@ el._explanation = { groups: [{ entries: [
   { kind: "removed", label: "Weather" },
   { kind: "removed", label: "Clock" },
 ] }] };
-el._items = [
-  { label: "Weather", position: 0, kind: "card" },
-  { label: "Clock", position: 1, kind: "card" },
-];
 el._undo = { available: true, equals_state_before: false };
 
 const row = (adds, message) =>
   el._renderDetail({ revision: "a", previous: "b", adds, message });
-const offers = (html) => (html.match(/data-restore=/g) || []).length;
 // Sentences in this file are written across several lines, indented to
 // sit in their template. A test that searched for one as it stands
 // would go red the next time somebody reflows a paragraph - a cosmetic
 // edit failing a case about meaning.
 const flat = (html) => html.replace(/\\s+/g, " ");
-
-// Two cards gone and nothing added: putting one back is unambiguous, so
-// the rows stay beside the undo.
-const removalsOnly = offers(row(false, "2 cards removed"));
-// The same change, but it added something too. A put-back would leave
-// the added card standing next to the one it restores.
-const trap = offers(row(true, "1 card removed, 1 card added"));
-// The live false positive of the regex this replaced: a dashboard
-// renamed to `3 added` touched no card at all.
-const renamed = offers(row(false, 'dash: renamed to "3 added"'));
-// And the case the regex missed, because of the word in between. A view
-// that appeared is as much a thing a put-back leaves standing.
-const views = offers(row(true, "1 card removed, 2 views added"));
 
 // The undo the server said yes to. The control for the two sentences
 // below: without it, "does not claim a refusal" would also be true of a
@@ -3938,7 +3895,6 @@ el._undo = null;
 const unknown = row(false, "2 cards removed");
 
 console.log(JSON.stringify({
-  removalsOnly, trap, renamed, views,
   available: {
     offers: available.includes("data-undo="),
     saysNothingCannot: !flat(available).includes("cannot be taken back"),
@@ -3960,17 +3916,6 @@ console.log(JSON.stringify({
 @pytest.fixture(scope="session")
 def taking_back(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "taking_back", _TAKING_BACK)
-
-
-def test_a_trap_is_read_from_the_row_and_not_from_its_wording(taking_back):
-    # `adds` decides, and only `adds`. The four messages here are chosen
-    # so that the regex this replaced gets two of them wrong: it read
-    # `renamed to "3 added"` as a trap, and it missed `2 views added`
-    # because of the word in between.
-    assert taking_back["removalsOnly"] == 2
-    assert taking_back["trap"] == 0
-    assert taking_back["renamed"] == 2
-    assert taking_back["views"] == 0
 
 
 def test_an_undo_the_server_allows_is_offered_as_a_button(taking_back):
@@ -4029,8 +3974,7 @@ const expandPromise = el._expand("rev1");
 await settle();
 const frame0 = rendered[rendered.length - 1];
 
-// Fast phase: resolve deleted_since and explain
-calls["deleted_since"]({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
+// Fast phase: resolve explain
 calls["explain"]({
   groups: [],
   note: "",
@@ -4068,7 +4012,6 @@ def test_expand_renders_explanation_while_undo_is_loading(progressive_expand):
     frame1 = progressive_expand["frame1"]
     assert frame1["detailLoading"] is None
     assert frame1["undoLoading"] == "rev1"
-    assert "Old Card" in frame1["html"]
     assert "Checking whether this change can be undone" in frame1["html"]
     assert "Whether this change can be taken back is not known" not in frame1["html"]
     assert "data-undo=" not in frame1["html"]
@@ -4193,7 +4136,6 @@ const expandPromise = el._expand("rev1");
 await settle();
 
 // Fast phase succeeds
-calls["deleted_since"].resolve({ items: [{ label: "Old Card", kind: "card", position: 0 }] });
 calls["explain"].resolve({
   groups: [],
   note: "",
@@ -4224,7 +4166,6 @@ def test_undo_failure_preserves_explanation_and_clears_loading_undo(expand_undo_
     frame = expand_undo_failure["frameAfterError"]
     assert frame["detailLoading"] is None
     assert frame["undoLoading"] is None
-    assert "Old Card" in frame["html"]
     assert "Show the technical details" in frame["html"]
     flat_html = " ".join(frame["html"].split())
     assert "Whether this change can be taken back is not known" in flat_html
@@ -4262,7 +4203,6 @@ el._call = (type) => new Promise((resolve, reject) => {
 // First expand: the explanation arrives, the undo does not.
 const first = el._expand("rev1");
 await settle();
-held["deleted_since"].resolve({ items: [] });
 held["explain"].resolve({ groups: [], note: "", diff: "-a\\n+b\\n" });
 await settle();
 held["undo_change"].reject(new Error("WebSocket timeout"));
@@ -4278,7 +4218,6 @@ held = {};
 const again = el._expand("rev1");
 await settle();
 const askedOnReExpand = asked.length - countBefore;
-held["deleted_since"]?.resolve({ items: [] });
 held["explain"]?.resolve({ groups: [], note: "", diff: "" });
 held["undo_change"]?.resolve({ available: true });
 await again;
@@ -4294,11 +4233,9 @@ for (let i = 0; i < 40; i++)
   many._changes.push({ revision: "r" + i, previous: "p" + i, message: "m", adds: false });
 many._call = (type) =>
   Promise.resolve(
-    type === "deleted_since"
-      ? { items: [] }
-      : type === "explain"
-        ? { groups: [], note: "", diff: "x" }
-        : { available: true },
+    type === "explain"
+      ? { groups: [], note: "", diff: "x" }
+      : { available: true },
   );
 for (const change of many._changes) {
   await many._expand(change.revision);
@@ -4327,7 +4264,7 @@ def test_a_failed_undo_is_not_remembered_as_an_answer(cache_limits):
     # nothing and repeated "the answer did not arrive", pointing at a
     # banner the next action had already cleared.
     assert cache_limits["cachedAfterFailure"] is False
-    assert cache_limits["askedOnReExpand"] == 3
+    assert cache_limits["askedOnReExpand"] == 2
     assert cache_limits["cachedOnceItAnswered"] is True
 
 
@@ -4352,7 +4289,6 @@ el._changes = [
 let callCount = 0;
 el._call = (type, extra) => {
   callCount++;
-  if (type === "deleted_since") return Promise.resolve({ items: [{ label: "Card", kind: "card", position: 0 }] });
   if (type === "explain") return Promise.resolve({ groups: [], note: "", diff: "diff" });
   if (type === "undo_change") return Promise.resolve({ available: true });
   return Promise.resolve({});
@@ -4374,14 +4310,12 @@ await el._expand("rev1");
 await settle();
 const callsAfterReopen = callCount;
 const hasExplanation = !!el._explanation;
-const hasItems = el._items.length > 0;
 
 console.log(JSON.stringify({
   callsAfterFirst,
   cachedAfterFirst,
   callsAfterReopen,
   hasExplanation,
-  hasItems,
 }));
 """
 
@@ -4392,7 +4326,7 @@ def detail_cache(tmp_path_factory):
 
 
 def test_first_expand_fetches_from_backend(detail_cache):
-    assert detail_cache["callsAfterFirst"] == 3
+    assert detail_cache["callsAfterFirst"] == 2
 
 
 def test_first_expand_populates_cache(detail_cache):
@@ -4402,7 +4336,6 @@ def test_first_expand_populates_cache(detail_cache):
 def test_reexpand_uses_cache_without_network_calls(detail_cache):
     assert detail_cache["callsAfterReopen"] == 0
     assert detail_cache["hasExplanation"] is True
-    assert detail_cache["hasItems"] is True
 
 
 # -- a level the server left out must not take the flow with it ------------
