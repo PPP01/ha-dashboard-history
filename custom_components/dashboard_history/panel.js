@@ -417,10 +417,15 @@ class DashboardHistoryPanel extends HTMLElement {
     // early" trap decision 9 removed for the single-change case.
     // Without it, nothing here says which picked row ended up which
     // side of the sentence below.
+    // Not escaped here: the whole heading this builds into is escaped
+    // once, wholesale, by `renderPlain` (`<h3>${escape(heading)}</h3>`)
+    // - escaping the label again here as well doubled every `&` in it
+    // to `&amp;amp;`. The literal double quotes around the label still
+    // come out as `&quot;`, from that one, outer escape.
     const describe = (entry, time) =>
       entry.revision === null
         ? "Current state"
-        : `the state after "${escape(entry.label)}" (${escape(when(time))})`;
+        : `the state after "${entry.label}" (${escape(when(time))})`;
 
     let missingHtml = "";
     // Put back only where one side is the current state - the other
@@ -878,6 +883,16 @@ class DashboardHistoryPanel extends HTMLElement {
     this._open = null;
     this._clearDetail();
     this._detailCache.clear();
+    // A pick made while viewing one dashboard must not survive a switch
+    // to another: found by the final review, a standing selection from
+    // dashboard A - one checkbox click away from completing a compare,
+    // or "current state" already picked and one click away from
+    // reopening the dialog - would otherwise pair up with a pick made
+    // on B, comparing B's freshly-picked state against A's leftover
+    // commit and labelling the whole thing with A's message and date.
+    this._compareMode = false;
+    this._compareSelection = [];
+    this._compareMissing = [];
     this._cursor = null;
     this._versions = [];
     this._matching = [];
@@ -2463,6 +2478,20 @@ class DashboardHistoryPanel extends HTMLElement {
         recorded state, so there is nothing before it to compare against.</p>
         ${this._renderMakeVersion(change)}</div>`;
     const undo = this._undo?.available ? this._undo : null;
+    // The compare bar itself already hides "current state" for a
+    // dashboard Home Assistant does not currently have (`_renderMain`,
+    // spec decision 19's edge case: put-back only ever writes into a
+    // live state) - this jump ends up picking exactly that "current
+    // state", so offering it here for the same dashboard would open a
+    // door the compare bar was built to keep closed.
+    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    const compareFromOffer =
+      dashboard?.exists === false
+        ? ""
+        : `<div class="backto">
+               <button class="act ghost" data-compare-from="${escape(change.previous || "")}"
+                       >Compare with the current state</button>
+             </div>`;
 
     // Left out where the number is not known - a row from outside the
     // loaded window has no place in it to count from, and a guessed
@@ -2480,10 +2509,7 @@ class DashboardHistoryPanel extends HTMLElement {
         : this._undo
           ? `<p class="why">This change cannot be taken back exactly:
              ${escape(this._undo.reason || "no reason given")}.</p>
-             <div class="backto">
-               <button class="act ghost" data-compare-from="${escape(change.previous || "")}"
-                       >Compare with the current state</button>
-             </div>`
+             ${compareFromOffer}`
         : // Nothing was answered at all - the request for it failed, or
           // it is still out. The sentence above makes a statement about
           // the change itself, and this is the one case where the panel
@@ -3022,11 +3048,28 @@ class DashboardHistoryPanel extends HTMLElement {
       event.stopPropagation();
       this._jumpToCompareFrom(element.dataset.compareFrom);
     });
-    onClick("[data-compare-restore]", (element) => {
+    // `[data-compare-restore]` buttons are not in the DOM at the moment
+    // this generic pass runs - they are injected later, into
+    // `[data-compare-body]`, by `_openCompare`'s own `body.innerHTML =`
+    // write, which happens after a click while no full `_render()` runs
+    // (a dialog's content must not be torn down under the user - see
+    // `_renderOwed`). A listener attached directly to the buttons above
+    // would therefore bind to nothing and never fire.
+    //
+    // `[data-compare-body]` itself is static markup, part of `DIALOGS`
+    // from the very first render, so this pass reaches it the ordinary
+    // way; delegating from there with `closest` catches a button however
+    // long after this wiring pass it was injected. Same idea as the
+    // `.levels` button group above, applied to the generic block: one
+    // listener on the container rather than one per button that does
+    // not exist yet.
+    onClick("[data-compare-body]", (element, event) => {
+      const button = event.target.closest("[data-compare-restore]");
+      if (!button) return;
       const dialog = element.closest("dialog.compare");
       const revision = dialog?.dataset.compareReference;
       if (!revision) return;
-      const position = Number(element.dataset.compareRestore);
+      const position = Number(button.dataset.compareRestore);
       const item = (this._compareMissing || []).find(
         (candidate) => candidate.position === position,
       );

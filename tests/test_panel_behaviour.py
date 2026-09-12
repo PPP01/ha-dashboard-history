@@ -46,12 +46,28 @@ const answer = (call, mark) => {
  * does - `[data-keep]`, then `.keepbox`, never `.keepbox` straight from
  * the dialog - and that is the feature: a test that found a node the
  * code never touched would pass while proving nothing.
+ *
+ * The "remembered per selector" cache (`_seen`) is shared by the whole
+ * tree, not kept one dictionary per node - `node(shared)` passes the
+ * caller's own `_seen` down to whatever it hands back. A real
+ * `querySelector` always resolves to the one live element no matter
+ * which ancestor asks: `root.querySelectorAll(x)` and
+ * `nested.querySelector(x)` find the same node when `x` matches only
+ * once, wherever `nested` sits under `root`. Found by the 2026-09-12
+ * review: with one cache per calling node instead, a click listener
+ * the generic wiring attached via `root.querySelectorAll("[data-
+ * compare-body]")` and the container `_openCompare` wrote its content
+ * into via `dialog.querySelector("[data-compare-body]")` were two
+ * disconnected phantom nodes - the listener bound to one, the content
+ * went into the other - and the existing test never noticed, because
+ * it queried the selector the listener was bound to and never went
+ * anywhere near the one `_openCompare` actually populated.
  */
-const node = () => {
+const node = (shared) => {
   const it = {
     textContent: "", innerHTML: "", value: "", checked: false,
     hidden: false, returnValue: "", open: false, dataset: {},
-    _seen: {}, _on: {},
+    _seen: shared || {}, _on: {},
     classList: {
       _classes: new Set(),
       toggle(c, force) {
@@ -73,7 +89,7 @@ const node = () => {
         }
         return null;
       }
-      return (it._seen[selector] ||= node());
+      return (it._seen[selector] ||= node(it._seen));
     },
     querySelectorAll(selector) { return [it.querySelector(selector)]; },
     addEventListener(name, run) { it._on[name] = run; },
@@ -1484,6 +1500,53 @@ def test_compare_mode_selection_keeps_at_most_two(compare_select):
     assert compare_select["afterOff"] == {"mode": False, "selection": []}
 
 
+_COMPARE_CLEARED_ON_SWITCH = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "advanced";
+el._changes = [];
+el._call = () => Promise.resolve({ changes: [], next_cursor: null, versions: [] });
+el.shadowRoot = node();
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+// A standing pick that never reached two - one checkbox click on the
+// next dashboard away from completing a compare against whatever it
+// shows - plus leftover `_compareMissing` from an earlier dialog,
+// which only `_openCompare` ever populates and only a switch should
+// ever clear again.
+el._compareMissing = [{ position: 0, kind: "card", label: "Gone card" }];
+
+await el._select("other");
+
+console.log(JSON.stringify({
+  mode: el._compareMode,
+  selection: el._compareSelection,
+  missing: el._compareMissing,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_cleared_on_switch(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_cleared_on_switch", _COMPARE_CLEARED_ON_SWITCH
+    )
+
+
+def test_switching_dashboards_clears_a_standing_compare_pick(compare_cleared_on_switch):
+    # Found by the final review: a pick made while viewing one dashboard
+    # survived a switch to another untouched, so one checkbox click on
+    # the new dashboard could complete a stale two-item selection and
+    # compare its fresh pick against the old dashboard's leftover
+    # commit - mislabelled with the old dashboard's message and date -
+    # or, with "current state" already picked, pop the dialog open on
+    # the very next click.
+    assert compare_cleared_on_switch["mode"] is False
+    assert compare_cleared_on_switch["selection"] == []
+    assert compare_cleared_on_switch["missing"] == []
+
+
 _COMPARE_OPEN = """
 const el = new Panel();
 el._render = () => {};
@@ -1567,8 +1630,8 @@ el._call = (type, extra) => new Promise((resolve) => {
 });
 
 // `_render` runs for real in this scenario, unlike most others in this
-// file: [data-compare-restore] is wired inside it, and a stubbed no-op
-// would leave nothing to click.
+// file: the delegated `[data-compare-body]` listener is wired inside
+// it, and a stubbed no-op would leave nothing to click.
 el._toggleCompareMode();
 el._toggleCompareRevision("a", "1 removed");
 el._toggleCompareRevision(null, "Current state");
@@ -1589,17 +1652,43 @@ calls.find((c) => c.type === "deleted_since").resolve({
 await settle();
 
 const dialog = el.shadowRoot.querySelector("dialog.compare");
-const button = el.shadowRoot.querySelector("[data-compare-restore]");
+
+// The button itself is never real here - this stand-in does not parse
+// the markup `_openCompare` writes into `[data-compare-body]`, so a
+// button built by `querySelector` alone would prove nothing either
+// way. Built by hand instead, the way a real one would be found by
+// `event.target.closest(...)` once a click on it bubbles up.
+const button = node();
 button.dataset.compareRestore = "0";
+button._closest["[data-compare-restore]"] = button;
+
+// Found from the shadow root - exactly what the delegated wiring
+// itself queries (`onClick("[data-compare-body]", ...)` in `_render`).
+// Before the 2026-09-12 fix, this container and the one
+// `_openCompare` writes its content into (reached via
+// `dialog.querySelector(...)`) were two disconnected phantom nodes,
+// and a test that grabbed a node for `[data-compare-restore]` straight
+// from the root - as this one used to - found *a* node with a
+// listener on it regardless, without ever proving the listener sat on
+// the element a real click could actually reach. Querying the
+// container here is what closes that gap: if the click listener were
+// still bound to the wrong selector, `container._on.click` would not
+// exist and this scenario would throw before it could log anything.
+const container = el.shadowRoot.querySelector("[data-compare-body]");
 // No real tree here to walk upward through, so the one ancestor the
 // handler asks `.closest` for is handed to it directly - see `closest`
 // on the stand-in node.
-button._closest["dialog.compare"] = dialog;
+container._closest["dialog.compare"] = dialog;
 
 let restoreArgs = null;
 el._restoreItem = (revision, item) => { restoreArgs = { revision, item }; };
 
-button._on.click({});
+// A real click on the button bubbles up to the container the
+// delegated listener is bound to; nothing here has a real tree to
+// bubble through, so the event is fired on the container directly,
+// carrying the button as `event.target` the way the browser would
+// deliver it.
+container._on.click({ target: button });
 
 console.log(JSON.stringify({ restoreArgs }));
 """
@@ -1651,6 +1740,46 @@ def test_undo_refusal_offers_a_way_into_compare_mode(undo_refused_links_to_compa
     html = undo_refused_links_to_compare["html"]
     assert "cannot be taken back exactly" in html
     assert 'data-compare-from="a"' in html
+
+
+_UNDO_REFUSED_ON_A_DELETED_DASHBOARD = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+// The compare bar itself already hides "current state" for a dashboard
+// Home Assistant does not currently have (`_renderMain`) - the jump a
+// refused undo offers ends up picking exactly that "current state",
+// so it must not be offered here either.
+el._dashboards = [{ key: "dash", title: "Dash", exists: false }];
+el._changes = [{ revision: "b", previous: "a", message: "1 removed" }];
+el._open = "b";
+el._explanation = { groups: [], note: "" };
+el._undo = { available: false, reason: "a section has no path to recognise it by" };
+el._loadingDetail = null;
+el._loadingUndo = null;
+
+const html = el._renderDetail(el._changes[0]);
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def undo_refused_on_a_deleted_dashboard(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory,
+        "undo_refused_on_a_deleted_dashboard",
+        _UNDO_REFUSED_ON_A_DELETED_DASHBOARD,
+    )
+
+
+def test_the_compare_jump_is_not_offered_for_a_deleted_dashboard(
+    undo_refused_on_a_deleted_dashboard,
+):
+    html = undo_refused_on_a_deleted_dashboard["html"]
+    # The refusal itself is still said - only the door into a "current
+    # state" that does not exist is closed.
+    assert "cannot be taken back exactly" in html
+    assert "data-compare-from" not in html
 
 
 _COMPARE_FROM_CLICK = """

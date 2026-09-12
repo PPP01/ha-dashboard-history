@@ -1282,11 +1282,17 @@ async def async_compare(
     if error is not None:
         return {"groups": [], "note": "", "diff": "", "error": error}
 
-    times = {}
-    if full_a is not None and full_b is not None:
-        times = await hass.async_add_executor_job(
-            store.commit_times, [full_a, full_b]
-        )
+    # Whichever side(s) are real revisions, not only where both are.
+    # The "current state" pair - the only pair that ever offers put-back,
+    # and the one a refused undo's jump into compare mode prefills - has
+    # exactly one real side and one `None` ("current") side, and that
+    # real side still needs its own commit time: left at `{}`, `when()`
+    # in the panel falls back to the Unix epoch and shows it as
+    # 01.01.1970.
+    real = [full for full in (full_a, full_b) if full is not None]
+    times = (
+        await hass.async_add_executor_job(store.commit_times, real) if real else {}
+    )
 
     def newer(x_full, y_full):
         if x_full is None:  # "current" - always the newest

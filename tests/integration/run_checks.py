@@ -1987,6 +1987,12 @@ async def run_compare(access: str) -> None:
             and answer.get("time_b") is None,
             str({k: answer.get(k) for k in ("revision_a", "revision_b", "time_b")}),
         )
+        check(
+            "the real side of a 'current state' pair still carries its own "
+            "commit time, not the 1970 fallback a missing one renders as",
+            isinstance(answer.get("time_a"), int),
+            str({k: answer.get(k) for k in ("time_a", "time_b")}),
+        )
 
         # Identical content on both sides.
         answer = await socket.call(
