@@ -416,24 +416,27 @@ async def main():
                 print("    NO plain words - the row would not stay expanded")
             await page.shot("5-expanded-deletion.png")
 
-            # Two kinds of button sit on a row where something is
-            # missing, and they differ in reach rather than in wording:
-            # "Put back" reinserts one item into today's configuration,
-            # setting a state back writes a whole state over the
-            # dashboard. They used to share a sentence spelling that
-            # difference out ("Put back adds..."), only where both were
-            # on screen - decision 15 (Task 5) removed it: the coarse
+            # Two kinds of button used to sit on this same row where
+            # something is missing, and they differed in reach rather than
+            # in wording: "Put back" reinserted one item into today's
+            # configuration, setting a state back writes a whole state
+            # over the dashboard. They used to share a sentence spelling
+            # that difference out ("Put back adds..."), only where both
+            # were on screen - decision 15 (Task 5) removed it: the coarse
             # button is now folded behind its own
             # "Replace the whole dashboard instead" summary, which carries
             # that distinction structurally instead of in a shared
-            # sentence. Checked here in its place: the fold exists and
-            # starts closed wherever a coarse button survives.
+            # sentence. Since vorhaben J (Task 6), "Put back" is gone from
+            # this row entirely - it only exists inside the compare dialog
+            # opened further down - so putBack here can only ever read 0;
+            # checked in its place: the fold exists and starts closed
+            # wherever a coarse button survives.
             reach = await page.js(
                 "(() => { const d = " + PANEL + '.querySelector(".detail");'
                 " if (!d) return null;"
                 " const fold = d.querySelector('details.more');"
                 " return {"
-                '  putBack: d.querySelectorAll("[data-restore]").length,'
+                '  putBack: d.querySelectorAll("dialog.compare [data-compare-restore]").length,'
                 '  setBack: d.querySelectorAll(".backto [data-state]").length,'
                 "  foldSummary: fold"
                 "    ? fold.querySelector('summary').textContent.trim() : null,"
@@ -1091,47 +1094,67 @@ async def main():
             await page.shot("17-current-names-its-version.png")
 
             print("\n-- Two kinds of button, told apart --")
-            # The row the deletion section met had nothing missing, so
-            # "Put back" was not on screen and there was nothing to tell
-            # apart. Here both are put on one row on purpose: `_items` is
-            # what the panel renders the offers from, and entry 1 is the
-            # one that has a recorded state before it, so a "Back to"
-            # button is offered beside them.
+            # Compare mode replaces the synthetic `_items` this section used to
+            # poke directly - `_items` is gone since the row-level list was
+            # removed (spec decision 19/vorhaben J). This drives the real path
+            # instead: turn compare mode on, tick "current state" and one row
+            # that has something missing before it, and read the dialog compare
+            # mode actually opens.
             #
-            # Entry 2 was the first choice and produced nothing at all:
-            # it is the oldest of the three, so `_before` finds nothing
-            # and the detail takes its "first recorded state" branch,
-            # which carries neither a list nor a button. Zeros that meant
-            # "wrong row", not "missing feature".
+            # The rows still on screen carry the synthetic revisions the
+            # "joining the two halves" section made up, and compare mode's
+            # picks are a real `compare` call against the store - ticking
+            # two of those answers "unknown revision", never a comparison.
+            # Pressing reload first (the real button, not a poked field)
+            # puts the dashboard's actual history back before any of that
+            # runs.
             #
-            # `_undo` reset to null, deliberately: it is filled in by a
-            # real `undo_change` fetch that this synthetic setup never
-            # makes, so it would otherwise still carry whatever a real
-            # row on this instance answered earlier - and since decision
-            # 15 (Task 5), `_renderSetBack` reads it to decide whether the
-            # "before" button survives. Left stale, this section could
-            # pass or fail depending on what ran before it rather than on
-            # what it sets up. The old shared "Put back adds..." sentence
-            # is gone with the same change; the fold's own summary now
-            # carries that distinction, checked here in its place.
-            told = await page.js(
-                "(() => { const p = " + ELEMENT + ";"
-                " p._items = [{position: 0, kind: 'card',"
-                "              label: 'tile: demo', view: 'home'}];"
-                " p._open = p._changes[1].revision;"
-                " p._undo = null;"
-                " p._render();"
-                " const d = p.shadowRoot.querySelector('.detail');"
-                " if (!d) return null;"
-                " const fold = d.querySelector('details.more');"
-                " return {"
-                "   putBack: d.querySelectorAll('[data-restore]').length,"
-                "   setBack: d.querySelectorAll('.backto [data-state]').length,"
-                "   foldSummary: fold"
-                "     ? fold.querySelector('summary').textContent.trim() : null,"
-                " }; })()"
+            # The second box is not necessarily a row that differs from
+            # now - most of this bench's own recent history is "same
+            # state as now", and picking one of those would only ever
+            # show "No difference between these two states." A row still
+            # offering "Back to this version" is one the panel itself
+            # already knows differs from today, so picking among those -
+            # falling back to the last loaded box where none remain -
+            # gives this section an actual difference to read instead of
+            # a coin flip.
+            #
+            # putBack can still read 0 without that meaning the wiring is
+            # wrong: `run_checks.py` drops a card and puts it straight
+            # back as part of staying reproducible, so nothing is left
+            # missing once it has run - and the picked row may differ
+            # from now only by an *addition*, which `deleted_since` has
+            # nothing to say about either. What this reads either way is
+            # the dialog's real answer, not a guess planted in `_items`.
+            await page.js(f'{PANEL}.querySelector("[data-refresh]").click()')
+            await page.settle(f'{PANEL}.querySelectorAll(".change").length > 3', 10)
+            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
+            await page.js(
+                f"(() => {{ const boxes = [...{PANEL}.querySelectorAll('.compare-check')];"
+                " boxes[0].click();"
+                " const differs = boxes.slice(1).find("
+                "   (box) => box.closest('.penholder')?.querySelector('[data-state]'));"
+                " (differs || boxes[boxes.length - 1]).click(); })()"
             )
-            for name, value in (told or {}).items():
+            # `dialog.showModal()` runs synchronously, before the `compare`
+            # and `deleted_since` calls it waits on - checking only for
+            # `[open]` would read the dialog the instant it shows its
+            # "Comparing..." spinner, before either call answers. Waiting
+            # for the spinner to be gone too is what makes this read the
+            # settled body instead of a race.
+            opened = await page.settle(
+                f'!!{PANEL}.querySelector("dialog.compare[open]") &&'
+                f' !{PANEL}.querySelector("dialog.compare .row-loading")',
+                10,
+            )
+            told = await page.js(
+                "(() => { const d = " + PANEL + ".querySelector('dialog.compare');"
+                " if (!d) return null;"
+                " return {"
+                "   putBack: d.querySelectorAll('[data-compare-restore]').length,"
+                " }; })()"
+            ) if opened else None
+            for name, value in (told or {"putBack": None}).items():
                 print(f"    {name}: {value!r}")
             await page.shot("19-two-kinds-of-button.png")
 

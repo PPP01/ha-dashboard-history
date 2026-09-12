@@ -171,7 +171,7 @@ quality. The panel leads with the narrowest one that fits.
 | | What it touches |
 | --- | --- |
 | **Undo this change** | That one change, and nothing else. Everything saved since stays exactly as it is. |
-| **Put back** | One missing item, reinserted into the dashboard *as it stands today*. Nothing else changes. |
+| **Put back** | One missing item, reinserted into the dashboard *as it stands today* — reached through compare mode. Nothing else changes. |
 | **Back to the state before / after this change** | The whole dashboard. That earlier state is written over what is there now. |
 
 **Undo this change** is what people mean by undoing something, so the row
@@ -226,8 +226,9 @@ edit that card again", not "before the week is out".
 
 #### I deleted a card by accident
 
-In the panel: find the change that deleted it, expand it, press **Undo
-this change** or the card's own **Put back**, read the preview, confirm.
+In the panel: find the change that deleted it, expand it, and either
+press **Undo this change** or open compare mode against the state right
+before it for the same **Put back**, read the preview, confirm.
 
 The same thing through Developer Tools → Actions, if you prefer:
 
@@ -278,8 +279,10 @@ in the row. That has four consequences:
   offers the section as one thing rather than as a heap of cards — as
   long as the other sections of that view are as you left them. Edit one
   of them in between and it says so; *Undo this change* declines either
-  way, because a section has no path to recognise it by. The whole-state
-  restore brings it back in any case.
+  way, because a section has no path to recognise it by. When it does,
+  the row offers a way into compare mode instead, prefilled with the
+  state right before it and the current one — the same Put back, one
+  click further in. The whole-state restore brings it back in any case.
 - **Adding a section** switches the undo off for that one save. Nothing
   is broken; the tool declines to work while the row it counts on has
   shifted.
@@ -609,21 +612,24 @@ rename a view's URL path — all of those are taken back exactly, verified
 against the current code. What *Put back* is restricted to is
 disappearances, because it is additive by definition.
 
-#### Where the undo hides a Put back button
+#### Where the undo leaves no way into compare mode
 
-Where an undo already covers an item, that item's own *Put back* button is
-gone, for one of two reasons and no others:
+Where an undo already covers an item exactly, the row offers no way into
+compare mode for it — one exact button beats a second route to the same
+result, for one of two reasons and no others:
 
 - The undo brings back exactly that one item and nothing else — a change
-  that deleted a single thing. Two buttons doing literally the same thing
-  is what the first person to see them side by side reported.
+  that deleted a single thing. Two ways to reach the same result is what
+  the first person to see them side by side reported.
 - The change also *added* something. Then a put-back is not merely
   redundant but wrong: an edit that touches the identifying field reads
   as one removal plus one addition, so putting the old card back would
   leave both versions standing.
 
-What is missing because of *later* changes keeps its button, under a line
-saying where it comes from.
+What is missing because of *later* changes still gets a way there: the
+row offers *Compare with the current state*, which opens compare mode
+prefilled with the state right before it and today's — the same *Put
+back*, reached through compare mode instead of a button on the row.
 
 ### When a change is recorded
 
@@ -716,6 +722,9 @@ the limits cost is the *narrow* way back, not the content.
 | A path freed and reused by a new view | read as card changes inside it | writes the old cards into the new view | — | works |
 | Two views sharing one path | read as cards removed, not as a view gone | **refuses** | **refuses** | works |
 
+*Reached through compare mode since v0.4.0, not as a button on the row
+itself.*
+
 Four of these deserve the detail.
 
 #### A card with nothing to recognise it by
@@ -803,6 +812,9 @@ sections on the installation this was developed against carry none.
 | Edited a card in a section | `1 edited`, names the card | — | exact |
 | Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
 | Deleted a whole section | its cards, named one by one | the section, into the gap it left | **refuses** |
+
+*Reached through compare mode since v0.4.0, not as a button on the row
+itself.*
 
 One thing the last row does not change: the *words*. A deleted section is
 offered back as one thing, but the entry in the history still lists the
