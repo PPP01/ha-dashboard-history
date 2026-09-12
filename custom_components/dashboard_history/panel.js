@@ -349,6 +349,94 @@ class DashboardHistoryPanel extends HTMLElement {
       if (this._compareSelection.length > 2) this._compareSelection.shift();
     }
     this._render();
+    if (this._compareSelection.length === 2) this._openCompare();
+  }
+
+  /**
+   * Opens the compare dialog for the two current picks.
+   *
+   * Sends both picks to `compare` in whatever order they were selected
+   * - the backend works out which one is actually older, not this
+   * method. A picked row can outlive a refresh that dropped it from
+   * `_changes` (spec decision 19's own edge case), so `_changes`
+   * cannot be trusted here the way an earlier draft of this method
+   * trusted it. `revision_a`/`revision_b` come back reassigned into
+   * chronological order; matching them against the two local picks
+   * says which label and date belong on which side.
+   */
+  async _openCompare() {
+    const [first, second] = this._compareSelection;
+    const dialog = this.shadowRoot.querySelector("dialog.compare");
+    const body = dialog.querySelector("[data-compare-body]");
+    body.innerHTML = `<p class="muted row-loading"><span class="ring mini"></span> Comparing…</p>`;
+    dialog.returnValue = "";
+    dialog.showModal();
+
+    const compareArgs = { dashboard: this._selected };
+    if (first.revision !== null) compareArgs.revision_a = first.revision;
+    if (second.revision !== null) compareArgs.revision_b = second.revision;
+    const comparison = await this._call("compare", compareArgs);
+
+    if (comparison.error) {
+      body.innerHTML = `<p class="why">${escape(comparison.error)}</p>`;
+      await this._answerFrom(dialog);
+      return;
+    }
+
+    const older = first.revision === comparison.revision_a ? first : second;
+    const newer = older === first ? second : first;
+
+    // Spec decision 19/9: naming date and automatic message on each
+    // side is not decoration - it is what removes the "one row too
+    // early" trap decision 9 removed for the single-change case.
+    // Without it, nothing here says which picked row ended up which
+    // side of the sentence below.
+    const describe = (entry, time) =>
+      entry.revision === null
+        ? "Current state"
+        : `the state after "${escape(entry.label)}" (${escape(when(time))})`;
+
+    let missingHtml = "";
+    // Put back only where one side is the current state - the other
+    // side is then the reference `deleted_since` and `restore_deleted`
+    // already work against, unchanged.
+    const historicalSide = newer.revision === null ? older : null;
+    if (historicalSide) {
+      const missing = await this._call("deleted_since", {
+        dashboard: this._selected,
+        revision: historicalSide.revision,
+      });
+      const items = missing.items || [];
+      missingHtml = items.length
+        ? `<p class="why" style="margin-top:16px">Missing since then, still gone:</p>` +
+          items
+            .map(
+              (item) => `
+          <div class="item">
+            <span class="label">${escape(item.label)}
+              <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
+            </span>
+            <button class="act" data-compare-restore="${item.position}">Put back</button>
+          </div>`,
+            )
+            .join("")
+        : `<p class="muted">Nothing from before this state is missing today.</p>`;
+      dialog.dataset.compareReference = historicalSide.revision;
+    } else {
+      delete dialog.dataset.compareReference;
+    }
+
+    const diff = comparison.diff || "";
+    body.innerHTML = diff
+      ? renderPlain(
+          comparison,
+          `What changed between ${describe(older, comparison.time_a)} and ${describe(newer, comparison.time_b)}`,
+        ) +
+        `<details class="raw"><summary>Show the technical details</summary>${renderDiff(diff)}</details>` +
+        missingHtml
+      : `<p class="muted">No difference between these two states.</p>`;
+
+    await this._answerFrom(dialog);
   }
 
   set hass(hass) {
@@ -2110,15 +2198,10 @@ class DashboardHistoryPanel extends HTMLElement {
     await this._loadDashboards();
   }
 
-  _restoreItem(change, item) {
+  _restoreItem(revision, item) {
     this._confirm(`Put back: ${item.label}`, (confirm, keep, dashboard) => [
       "restore_deleted",
-      {
-        dashboard,
-        revision: change.previous,
-        position: item.position,
-        confirm,
-      },
+      { dashboard, revision, position: item.position, confirm },
     ]);
   }
 
@@ -2929,7 +3012,7 @@ class DashboardHistoryPanel extends HTMLElement {
       const item = this._items.find(
         (candidate) => candidate.position === Number(element.dataset.restore),
       );
-      if (change && item) this._restoreItem(change, item);
+      if (change?.previous && item) this._restoreItem(change.previous, item);
     });
     onClick("[data-state]", (element, event) => {
       // Or the click reaches the row underneath and collapses it. The
@@ -2986,6 +3069,13 @@ class DashboardHistoryPanel extends HTMLElement {
       event.stopPropagation();
       const revision = element.dataset.compare || null;
       this._toggleCompareRevision(revision, element.dataset.compareLabel || "");
+    });
+    onClick("[data-compare-restore]", (element) => {
+      const dialog = element.closest("dialog.compare");
+      const revision = dialog?.dataset.compareReference;
+      if (!revision) return;
+      const position = Number(element.dataset.compareRestore);
+      this._restoreItem(revision, { position, label: element.closest(".item")?.querySelector(".label")?.textContent?.trim() || "" });
     });
     root.querySelectorAll(".segmented-control input[type='radio']").forEach((radio) => {
       radio.addEventListener("change", (event) => {

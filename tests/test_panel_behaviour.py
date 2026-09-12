@@ -1492,6 +1492,74 @@ def test_compare_mode_selection_keeps_at_most_two(compare_select):
     assert compare_select["afterOff"] == {"mode": False, "selection": []}
 
 
+_COMPARE_OPEN = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+const compareCall = calls.find((c) => c.type === "compare");
+// The backend decides order, not this scenario - "a" comes back as
+// revision_a because it really is the older side. A non-empty diff:
+// an empty one would mean the two states are byte-identical, and then
+// deleted_since could not honestly report anything missing either.
+compareCall.resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+const missingCall = calls.find((c) => c.type === "deleted_since");
+missingCall.resolve({ items: [{ position: 0, kind: "card", label: "Gone card", view: "a" }] });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+const body = dialog.querySelector("[data-compare-body]");
+
+console.log(JSON.stringify({
+  compareArgs: compareCall.extra,
+  missingArgs: missingCall.extra,
+  bodyHtml: body.innerHTML,
+  dialogOpen: dialog.open,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_open(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_open", _COMPARE_OPEN)
+
+
+def test_compare_dialog_opens_on_two_picks_and_offers_put_back(compare_open):
+    # "a" was picked first, "current" second - the backend's revision_a
+    # says "a" is genuinely the older side, and the dialog trusts that
+    # rather than re-deriving order from `_changes` itself.
+    assert compare_open["compareArgs"] == {"dashboard": "dash", "revision_a": "a"}
+    assert compare_open["missingArgs"] == {"dashboard": "dash", "revision": "a"}
+    # Spec decision 19/9: each side names its own automatic message, not
+    # a bare "between X and Y" that could be either of the two rows.
+    # `renderPlain` escapes its whole heading, so the quotes `describe()`
+    # wraps the label in come back as `&quot;` - correct once a browser
+    # renders it, and the form this check has to look for in the raw
+    # markup.
+    assert "&quot;1 removed&quot;" in compare_open["bodyHtml"]
+    assert "Current state" in compare_open["bodyHtml"]
+    assert "Gone card" in compare_open["bodyHtml"]
+    assert "Put back" in compare_open["bodyHtml"]
+    assert compare_open["dialogOpen"] is True
+
+
 _SEARCH = """
 const el = new Panel();
 el._render = () => {};
