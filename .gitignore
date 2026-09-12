@@ -25,3 +25,7 @@ GEMINI.md
 .antigravity/
 .agents/
 AGENTS.md
+
+# Per-contributor Claude Code preferences (session language and the
+# like) - never the project's own rules, which stay in CLAUDE.md.
+CLAUDE.local.md
