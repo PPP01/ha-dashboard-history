@@ -1690,7 +1690,13 @@ el._restoreItem = (revision, item) => { restoreArgs = { revision, item }; };
 // deliver it.
 container._on.click({ target: button });
 
-console.log(JSON.stringify({ restoreArgs }));
+console.log(JSON.stringify({
+  restoreArgs,
+  dialogOpen: dialog.open,
+  compareMode: el._compareMode,
+  selection: el._compareSelection,
+  missing: el._compareMissing,
+}));
 """
 
 
@@ -1711,6 +1717,136 @@ def test_put_back_from_the_compare_dialog_names_the_clean_label(compare_restore_
         "revision": "a",
         "item": {"position": 0, "kind": "card", "label": "Gone card", "view": "a"},
     }
+
+
+def test_put_back_from_the_compare_dialog_closes_it(compare_restore_click):
+    # Found by an outside review: putting one item back can shift the
+    # positions of whatever else the dialog still lists, and it never
+    # refreshes on its own - a second click on a button drawn before
+    # this one would then act on a position that no longer means what
+    # it did when the dialog opened. Closing it here, rather than
+    # trying to keep it in step, is what rules that out - the compare
+    # mode's own state goes back to empty too, the same shape a fresh
+    # pick starts from.
+    assert compare_restore_click["dialogOpen"] is False
+    assert compare_restore_click["compareMode"] is False
+    assert compare_restore_click["selection"] == []
+    assert compare_restore_click["missing"] == []
+
+
+_COMPARE_ABANDONED_ON_SWITCH = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "advanced";
+el._selected = "dash";
+el._changes = [];
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => {
+  if (type === "compare" || type === "deleted_since") {
+    return new Promise((resolve) => { calls.push({ type, extra, resolve }); });
+  }
+  // Whatever `_select`'s own refresh needs, answered at once - none of
+  // it is what this scenario is testing.
+  return Promise.resolve({ changes: [], next_cursor: null, versions: [] });
+};
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+// The dashboard changes while `compare` is still in flight - `_select`
+// claims "write" as one of its first lines, before it awaits anything.
+await el._select("other");
+
+const compareCall = calls.find((c) => c.type === "compare");
+compareCall.resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+console.log(JSON.stringify({
+  deletedSinceCalled: calls.some((c) => c.type === "deleted_since"),
+  compareReference: el.shadowRoot.querySelector("dialog.compare").dataset.compareReference ?? null,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_abandoned_on_switch(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_abandoned_on_switch", _COMPARE_ABANDONED_ON_SWITCH
+    )
+
+
+def test_a_compare_in_flight_is_abandoned_on_a_dashboard_switch(compare_abandoned_on_switch):
+    # Found by an outside review: `_openCompare` used to re-read
+    # `this._selected` after its first await, so a dashboard switch
+    # while "Comparing..." was still up would ask `deleted_since` about
+    # the picked revision against whatever dashboard somebody has since
+    # switched to. Claiming "write" up front and checking it back after
+    # each await is what `_select` claiming "write" on its own already
+    # invalidates.
+    assert compare_abandoned_on_switch["deletedSinceCalled"] is False
+    assert compare_abandoned_on_switch["compareReference"] is None
+
+
+_COMPARE_ABANDONED_ON_CLOSE = """
+const el = new Panel();
+el._render = () => {};
+el._mode = "advanced";
+el._selected = "dash";
+el._changes = [];
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+// Closed here, before `compare` has answered at all - no `close`
+// listener is registered yet at this point (`_answerFrom` is only
+// reached at the very end of `_openCompare`), so this is exactly what
+// a user closing the dialog mid-fetch looks like from the inside.
+el.shadowRoot.querySelector("dialog.compare").close();
+
+calls.find((c) => c.type === "compare").resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+console.log(JSON.stringify({
+  deletedSinceCalled: calls.some((c) => c.type === "deleted_since"),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_abandoned_on_close(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_abandoned_on_close", _COMPARE_ABANDONED_ON_CLOSE
+    )
+
+
+def test_a_compare_closed_mid_fetch_does_not_finish_its_work(compare_abandoned_on_close):
+    # Found by an outside review: `_answerFrom` only ever waits for a
+    # *future* close event, so a dialog already closed before
+    # `_openCompare` reached that line left the wait hanging forever -
+    # and along the way, it would still have gone on to fetch
+    # `deleted_since` for a dialog nobody was looking at. The `!dialog.open`
+    # check added alongside the write-claim check rules out both: this
+    # scenario completes (a hang would time this test out) and never
+    # asks for the missing-items list.
+    assert compare_abandoned_on_close["deletedSinceCalled"] is False
 
 
 _UNDO_REFUSED_LINKS_TO_COMPARE = """

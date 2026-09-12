@@ -1293,12 +1293,24 @@ async def async_compare(
     times = (
         await hass.async_add_executor_job(store.commit_times, real) if real else {}
     )
+    # `commit_times` alone ties on two commits made in the same
+    # wall-clock second - git's own timestamp resolution is one second,
+    # and a fast save (or a fast test rig) hits that regularly. Where
+    # that happens, the argument order the caller happened to use would
+    # otherwise decide it, reading the whole explanation backwards for
+    # one of the two calling orders. `commit_order` is the same total
+    # order the store's own index is built from, and never ties.
+    order = (
+        await hass.async_add_executor_job(store.commit_order, real) if real else {}
+    )
 
     def newer(x_full, y_full):
         if x_full is None:  # "current" - always the newest
             return True
         if y_full is None:
             return False
+        if x_full in order and y_full in order:
+            return order[x_full] < order[y_full]  # lower position is newer
         return times.get(x_full, 0) > times.get(y_full, 0)
 
     if newer(full_a, full_b):

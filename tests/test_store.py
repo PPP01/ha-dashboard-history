@@ -576,6 +576,34 @@ def test_asking_an_empty_repository_is_empty(tmp_path):
     assert fresh.commit_times(["abc"]) == {}
 
 
+def test_commit_order_gives_a_strict_order_ties_or_not(store):
+    # `commit_times` alone cannot always tell two commits apart - two
+    # saves inside the same wall-clock second (git's own timestamp
+    # resolution) get the same value there, which two calls this close
+    # together often do on a fast run. `commit_order` answers from the
+    # index's own total order instead, which never ties.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    order = store.commit_order([first, second])
+    assert order[first] > order[second]
+
+
+def test_commit_order_is_keyed_by_what_was_asked(store):
+    only = store.write_snapshot("home", "a: 1\n", "only")
+    store.create_version("home/v1.0.0", "First", "", only)
+    assert list(store.commit_order(["home/v1.0.0"])) == ["home/v1.0.0"]
+
+
+def test_commit_order_on_an_unknown_revision_is_empty(store):
+    only = store.write_snapshot("home", "a: 1\n", "only")
+    assert store.commit_order([only, "f" * 40]) == {only: store.commit_order([only])[only]}
+
+
+def test_commit_order_asking_an_empty_repository_is_empty(tmp_path):
+    fresh = HistoryStore(tmp_path / "nothing")
+    assert fresh.commit_order(["abc"]) == {}
+
+
 # -- forgetting a dashboard for good -----------------------------------
 #
 # The one operation in this project that rewrites the stored history, in

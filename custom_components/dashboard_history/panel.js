@@ -392,16 +392,34 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   async _openCompare() {
     const [first, second] = this._compareSelection;
+    // Read once, not re-read after the awaits below: `_select` claims
+    // "write" on a dashboard switch, which is exactly what a stale
+    // in-flight compare must not survive - reading `this._selected`
+    // again down there would ask `deleted_since` about *this*
+    // dashboard's revision against whatever dashboard somebody has
+    // since switched to.
+    const dashboard = this._selected;
+    const mine = this._claim("write");
     const dialog = this.shadowRoot.querySelector("dialog.compare");
     const body = dialog.querySelector("[data-compare-body]");
     body.innerHTML = `<p class="muted row-loading"><span class="ring mini"></span> Comparing…</p>`;
     dialog.returnValue = "";
     dialog.showModal();
 
-    const compareArgs = { dashboard: this._selected };
+    const compareArgs = { dashboard };
     if (first.revision !== null) compareArgs.revision_a = first.revision;
     if (second.revision !== null) compareArgs.revision_b = second.revision;
     const comparison = await this._call("compare", compareArgs);
+    // Bail out silently once the context has moved on: `!mine()` means
+    // a dashboard switch since this call started, and `!dialog.open`
+    // means the dialog itself was closed while it was in flight -
+    // either way, nothing below is still meant for whoever is looking
+    // at the page now. Left this way rather than proceeding: writing
+    // into a closed dialog's body is harmless on its own, but the
+    // `deleted_since` call further down is not - it would otherwise
+    // ask about the dashboard picked *here* against whatever dashboard
+    // is selected by the time it runs.
+    if (!mine() || !dialog.open) return;
 
     if (comparison.error) {
       body.innerHTML = `<p class="why">${escape(comparison.error)}</p>`;
@@ -434,9 +452,10 @@ class DashboardHistoryPanel extends HTMLElement {
     const historicalSide = newer.revision === null ? older : null;
     if (historicalSide) {
       const missing = await this._call("deleted_since", {
-        dashboard: this._selected,
+        dashboard,
         revision: historicalSide.revision,
       });
+      if (!mine() || !dialog.open) return;
       const items = missing.items || [];
       missingHtml = items.length
         ? `<p class="why" style="margin-top:16px">Missing since then, still gone:</p>` +
@@ -3074,6 +3093,18 @@ class DashboardHistoryPanel extends HTMLElement {
         (candidate) => candidate.position === position,
       );
       if (!item) return;
+      // Closed here rather than kept open and refreshed: putting one
+      // item back can shift the positions of whatever else this dialog
+      // still lists, and it never re-fetches on its own. A second click
+      // on a button drawn before this one either names the wrong item
+      // now or a position that no longer exists - closing pins that
+      // down to "never", at the cost of a fresh compare to put another
+      // item back. `dialog.close()` settles `_openCompare`'s own
+      // pending `_answerFrom` wait the same way the Close button would.
+      dialog.close();
+      this._compareMode = false;
+      this._compareSelection = [];
+      this._compareMissing = [];
       this._restoreItem(revision, item);
     });
     root.querySelectorAll(".segmented-control input[type='radio']").forEach((radio) => {

@@ -1818,6 +1818,39 @@ class HistoryStore:
             found[revision] = repo[resolved.encode()].commit_time
         return found
 
+    def commit_order(self, revisions: Iterable[str]) -> dict[str, int]:
+        """Where each of these revisions sits in the repository's own
+        commit order. Lower is newer.
+
+        Breaks the tie `commit_times` cannot: two commits made in the
+        same wall-clock second carry the same value there - git's own
+        timestamp resolution is one second, and a fast save or a fast
+        test rig hits it regularly - but never the same position here.
+        This is the same total order `_revision_index` walks once and
+        `_indexed_revisions`/`previous_change` already trust for
+        exactness, read instead of recomputed.
+
+        Keyed by what the caller handed in, same convention as
+        `commit_times`, so the two answers can be looked up side by
+        side. Left out where the index does not reach a revision (see
+        `_indexed_revisions`'s own docstring for when that is) rather
+        than a guessed position - a caller that needs an answer for
+        every revision, indexed or not, should fall back to
+        `commit_times` for the ones missing here.
+        """
+        repo = self._repo()
+        if repo is None:
+            return {}
+        index = self._revision_index(repo)
+        if index is None:
+            return {}
+        found: dict[str, int] = {}
+        for revision in dict.fromkeys(revisions):
+            resolved = self._resolve(repo, revision)
+            if resolved is not None and resolved in index.order:
+                found[revision] = index.order[resolved]
+        return found
+
     def list_dashboards(self) -> list[str]:
         """Every dashboard the history currently tracks."""
         repo = self._repo()
