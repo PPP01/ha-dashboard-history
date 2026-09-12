@@ -201,6 +201,30 @@ explain:
       selector:
         text:
 
+compare:
+  name: Compare two states
+  description: >-
+    The full difference between any two states of one dashboard - not
+    necessarily adjacent ones, and either side may be left out to mean
+    the dashboard's current live state.
+  fields:
+    dashboard:
+      required: true
+      example: dashboard-karte
+      selector:
+        text:
+    revision_a:
+      description: >-
+        One side of the comparison. Left out, this side means the
+        current live state - at least one of the two must be an actual
+        revision.
+      selector:
+        text:
+    revision_b:
+      description: The other side, same rule.
+      selector:
+        text:
+
 forget:
   name: Forget a deleted dashboard
   description: >-

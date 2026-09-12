@@ -111,6 +111,15 @@ async def async_register(hass: HomeAssistant) -> None:
             hass, store, call.data["dashboard"], call.data["revision"]
         )
 
+    async def compare(call: ServiceCall) -> dict:
+        return await operations.async_compare(
+            hass,
+            store,
+            call.data["dashboard"],
+            call.data.get("revision_a"),
+            call.data.get("revision_b"),
+        )
+
     async def forget(call: ServiceCall) -> dict:
         return await operations.async_forget(
             hass, store, call.data["dashboard"], bool(call.data.get("confirm"))
@@ -184,6 +193,10 @@ async def async_register(hass: HomeAssistant) -> None:
             vol.Optional("text", default=""): cv.string,
         })),
         ("explain", explain, DASHBOARD.extend({vol.Required("revision"): cv.string})),
+        ("compare", compare, DASHBOARD.extend({
+            vol.Optional("revision_a"): cv.string,
+            vol.Optional("revision_b"): cv.string,
+        })),
         ("forget", forget, DASHBOARD.extend({
             vol.Optional("confirm", default=False): bool,
         })),

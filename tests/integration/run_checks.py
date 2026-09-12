@@ -1880,6 +1880,175 @@ async def run_undo(access: str) -> None:
         )
 
 
+async def run_compare(access: str) -> None:
+    """Comparing two arbitrary states, not necessarily adjacent ones."""
+    key = "dh-compare-check"
+    first = {"type": "markdown", "content": "First card"}
+    second = {"type": "markdown", "content": "Second card"}
+    third = {"type": "markdown", "content": "Third card"}
+
+    def state(cards):
+        return {"views": [{"path": "a", "title": "A", "cards": list(cards)}]}
+
+    async def save(socket, cards):
+        before = await socket.call("dashboard_history/history", dashboard=key, limit=1)
+        rows = before["changes"]
+        await socket.call(
+            "lovelace/config/save", url_path=key, config=state(cards)
+        )
+        await _wait_for_new_state(
+            socket, key, rows[0]["revision"] if rows else "", RECORDING_WAIT
+        )
+
+    async def newest(socket):
+        answer = await socket.call("dashboard_history/history", dashboard=key)
+        return answer["changes"][0]["revision"]
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        made_id = next(
+            (entry["id"] for entry in listed if entry.get("url_path") == key), None
+        )
+        if made_id is None:
+            made = await socket.call(
+                "lovelace/dashboards/create", url_path=key, title="DH Compare"
+            )
+            made_id = made["id"]
+            await asyncio.sleep(4)
+
+        await save(socket, [first])
+        first_rev = await newest(socket)
+        await save(socket, [first, second])
+        middle_rev = await newest(socket)
+        await save(socket, [first, second, third])
+        newest_rev = await newest(socket)
+
+        # Two non-adjacent, real revisions.
+        answer = await socket.call(
+            "dashboard_history/compare",
+            dashboard=key,
+            revision_a=first_rev,
+            revision_b=newest_rev,
+        )
+        check(
+            "a compare across two non-adjacent states names both additions",
+            len(answer.get("groups", [])) == 1
+            and len(answer["groups"][0]["entries"]) == 2,
+            str(answer.get("groups")),
+        )
+        check("no error on two known revisions", "error" not in answer)
+        check(
+            "the answer echoes back which side is the older one",
+            answer.get("revision_a") == first_rev
+            and answer.get("revision_b") == newest_rev,
+            str({k: answer.get(k) for k in ("revision_a", "revision_b")}),
+        )
+        check(
+            "both real sides carry their own commit time",
+            isinstance(answer.get("time_a"), int) and isinstance(answer.get("time_b"), int)
+            and answer["time_a"] <= answer["time_b"],
+            str({k: answer.get(k) for k in ("time_a", "time_b")}),
+        )
+
+        # The same pair, arguments the other way round - the panel does
+        # not always know which of its two picks is older (a picked row
+        # can outlive a refresh that dropped it from what is loaded), so
+        # sending them in click order rather than chronological order
+        # must produce the identical, correctly-oriented answer.
+        reversed_answer = await socket.call(
+            "dashboard_history/compare",
+            dashboard=key,
+            revision_a=newest_rev,
+            revision_b=first_rev,
+        )
+        check(
+            "argument order does not change which side ends up 'a'",
+            reversed_answer.get("revision_a") == first_rev
+            and reversed_answer.get("revision_b") == newest_rev
+            and reversed_answer.get("groups") == answer.get("groups"),
+            str(reversed_answer),
+        )
+
+        # One side is the current live state.
+        answer = await socket.call(
+            "dashboard_history/compare",
+            dashboard=key,
+            revision_a=middle_rev,
+        )
+        check(
+            "against the current state, one addition shows up",
+            len(answer.get("groups", [])) == 1
+            and len(answer["groups"][0]["entries"]) == 1,
+            str(answer.get("groups")),
+        )
+        check(
+            "'current state' always lands as the newer side, argument slot aside",
+            answer.get("revision_a") == middle_rev and answer.get("revision_b") is None
+            and answer.get("time_b") is None,
+            str({k: answer.get(k) for k in ("revision_a", "revision_b", "time_b")}),
+        )
+
+        # Identical content on both sides.
+        answer = await socket.call(
+            "dashboard_history/compare",
+            dashboard=key,
+            revision_a=newest_rev,
+            revision_b=newest_rev,
+        )
+        check(
+            "comparing a state against itself yields an empty diff",
+            answer.get("diff", "x") == "",
+            repr(answer.get("diff")),
+        )
+
+        # Both sides the current state: refused, not silently answered.
+        answer = await socket.call("dashboard_history/compare", dashboard=key)
+        check(
+            "comparing 'now' against 'now' is refused",
+            bool(answer.get("error")),
+            str(answer),
+        )
+
+        # Unknown revision.
+        answer = await socket.call(
+            "dashboard_history/compare",
+            dashboard=key,
+            revision_a="0" * 40,
+            revision_b=newest_rev,
+        )
+        check(
+            "an unresolvable revision is named as the error, not silently empty",
+            "unknown revision" in (answer.get("error") or ""),
+            str(answer.get("error")),
+        )
+
+        # One side is the deletion row itself - the case `_state_at`
+        # would have wrongly turned into an error (see task 1's aside).
+        # `_wait_for_newest` hands back the newest history *message*, not
+        # its revision (every other call site here only ever checks a
+        # phrase against it) - the actual revision still has to come from
+        # `history` once the message says the deletion has landed.
+        await socket.call("lovelace/dashboards/delete", dashboard_id=made_id)
+        await _wait_for_newest(socket, key, "dashboard deleted", RECORDING_WAIT)
+        deletion_rev = await newest(socket)
+        answer = await socket.call(
+            "dashboard_history/compare",
+            dashboard=key,
+            revision_a=newest_rev,
+            revision_b=deletion_rev,
+        )
+        check(
+            "comparing against a dashboard's own deletion row is not an error",
+            "error" not in answer,
+            str(answer),
+        )
+        check(
+            "the deletion shows up as removals, not a silently empty diff",
+            len(answer.get("groups", [])) >= 1,
+            str(answer.get("groups")),
+        )
+
+
 async def run_positions(access: str) -> None:
     """A position is an address, not an identity.
 
@@ -3689,6 +3858,8 @@ if __name__ == "__main__":
     asyncio.run(run_remove_version(access))
     print("\n  -- Eine Aenderung gezielt zuruecknehmen --")
     asyncio.run(run_undo(access))
+    print("\n  -- Zwei beliebige Staende vergleichen --")
+    asyncio.run(run_compare(access))
     print("\n  -- Blaettern statt abschneiden --")
     asyncio.run(run_paging(access))
     print("\n  -- Position ist keine Identitaet --")

@@ -990,6 +990,7 @@ dashboard's internal id (`energie_2`); the two are not the same string.
 | `history` | The recorded states of one dashboard, newest first, paged |
 | `search` | Find changes of one dashboard by their words, over the whole history |
 | `explain` | What one change did, in plain words |
+| `compare` | The full difference between any two states, not necessarily adjacent ones |
 | `deleted_since` | What disappeared since a revision, each with a position |
 | `restore_deleted` | Put one of them back — additive (needs `confirm`) |
 | `undo_change` | Take one change back and keep the ones after it (needs `confirm`) |

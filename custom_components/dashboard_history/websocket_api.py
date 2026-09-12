@@ -96,6 +96,20 @@ _COMMANDS = (
         lambda msg: {"key": msg["dashboard"], "revision": msg["revision"]},
     ),
     _command(
+        f"{DOMAIN}/compare",
+        {
+            **_DASHBOARD,
+            vol.Optional("revision_a"): str,
+            vol.Optional("revision_b"): str,
+        },
+        operations.async_compare,
+        lambda msg: {
+            "key": msg["dashboard"],
+            "revision_a": msg.get("revision_a"),
+            "revision_b": msg.get("revision_b"),
+        },
+    ),
+    _command(
         f"{DOMAIN}/restore_deleted",
         {
             **_DASHBOARD,
