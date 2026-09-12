@@ -722,8 +722,7 @@ the limits cost is the *narrow* way back, not the content.
 | A path freed and reused by a new view | read as card changes inside it | writes the old cards into the new view | — | works |
 | Two views sharing one path | read as cards removed, not as a view gone | **refuses** | **refuses** | works |
 
-*Reached through compare mode since v0.4.0, not as a button on the row
-itself.*
+*Reached through compare mode, not as a button on the row itself.*
 
 Four of these deserve the detail.
 
@@ -813,8 +812,7 @@ sections on the installation this was developed against carry none.
 | Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
 | Deleted a whole section | its cards, named one by one | the section, into the gap it left | **refuses** |
 
-*Reached through compare mode since v0.4.0, not as a button on the row
-itself.*
+*Reached through compare mode, not as a button on the row itself.*
 
 One thing the last row does not change: the *words*. A deleted section is
 offered back as one thing, but the entry in the history still lists the

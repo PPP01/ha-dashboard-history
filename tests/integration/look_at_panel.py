@@ -490,12 +490,14 @@ async def main():
             # state is already current. Row 0 - still expanded from the
             # section above - may or may not have one left, so later rows
             # are tried in turn until one does. A row's own async fetch
-            # (deleted_since/explain/undo_change) renders the detail div at
-            # once and fills in its buttons only once it resolves, so each
-            # try waits for the busy indicator to clear rather than for the
-            # div itself. Clicking an element inside a collapsed <details>
-            # works regardless: .click() dispatches straight to the
-            # handler and does not need the element to be visible.
+            # (explain/undo_change - `deleted_since` is no longer part of
+            # it, since Task 5 folded put-back into the compare dialog)
+            # renders the detail div at once and fills in its buttons only
+            # once it resolves, so each try waits for the busy indicator to
+            # clear rather than for the div itself. Clicking an element
+            # inside a collapsed <details> works regardless: .click()
+            # dispatches straight to the handler and does not need the
+            # element to be visible.
             total_rows = await page.js(f'{PANEL}.querySelectorAll(".change").length')
             row = 0
             has_state_button = await page.js(f'!!{PANEL}.querySelector("[data-state]")')
@@ -965,7 +967,7 @@ async def main():
 
             print("\n-- The button on a row --")
             await page.js(f'{PANEL}.querySelector(".change").click()')
-            # Wait for the row's own explain/deleted_since fetch to settle,
+            # Wait for the row's own explain/undo_change fetch to settle,
             # not just for the button to appear - it renders on the first,
             # synchronous pass already, before that fetch resolves. Firing
             # the next guarded action while it is still in flight races two
