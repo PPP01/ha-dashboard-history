@@ -191,6 +191,10 @@ class DashboardHistoryPanel extends HTMLElement {
     this._items = [];
     this._compareMode = false;
     this._compareSelection = [];
+    // The cards `_openCompare` found missing on the historical side, kept
+    // as data rather than re-read from the dialog's own rendered markup -
+    // see `_openCompare` and the `[data-compare-restore]` handler.
+    this._compareMissing = [];
     this._explanation = null;
     this._undo = null;
     this._loadingDetail = null;
@@ -422,6 +426,12 @@ class DashboardHistoryPanel extends HTMLElement {
             .join("")
         : `<p class="muted">Nothing from before this state is missing today.</p>`;
       dialog.dataset.compareReference = historicalSide.revision;
+      // Retained for the click handler below: `.label`'s rendered
+      // markup nests a `.where` badge inside it, so reading the
+      // button's own item back out of `.textContent` would run the
+      // two together (`"Gone card card · view a"`) instead of naming
+      // the clean label `_restoreItem`'s dialog title shows.
+      this._compareMissing = items;
     } else {
       delete dialog.dataset.compareReference;
     }
@@ -3075,7 +3085,11 @@ class DashboardHistoryPanel extends HTMLElement {
       const revision = dialog?.dataset.compareReference;
       if (!revision) return;
       const position = Number(element.dataset.compareRestore);
-      this._restoreItem(revision, { position, label: element.closest(".item")?.querySelector(".label")?.textContent?.trim() || "" });
+      const item = (this._compareMissing || []).find(
+        (candidate) => candidate.position === position,
+      );
+      if (!item) return;
+      this._restoreItem(revision, item);
     });
     root.querySelectorAll(".segmented-control input[type='radio']").forEach((radio) => {
       radio.addEventListener("change", (event) => {

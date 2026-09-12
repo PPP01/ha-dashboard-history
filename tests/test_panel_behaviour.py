@@ -78,6 +78,18 @@ const node = () => {
     },
     querySelectorAll(selector) { return [it.querySelector(selector)]; },
     addEventListener(name, run) { it._on[name] = run; },
+    // No real tree to walk, so a scenario that needs an ancestor sets it
+    // by hand on `_closest` before firing the click - `element._closest =
+    // { "dialog.compare": dialog }` - and an unset selector answers null,
+    // same as an ordinary miss. Added once a click handler wired through
+    // `onClick` (which always asks `.closest("summary")` first) needed
+    // firing for real rather than calling the method it wires straight.
+    _closest: {},
+    closest(selector) {
+      return Object.prototype.hasOwnProperty.call(it._closest, selector)
+        ? it._closest[selector]
+        : null;
+    },
     // `setAttribute` remembers, the other two are no-ops: the version
     // dialog presses its level buttons into shape with `setAttribute`
     // and puts the cursor in the title field, and the description
@@ -1558,6 +1570,78 @@ def test_compare_dialog_opens_on_two_picks_and_offers_put_back(compare_open):
     assert "Gone card" in compare_open["bodyHtml"]
     assert "Put back" in compare_open["bodyHtml"]
     assert compare_open["dialogOpen"] is True
+
+
+_COMPARE_RESTORE_CLICK = """
+const el = new Panel();
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [];
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._versions = [];
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+// `_render` runs for real in this scenario, unlike most others in this
+// file: [data-compare-restore] is wired inside it, and a stubbed no-op
+// would leave nothing to click.
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+calls.find((c) => c.type === "compare").resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+// A label the old row-level handler never had to deal with: rendered,
+// `.label` nests a `.where` badge inside it, so reading the item back
+// out of `.textContent` would run the two together.
+calls.find((c) => c.type === "deleted_since").resolve({
+  items: [{ position: 0, kind: "card", label: "Gone card", view: "a" }],
+});
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+const button = el.shadowRoot.querySelector("[data-compare-restore]");
+button.dataset.compareRestore = "0";
+// No real tree here to walk upward through, so the one ancestor the
+// handler asks `.closest` for is handed to it directly - see `closest`
+// on the stand-in node.
+button._closest["dialog.compare"] = dialog;
+
+let restoreArgs = null;
+el._restoreItem = (revision, item) => { restoreArgs = { revision, item }; };
+
+button._on.click({});
+
+console.log(JSON.stringify({ restoreArgs }));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_restore_click(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_restore_click", _COMPARE_RESTORE_CLICK)
+
+
+def test_put_back_from_the_compare_dialog_names_the_clean_label(compare_restore_click):
+    # Found by review: the button's item was read back out of the
+    # dialog's own rendered `.label` text, which nests a `.where` badge
+    # inside it - so `.textContent` ran the two together into "Gone
+    # card card - view a" instead of "Gone card". The handler looks the
+    # item up by position in the retained `_compareMissing` array
+    # instead, the same way the old row-level handler looks its item up
+    # in `_items` rather than in what was drawn.
+    assert compare_restore_click["restoreArgs"] == {
+        "revision": "a",
+        "item": {"position": 0, "kind": "card", "label": "Gone card", "view": "a"},
+    }
 
 
 _SEARCH = """
