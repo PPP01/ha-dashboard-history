@@ -1615,6 +1615,94 @@ def test_compare_dialog_opens_on_two_picks_and_offers_put_back(compare_open):
     assert compare_open["dialogOpen"] is True
 
 
+_COMPARE_MISSING_GROUPED_BY_VIEW = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+el._toggleCompareMode();
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision(null, "Current state");
+await settle();
+
+calls.find((c) => c.type === "compare").resolve({
+  groups: [], note: "", diff: "-3 removed\\n",
+  revision_a: "a", revision_b: null, time_a: 1731000000, time_b: null,
+});
+await settle();
+
+// Two cards from the same view, one from another - arriving in view
+// order the way `find_removed` itself walks the views, not sorted or
+// shuffled by this scenario. Labels distinct from the diff text above,
+// so `indexOf` below cannot accidentally match the raw diff instead of
+// the grouped list this test is actually about.
+calls.find((c) => c.type === "deleted_since").resolve({
+  items: [
+    { position: 0, kind: "card", label: "Card A", view: "erste", view_title: "Erste Ansicht" },
+    { position: 1, kind: "card", label: "Card B", view: "erste", view_title: "Erste Ansicht" },
+    { position: 2, kind: "card", label: "Card C", view: "zweite", view_title: "Zweite Ansicht" },
+  ],
+});
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+const bodyHtml = dialog.querySelector("[data-compare-body]").innerHTML;
+
+console.log(JSON.stringify({
+  bodyHtml,
+  firstHeadingCount: bodyHtml.split("In the view Erste Ansicht").length - 1,
+  secondHeadingCount: bodyHtml.split("In the view Zweite Ansicht").length - 1,
+  order: [
+    bodyHtml.indexOf("In the view Erste Ansicht"),
+    bodyHtml.indexOf("Card A"),
+    bodyHtml.indexOf("Card B"),
+    bodyHtml.indexOf("In the view Zweite Ansicht"),
+    bodyHtml.indexOf("Card C"),
+  ],
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_missing_grouped_by_view(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory,
+        "compare_missing_grouped_by_view",
+        _COMPARE_MISSING_GROUPED_BY_VIEW,
+    )
+
+
+def test_the_missing_list_is_grouped_by_view(compare_missing_grouped_by_view):
+    # Found: the flat "Missing since then" list repeated its view as a
+    # small badge on every single row instead of grouping like the diff
+    # right above it already does - on a dashboard with a dozen views,
+    # scanning for "everything from the Kitchen view" meant reading every
+    # row's badge instead of looking at one heading.
+    result = compare_missing_grouped_by_view
+    # One heading per view, not one per item - two cards from "Erste
+    # Ansicht" must not print its heading twice.
+    assert result["firstHeadingCount"] == 1
+    assert result["secondHeadingCount"] == 1
+    (
+        first_heading,
+        card_a,
+        card_b,
+        second_heading,
+        card_c,
+    ) = result["order"]
+    assert -1 not in result["order"]
+    # Both of "Erste Ansicht"'s cards sit under its own heading, before
+    # the next view's heading opens - not scattered across two groups.
+    assert first_heading < card_a < card_b < second_heading < card_c
+
+
 _COMPARE_RESTORE_CLICK = """
 const el = new Panel();
 el._selected = "dash";

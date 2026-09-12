@@ -523,6 +523,7 @@ async def async_deleted_since(
                 "kind": item.kind,
                 "label": item.label,
                 "view": item.view_path,
+                "view_title": item.view_title,
             }
             for position, item in enumerate(items)
         ]

@@ -2392,6 +2392,73 @@ async def run_sections(access: str) -> None:
                 "lovelace/dashboards/delete", dashboard_id=mine["id"]
             )
 
+
+async def run_missing_grouped_by_view(access: str) -> None:
+    """`deleted_since` names each item's view by its title, not its path.
+
+    The panel groups the "still gone" list under one heading per view
+    (vorhaben J, 2026-09-12) - the same heading the plain-language diff
+    above it already uses for its own groups. That heading is a view's
+    *title*; `view_path` alone would print the raw URL slug instead
+    ("wohnzimmer" rather than "Wohnzimmer"), and would print nothing at
+    all for a view with no path. None of this is reachable from pytest:
+    the value only exists once `operations.async_deleted_since` has
+    turned a `RemovedItem` into a WebSocket answer.
+    """
+    key = "dh-view-title-check"
+    a = {"type": "markdown", "content": "# A"}
+    b = {"type": "markdown", "content": "# B"}
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+        async def save(config: dict) -> list:
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            return await _wait_until_recorded(socket, key)
+
+        both = await save(
+            {
+                "views": [
+                    {"path": "erste", "title": "Erste Ansicht", "cards": [a]},
+                    {"path": "zweite", "title": "Zweite Ansicht", "cards": [b]},
+                ]
+            }
+        )
+        base = both[0]["revision"]
+        await save(
+            {
+                "views": [
+                    {"path": "erste", "title": "Erste Ansicht", "cards": []},
+                    {"path": "zweite", "title": "Zweite Ansicht", "cards": []},
+                ]
+            }
+        )
+
+        gone = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=base
+        )
+        titles = {item["label"]: item["view_title"] for item in gone["items"]}
+        check(
+            "each missing card names the title of the view it came from",
+            all(
+                title in ("Erste Ansicht", "Zweite Ansicht") for title in titles.values()
+            )
+            and len(set(titles.values())) == 2,
+            f"titles={titles}",
+        )
+
+        # Named, never by prefix: this instance holds other dh-* boards.
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        mine = next((e for e in listed if e.get("url_path") == key), None)
+        if mine is not None:
+            await socket.call(
+                "lovelace/dashboards/delete", dashboard_id=mine["id"]
+            )
+
+
 async def run_paging(access: str) -> None:
     """Paging by commit cursor.
 
@@ -3872,6 +3939,8 @@ if __name__ == "__main__":
     asyncio.run(run_positions(access))
     print("\n  -- Ein ganzer Abschnitt, als eine Sache --")
     asyncio.run(run_sections(access))
+    print("\n  -- Gruppiert nach Views, nicht nach Pfaden --")
+    asyncio.run(run_missing_grouped_by_view(access))
     print("\n  -- Versionen, die von selbst entstehen --")
     asyncio.run(run_milestones(access))
     print("\n  -- Der Schalter fuer die Tagesversionen --")

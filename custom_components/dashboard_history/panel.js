@@ -457,19 +457,49 @@ class DashboardHistoryPanel extends HTMLElement {
       });
       if (!mine() || !dialog.open) return;
       const items = missing.items || [];
+      // Grouped by view, the same way the diff above already groups its
+      // own entries (`renderPlain`) - the items themselves arrive in
+      // view order (`find_removed` walks the views in order), so a plain
+      // first-seen grouping lines up with that diff's groups without
+      // having to sort anything.
+      const missingGroups = [];
+      const byView = new Map();
+      for (const item of items) {
+        const view = item.view_title || item.view || "";
+        if (!byView.has(view)) {
+          const group = { view, items: [] };
+          byView.set(view, group);
+          missingGroups.push(group);
+        }
+        byView.get(view).items.push(item);
+      }
       missingHtml = items.length
         ? `<p class="why" style="margin-top:16px">Missing since then, still gone:</p>` +
-          items
+          // `.view`'s indent-and-border look comes from `.plain .view` -
+          // a descendant rule, so this reuses it verbatim only by
+          // sitting inside a `.plain` wrapper of its own, the same way
+          // the diff's groups above already do.
+          `<div class="plain">` +
+          missingGroups
             .map(
-              (item) => `
-          <div class="item">
-            <span class="label">${escape(item.label)}
-              <span class="where">${escape(item.kind)}${item.view ? ` · view ${escape(item.view)}` : ""}</span>
-            </span>
-            <button class="act" data-compare-restore="${item.position}">Put back</button>
+              (group) => `
+          <div class="view">
+            <strong>In the view ${escape(group.view)}</strong>
+            ${group.items
+              .map(
+                (item) => `
+            <div class="item">
+              <span class="label">${escape(item.label)}
+                <span class="where">${escape(item.kind)}</span>
+              </span>
+              <button class="act" data-compare-restore="${item.position}">Put back</button>
+            </div>`,
+              )
+              .join("")}
           </div>`,
             )
-            .join("")
+            .join("") +
+          `</div>`
         : `<p class="muted">Nothing from before this state is missing today.</p>`;
       dialog.dataset.compareReference = historicalSide.revision;
       // Retained for the click handler below: `.label`'s rendered

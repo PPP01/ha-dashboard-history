@@ -44,6 +44,7 @@ def test_card_removed_is_found():
     assert removed[0].payload == B
     assert removed[0].index == 1
     assert removed[0].view_path == "home"
+    assert removed[0].view_title == "Home"
 
 
 def test_card_added_is_not_a_removal():
@@ -282,6 +283,9 @@ def test_view_removed_is_found():
     assert len(removed) == 1
     assert removed[0].kind == "view"
     assert removed[0].view_path == "gone"
+    # No title on the removed view - `view_title` falls back to its path,
+    # the same order `_view_name` tries them in.
+    assert removed[0].view_title == "gone"
 
 
 def test_cards_inside_sections_are_covered():
@@ -307,6 +311,29 @@ def test_removed_item_has_a_readable_label():
     assert "light.b" in removed[0].label
 
 
+def test_removed_items_carry_their_views_title_for_grouping():
+    # A view's title, not its path, is what the diff above a put-back
+    # list already heads its own groups with (`_view_name`) - two cards
+    # gone from two differently-titled views must come back naming those
+    # titles, not the slugs a caller would otherwise have to look up
+    # again to group these items the same way.
+    old = {
+        "views": [
+            {"path": "erste", "title": "Erste Ansicht", "cards": [A]},
+            {"path": "zweite", "title": "Zweite Ansicht", "cards": [B]},
+        ]
+    }
+    new = {
+        "views": [
+            {"path": "erste", "title": "Erste Ansicht", "cards": []},
+            {"path": "zweite", "title": "Zweite Ansicht", "cards": []},
+        ]
+    }
+    removed = analyze.find_removed(old, new)
+    titles = {item.payload["entity"]: item.view_title for item in removed}
+    assert titles == {"light.a": "Erste Ansicht", "light.b": "Zweite Ansicht"}
+
+
 def test_removed_view_keeps_its_position():
     old = {"views": [{"path": "a", "cards": []}, {"path": "gone", "cards": []},
                      {"path": "c", "cards": []}]}
@@ -321,6 +348,10 @@ def test_views_without_a_path_are_handled():
     removed = analyze.find_removed(old, new)
     assert len(removed) == 1
     assert removed[0].view_path is None
+    # `view_title` is what a caller groups removed items by - it must not
+    # go missing along with the path, or a pathless view's items would be
+    # ungroupable.
+    assert removed[0].view_title == "No path"
 
 
 # -- the plain-language explanation ------------------------------------

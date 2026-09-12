@@ -46,6 +46,12 @@ class RemovedItem:
     # fingerprints of them, because `restore` compares it with `==` and
     # cannot import `analyze.fingerprint` at runtime.
     neighbours: tuple | None = None
+    # The view's own name, the same way `_view_name` resolves it for the
+    # human-readable diff (title, else path, else position) - so a list of
+    # removed items can be grouped and headed the same way that diff
+    # already groups its own entries, instead of a raw `view_path` that is
+    # `None` for a pathless view and a bare slug rather than its title.
+    view_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -691,6 +697,10 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
 
     items: list[RemovedItem] = []
     for view_index, (key, old_view) in enumerate(_views_by_key(old)):
+        # Resolved once per view, the same way `_explain` names the group
+        # it heads its own diff with - so a caller that groups these items
+        # by view can head each group the identical name.
+        name = _view_name(old_view, key)
         if key not in new_views:
             items.append(
                 RemovedItem(
@@ -700,7 +710,8 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                     location=(),
                     index=view_index,
                     payload=old_view,
-                    label=f"view: {old_view.get('title') or old_view.get('path') or key}",
+                    label=f"view: {name}",
+                    view_title=name,
                 )
             )
             continue
@@ -725,6 +736,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                         for position, other in enumerate(old_view.get("sections") or [])
                         if position != index
                     ),
+                    view_title=name,
                 )
             )
         swallowed = {("sections", index, "cards") for index in whole}
@@ -738,6 +750,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 payload=slot.card,
                 label=_describe(slot.card),
                 anchor=_section_anchor(old_view, slot.location),
+                view_title=name,
             )
             for slot in gone
             if slot.location not in swallowed
