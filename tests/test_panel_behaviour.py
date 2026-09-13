@@ -5871,3 +5871,60 @@ def test_the_cards_technical_details_summary_carries_the_pill_glyph(card_diff_pi
     # "Show the technical details") keep passing unmodified.
     assert '<span class="glyph">&lt;/&gt;</span> Show the technical details' in card_diff_pill["html"]
     assert 'details class="raw"' in card_diff_pill["html"]
+
+
+_ACTION_BAR = """
+const el = new Panel();
+el._render = () => {};
+el._changes = [
+  { revision: "a", previous: "b", same_as_now: false, timestamp: 20 },
+  { revision: "b", previous: "c", same_as_now: false, timestamp: 10 },
+  { revision: "c", previous: null, same_as_now: false, timestamp: 5 },
+];
+el._explanation = { groups: [], note: "" };
+
+// Undo available, both replace candidates exist.
+el._undo = { available: true, equals_state_before: false };
+const withBoth = el._renderDetail(el._changes[0]);
+
+// Undo refused: no undo button, replace candidates unaffected.
+el._undo = { available: false, reason: "no reason given" };
+const withoutUndo = el._renderDetail(el._changes[0]);
+
+// The oldest loaded change has no previous at all: no replace trigger,
+// only the version button - matching today's behaviour exactly.
+const first = el._renderDetail(el._changes[2]);
+
+console.log(JSON.stringify({ withBoth, withoutUndo, first }));
+"""
+
+
+@pytest.fixture(scope="session")
+def action_bar(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "action_bar", _ACTION_BAR)
+
+
+def test_the_action_bar_carries_version_undo_and_replace_together(action_bar):
+    html = action_bar["withBoth"]
+    assert '<div class="action-bar">' in html
+    assert 'data-version="a"' in html
+    assert 'data-undo="a"' in html
+    assert 'data-replace="a"' in html
+    assert "Replace the whole dashboard…" in html
+
+
+def test_the_replace_trigger_is_absent_when_undo_is_refused_but_visible_anyway(action_bar):
+    # Replace does not depend on Undo being available - they are two
+    # independent offers in the same bar.
+    html = action_bar["withoutUndo"]
+    assert "data-undo=" not in html
+    assert 'data-replace="a"' in html
+
+
+def test_the_first_recorded_change_offers_no_replace_trigger(action_bar):
+    # Unchanged from before this redesign: `_renderDetail`'s "no
+    # previous" branch never called `_renderSetBack`, so it must never
+    # call `_replaceCandidates` either.
+    html = action_bar["first"]
+    assert "data-replace=" not in html
+    assert 'data-version="c"' in html

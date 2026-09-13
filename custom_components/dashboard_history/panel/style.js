@@ -446,16 +446,26 @@ export const STYLE = `
     gap: 8px;
     margin-top: 16px;
   }
-  .mkver {
+  .action-bar {
     display: flex;
-    align-items: center;
     flex-wrap: wrap;
+    align-items: center;
     gap: 10px;
-    margin-top: 8px;
+    margin-top: 16px;
   }
-  .mkver .named {
+  .action-bar .named {
     color: var(--secondary-text-color, #727272);
     font-size: 13px;
+  }
+  button.act.replace-trigger {
+    margin-left: auto;
+    background: none;
+    color: var(--warning-color, #b3541e);
+    padding: 8px 10px;
+  }
+  button.act.replace-trigger:hover {
+    background: rgba(179, 84, 30, 0.08);
+    background: color-mix(in srgb, var(--warning-color, #b3541e) 10%, transparent);
   }
   .why {
     display: block;
@@ -644,13 +654,6 @@ export const STYLE = `
     text-transform: uppercase;
     letter-spacing: .06em;
   }
-  details.more { margin-top: 16px; }
-  details.more > summary {
-    color: var(--secondary-text-color, #727272);
-    font-size: 13px;
-    cursor: pointer;
-  }
-  details.more > summary:hover { color: var(--primary-text-color, #212121); }
   /* Segmented control: Simple / Advanced switcher */
   .segmented-control {
     all: unset;

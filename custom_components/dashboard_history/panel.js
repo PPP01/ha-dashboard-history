@@ -1380,8 +1380,8 @@ class DashboardHistoryPanel extends HTMLElement {
     // Asked only where the answer has somewhere to go. `_renderDetail`
     // returns before the undo section when a change has no predecessor
     // - "the first recorded state, so there is nothing before it to
-    // compare against" - and `_renderSetBack`, the only other reader of
-    // `_undo`, is reached from below that return. So the oldest change
+    // compare against" - and `_replaceCandidates`, the only other reader
+    // of `_undo`, is reached from below that return. So the oldest change
     // of a dashboard used to have its undo computed and thrown away:
     // measured at 1.2-1.5 s on a 28-view dashboard, which is the cost
     // this row was split into two phases to avoid in the first place.
@@ -2459,61 +2459,78 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The coarse ways back, folded away.
+   * The candidate target states "Replace the whole dashboard" can offer
+   * for this change - "before" and/or "after" it - as pure data, plus
+   * the one sentence there is to say when there is nothing to offer at
+   * all. Kept as data rather than markup: the redesign shows both
+   * candidates in one overlay with a radio choice, and the card itself
+   * only needs to know whether the trigger button has anything to
+   * open.
    *
-   * They used to stand beside the fine ones, and the first person to
-   * meet them read them as two labels for one action - fairly, because
-   * in the case they met (newest change, one deleted card) that is
-   * exactly what they were. Since decision 15 the row leads with the
-   * targeted undo, and these are the escape hatch: replace the whole
-   * dashboard, everything since gone. Folded, not removed - it is a
-   * real capability and somebody wants it about once a year.
-   *
-   * The "before" button is left out when it would write exactly what
-   * the undo writes. The server says so with `equals_state_before`; the
-   * panel does not compare states, because a comparison here is logic
-   * here.
+   * The two conditions are unchanged from the buttons this replaces:
+   * "before" is left out where it would write exactly what Undo
+   * already writes (`equals_state_before`) or where the predecessor is
+   * already known to be the live state; "after" is left out where this
+   * very change already is the live state.
    */
-  _renderSetBack(change) {
+  _replaceCandidates(change) {
     const before = change.previous;
-    const buttons = [];
     const same = this._undo?.available && this._undo.equals_state_before;
-    // Where the predecessor is outside the loaded window there is no
-    // row to ask, so this stays false and the button stays - exactly
-    // what happened before, when `this._changes[index + 1]` was not
-    // there either.
     const beforeIsNow = Boolean(before && this._changeAt(before)?.same_as_now);
+    const candidates = [];
     if (before && !beforeIsNow && !same)
-      buttons.push({
+      candidates.push({
         revision: before,
-        label: "Back to the state before this change",
+        label: "State before this change",
+        timestamp: this._changeAt(before)?.timestamp ?? null,
       });
     if (!change.same_as_now)
-      buttons.push({
+      candidates.push({
         revision: change.revision,
-        label: "Back to the state after this change",
+        label: "State after this change",
+        timestamp: change.timestamp ?? null,
       });
-
     const why = beforeIsNow
-      ? `<span class="why">The state before this change is what the
-            dashboard holds now — nothing to set back.</span>`
+      ? "The state before this change is what the dashboard holds now — nothing to set back."
       : "";
-    if (!buttons.length) return why;
-    return `<details class="more">
-        <summary>Replace the whole dashboard instead</summary>
-        <p class="why" style="margin-top:8px">Setting a state back replaces
-          the whole dashboard with how it was then. Everything saved since
-          is no longer what the dashboard holds.</p>
-        <div class="backto">
-          ${buttons
-        .map(
-          (b) =>
-            `<button class="act ghost" data-state="${escape(b.revision)}"
-                  >${b.label}</button>`,
-        )
-        .join("")}
-        </div>${why}
-      </details>`;
+    return { candidates, why };
+  }
+
+  /**
+   * The card's one action bar: Version up to here, Undo (only where
+   * available), Replace the whole dashboard (only where there is a
+   * candidate to replace it with) - in that order, matching the
+   * redesign's "one action bar, not three stacked blocks".
+   *
+   * `offerReplace: false` is for the one caller with no `previous` at
+   * all (the first recorded state): `_replaceCandidates` reading a null
+   * `change.previous` would still offer "after" whenever this very
+   * change is not the live state, which is new territory this plan
+   * does not touch - the code it replaces never called `_renderSetBack`
+   * for that branch either.
+   */
+  _renderActionBar(change, { offerReplace = true } = {}) {
+    const undo = this._undo?.available ? this._undo : null;
+    const { candidates, why } = offerReplace
+      ? this._replaceCandidates(change)
+      : { candidates: [], why: "" };
+    const named = this._alreadyNamed(change);
+    const versionButton = `<button class="act ghost" data-version="${escape(change.revision)}"
+                >Version up to here</button>`;
+    const undoButton = undo
+      ? `<button class="act" data-undo="${escape(change.revision)}">Undo this change</button>`
+      : "";
+    const replaceButton = candidates.length
+      ? `<button class="act replace-trigger" data-replace="${escape(change.revision)}"
+                >&#x27F2; Replace the whole dashboard…</button>`
+      : "";
+    return `<div class="action-bar">
+        ${versionButton}
+        ${undoButton}
+        ${replaceButton}
+      </div>
+      ${named ? `<span class="named">${escape(named)}</span>` : ""}
+      ${why ? `<span class="why">${why}</span>` : ""}`;
   }
 
   _renderDetail(change) {
@@ -2539,7 +2556,7 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!before)
       return `<div class="detail">${plain}<p class="muted">This is the first
         recorded state, so there is nothing before it to compare against.</p>
-        ${this._renderMakeVersion(change)}</div>`;
+        ${this._renderActionBar(change, { offerReplace: false })}</div>`;
     const undo = this._undo?.available ? this._undo : null;
     // The compare bar itself already hides "current state" for a
     // dashboard Home Assistant does not currently have (`_renderMain`,
@@ -2559,14 +2576,8 @@ class DashboardHistoryPanel extends HTMLElement {
     // Left out where the number is not known - a row from outside the
     // loaded window has no place in it to count from, and a guessed
     // number in a sentence about what is kept would be the worst kind.
-    const made = this._madeSince(change);
-    const kept =
-      made ? ` and keeps the ${made} change${made === 1 ? "" : "s"} made since` : "";
     const offer = undo
-      ? `<div class="backto">
-           <button class="act" data-undo="${escape(change.revision)}">Undo this change</button>
-         </div>
-         <p class="why" style="margin-top:8px">Puts this change back${kept}.</p>`
+      ? ""
       : this._loadingUndo === change.revision
         ? `<p class="why row-loading"><span class="ring mini"></span> Checking whether this change can be undone…</p>`
         : this._undo
@@ -2601,8 +2612,7 @@ class DashboardHistoryPanel extends HTMLElement {
       ${plain}
       ${technical}
       ${offer}
-      ${this._renderSetBack(change)}
-      ${this._renderMakeVersion(change)}
+      ${this._renderActionBar(change)}
     </div>`;
   }
 
@@ -2645,26 +2655,6 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!change || !change.same_as_now) return [];
     const own = (change.versions || []).map((v) => shortName(v.name));
     return this._versionsMatchingNow().filter((name) => !own.includes(name));
-  }
-
-  /**
-   * The button that makes a version, and what is already named there.
-   *
-   * The note sits beside the button rather than only in the dialog the
-   * button opens: telling somebody after they clicked is telling them
-   * late. The button stays, though - unlike "Back to this version",
-   * which is a pure no-op on the current state, a second version on the
-   * same content creates a name that did not exist and can be exactly
-   * what somebody means ("we went back to the old layout, and that is
-   * v1.0.0 now"). The design record allows two versions on one state.
-   */
-  _renderMakeVersion(change) {
-    const named = this._alreadyNamed(change);
-    return `<div class="mkver">
-        <button class="act ghost" data-version="${escape(change.revision)}"
-                >Version up to here</button>
-        ${named ? `<span class="named">${escape(named)}</span>` : ""}
-      </div>`;
   }
 
   /**
@@ -3074,6 +3064,10 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick("[data-undo]", (element, event) => {
       event.stopPropagation();
       this._undoChange(element.dataset.undo);
+    });
+    onClick("[data-replace]", (element, event) => {
+      event.stopPropagation();
+      this._openReplace(element.dataset.replace);
     });
     onClick("[data-forget]", () => this._forget());
     onClick("[data-older]", () => this._loadOlder());
