@@ -622,25 +622,37 @@ async def main():
                 " })()"
             )
             await page.settle(f'!!{PANEL}.querySelector(".current .detail")')
-            # textContent, not innerText - same reason as above: this
-            # button can sit inside the closed "Replace the whole
-            # dashboard instead" fold.
+            # `.current .detail` runs through the very same
+            # `_renderDetail`/`_renderActionBar` path as every other row -
+            # since the redesign (Task 2/4) that path emits one
+            # `[data-replace]` trigger, not `[data-state]`. textContent,
+            # not innerText: the label reads the same regardless of
+            # visibility, matching the other `[data-replace]` reads above.
             label = await page.js(
-                f'{PANEL}.querySelector(".current .detail [data-state]")'
+                f'{PANEL}.querySelector(".current .detail [data-replace]")'
                 "?.textContent.trim() ?? null"
             )
             print(f"    label: {label!r}")
             await page.shot("9-current-state.png")
 
             print("\n-- Both destinations on one row, each aimed right --")
-            # A row sits between two states and offers both. Which button
-            # carries which revision is the whole correctness of it: aimed
-            # one row off, it overwrites the dashboard with a state nobody
-            # asked for.
+            # A row sits between two states and used to offer each as its
+            # own button, aimed at its own revision. Since the redesign
+            # (Task 2/4), both live inside one `[data-replace]` trigger's
+            # overlay instead, as a `[data-replace-choice]` radio - two
+            # `.replace-option` rows, each a label plus an optional
+            # timestamp, not a revision any more (that hash is deliberately
+            # no longer shown to whoever picks). `_replaceCandidates`
+            # documents the order this produces: "before" pushed first,
+            # "after" second - what is checked here is that order, plus
+            # each option's own timestamp against the change it is meant to
+            # name, the same cross-check the retired two-button code did by
+            # revision instead of by date.
             #
-            # Both only appear where neither target is the current state, so
-            # the row is picked from the data rather than assumed - on a
-            # history that went back and forth most rows show one button.
+            # Both options only appear where neither target is the current
+            # state, so the row is picked from the data rather than
+            # assumed - on a history that went back and forth most rows
+            # offer only one.
             picked = await page.js(
                 "(() => { const el = document.querySelector('dashboard-history-panel')"
                 " || (() => { const walk = (root) => {"
@@ -653,7 +665,9 @@ async def main():
                 " for (let i = 0; i < c.length - 1; i++)"
                 "   if (!c[i].same_as_now && !c[i + 1].same_as_now)"
                 "     return {index: i, self: c[i].revision.slice(0, 7),"
-                "             before: c[i + 1].revision.slice(0, 7)};"
+                "             before: c[i + 1].revision.slice(0, 7),"
+                "             selfTimestamp: c[i].timestamp ?? null,"
+                "             beforeTimestamp: c[i + 1].timestamp ?? null};"
                 " return null; })()"
             )
             if not picked:
@@ -672,30 +686,50 @@ async def main():
                     + f'.querySelectorAll(".change")[{picked["index"]}].click();'
                     " })()"
                 )
-                await page.settle(f'!!{PANEL}.querySelector(".detail .backto")')
-                # textContent, not innerText: since decision 15 these
-                # buttons sit inside the closed "Replace the whole
-                # dashboard instead" fold, and a closed <details> gives its
-                # non-summary content no layout box - innerText reads that
-                # as "", which made every label below come back empty
-                # while the aim itself was still exactly right.
-                aim = await page.js(
-                    "(() => { const b = [..." + PANEL
-                    + '.querySelectorAll(".detail .backto button")];'
-                    " return b.map(x => [x.textContent.trim(),"
-                    "                     x.dataset.state.slice(0, 7)]); })()"
+                await page.settle(f'!!{PANEL}.querySelector("[data-replace]")')
+                await page.js(f'{PANEL}.querySelector("[data-replace]").click()')
+                await page.settle(f'{PANEL}.querySelector("dialog.replace").open')
+                await page.settle(
+                    f'!!{PANEL}.querySelector("dialog.replace .body details.raw")'
                 )
-                for label, target in aim:
+                options = await page.js(
+                    "(() => { const rows = [..." + PANEL
+                    + '.querySelectorAll("[data-replace-choice] .replace-option")];'
+                    " return rows.map(r => ["
+                    "   r.querySelector('span:not(.when)')?.textContent.trim() ?? null,"
+                    "   r.querySelector('.when')?.textContent.trim() ?? null,"
+                    " ]); })()"
+                )
+                # `_replaceCandidates` always pushes "before" first and
+                # "after" second when both survive - unconditionally, not
+                # depending on which happens to carry a timestamp - so
+                # index 0 is expected to be "before" and index 1 "after".
+                expected = ["before", "after"]
+                for index, (label, stamp) in enumerate(options):
                     where = (
-                        "the state BEFORE this change"
-                        if target == picked["before"]
-                        else "the state AFTER this change"
-                        if target == picked["self"]
-                        else "SOMEWHERE ELSE - WRONG"
+                        "before" if "before" in (label or "").lower()
+                        else "after" if "after" in (label or "").lower()
+                        else "UNRECOGNISED LABEL"
                     )
-                    print(f"    {label!r} -> {target} = {where}")
-                print(f"    buttons on that row: {len(aim)}")
+                    order_note = (
+                        "in the documented order"
+                        if index < len(expected) and where == expected[index]
+                        else "OUT OF THE DOCUMENTED ORDER"
+                    )
+                    print(f"    option {index}: {label!r} — {stamp!r} ({where}, {order_note})")
+                print(f"    options on that row: {len(options)} (expected 2)")
+                print(
+                    "    for comparison, the change's own timestamps: "
+                    f"after={picked['selfTimestamp']!r} "
+                    f"before={picked['beforeTimestamp']!r}"
+                )
                 await page.shot("12-two-destinations.png")
+                # Cancel, emphatically: this instance is disposable but the
+                # point of the preview is that nothing is written.
+                await page.js(
+                    f'{PANEL}.querySelector("dialog.replace").close("cancel")'
+                )
+                await asyncio.sleep(0.5)
 
             print("\n-- Naming what each half of a row is about --")
             # Measured on dh-testlauf: a row read "4 moved · same as now",
