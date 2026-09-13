@@ -114,6 +114,7 @@ export function versionHead({ section, here, top, compareMode = false, compareCh
       ${compareMode
       ? `<input type="checkbox" class="compare-check" data-compare="${escape(first.name)}"
                  data-compare-label="${escape(first.title || first.name)}"
+                 ${here && top === 0 ? 'data-compare-now="1"' : ""}
                  ${compareChecked ? "checked" : ""}>`
       : ""}
       <span class="name">${escape(first.name.split("/").pop())}</span>
@@ -223,12 +224,18 @@ export function renderRow({
              title="A different entry that holds exactly what ${escape(joinNames(matching))} holds. Going back to a version writes a new entry; this is that entry."
              >same state as ${escape(someNames(matching))}</span>`
     : "";
+  // `spokenFor` only mutes the chip's own text - the row underneath a
+  // version head that sits on the newest change still IS that state,
+  // and compare mode needs to know that regardless of whether anything
+  // on screen says so out loud.
+  const isNow = newest && change.same_as_now;
   return `
       <div class="card">
         <div class="change penholder" data-revision="${escape(change.revision)}">
           ${compareMode
       ? `<input type="checkbox" class="compare-check" data-compare="${escape(change.revision)}"
                  data-compare-label="${escape(change.description || change.message)}"
+                 ${isNow ? 'data-compare-now="1"' : ""}
                  ${compareChecked ? "checked" : ""}>`
       : ""}
           <span class="what">${escape(change.description || change.message)}${chip}${named}

@@ -1615,6 +1615,181 @@ def test_compare_dialog_opens_on_two_picks_and_offers_put_back(compare_open):
     assert compare_open["dialogOpen"] is True
 
 
+_COMPARE_KNOWN_CURRENT_ROW = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+el._toggleCompareMode();
+// "b" is picked the way a row or version already marked same_as_now
+// picks itself - `now: true`, not the pinned "Current state" pick's
+// `revision: null`. A dashboard whose newest change already carries a
+// version (the case a real installation showed: v1.0.1 sitting on the
+// current state) has no pinned pick ticked at all here, and still
+// ought to offer Put-back once the backend confirms "b" is the newer
+// side.
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision("b", "v1.0.1", true);
+await settle();
+
+calls.find((c) => c.type === "compare").resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: "b", time_a: 1731000000, time_b: 1731100000,
+});
+await settle();
+
+const missingCall = calls.find((c) => c.type === "deleted_since");
+if (missingCall) {
+  missingCall.resolve({ items: [{ position: 0, kind: "card", label: "Gone card", view: "a" }] });
+  await settle();
+}
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+console.log(JSON.stringify({
+  missingCalled: !!missingCall,
+  missingArgs: missingCall ? missingCall.extra : null,
+  bodyHtml: dialog.querySelector("[data-compare-body]").innerHTML,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_known_current_row(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_known_current_row", _COMPARE_KNOWN_CURRENT_ROW
+    )
+
+
+def test_put_back_is_offered_against_a_row_already_known_to_be_current(
+    compare_known_current_row,
+):
+    # Found from a real installation: a row or version can already be
+    # marked "current state" (same_as_now, or a version sitting on the
+    # newest change) without being the pinned "Current state" pick -
+    # and Put-back used to stay hidden for it regardless, because the
+    # only check was "is the newer side literally revision === null".
+    result = compare_known_current_row
+    assert result["missingCalled"] is True
+    assert result["missingArgs"] == {"dashboard": "dash", "revision": "a"}
+    assert "Put back" in result["bodyHtml"]
+
+
+_COMPARE_TWO_HISTORICAL_REVISIONS = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => {
+  calls.push({ type, extra, resolve });
+});
+
+el._toggleCompareMode();
+// Neither side is "now": two ordinary past revisions, neither of them
+// known to hold today's content. Put-back has nothing to put back
+// *into* here - `deleted_since`/`restore_deleted` always write into
+// the live dashboard, and nothing here says the live dashboard is
+// either of these two states.
+el._toggleCompareRevision("a", "1 removed");
+el._toggleCompareRevision("b", "v1.0.0");
+await settle();
+
+calls.find((c) => c.type === "compare").resolve({
+  groups: [], note: "", diff: "-Gone card\\n",
+  revision_a: "a", revision_b: "b", time_a: 1731000000, time_b: 1731100000,
+});
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.compare");
+console.log(JSON.stringify({
+  missingCalled: calls.some((c) => c.type === "deleted_since"),
+  bodyHtml: dialog.querySelector("[data-compare-body]").innerHTML,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_two_historical_revisions(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory,
+        "compare_two_historical_revisions",
+        _COMPARE_TWO_HISTORICAL_REVISIONS,
+    )
+
+
+def test_put_back_stays_hidden_between_two_past_revisions(
+    compare_two_historical_revisions,
+):
+    result = compare_two_historical_revisions
+    assert result["missingCalled"] is False
+    assert "Put back" not in result["bodyHtml"]
+
+
+_COMPARE_BAR_PINNED_PICK = """
+const el = new Panel();
+el._selected = "dash";
+el._mode = "advanced";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._versions = [];
+el.shadowRoot = node();
+
+// The newest change already stands for the current state - the same
+// fact a crowned row or a version head would show on screen. A second,
+// separate checkbox saying the same thing is what confused a real user
+// (2026-09-13): "the current state is already known, why isn't that
+// checkbox the same as this one?" It should be - there is only one.
+el._changes = [
+  { revision: "a", message: "1 removed", timestamp: 1731000000,
+    same_as_now: true, versions: [] },
+];
+// Not "current-pick" alone: that class name also sits in the
+// stylesheet's own CSS rule, right at the top of every render
+// (`<style>${STYLE}</style>`), so it is never actually absent from
+// `innerHTML` - only the pinned row's own markup is.
+const PINNED_PICK = 'data-compare-label="Current state"';
+el._toggleCompareMode();
+await settle();
+const withCrownedRow = el.shadowRoot.innerHTML.includes(PINNED_PICK);
+
+// Decision 9's own edge case: the dashboard changed at Home Assistant's
+// back, so nothing recorded matches it any more. Nothing on screen can
+// stand in for "Current state" here, so the pinned pick stays - it is
+// the one thing decision 9 keeps it for.
+el._changes = [
+  { revision: "a", message: "1 removed", timestamp: 1731000000,
+    same_as_now: false, versions: [] },
+];
+el._render();
+const withNothingCrowned = el.shadowRoot.innerHTML.includes(PINNED_PICK);
+
+console.log(JSON.stringify({ withCrownedRow, withNothingCrowned }));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_bar_pinned_pick(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_bar_pinned_pick", _COMPARE_BAR_PINNED_PICK
+    )
+
+
+def test_the_pinned_current_state_pick_hides_once_a_row_already_stands_for_it(
+    compare_bar_pinned_pick,
+):
+    result = compare_bar_pinned_pick
+    assert result["withCrownedRow"] is False
+    assert result["withNothingCrowned"] is True
+
+
 _COMPARE_MISSING_GROUPED_BY_VIEW = """
 const el = new Panel();
 el._render = () => {};
@@ -3676,6 +3851,16 @@ const head = (here, top) =>
     here,
     top,
   });
+const headCompare = (here, top) =>
+  rows.versionHead({
+    section: {
+      versions: [{ name: "dash/v1.0.0", title: "One", annotated: true }],
+      rows: [top, top + 1],
+    },
+    here,
+    top,
+    compareMode: true,
+  });
 
 // Two versions on one state: the head names both, so both need a way
 // to be renamed. The second only ever appears here - the simple mode
@@ -3716,6 +3901,27 @@ console.log(JSON.stringify({
   lowerChip: row(CHANGE, { newest: false }).includes("same state as now"),
   spokenFor: row(CHANGE, { newest: true, spokenFor: true })
     .includes("current state"),
+  // A version sitting on the newest change is known-current for
+  // compare mode even though nothing here calls it a "chip" - the
+  // version head states it in plain text instead (`crowned` above).
+  headNowWhereCrowned: headCompare(true, 0).includes('data-compare-now="1"'),
+  // Further down, `here` still means "this is where this version's
+  // state sits", but not on the newest change - "same state as now",
+  // never "current state" - so it must not carry the flag either.
+  headNowFurtherDown: headCompare(true, 2).includes('data-compare-now="1"'),
+  headNowWhereNotHere: headCompare(false, 0).includes('data-compare-now="1"'),
+  // `spokenFor` mutes only the chip's *text* - the checkbox underneath
+  // a crowned version head is still the newest, still same_as_now, and
+  // compare mode has to know that regardless of what the row says.
+  rowNowWhenCrowned: row(CHANGE, { newest: true, compareMode: true, spokenFor: true })
+    .includes('data-compare-now="1"'),
+  rowNowWhenNotSameAsNow: row({ ...CHANGE, same_as_now: false }, { newest: true, compareMode: true })
+    .includes('data-compare-now="1"'),
+  // Byte-identical further down without being where you are (moved a
+  // card back and forth) is not "now" for compare mode either - the
+  // same distinction `lowerChip` above already draws.
+  rowNowWhenNotNewest: row(CHANGE, { newest: false, compareMode: true })
+    .includes('data-compare-now="1"'),
   movedOn: row({ ...CHANGE, same_as_now: false }, { newest: true })
     .includes("chip"),
   named: row(CHANGE, { newest: true, matching: ["v1.0.0"] })
@@ -3771,6 +3977,23 @@ def test_a_chip_says_which_kind_of_sameness_it_means(row_parts):
     # And nothing at all where the dashboard has moved on.
     assert row_parts["movedOn"] is False
     assert row_parts["named"] is True
+
+
+def test_compare_mode_marks_a_pick_that_is_known_to_be_current(row_parts):
+    # Found from a real installation: a version sitting on the newest
+    # change is already known to be "current state" - the panel says so
+    # in the version head's own text - but its compare-mode checkbox
+    # used to carry only its own revision, with nothing distinguishing
+    # it from an arbitrary past pick. `data-compare-now` is that
+    # distinction, and it must land on exactly the picks the panel
+    # already calls current, in either rendering path (a row, or a
+    # version head), and nowhere else.
+    assert row_parts["headNowWhereCrowned"] is True
+    assert row_parts["headNowFurtherDown"] is False
+    assert row_parts["headNowWhereNotHere"] is False
+    assert row_parts["rowNowWhenCrowned"] is True
+    assert row_parts["rowNowWhenNotSameAsNow"] is False
+    assert row_parts["rowNowWhenNotNewest"] is False
 
 
 def test_every_version_a_head_names_can_be_renamed(row_parts):

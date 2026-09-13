@@ -338,17 +338,28 @@ class DashboardHistoryPanel extends HTMLElement {
    * One pick in the compare mode. `revision` is `null` for "Current
    * state" - the one pick that is not a recorded revision at all.
    *
+   * `now` says this pick is *known* to hold exactly what the dashboard
+   * holds right now - true by definition for "Current state" itself,
+   * and also true for an ordinary row or version that carries the same
+   * fact (`same_as_now`, or a version sitting on the newest change).
+   * `_openCompare` reads it to decide whether Put-back applies, rather
+   * than asking only "is this literally the pinned pick" - a picked
+   * revision that is *known* current is exactly as good a baseline as
+   * the pinned one, and treating it as a different case is what made
+   * Put-back silently withhold itself from a row that already told you
+   * it was current.
+   *
    * A third pick evicts the oldest of the two standing picks (FIFO),
    * never an error: comparing is exploratory, and blocking a third
    * click would only make somebody uncheck one first for no reason.
    * Picking an already-selected revision again removes just that one.
    */
-  _toggleCompareRevision(revision, label) {
+  _toggleCompareRevision(revision, label, now = false) {
     const at = this._compareSelection.findIndex((s) => s.revision === revision);
     if (at >= 0) {
       this._compareSelection.splice(at, 1);
     } else {
-      this._compareSelection.push({ revision, label });
+      this._compareSelection.push({ revision, label, now: now || revision === null });
       if (this._compareSelection.length > 2) this._compareSelection.shift();
     }
     this._render();
@@ -372,7 +383,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._compareMode = true;
     this._compareSelection = [
       { revision: previousRevision, label: row?.description || row?.message || "" },
-      { revision: null, label: "Current state" },
+      { revision: null, label: "Current state", now: true },
     ];
     this._render();
     this._openCompare();
@@ -446,10 +457,13 @@ class DashboardHistoryPanel extends HTMLElement {
         : `the state after "${entry.label}" (${escape(when(time))})`;
 
     let missingHtml = "";
-    // Put back only where one side is the current state - the other
-    // side is then the reference `deleted_since` and `restore_deleted`
-    // already work against, unchanged.
-    const historicalSide = newer.revision === null ? older : null;
+    // Put back wherever the newer side is *known* to hold the current
+    // state - not only where it is literally the pinned "Current state"
+    // pick. A row or version already marked as holding exactly today's
+    // content (`now`, set in `_toggleCompareRevision`) is just as valid
+    // a baseline: `deleted_since`/`restore_deleted` always work against
+    // the live configuration regardless of which revision named it.
+    const historicalSide = newer.now ? older : null;
     if (historicalSide) {
       const missing = await this._call("deleted_since", {
         dashboard,
@@ -2792,12 +2806,23 @@ class DashboardHistoryPanel extends HTMLElement {
     // not currently have: there is nothing there to compare against,
     // and Put-back only ever writes into a live state (spec decision
     // 19's edge case table).
+    //
+    // Also left out wherever the newest change already stands for the
+    // current state - as a crowned row, or as the version head above
+    // it, both marked `now` in `_renderTopSection`/`_renderVersionHead`
+    // - because ticking that one already means the same thing, and a
+    // second checkbox for one fact reads as two different facts. Kept
+    // only for decision 9's own edge case, the one thing it exists
+    // for: nothing recorded matches what Home Assistant holds right
+    // now, so nothing on screen can stand in for "Current state" but
+    // this pick itself.
+    const somethingIsAlreadyCurrent = Boolean(this._changes[0]?.same_as_now);
     const compareBar = `<div class="compare-bar">
            <button class="act ghost" data-compare-toggle="1">
              ${this._compareMode ? "Exit compare mode" : "Compare mode"}
            </button>
          </div>
-         ${this._compareMode && dashboard?.exists !== false
+         ${this._compareMode && dashboard?.exists !== false && !somethingIsAlreadyCurrent
         ? currentStateRow(this._compareSelection.some((s) => s.revision === null))
         : ""}`;
     const topBar = banner + compareBar;
@@ -3091,7 +3116,8 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick(".compare-check", (element, event) => {
       event.stopPropagation();
       const revision = element.dataset.compare || null;
-      this._toggleCompareRevision(revision, element.dataset.compareLabel || "");
+      const now = element.dataset.compareNow === "1";
+      this._toggleCompareRevision(revision, element.dataset.compareLabel || "", now);
     });
     onClick("[data-compare-from]", (element, event) => {
       event.stopPropagation();
