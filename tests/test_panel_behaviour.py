@@ -6121,3 +6121,38 @@ def test_a_single_replace_candidate_skips_the_radio_choice(open_replace_single):
     # only one possible reply.
     assert open_replace_single["callCount"] == 1
     assert open_replace_single["choiceHtml"] == ""
+
+
+_UNDO_INTRO = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a" }, { revision: "b" }, { revision: "c" }];
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const done = el._undoChange("a");
+await settle();
+calls[0].resolve({ preview: "-x\\n+y", explanation: { groups: [], note: "" } });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
+const bodyHtml = dialog.querySelector(".body").innerHTML;
+dialog.close("cancel");
+await done;
+
+console.log(JSON.stringify({ bodyHtml }));
+"""
+
+
+@pytest.fixture(scope="session")
+def undo_intro(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "undo_intro", _UNDO_INTRO)
+
+
+def test_the_undo_dialog_carries_the_kept_since_sentence(undo_intro):
+    # Moved out of the card (design handoff point 2): the reader sees
+    # this sentence at the point they are asked to confirm, not before.
+    assert "Puts this change back and keeps the 2 changes made since." in undo_intro["bodyHtml"]

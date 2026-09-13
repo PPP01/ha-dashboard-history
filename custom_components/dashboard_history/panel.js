@@ -1444,7 +1444,7 @@ class DashboardHistoryPanel extends HTMLElement {
    * with nobody having seen its diff, which is the one rule this panel
    * exists to keep.
    */
-  async _confirm(title, request, wantsKeep = false) {
+  async _confirm(title, request, wantsKeep = false, intro = "") {
     const asked = this._selected;
     // Claimed as well, so the dialog does not open at all when the
     // selection moved while the preview was out: a diff for a dashboard
@@ -1572,6 +1572,7 @@ class DashboardHistoryPanel extends HTMLElement {
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : renderPlain(preview.explanation, "What applying this does") +
+      (intro ? `<p class="why">${escape(intro)}</p>` : "") +
       `<div class="confirm-seg-bar" role="group" aria-label="Details and information">
          <button type="button" class="confirm-seg-btn" data-seg="diff"
                  aria-expanded="false" aria-controls="confirm-diff-panel">
@@ -2491,14 +2492,24 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _undoChange(revision) {
-    this._confirm("Undo this change", (confirm, keep, dashboard) => [
-      "undo_change",
-      // `preview` only on the call that shows one - the first, before
-      // the write. The second call, with `confirm` true, already has
-      // the diff this dialog is displaying; asking for it again would
-      // pay for the same two dumps a second time for nothing shown.
-      { dashboard, revision, confirm, preview: !confirm },
-    ]);
+    const change = this._changeAt(revision);
+    const made = change ? this._madeSince(change) : null;
+    const toKeep = made !== null ? this._changes.length - 1 - made : null;
+    const kept =
+      toKeep !== null ? ` and keeps the ${toKeep} change${toKeep === 1 ? "" : "s"} made since` : "";
+    this._confirm(
+      "Undo this change",
+      (confirm, keep, dashboard) => [
+        "undo_change",
+        // `preview` only on the call that shows one - the first, before
+        // the write. The second call, with `confirm` true, already has
+        // the diff this dialog is displaying; asking for it again would
+        // pay for the same two dumps a second time for nothing shown.
+        { dashboard, revision, confirm, preview: !confirm },
+      ],
+      false,
+      `Puts this change back${kept}.`,
+    );
   }
 
   _renderDashboard(d) {
