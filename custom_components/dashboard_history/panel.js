@@ -1573,89 +1573,12 @@ class DashboardHistoryPanel extends HTMLElement {
            nothing to apply.</p>`
       : renderPlain(preview.explanation, "What applying this does") +
       (intro ? `<p class="why">${escape(intro)}</p>` : "") +
-      `<div class="confirm-seg-bar" role="group" aria-label="Details and information">
-         <button type="button" class="confirm-seg-btn" data-seg="diff"
-                 aria-expanded="false" aria-controls="confirm-diff-panel">
-           <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor" class="seg-icon">
-             <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd"/>
-           </svg>
-           <span>Show the technical details</span>
-         </button>
-         <button type="button" class="confirm-seg-btn" data-seg="info"
-                 aria-expanded="false" aria-controls="confirm-info-panel"${keeps ? "" : " hidden"}>
-           <svg viewBox="0 0 20 20" width="15" height="15" fill="currentColor" class="seg-icon">
-             <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-           </svg>
-           <span>Current state is preserved</span>
-         </button>
-       </div>
-       <div class="confirm-panels">
-         <details class="raw" id="confirm-diff-panel">
-           <summary>Show the technical details</summary>
-           ${renderDiff(preview.preview)}
-         </details>
-         <div class="confirm-info-panel" id="confirm-info-panel" hidden>
-           ${keepsContent}
-         </div>
-       </div>`;
+      `<details class="raw">
+         <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
+         ${renderDiff(preview.preview)}
+       </details>
+       ${keepsContent}`;
 
-    const segBar = dialog.querySelector(".confirm-seg-bar");
-    const rawDetails = dialog.querySelector("details.raw");
-    const infoPanel = dialog.querySelector(".confirm-info-panel");
-    const diffBtn = segBar?.querySelector('[data-seg="diff"]');
-    const infoBtn = segBar?.querySelector('[data-seg="info"]');
-
-    let currentSeg = null;
-
-    // `aria-expanded` and not `aria-pressed`, which is what these
-    // carried at first. The two say different things, and the panel
-    // uses both: the version dialog's patch/minor/major buttons are a
-    // choice among alternatives, and pressed is right there. These two
-    // disclose a panel. Pressed would announce a switch that is on and
-    // never say that anything appeared, or where - and the `<summary>`
-    // these buttons replaced said both by itself, before it was
-    // hidden away with `display: none`. `aria-controls` names the
-    // panel each one opens.
-    const updateSegState = (activeSeg) => {
-      currentSeg = activeSeg;
-      if (diffBtn) {
-        diffBtn.classList.toggle("active", activeSeg === "diff");
-        diffBtn.setAttribute("aria-expanded", String(activeSeg === "diff"));
-      }
-      if (infoBtn) {
-        infoBtn.classList.toggle("active", activeSeg === "info");
-        infoBtn.setAttribute("aria-expanded", String(activeSeg === "info"));
-      }
-      if (rawDetails) {
-        rawDetails.open = activeSeg === "diff";
-      }
-      if (infoPanel) {
-        infoPanel.hidden = activeSeg !== "info";
-      }
-    };
-    updateSegState(null);
-
-    if (diffBtn) {
-      diffBtn.addEventListener("click", () => {
-        updateSegState(currentSeg === "diff" ? null : "diff");
-      });
-    }
-
-    if (infoBtn) {
-      infoBtn.addEventListener("click", () => {
-        updateSegState(currentSeg === "info" ? null : "info");
-      });
-    }
-
-    if (rawDetails) {
-      rawDetails.addEventListener("toggle", () => {
-        if (rawDetails.open && currentSeg !== "diff") {
-          updateSegState("diff");
-        } else if (!rawDetails.open && currentSeg === "diff") {
-          updateSegState(null);
-        }
-      });
-    }
     const applyButton = dialog.querySelector('.actions button[value="apply"]');
     applyButton.hidden = Boolean(nothingToDo);
     dialog.querySelector('.actions button[value="cancel"]').textContent =

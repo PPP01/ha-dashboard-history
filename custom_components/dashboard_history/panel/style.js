@@ -876,57 +876,6 @@ export const STYLE = `
   .hint { margin-top:18px; }
   .linky { background:none; border:none; padding:0; color:inherit;
          text-decoration:underline; cursor:pointer; font:inherit; }
-  /* Segmented toggle bar for confirmation dialogs */
-  .confirm-seg-bar {
-    margin: 14px 0 6px;
-    display: inline-flex;
-    background: var(--secondary-background-color, #fafafa);
-    border: 1px solid var(--divider-color, rgba(0, 0, 0, .12));
-    border-radius: 8px;
-    padding: 3px;
-    gap: 4px;
-    max-width: 100%;
-  }
-  .confirm-seg-btn {
-    background: none;
-    border: none;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--secondary-text-color, #727272);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: background .15s ease, color .15s ease, box-shadow .15s ease;
-    user-select: none;
-    font-family: inherit;
-  }
-  .confirm-seg-btn:hover {
-    color: var(--primary-text-color, #212121);
-  }
-  .confirm-seg-btn.active {
-    background: var(--card-background-color, #fff);
-    color: var(--primary-color, #03a9f4);
-    font-weight: 600;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
-  }
-  .confirm-seg-btn .seg-icon {
-    flex-shrink: 0;
-  }
-  dialog.confirm details.raw {
-    margin-top: 10px;
-  }
-  dialog.confirm details.raw > summary {
-    display: none;
-  }
-  .confirm-info-panel {
-    margin-top: 10px;
-  }
-  .confirm-info-panel[hidden] {
-    display: none;
-  }
   /* Tinted from the theme's own accent rather than from a fixed blue:
      the left edge below already reads --primary-color, so on a theme
      that sets another one the fill and the edge used to disagree. The

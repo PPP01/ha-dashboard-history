@@ -1197,7 +1197,7 @@ def test_a_dialog_dismissed_without_a_button_writes_nothing(keeping):
     assert keeping["afterEscape"] == 1
 
 
-_CONFIRM_SEGMENTED = """
+_CONFIRM_PILL = """
 const el = new Panel();
 el._render = () => {};
 el._selected = "dash";
@@ -1205,8 +1205,6 @@ el._mode = "advanced";
 el._changes = [{ revision: "a" }, { revision: "b" }];
 el.shadowRoot = node();
 el._recorded = () => Promise.resolve();
-el._select = async () => {};
-el._loadDashboardsQuietly = async () => {};
 
 el._call = (type, extra) => {
   if (type === "restore_state" && !extra.confirm)
@@ -1222,144 +1220,43 @@ const done = el._restoreState("b", "Back to this version");
 await settle();
 
 const dialog = el.shadowRoot.querySelector("dialog.confirm");
-const segBar = dialog.querySelector(".confirm-seg-bar");
-const diffBtn = segBar.querySelector('[data-seg="diff"]');
-const infoBtn = segBar.querySelector('[data-seg="info"]');
 const raw = dialog.querySelector("details.raw");
-const infoPanel = dialog.querySelector(".confirm-info-panel");
+const bodyHtml = dialog.querySelector(".body").innerHTML;
 
-const initial = {
-  diffActive: diffBtn.classList.contains("active"),
-  infoActive: infoBtn.classList.contains("active"),
-  rawOpen: raw.open,
-  infoHidden: infoPanel.hidden,
-  diffExpanded: diffBtn.getAttribute("aria-expanded"),
-  infoExpanded: infoBtn.getAttribute("aria-expanded"),
-};
-
-diffBtn._on.click();
-const afterDiffClick = {
-  diffActive: diffBtn.classList.contains("active"),
-  infoActive: infoBtn.classList.contains("active"),
-  rawOpen: raw.open,
-  infoHidden: infoPanel.hidden,
-  diffExpanded: diffBtn.getAttribute("aria-expanded"),
-  infoExpanded: infoBtn.getAttribute("aria-expanded"),
-};
-
-diffBtn._on.click();
-const afterDiffToggleOff = {
-  diffActive: diffBtn.classList.contains("active"),
-  infoActive: infoBtn.classList.contains("active"),
-  rawOpen: raw.open,
-  infoHidden: infoPanel.hidden,
-  diffExpanded: diffBtn.getAttribute("aria-expanded"),
-  infoExpanded: infoBtn.getAttribute("aria-expanded"),
-};
-
-infoBtn._on.click();
-const afterInfoClick = {
-  diffActive: diffBtn.classList.contains("active"),
-  infoActive: infoBtn.classList.contains("active"),
-  rawOpen: raw.open,
-  infoHidden: infoPanel.hidden,
-  diffExpanded: diffBtn.getAttribute("aria-expanded"),
-  infoExpanded: infoBtn.getAttribute("aria-expanded"),
-};
-
-diffBtn._on.click();
-const afterSwitchToDiff = {
-  diffActive: diffBtn.classList.contains("active"),
-  infoActive: infoBtn.classList.contains("active"),
-  rawOpen: raw.open,
-  infoHidden: infoPanel.hidden,
-  diffExpanded: diffBtn.getAttribute("aria-expanded"),
-  infoExpanded: infoBtn.getAttribute("aria-expanded"),
-};
-
-const markup = dialog.querySelector(".body").innerHTML;
-const controls = {
-  diff: markup.includes('aria-controls="confirm-diff-panel"'),
-  info: markup.includes('aria-controls="confirm-info-panel"'),
-  diffPanelHasId: markup.includes('id="confirm-diff-panel"'),
-  infoPanelHasId: markup.includes('id="confirm-info-panel"'),
-  noPressed: !markup.includes("aria-pressed"),
-};
+const beforeOpen = { rawOpen: raw.open };
+raw.open = true;
+raw._on.toggle?.();
+const afterOpen = { rawOpen: raw.open };
 
 dialog.close("cancel");
 await done;
 
-console.log(JSON.stringify({
-  initial,
-  afterDiffClick,
-  afterDiffToggleOff,
-  afterInfoClick,
-  afterSwitchToDiff,
-  controls,
-}));
+console.log(JSON.stringify({ bodyHtml, beforeOpen, afterOpen }));
 """
 
 
 @pytest.fixture(scope="session")
-def confirm_segmented(tmp_path_factory):
-    return _run_in_node(tmp_path_factory, "confirm_segmented", _CONFIRM_SEGMENTED)
+def confirm_pill(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "confirm_pill", _CONFIRM_PILL)
 
 
-def test_the_panel_buttons_say_that_they_disclose(confirm_segmented):
-    # These two replaced a <summary>, whose display:none took its
-    # semantics with it: a native disclosure says that it opens
-    # something and what. They carried `aria-pressed`, which announces
-    # a switch that is on and names nothing - right for the version
-    # dialog's patch/minor/major choice, wrong here.
-    assert confirm_segmented["controls"]["noPressed"] is True
-    assert confirm_segmented["controls"]["diff"] is True
-    assert confirm_segmented["controls"]["info"] is True
-    assert confirm_segmented["controls"]["diffPanelHasId"] is True
-    assert confirm_segmented["controls"]["infoPanelHasId"] is True
+def test_the_confirm_dialog_uses_the_same_pill_as_the_card(confirm_pill):
+    # One component everywhere, per the redesign - no second
+    # disclosure pattern built just for this dialog.
+    assert '<span class="glyph">&lt;/&gt;</span> Show the technical details' in confirm_pill["bodyHtml"]
+    assert "confirm-seg-bar" not in confirm_pill["bodyHtml"]
+    assert "confirm-info-panel" not in confirm_pill["bodyHtml"]
 
 
-def test_the_disclosed_state_travels_with_the_panels(confirm_segmented):
-    steps = [
-        ("initial", "false", "false"),
-        ("afterDiffClick", "true", "false"),
-        ("afterDiffToggleOff", "false", "false"),
-        ("afterInfoClick", "false", "true"),
-        ("afterSwitchToDiff", "true", "false"),
-    ]
-    for frame, diff, info in steps:
-        assert confirm_segmented[frame]["diffExpanded"] == diff, frame
-        assert confirm_segmented[frame]["infoExpanded"] == info, frame
+def test_the_confirm_dialogs_pill_starts_closed(confirm_pill):
+    assert confirm_pill["beforeOpen"]["rawOpen"] is False
 
 
-def test_confirm_segmented_bar_starts_collapsed(confirm_segmented):
-    assert confirm_segmented["initial"]["diffActive"] is False
-    assert confirm_segmented["initial"]["infoActive"] is False
-    assert confirm_segmented["initial"]["rawOpen"] is False
-    assert confirm_segmented["initial"]["infoHidden"] is True
-
-
-def test_confirm_segmented_bar_toggles_diff(confirm_segmented):
-    assert confirm_segmented["afterDiffClick"]["diffActive"] is True
-    assert confirm_segmented["afterDiffClick"]["rawOpen"] is True
-    assert confirm_segmented["afterDiffClick"]["infoHidden"] is True
-
-    # Clicking active diff segment toggles it off
-    assert confirm_segmented["afterDiffToggleOff"]["diffActive"] is False
-    assert confirm_segmented["afterDiffToggleOff"]["rawOpen"] is False
-    assert confirm_segmented["afterDiffToggleOff"]["infoHidden"] is True
-
-
-def test_confirm_segmented_bar_toggles_info_and_switches(confirm_segmented):
-    assert confirm_segmented["afterInfoClick"]["infoActive"] is True
-    assert confirm_segmented["afterInfoClick"]["diffActive"] is False
-    assert confirm_segmented["afterInfoClick"]["rawOpen"] is False
-    assert confirm_segmented["afterInfoClick"]["infoHidden"] is False
-
-    # Switching directly to diff
-    assert confirm_segmented["afterSwitchToDiff"]["diffActive"] is True
-    assert confirm_segmented["afterSwitchToDiff"]["infoActive"] is False
-    assert confirm_segmented["afterSwitchToDiff"]["rawOpen"] is True
-    assert confirm_segmented["afterSwitchToDiff"]["infoHidden"] is True
+def test_the_footnote_is_visible_without_any_toggle(confirm_pill):
+    # "What the dashboard holds now is not lost..." used to be behind a
+    # second, "Current state is preserved" button. It is now always
+    # there whenever there is anything to say - no click needed.
+    assert "What the dashboard holds now is not lost" in confirm_pill["bodyHtml"]
 
 
 _KEEPBOX_CHANGE = """
