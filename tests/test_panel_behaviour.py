@@ -5845,3 +5845,29 @@ def test_the_wordless_lightweight_tag_claims_nothing_it_does_not_have(removing):
     assert removing["wordlessNamesOnlyTheTag"] is True
     assert removing["wordlessHidesTheWordsParagraph"] is True
     assert removing["wordlessHasNoDescriptionParagraph"] is True
+
+
+_CARD_DIFF_PILL = """
+const el = new Panel();
+el._render = () => {};
+el._changes = [{ revision: "a", previous: "b" }];
+el._explanation = { groups: [], note: "", diff: "-old\\n+new" };
+el._undo = null;
+
+const html = el._renderDetail(el._changes[0]);
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def card_diff_pill(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "card_diff_pill", _CARD_DIFF_PILL)
+
+
+def test_the_cards_technical_details_summary_carries_the_pill_glyph(card_diff_pill):
+    # The redesign turns the native triangle into a pill with a `</>`
+    # glyph before the label; the label text itself does not change, so
+    # the existing progressive-expand tests (which grep for exactly
+    # "Show the technical details") keep passing unmodified.
+    assert '<span class="glyph">&lt;/&gt;</span> Show the technical details' in card_diff_pill["html"]
+    assert 'details class="raw"' in card_diff_pill["html"]

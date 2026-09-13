@@ -508,10 +508,39 @@ export const STYLE = `
   .plain li.added { color: var(--success-color, #0f9d58); }
   .plain .note { margin: 8px 0 0; font-size: 13px; }
   details.raw > summary {
-    padding: 8px 0;
-    color: var(--secondary-text-color, #727272);
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    margin: 8px 0;
+    border: 1px solid var(--divider-color, #dfe3e8);
+    border-radius: 18px;
+    background: var(--secondary-background-color, #f1f3f5);
+    color: var(--primary-text-color, #37474f);
+    font-size: 13.5px;
+    font-weight: 500;
     cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  details.raw > summary::-webkit-details-marker { display: none; }
+  details.raw > summary:hover {
+    background: var(--divider-color, #e7ebee);
+  }
+  details.raw > summary .glyph {
+    font-family: monospace;
+    font-size: 12px;
+    color: var(--secondary-text-color, #607d8b);
+  }
+  details.raw > summary::after {
+    content: "\\25BE";
+    margin-left: 2px;
+    color: var(--secondary-text-color, #90a4ae);
+    display: inline-block;
+    transition: transform .15s ease;
+  }
+  details.raw[open] > summary::after {
+    transform: rotate(180deg);
   }
   .detail details.raw pre {
     margin-top: 4px;

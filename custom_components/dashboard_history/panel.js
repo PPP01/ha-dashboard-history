@@ -2592,7 +2592,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const technical =
       this._explanation && this._explanation.diff
         ? `<details class="raw"${this._diffOpen ? " open" : ""}>
-             <summary>Show the technical details</summary>
+             <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
              ${renderDiff(this._explanation.diff)}
            </details>`
         : "";
