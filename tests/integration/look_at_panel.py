@@ -420,27 +420,24 @@ async def main():
             # something is missing, and they differed in reach rather than
             # in wording: "Put back" reinserted one item into today's
             # configuration, setting a state back writes a whole state
-            # over the dashboard. They used to share a sentence spelling
-            # that difference out ("Put back adds..."), only where both
-            # were on screen - decision 15 (Task 5) removed it: the coarse
-            # button is now folded behind its own
-            # "Replace the whole dashboard instead" summary, which carries
-            # that distinction structurally instead of in a shared
-            # sentence. Since vorhaben J (Task 6), "Put back" is gone from
-            # this row entirely - it only exists inside the compare dialog
-            # opened further down - so putBack here can only ever read 0;
-            # checked in its place: the fold exists and starts closed
-            # wherever a coarse button survives.
+            # over the dashboard. Since vorhaben J (Task 6), "Put back" is
+            # gone from this row entirely - it only exists inside the
+            # compare dialog opened further down - so putBack here can
+            # only ever read 0. The coarse action used to sit behind its
+            # own "Replace the whole dashboard instead" <details class=
+            # "more"> fold; the redesign's action bar (this plan's Task 2)
+            # replaced that fold with one `[data-replace]` trigger button
+            # that opens a combined overlay (`dialog.replace`, Task 4)
+            # offering both "before" and "after" as a radio choice - so
+            # what is worth checking here is only whether that trigger is
+            # present and what it says, not a fold that no longer exists.
             reach = await page.js(
                 "(() => { const d = " + PANEL + '.querySelector(".detail");'
                 " if (!d) return null;"
-                " const fold = d.querySelector('details.more');"
                 " return {"
                 '  putBack: d.querySelectorAll("dialog.compare [data-compare-restore]").length,'
-                '  setBack: d.querySelectorAll(".backto [data-state]").length,'
-                "  foldSummary: fold"
-                "    ? fold.querySelector('summary').textContent.trim() : null,"
-                "  foldStartsClosed: fold ? !fold.open : null,"
+                "  replaceTrigger: d.querySelector('[data-replace]')"
+                "    ?.textContent.trim() ?? null,"
                 " }; })()"
             )
             for name, value in (reach or {}).items():
@@ -482,71 +479,84 @@ async def main():
                 print("    " + plain.strip().replace("\n", "\n    "))
                 await page.shot("6-expanded-live.png")
 
-            print("\n-- The confirm dialog: words on top, diff collapsed --")
-            # Since decision 15, _renderSetBack folds its coarse buttons
-            # behind <details class="more"> and can render none at all: the
-            # "before" one disappears where the targeted undo already
-            # reaches that state, and the "after" one where this row's own
-            # state is already current. Row 0 - still expanded from the
-            # section above - may or may not have one left, so later rows
-            # are tried in turn until one does. A row's own async fetch
-            # (explain/undo_change - `deleted_since` is no longer part of
-            # it, since Task 5 folded put-back into the compare dialog)
-            # renders the detail div at once and fills in its buttons only
-            # once it resolves, so each try waits for the busy indicator to
-            # clear rather than for the div itself. Clicking an element
-            # inside a collapsed <details> works regardless: .click()
-            # dispatches straight to the handler and does not need the
-            # element to be visible.
+            print("\n-- The replace overlay: one static sentence, diff collapsed --")
+            # Since the redesign (this plan's Task 2 and Task 4), the two
+            # "before"/"after" buttons this section used to click one at a
+            # time - each opening its own `dialog.confirm` - are combined
+            # into one `[data-replace]` trigger in the action bar, opening
+            # one overlay (`dialog.replace`) instead. Which state applies
+            # is picked inside it, via a `[data-replace-choice]` radio -
+            # present only when both candidates survive; `_replaceCandidates`
+            # can also leave just one, in which case the choice block is
+            # empty and there is nothing to pick between. The trigger can
+            # be missing entirely on a row where neither candidate
+            # survives - the targeted undo already reaches "before", and
+            # this row's own state is already "after" - so later rows are
+            # tried in turn until one offers it, the same way the retired
+            # code tried rows for a coarse "set back" button. A row's own
+            # async fetch (explain/undo_change) renders the detail div at
+            # once and fills in its buttons only once it resolves, so each
+            # try waits for the busy indicator to clear rather than for the
+            # div itself. Clicking an element inside a collapsed <details>
+            # works regardless: .click() dispatches straight to the
+            # handler and does not need the element to be visible.
             total_rows = await page.js(f'{PANEL}.querySelectorAll(".change").length')
             row = 0
-            has_state_button = await page.js(f'!!{PANEL}.querySelector("[data-state]")')
-            while not has_state_button and row + 1 < total_rows:
+            has_replace_button = await page.js(
+                f'!!{PANEL}.querySelector("[data-replace]")'
+            )
+            while not has_replace_button and row + 1 < total_rows:
                 row += 1
                 await page.js(f'{PANEL}.querySelectorAll(".change")[{row}].click()')
                 await page.settle(f'!{PANEL}.querySelector(".bar .muted")')
-                has_state_button = await page.js(
-                    f'!!{PANEL}.querySelector("[data-state]")'
+                has_replace_button = await page.js(
+                    f'!!{PANEL}.querySelector("[data-replace]")'
                 )
-            if not has_state_button:
+            if not has_replace_button:
                 print(
-                    "    no row on this dashboard offers a coarse 'set back' "
-                    "button any more - the targeted undo and the current "
-                    "state cover everything, so there is nothing left to "
-                    "open the confirm dialog with"
+                    "    no row on this dashboard offers to replace the "
+                    "whole dashboard any more - the targeted undo and the "
+                    "current state cover everything, so there is nothing "
+                    "left to open the overlay with"
                 )
             else:
                 if row:
                     print(f"    row 0 offered none; row {row} does")
-                await page.js(f'{PANEL}.querySelector("[data-state]").click()')
-                await page.settle(f'{PANEL}.querySelector("dialog.confirm").open')
-                await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+                await page.js(f'{PANEL}.querySelector("[data-replace]").click()')
+                await page.settle(f'{PANEL}.querySelector("dialog.replace").open')
+                await page.settle(
+                    f'!!{PANEL}.querySelector("dialog.replace .body details.raw")'
+                )
                 shape = await page.js(
                     "(() => { const d = "
                     + PANEL
-                    + '.querySelector("dialog.confirm");'
+                    + '.querySelector("dialog.replace");'
                     ' const details = d.querySelector("details.raw");'
+                    ' const choice = d.querySelector("[data-replace-choice]");'
                     " return {"
-                    '  heading: d.querySelector(".plain h3").innerText,'
+                    '  heading: d.querySelector("h2").innerText,'
+                    '  why: d.querySelector(".why").innerText,'
+                    "  choiceOptions: choice"
+                    '    ? choice.querySelectorAll(".replace-option").length : 0,'
                     "  diffCollapsed: details ? !details.open : null,"
                     '  diffPresent: !!d.querySelector("details.raw pre"),'
-                    '  plainText: d.querySelector(".plain").innerText.slice(0, 300),'
                     '  keeps: d.querySelector(".keeps")'
                     '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                     " }; })()"
                 )
                 print(f"    heading: {shape['heading']!r}")
+                print(f"    why: {shape['why']!r}")
+                print(f"    choice options offered: {shape['choiceOptions']}")
                 print(f"    keeps: {shape['keeps']!r}")
                 print(
                     f"    diff present: {shape['diffPresent']}, "
                     f"collapsed: {shape['diffCollapsed']}"
                 )
-                print("    " + shape["plainText"].strip().replace("\n", "\n    "))
                 await page.shot("7-confirm-dialog.png")
                 # Cancel, emphatically: this instance is disposable but the
                 # point of the preview is that nothing is written.
                 await page.js(
-                    f'{PANEL}.querySelector("dialog.confirm").close("cancel")'
+                    f'{PANEL}.querySelector("dialog.replace").close("cancel")'
                 )
                 await asyncio.sleep(0.5)
 
@@ -569,12 +579,11 @@ async def main():
             # anyway - with a preview reading "No difference."
             #
             # A plain click toggles a row - clicking one already open
-            # collapses it instead. The confirm-dialog section above tries
-            # rows in order until one still offers a coarse button, since
-            # decision 15, and can leave row 1 - not row 0 - open behind
-            # it. Read `_open` first and click only when row 1 is not
-            # already it, so this always opens rather than sometimes
-            # closing.
+            # collapses it instead. The overlay section above tries rows in
+            # order until one still offers a `[data-replace]` trigger, and
+            # can leave row 1 - not row 0 - open behind it. Read `_open`
+            # first and click only when row 1 is not already it, so this
+            # always opens rather than sometimes closing.
             await page.js(
                 "(() => { const p = " + ELEMENT + "; const rev = p._changes[1].revision;"
                 " if (p._open !== rev) " + PANEL + '.querySelectorAll(".change")[1].click();'
@@ -585,13 +594,15 @@ async def main():
                 "(() => { const d = " + PANEL + '.querySelector(".detail"); return {'
                 # `?? null` on purpose: an undefined value is dropped from
                 # the object by returnByValue, and the key vanishes with it.
-                # `textContent`, not `innerText`: since decision 15 this
-                # button can sit inside a closed <details class="more">,
-                # and a closed <details> gives its non-summary content no
-                # layout box at all - `innerText` answers "" for anything
-                # with none, which read as "no label" where there truly
-                # was one.
-                '  button: d.querySelector("[data-state]")?.textContent.trim() ?? null,'
+                # Since the redesign (Task 2/4), the two before/after
+                # buttons this row used to offer are one `[data-replace]`
+                # trigger - it always reads the same label regardless of
+                # direction ("Replace the whole dashboard…"); which state
+                # it targets is picked inside the overlay it opens, not
+                # named on the trigger itself. Absent here on purpose: row
+                # 1's only candidate ("after") is already the live state,
+                # so `_replaceCandidates` offers nothing to click at all.
+                '  button: d.querySelector("[data-replace]")?.textContent.trim() ?? null,'
                 '  reason: d.querySelector(".why")?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 " }; })()"
             )

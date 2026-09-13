@@ -962,6 +962,33 @@ export const STYLE = `
     line-height: 1.45;
   }
 
+  .replace-choice {
+    padding: 4px 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .replace-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 2px solid var(--divider-color, #e0e4e8);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .replace-option:has(input:checked) {
+    border-color: var(--primary-color, #03a9f4);
+  }
+  .replace-option .when {
+    margin-left: auto;
+    color: var(--secondary-text-color, #888);
+    font-size: 13px;
+  }
+  button.act.replace-confirm {
+    background: var(--warning-color, #b3541e);
+  }
+
   /* Confirm dialog footer with conditional version name fields */
   .confirm-footer {
     display: grid;

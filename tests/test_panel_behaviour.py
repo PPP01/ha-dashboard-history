@@ -5987,3 +5987,137 @@ def test_the_first_recorded_change_offers_no_replace_trigger(action_bar):
     html = action_bar["first"]
     assert "data-replace=" not in html
     assert 'data-version="c"' in html
+
+
+_OPEN_REPLACE_BOTH = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [
+  { revision: "a", previous: "b", same_as_now: false, timestamp: 20 },
+  { revision: "b", previous: "c", same_as_now: false, timestamp: 10 },
+];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+// Not part of what this scenario measures - `_openReplace` reloads the
+// history after a successful write the same way `_confirm` does, and
+// that reload runs through the same `_call` stub. Without this the
+// scenario's own manual, resolve-by-hand `_call` would leave that
+// reload's requests uncollected forever and `await done` below would
+// never settle - the same reason several `_confirm`-flow scenarios
+// earlier in this file stub it out too.
+el._reloadAfterWrite = async () => null;
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const done = el._openReplace("a");
+await settle();
+const firstBatch = calls.map((c) => ({ type: c.type, extra: c.extra }));
+
+calls[0].resolve({ preview: "-a\\n+b", explanation: { groups: [], note: "" } });
+calls[1].resolve({ preview: "-c\\n+d", explanation: { groups: [], note: "" } });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.replace");
+const choice = dialog.querySelector("[data-replace-choice]");
+const afterOpen = { bodyHtml: dialog.querySelector(".body").innerHTML };
+
+// The stand-in caches one stand-in node per selector *string*, shared
+// tree-wide, not one per real element - so both radios `_openReplace`
+// builds via `choice.querySelectorAll('input[name="replace-target"]')`
+// collapse onto the single node cached under that selector, and that
+// is where `addEventListener("change", ...)` actually lands - not on
+// `choice` itself. Read via the same selector the production code
+// queries with, not through `choice._on` directly.
+const radio = choice.querySelector('input[name="replace-target"]');
+radio._on.change?.({ target: { value: "1" } });
+const afterSwitch = { bodyHtml: dialog.querySelector(".body").innerHTML, calls: calls.length };
+
+dialog.close("apply");
+await settle();
+const writeCall = calls[2] ? { type: calls[2].type, extra: calls[2].extra } : null;
+calls[2]?.resolve({ applied: true });
+await done;
+
+console.log(JSON.stringify({ firstBatch, afterOpen, afterSwitch, writeCall }));
+"""
+
+
+@pytest.fixture(scope="session")
+def open_replace_both(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "open_replace_both", _OPEN_REPLACE_BOTH)
+
+
+def test_both_replace_previews_are_fetched_in_parallel(open_replace_both):
+    # Not one after the other on radio click: both restore_state
+    # previews go out together when the overlay opens.
+    types = [c["type"] for c in open_replace_both["firstBatch"]]
+    assert types == ["restore_state", "restore_state"]
+    revisions = {c["extra"]["revision"] for c in open_replace_both["firstBatch"]}
+    assert revisions == {"a", "b"}
+    assert all(c["extra"]["confirm"] is False for c in open_replace_both["firstBatch"])
+
+
+def test_switching_the_replace_radio_costs_no_extra_request(open_replace_both):
+    assert "+b" in open_replace_both["afterOpen"]["bodyHtml"]
+    assert "+d" in open_replace_both["afterSwitch"]["bodyHtml"]
+    assert open_replace_both["afterSwitch"]["calls"] == 2
+
+
+def test_confirming_the_replace_writes_the_selected_candidate(open_replace_both):
+    # `_replaceCandidates` orders "before" (revision "b") first and
+    # "after" (revision "a", the change itself) second; the radio was
+    # switched to index 1 - "after" - before Apply, matching the "+d"
+    # preview `test_switching_the_replace_radio_costs_no_extra_request`
+    # already confirms is on screen at that point.
+    assert open_replace_both["writeCall"] == {
+        "type": "restore_state",
+        "extra": {"dashboard": "dash", "revision": "a", "confirm": True},
+    }
+
+
+_OPEN_REPLACE_SINGLE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+// Only "after" applies: this is the newest change and its predecessor
+// is already known to be today's live state.
+el._changes = [{ revision: "a", previous: "b", same_as_now: false }];
+el._changeAt = (rev) => rev === "b" ? { revision: "b", same_as_now: true } : el._changes.find((c) => c.revision === rev) || null;
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const done = el._openReplace("a");
+await settle();
+calls[0].resolve({ preview: "-a\\n+b", explanation: { groups: [], note: "" } });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.replace");
+const choiceHtml = dialog.querySelector("[data-replace-choice]").innerHTML;
+
+dialog.close("cancel");
+await done;
+
+console.log(JSON.stringify({ callCount: calls.length, choiceHtml }));
+"""
+
+
+@pytest.fixture(scope="session")
+def open_replace_single(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "open_replace_single", _OPEN_REPLACE_SINGLE)
+
+
+def test_a_single_replace_candidate_skips_the_radio_choice(open_replace_single):
+    # Only one option: no server round trip wasted on a choice with one
+    # answer, and nothing that reads as a UI asking a question with
+    # only one possible reply.
+    assert open_replace_single["callCount"] == 1
+    assert open_replace_single["choiceHtml"] == ""

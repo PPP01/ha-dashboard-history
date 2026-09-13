@@ -53,6 +53,34 @@ export const DIALOGS = `
       </div>
     </div>
   </dialog>
+  <dialog class="replace">
+    <h2>Replace the whole dashboard</h2>
+    <p class="why">The dashboard is set back to a full snapshot.
+      Everything saved since is no longer what the dashboard holds.</p>
+    <div class="replace-choice" data-replace-choice></div>
+    <div class="body"></div>
+    <div class="confirm-footer">
+      <div class="keep" data-keep hidden>
+        <label class="save-checkbox-label">
+          <input type="checkbox" class="keepbox">
+          <span>Save the state you are leaving as a version</span>
+        </label>
+        <div class="keepfields" hidden>
+          <input class="text keeptitle" type="text" maxlength="200"
+                 placeholder="What to call it">
+          <p class="muted" style="font-size:13px">
+            Kept either way — without a name it is only findable in the
+            advanced view. Nothing is deleted.
+          </p>
+        </div>
+      </div>
+      <div class="actions">
+        <span class="note muted" style="margin-right:auto"></span>
+        <button class="act ghost" value="cancel">Cancel</button>
+        <button class="act replace-confirm" value="apply">Replace dashboard</button>
+      </div>
+    </div>
+  </dialog>
   <dialog class="forget">
     <h2>Forget this dashboard for good</h2>
     <div class="body"></div>

@@ -1742,6 +1742,170 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * Fill in a Replace overlay's body for whichever candidate is
+   * currently selected, and (re)arm its keep-as-version block for that
+   * candidate specifically - "before" and "after" can each disagree on
+   * whether a version already covers the live state, so switching the
+   * radio must redo this, not just swap the visible diff.
+   *
+   * No network call in here: `previews` was fetched once, in full, by
+   * `_openReplace`, before this dialog was ever shown.
+   */
+  _paintReplace(dialog, candidates, previews, selectedIndex) {
+    const preview = previews[selectedIndex];
+    const nothingToDo = !preview.preview && preview.note;
+    const covered = this._versionsMatchingNow();
+    const keeps = preview.creates_dashboard
+      ? ""
+      : covered.length
+        ? `<p class="keeps" title="${escape(joinNames(covered))}">What the
+             dashboard holds now is already saved as
+             ${escape(someNames(covered))}, so there is nothing to keep.
+             Nothing is deleted.</p>`
+        : `<p class="keeps">What the dashboard holds now is not lost: it
+             stays in the history as its own entry, so you can set it
+             back the same way.</p>`;
+    const keepable = Boolean(!nothingToDo && !preview.creates_dashboard && !covered.length);
+    const keepsContent = keeps
+      ? `<div class="info-callout">
+           <div class="info-callout__icon" aria-hidden="true">
+             <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
+               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+             </svg>
+           </div>
+           <div class="info-callout__content">${keeps}</div>
+         </div>`
+      : "";
+    dialog.querySelector(".body").innerHTML = nothingToDo
+      ? `<p>This state is what the dashboard holds right now, so there is
+           nothing to apply.</p>`
+      : `<details class="raw">
+           <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
+           ${renderDiff(preview.preview)}
+         </details>
+         ${keepsContent}`;
+    const applyButton = dialog.querySelector('.actions button[value="apply"]');
+    applyButton.hidden = Boolean(nothingToDo);
+    dialog.querySelector('.actions button[value="cancel"]').textContent =
+      nothingToDo ? "Close" : "Cancel";
+    const note = preview.creates_dashboard
+      ? "This recreates the dashboard, with its old title and icon."
+      : "";
+    dialog.querySelector(".note").textContent = note;
+    return { keepable, keepBlock: this._armKeep(keepable, dialog) };
+  }
+
+  /**
+   * "Replace the whole dashboard", combined: fetches every candidate
+   * target state's preview at once (there is at most one "before" and
+   * one "after"), so picking between them in the overlay costs no
+   * second round trip - see the plan's global constraints for why this
+   * is safe (restore_state's preview path is read-only).
+   */
+  async _openReplace(revision) {
+    const change = this._changeAt(revision);
+    if (!change) return;
+    const { candidates } = this._replaceCandidates(change);
+    if (!candidates.length) return;
+    const asked = this._selected;
+    const mine = this._claim("write");
+    const previews = await this._guard(
+      () =>
+        Promise.all(
+          candidates.map((c) =>
+            this._call("restore_state", {
+              dashboard: asked,
+              revision: c.revision,
+              confirm: false,
+            }),
+          ),
+        ),
+      mine,
+    );
+    if (!mine() || !previews) return;
+    const failed = previews.find((p) => p.error);
+    if (failed) {
+      this._showError(failed.error);
+      return;
+    }
+    const refused = previews.find((p) => p.available === false);
+    if (refused) {
+      this._showError(refused.reason || "this cannot be replaced exactly");
+      return;
+    }
+
+    const dialog = this.shadowRoot.querySelector("dialog.replace");
+    const choice = dialog.querySelector("[data-replace-choice]");
+    let selected = 0;
+    let keepable = false;
+    let keepBlock = null;
+
+    const paint = () => {
+      ({ keepable, keepBlock } = this._paintReplace(dialog, candidates, previews, selected));
+    };
+
+    choice.innerHTML =
+      candidates.length > 1
+        ? candidates
+            .map(
+              (c, index) => `<label class="replace-option">
+                 <input type="radio" name="replace-target" value="${index}"
+                        ${index === 0 ? "checked" : ""}>
+                 <span>${escape(c.label)}</span>
+                 ${c.timestamp
+                   ? `<span class="when">${escape(when(c.timestamp))}</span>`
+                   : ""}
+               </label>`,
+            )
+            .join("")
+        : "";
+    if (candidates.length > 1) {
+      choice.querySelectorAll('input[name="replace-target"]').forEach((radio) => {
+        radio.addEventListener("change", (event) => {
+          selected = Number(event.target.value);
+          paint();
+        });
+      });
+    }
+    paint();
+
+    dialog.returnValue = "";
+    dialog.showModal();
+    const answer = await this._answerFrom(dialog);
+    if (answer !== "apply") return;
+    const target = candidates[selected];
+    const keep = keepable ? this._keepChoice(keepBlock) : null;
+    const recorded = this._recorded();
+    const applied = await this._guard(async () => {
+      const result = await this._call("restore_state", {
+        dashboard: asked,
+        revision: target.revision,
+        confirm: true,
+        ...(keep ? { keep_as_version: keep } : {}),
+      });
+      await recorded;
+      return result;
+    }, mine);
+    const failedKeep = applied?.kept_as_version?.error;
+    const keptFailed =
+      failedKeep && failedKeep !== applied?.note
+        ? `the dashboard went back, but no version was made: ${failedKeep}`
+        : "";
+    const threw = applied === null ? this._error : "";
+    const said =
+      applied?.error ||
+      (applied?.available === false
+        ? applied.reason || "this cannot be replaced exactly"
+        : "") ||
+      applied?.note ||
+      keptFailed ||
+      threw ||
+      "";
+    const stale = await this._reloadAfterWrite("the dashboard was replaced");
+    this._sayAbout(asked, [said, stale].filter(Boolean).join("; "));
+  }
+
+  /**
    * Wait for a dialog's answer, and pay back a render held while it
    * stood.
    *
