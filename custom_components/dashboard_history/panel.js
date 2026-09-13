@@ -532,7 +532,7 @@ class DashboardHistoryPanel extends HTMLElement {
           comparison,
           `What changed between ${describe(older, comparison.time_a)} and ${describe(newer, comparison.time_b)}`,
         ) +
-        `<details class="raw"><summary>Show the technical details</summary>${renderDiff(diff)}</details>` +
+        `<details class="raw"><summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>${renderDiff(diff)}</details>` +
         missingHtml
       : `<p class="muted">No difference between these two states.</p>`;
 
@@ -2625,8 +2625,8 @@ class DashboardHistoryPanel extends HTMLElement {
         ${versionButton}
         ${undoButton}
         ${replaceButton}
+        ${named ? `<span class="named">${escape(named)}</span>` : ""}
       </div>
-      ${named ? `<span class="named">${escape(named)}</span>` : ""}
       ${why ? `<span class="why">${why}</span>` : ""}`;
   }
 

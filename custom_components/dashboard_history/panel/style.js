@@ -911,6 +911,9 @@ export const STYLE = `
     line-height: 1.45;
   }
 
+  dialog.replace > .why {
+    padding: 0 16px;
+  }
   .replace-choice {
     padding: 4px 16px 0;
     display: flex;

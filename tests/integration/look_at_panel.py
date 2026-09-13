@@ -1019,13 +1019,13 @@ async def main():
             # re-renders against each other.
             await page.settle(f'!{PANEL}.querySelector(".bar .muted")')
             has_button = await page.js(
-                f'!!{PANEL}.querySelector(".detail .mkver button")'
+                f'!!{PANEL}.querySelector(".detail .action-bar [data-version]")'
             )
             label = await page.js(
-                f'{PANEL}.querySelector(".detail .mkver button")'
+                f'{PANEL}.querySelector(".detail .action-bar [data-version]")'
                 "?.innerText.trim() ?? null"
             )
-            print(f"    '.detail .mkver button' present: {has_button}")
+            print(f"    '.detail .action-bar [data-version]' present: {has_button}")
             print(f"    label: {label!r}")
             await page.shot("14-version-button.png")
 
@@ -1033,7 +1033,9 @@ async def main():
             if not has_button:
                 print("    no 'Version up to here' button - nothing to click")
             else:
-                await page.js(f'{PANEL}.querySelector(".detail .mkver button").click()')
+                await page.js(
+                    f'{PANEL}.querySelector(".detail .action-bar [data-version]").click()'
+                )
                 opened = await page.settle(f'{PANEL}.querySelector("dialog.version")?.open')
                 print(f"    dialog opened: {opened}")
                 if opened:
@@ -1132,7 +1134,7 @@ async def main():
                 '  versionHead: [...p.querySelectorAll("details.ver summary .count")]'
                 "    .map(x => x.innerText.trim()),"
                 '  backButton: !!p.querySelector("details.ver summary [data-state]"),'
-                '  besideTheButton: p.querySelector(".mkver .named")'
+                '  besideTheButton: p.querySelector(".action-bar .named")'
                 '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 " }; })()"
             )

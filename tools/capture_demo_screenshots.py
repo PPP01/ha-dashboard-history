@@ -298,7 +298,12 @@ async def main():
             # 3. Restore Dialog Light
             print("3. Opening undo/restore dialog...")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); '
+                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: .detail [data-state] '
+                'no longer matches (the flow now opens dialog.replace via '
+                '.detail .action-bar [data-replace]) - see the 2026-09-13 '
+                'history-card-redesign plan; this script needs a content rework, '
+                'not a selector fix."); btn.click(); })()'
             )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
@@ -312,7 +317,13 @@ async def main():
 
             # Click info segment
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector('
+                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
+                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
+                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
+                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
+                'plan; this script needs a content rework, not a selector fix."); '
+                'btn.click(); })()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 03a-restore-dialog-info-light.png...")
@@ -366,7 +377,13 @@ async def main():
 
             # Click info segment on Put back dialog
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector('
+                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
+                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
+                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
+                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
+                'plan; this script needs a content rework, not a selector fix."); '
+                'btn.click(); })()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 03d-put-back-info-light.png...")
@@ -437,7 +454,12 @@ async def main():
             # 8. Restore Dialog Dark
             print("8. Opening undo/restore dialog (Dark)...")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); '
+                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: .detail [data-state] '
+                'no longer matches (the flow now opens dialog.replace via '
+                '.detail .action-bar [data-replace]) - see the 2026-09-13 '
+                'history-card-redesign plan; this script needs a content rework, '
+                'not a selector fix."); btn.click(); })()'
             )
             await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
             await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
@@ -450,7 +472,13 @@ async def main():
 
             # Click info segment
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector('
+                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
+                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
+                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
+                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
+                'plan; this script needs a content rework, not a selector fix."); '
+                'btn.click(); })()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 07a-restore-dialog-info-dark.png...")
@@ -494,7 +522,13 @@ async def main():
 
             # Click info segment on Put back dialog
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector("dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); if (btn) btn.click(); }})()'
+                f'(() => {{ const btn = {PANEL}.querySelector('
+                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
+                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
+                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
+                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
+                'plan; this script needs a content rework, not a selector fix."); '
+                'btn.click(); })()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 07d-put-back-info-dark.png...")
