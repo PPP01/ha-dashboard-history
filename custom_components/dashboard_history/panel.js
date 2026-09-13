@@ -2494,9 +2494,8 @@ class DashboardHistoryPanel extends HTMLElement {
   _undoChange(revision) {
     const change = this._changeAt(revision);
     const made = change ? this._madeSince(change) : null;
-    const toKeep = made !== null ? this._changes.length - 1 - made : null;
     const kept =
-      toKeep !== null ? ` and keeps the ${toKeep} change${toKeep === 1 ? "" : "s"} made since` : "";
+      made ? ` and keeps the ${made} change${made === 1 ? "" : "s"} made since` : "";
     this._confirm(
       "Undo this change",
       (confirm, keep, dashboard) => [

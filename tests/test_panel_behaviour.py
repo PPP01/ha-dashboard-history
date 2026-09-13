@@ -6155,4 +6155,53 @@ def undo_intro(tmp_path_factory):
 def test_the_undo_dialog_carries_the_kept_since_sentence(undo_intro):
     # Moved out of the card (design handoff point 2): the reader sees
     # this sentence at the point they are asked to confirm, not before.
-    assert "Puts this change back and keeps the 2 changes made since." in undo_intro["bodyHtml"]
+    # "a" is _changes[0], the newest of the three loaded changes, so
+    # nothing was made since it - the sentence stays plain, with no
+    # "and keeps" clause (the fix for a bug that used to invert this:
+    # a prior version of this assertion expected "2" here, which was
+    # the count of *older* loaded changes, not newer ones).
+    assert undo_intro["bodyHtml"].count("Puts this change back.") == 1
+    assert "and keeps" not in undo_intro["bodyHtml"]
+
+
+_UNDO_INTRO_OLDEST = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a" }, { revision: "b" }, { revision: "c" }];
+el.shadowRoot = node();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const done = el._undoChange("c");
+await settle();
+calls[0].resolve({ preview: "-x\\n+y", explanation: { groups: [], note: "" } });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
+const bodyHtml = dialog.querySelector(".body").innerHTML;
+dialog.close("cancel");
+await done;
+
+console.log(JSON.stringify({ bodyHtml }));
+"""
+
+
+@pytest.fixture(scope="session")
+def undo_intro_oldest(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "undo_intro_oldest", _UNDO_INTRO_OLDEST)
+
+
+def test_the_undo_dialog_counts_changes_made_since_the_oldest_loaded_change(
+    undo_intro_oldest,
+):
+    # "c" is _changes[2], the oldest of the three loaded changes - two
+    # newer changes ("a" and "b") were made since it. This is the case
+    # that catches the inverted formula: the buggy version reported
+    # this._changes.length - 1 - made, the count of *older* loaded
+    # changes (0 here), not newer ones (2).
+    assert (
+        "Puts this change back and keeps the 2 changes made since."
+        in undo_intro_oldest["bodyHtml"]
+    )
