@@ -1367,6 +1367,28 @@ const el = new Panel();
 el.shadowRoot = node();
 el._render();
 
+// After _render(), the wiring code queries with "dialog .keepbox"
+// but the test queries with "dialog.confirm .keepbox". In the mock,
+// these are different selector keys, so they create different nodes.
+// Set up aliases so both selectors resolve to the same nodes.
+const realKeepbox = el.shadowRoot.querySelector("dialog .keepbox");
+const realDataKeep = el.shadowRoot.querySelector("dialog [data-keep]");
+const realFields = el.shadowRoot.querySelector("dialog .keepfields");
+
+el.shadowRoot._seen["dialog.confirm .keepbox"] = realKeepbox;
+el.shadowRoot._seen["dialog.confirm [data-keep]"] = realDataKeep;
+el.shadowRoot._seen["dialog.confirm .keepfields"] = realFields;
+
+// When the listener calls realDataKeep.querySelector(".keepfields"),
+// it looks in realDataKeep._seen, which is the same as el.shadowRoot._seen
+// (they share the _seen map). Alias the simple selector too.
+el.shadowRoot._seen[".keepfields"] = realFields;
+el.shadowRoot._seen[".keepbox"] = realKeepbox;
+
+// The listener uses keepbox.closest("[data-keep]"), which in the mock
+// requires _closest to be set up manually.
+realKeepbox._closest["[data-keep]"] = realDataKeep;
+
 const keepbox = el.shadowRoot.querySelector("dialog.confirm .keepbox");
 const fields = el.shadowRoot.querySelector("dialog.confirm .keepfields");
 
@@ -1391,6 +1413,42 @@ def keepbox_change(tmp_path_factory):
 def test_keepbox_change_toggles_keepfields_visibility(keepbox_change):
     assert keepbox_change["shownWhenChecked"] is False
     assert keepbox_change["hiddenWhenUnchecked"] is True
+
+
+_ARM_KEEP_SCOPED = """
+const el = new Panel();
+
+// Two independent stand-in dialogs, each with their own [data-keep].
+const dialogA = node();
+const dialogB = node();
+dialogA._seen["[data-keep]"] = node();
+dialogB._seen["[data-keep]"] = node();
+
+const shownA = el._armKeep(true, dialogA);
+const shownB = el._armKeep(false, dialogB);
+
+console.log(JSON.stringify({
+  shownA: shownA !== null,
+  hiddenA: dialogA._seen["[data-keep]"].hidden,
+  shownB: shownB !== null,
+  hiddenB: dialogB._seen["[data-keep]"].hidden,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def arm_keep_scoped(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "arm_keep_scoped", _ARM_KEEP_SCOPED)
+
+
+def test_arm_keep_is_scoped_to_the_dialog_it_is_given(arm_keep_scoped):
+    # _armKeep must query the dialog it is handed, never a shared
+    # shadow root - otherwise arming one dialog's checkbox would find
+    # (or fail to find) whichever [data-keep] happens to come first.
+    assert arm_keep_scoped["shownA"] is True
+    assert arm_keep_scoped["hiddenA"] is False
+    assert arm_keep_scoped["shownB"] is False
+    assert arm_keep_scoped["hiddenB"] is True
 
 
 _ADDRESSING = """
@@ -4992,6 +5050,7 @@ const reply = (type, value) => {
   if (at >= 0) calls.splice(at, 1)[0].resolve(value);
 };
 const keepBlock = () => el.shadowRoot.querySelector("[data-keep]");
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
 
 const first = el._select("dash");
 await settle();
@@ -5002,7 +5061,7 @@ reply("history", {
   today: "1 January 2020",
 });
 await first;
-const offered = el._armKeep(true).querySelector(".keeptitle").value;
+const offered = el._armKeep(true, dialog).querySelector(".keeptitle").value;
 
 // An emptied field falls back to the same string, not to the browser's.
 keepBlock().querySelector(".keeptitle").value = "";
@@ -5016,7 +5075,7 @@ await settle();
 reply("versions", { versions: [] });
 reply("history", { changes: [{ revision: "a" }], next_cursor: null });
 await second;
-const fallback = el._armKeep(true).querySelector(".keeptitle").value;
+const fallback = el._armKeep(true, dialog).querySelector(".keeptitle").value;
 
 console.log(JSON.stringify({ offered, cleared, fallback }));
 """

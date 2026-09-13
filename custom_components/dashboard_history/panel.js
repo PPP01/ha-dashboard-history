@@ -1663,7 +1663,7 @@ class DashboardHistoryPanel extends HTMLElement {
       ? "This recreates the dashboard, with its old title and icon."
       : "";
     dialog.querySelector(".note").textContent = note;
-    const keepBlock = this._armKeep(keepable);
+    const keepBlock = this._armKeep(keepable, dialog);
     dialog.returnValue = "";
     dialog.showModal();
     const answer = await this._answerFrom(dialog);
@@ -1792,8 +1792,8 @@ class DashboardHistoryPanel extends HTMLElement {
    * sees everything anyway and would otherwise collect a mark for every
    * experiment.
    */
-  _armKeep(show) {
-    const keep = this.shadowRoot.querySelector("[data-keep]");
+  _armKeep(show, dialog) {
+    const keep = dialog.querySelector("[data-keep]");
     if (!keep) return null;
     keep.hidden = !show;
     if (!show) return null;
@@ -3171,13 +3171,12 @@ class DashboardHistoryPanel extends HTMLElement {
           button.addEventListener("click", () => element.close(button.value)),
         ),
     );
-    const keepbox = root.querySelector("dialog.confirm .keepbox");
-    if (keepbox) {
+    root.querySelectorAll("dialog .keepbox").forEach((keepbox) => {
       keepbox.addEventListener("change", (event) => {
-        const fields = root.querySelector("dialog.confirm .keepfields");
+        const fields = keepbox.closest("[data-keep]")?.querySelector(".keepfields");
         if (fields) fields.hidden = !event.target.checked;
       });
-    }
+    });
     const field = root.querySelector("dialog.describe input.text");
     if (field)
       field.addEventListener("keydown", (event) => {
