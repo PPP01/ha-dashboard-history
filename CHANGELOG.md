@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.1
+
+The current-state ring now means the same thing wherever it appears.
+
+### One colour, one meaning
+
+Blue used to mark "current state" in the simple view but "unclean,
+nothing saved matches" in the advanced one — the same colour saying two
+different things depending on which view happened to be open. It now
+answers one question everywhere: does anything recorded hold what the
+dashboard holds right now. Orange where nothing does, blue where a
+version does — including a version section that is also the newest
+change, which used to carry no colour of its own at all.
+
 ## v0.5.0
 
 One action bar instead of three separate controls on a history card,
