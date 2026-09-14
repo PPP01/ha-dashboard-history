@@ -14,6 +14,20 @@
  * part instead, and anybody wanting the number can count the file.
  */
 
+// The quiet line every confirmation ends on, above its buttons. Written
+// once because two dialogs show it and it has to read identically in
+// both: the moment it differs by a word it stops being the same
+// reassurance and starts being two claims. Filled by `_sayFootnote`,
+// which is also what hides it where there is nothing to say.
+const FOOTNOTE = `
+      <div class="footnote" data-footnote hidden>
+        <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor"
+             class="footnote__icon" aria-hidden="true">
+          <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+        </svg>
+        <span data-footnote-text></span>
+      </div>`;
+
 // The two fields a version's words are typed into, and the one place
 // they are spelled. Two dialogs ask for them - one making a version,
 // one renaming it - and they have to ask the same way: the classes are
@@ -31,6 +45,7 @@ export const DIALOGS = `
   <dialog class="confirm">
     <h2></h2>
     <div class="body"></div>
+    ${FOOTNOTE}
     <div class="confirm-footer">
       <div class="keep" data-keep hidden>
         <label class="save-checkbox-label">
@@ -59,6 +74,7 @@ export const DIALOGS = `
       Everything saved since is no longer what the dashboard holds.</p>
     <div class="replace-choice" data-replace-choice></div>
     <div class="body"></div>
+    ${FOOTNOTE}
     <div class="confirm-footer">
       <div class="keep" data-keep hidden>
         <label class="save-checkbox-label">

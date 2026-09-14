@@ -1444,7 +1444,12 @@ class DashboardHistoryPanel extends HTMLElement {
    * with nobody having seen its diff, which is the one rule this panel
    * exists to keep.
    */
-  async _confirm(title, request, wantsKeep = false, intro = "") {
+  async _confirm(
+    title,
+    request,
+    wantsKeep = false,
+    { intro = "", applyLabel = "Apply" } = {},
+  ) {
     const asked = this._selected;
     // Claimed as well, so the dialog does not open at all when the
     // selection moved while the preview was out: a diff for a dashboard
@@ -1535,16 +1540,15 @@ class DashboardHistoryPanel extends HTMLElement {
     // Left out entirely when the dashboard is being recreated: there is
     // no present state to keep, and the note beside the buttons already
     // says what happens instead.
+    // Plain text, not markup: it goes into the footnote strip below the
+    // body through `textContent`, which escapes for us. The strip is the
+    // design's own place for a line that reads the same in every dialog
+    // - said quietly, once, rather than boxed like news.
     const keeps = preview.creates_dashboard
       ? ""
       : covered.length
-        ? `<p class="keeps" title="${escape(joinNames(covered))}">What the
-             dashboard holds now is already saved as
-             ${escape(someNames(covered))}, so there is nothing to keep.
-             Nothing is deleted.</p>`
-        : `<p class="keeps">What the dashboard holds now is not lost: it
-             stays in the history as its own entry, so you can set it
-             back the same way.</p>`;
+        ? `Nothing is lost — the state you leave is already saved as ${someNames(covered)}.`
+        : "Nothing is lost — the state you leave stays in the history as its own entry.";
     // Offered only where a whole state is replaced and there is one to
     // keep. Not while a dashboard is being recreated - the answer for
     // that case is an error, and a tick box whose only possible outcome
@@ -1555,32 +1559,28 @@ class DashboardHistoryPanel extends HTMLElement {
     const keepable = Boolean(
       wantsKeep && !nothingToDo && !preview.creates_dashboard && !covered.length,
     );
-    const keepsContent = keeps
-      ? `<div class="info-callout">
-           <div class="info-callout__icon" aria-hidden="true">
-             <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
-               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-             </svg>
-           </div>
-           <div class="info-callout__content">
-             ${keeps}
-           </div>
-         </div>`
-      : "";
-
+    // The one sentence of consequence first, the itemised account after
+    // it: the dialog's opening line answers "what am I about to do", and
+    // reading it under a bullet list of cards puts the answer after the
+    // detail it summarises. The design's fixed order, and the reason it
+    // is fixed.
     dialog.querySelector(".body").innerHTML = nothingToDo
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
-      : renderPlain(preview.explanation, "What applying this does") +
-      (intro ? `<p class="why">${escape(intro)}</p>` : "") +
+      : (intro ? `<p class="lead">${escape(intro)}</p>` : "") +
+      renderPlain(preview.explanation, "What applying this does") +
       `<details class="raw">
          <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
          ${renderDiff(preview.preview)}
-       </details>
-       ${keepsContent}`;
+       </details>`;
+    this._sayFootnote(dialog, nothingToDo ? "" : keeps, covered);
 
     const applyButton = dialog.querySelector('.actions button[value="apply"]');
     applyButton.hidden = Boolean(nothingToDo);
+    // Named after what it does, never "Apply": a button that says the
+    // action back to you is the last place somebody can notice they are
+    // in the wrong dialog.
+    applyButton.textContent = applyLabel;
     dialog.querySelector('.actions button[value="cancel"]').textContent =
       nothingToDo ? "Close" : "Cancel";
     const note = preview.creates_dashboard
@@ -1679,35 +1679,24 @@ class DashboardHistoryPanel extends HTMLElement {
     const preview = previews[selectedIndex];
     const nothingToDo = !preview.preview && preview.note;
     const covered = this._versionsMatchingNow();
+    // Plain text, not markup: it goes into the footnote strip below the
+    // body through `textContent`, which escapes for us. The strip is the
+    // design's own place for a line that reads the same in every dialog
+    // - said quietly, once, rather than boxed like news.
     const keeps = preview.creates_dashboard
       ? ""
       : covered.length
-        ? `<p class="keeps" title="${escape(joinNames(covered))}">What the
-             dashboard holds now is already saved as
-             ${escape(someNames(covered))}, so there is nothing to keep.
-             Nothing is deleted.</p>`
-        : `<p class="keeps">What the dashboard holds now is not lost: it
-             stays in the history as its own entry, so you can set it
-             back the same way.</p>`;
+        ? `Nothing is lost — the state you leave is already saved as ${someNames(covered)}.`
+        : "Nothing is lost — the state you leave stays in the history as its own entry.";
     const keepable = Boolean(!nothingToDo && !preview.creates_dashboard && !covered.length);
-    const keepsContent = keeps
-      ? `<div class="info-callout">
-           <div class="info-callout__icon" aria-hidden="true">
-             <svg viewBox="0 0 20 20" width="18" height="18" fill="currentColor">
-               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-             </svg>
-           </div>
-           <div class="info-callout__content">${keeps}</div>
-         </div>`
-      : "";
     dialog.querySelector(".body").innerHTML = nothingToDo
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : `<details class="raw">
            <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
            ${renderDiff(preview.preview)}
-         </details>
-         ${keepsContent}`;
+         </details>`;
+    this._sayFootnote(dialog, nothingToDo ? "" : keeps, covered);
     const applyButton = dialog.querySelector('.actions button[value="apply"]');
     applyButton.hidden = Boolean(nothingToDo);
     dialog.querySelector('.actions button[value="cancel"]').textContent =
@@ -1880,6 +1869,29 @@ class DashboardHistoryPanel extends HTMLElement {
    * sees everything anyway and would otherwise collect a mark for every
    * experiment.
    */
+  /**
+   * The quiet line between a dialog's body and its buttons, or nothing.
+   *
+   * Its own strip rather than a box inside the body, because it says the
+   * same thing in every dialog every time: boxed and tinted it reads as
+   * news, and a reader who has seen it twice stops reading the body with
+   * it. `textContent` and not markup - the sentence carries version
+   * names that came back from the server.
+   *
+   * `covered` only for the tooltip: the sentence names at most three
+   * versions, the title holds the full list, exactly as the paragraph it
+   * replaces did.
+   */
+  _sayFootnote(dialog, text, covered = []) {
+    const strip = dialog.querySelector("[data-footnote]");
+    if (!strip) return;
+    strip.hidden = !text;
+    if (!text) return;
+    strip.querySelector("[data-footnote-text]").textContent = text;
+    if (covered.length) strip.title = joinNames(covered);
+    else strip.removeAttribute("title");
+  }
+
   _armKeep(show, dialog) {
     const keep = dialog.querySelector("[data-keep]");
     if (!keep) return null;
@@ -2386,10 +2398,15 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _restoreItem(revision, item) {
-    this._confirm(`Put back: ${item.label}`, (confirm, keep, dashboard) => [
-      "restore_deleted",
-      { dashboard, revision, position: item.position, confirm },
-    ]);
+    this._confirm(
+      `Put back: ${item.label}`,
+      (confirm, keep, dashboard) => [
+        "restore_deleted",
+        { dashboard, revision, position: item.position, confirm },
+      ],
+      false,
+      { applyLabel: "Put back" },
+    );
   }
 
   _restoreState(revision, title) {
@@ -2411,6 +2428,10 @@ class DashboardHistoryPanel extends HTMLElement {
         },
       ],
       true,
+      // The button that opened this dialog names the state it goes to
+      // ("Bring it back", "Back to this version"); the one that carries
+      // it out says the same thing back.
+      { applyLabel: title },
     );
   }
 
@@ -2430,7 +2451,10 @@ class DashboardHistoryPanel extends HTMLElement {
         { dashboard, revision, confirm, preview: !confirm },
       ],
       false,
-      `Puts this change back${kept}.`,
+      {
+        intro: `Puts this change back${kept}.`,
+        applyLabel: "Undo this change",
+      },
     );
   }
 

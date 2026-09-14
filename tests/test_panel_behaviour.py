@@ -120,6 +120,11 @@ const node = (shared) => {
     // regression that no screenshot shows untestable as well.
     setAttribute(name, value) { it._attrs[name] = String(value); },
     getAttribute(name) { return name in it._attrs ? it._attrs[name] : null; },
+    // Added when the footnote strip learned to drop a tooltip it had set
+    // for an earlier dialog: a stand-in that only remembers attributes
+    // and never forgets them cannot tell "no tooltip" from "the one from
+    // last time", which is exactly the bug that call prevents.
+    removeAttribute(name) { delete it._attrs[name]; },
     focus() {},
     select() {},
     showModal() { it.open = true; },
@@ -845,6 +850,9 @@ const press = async (value) => {
   await settle();
   const seen = {
     body: dialog().querySelector(".body").innerHTML,
+    footnote: dialog()
+      .querySelector("[data-footnote]")
+      .querySelector("[data-footnote-text]").textContent,
     ticked: box().checked,
     title: box() && el.shadowRoot
       .querySelector("[data-keep]").querySelector(".keeptitle").value,
@@ -871,7 +879,7 @@ await press(undefined);
 console.log(JSON.stringify({
   previewFirst: sent[0].extra.confirm === false,
   diffShown: simple.body.includes("Show the technical details"),
-  keepsShown: simple.body.includes("is not lost"),
+  keepsShown: simple.footnote.includes("Nothing is lost"),
   tickedInSimple: simple.ticked,
   fieldsHiddenInSimple: simple.fieldsHidden,
   offeredTitle: simple.title,
@@ -1045,6 +1053,12 @@ const attempt = async (shape, matching = []) => {
   // be a different `.body` than the one `_confirm` wrote into.
   const dialog = el.shadowRoot.querySelector("dialog.confirm");
   const body = dialog.querySelector(".body").innerHTML;
+  // Out of the body since the redesign: the sentence is a strip of its
+  // own between body and buttons, so it has to be read where the code
+  // writes it rather than where it used to sit.
+  const footnote = dialog
+    .querySelector("[data-footnote]")
+    .querySelector("[data-footnote-text]").textContent;
   dialog.close("apply");
   await done;
   const confirming = sent
@@ -1053,6 +1067,7 @@ const attempt = async (shape, matching = []) => {
   return {
     offered,
     body,
+    footnote,
     sentKeep: confirming ? confirming.extra.keep_as_version ?? null : null,
   };
 };
@@ -1133,10 +1148,10 @@ def test_a_state_a_version_already_holds_offers_nothing_to_keep(keep_suppressed)
     assert keep_suppressed["covered"]["sentKeep"] is None
     # And the box's absence is explained rather than silent. Without
     # this the offer somebody is used to seeing is simply gone, which
-    # reads as a fault in the tool. The paragraph it replaces - "is not
-    # lost", for the case where no version holds the state - is held by
-    # `test_the_dialog_carries_the_technical_diff_and_the_promise`.
-    assert "v0.0.4" in keep_suppressed["covered"]["body"]
+    # reads as a fault in the tool. The sentence it replaces - "Nothing
+    # is lost", for the case where no version holds the state - is held
+    # by `test_the_dialog_carries_the_technical_diff_and_the_promise`.
+    assert "v0.0.4" in keep_suppressed["covered"]["footnote"]
 
 
 def test_an_ordinary_restore_still_offers_to_keep(keep_suppressed):
@@ -1222,6 +1237,11 @@ await settle();
 const dialog = el.shadowRoot.querySelector("dialog.confirm");
 const raw = dialog.querySelector("details.raw");
 const bodyHtml = dialog.querySelector(".body").innerHTML;
+const strip = dialog.querySelector("[data-footnote]");
+const footnote = {
+  hidden: strip.hidden,
+  text: strip.querySelector("[data-footnote-text]").textContent,
+};
 
 const beforeOpen = { rawOpen: raw.open };
 raw.open = true;
@@ -1231,7 +1251,7 @@ const afterOpen = { rawOpen: raw.open };
 dialog.close("cancel");
 await done;
 
-console.log(JSON.stringify({ bodyHtml, beforeOpen, afterOpen }));
+console.log(JSON.stringify({ bodyHtml, footnote, beforeOpen, afterOpen }));
 """
 
 
@@ -1253,10 +1273,16 @@ def test_the_confirm_dialogs_pill_starts_closed(confirm_pill):
 
 
 def test_the_footnote_is_visible_without_any_toggle(confirm_pill):
-    # "What the dashboard holds now is not lost..." used to be behind a
-    # second, "Current state is preserved" button. It is now always
-    # there whenever there is anything to say - no click needed.
-    assert "What the dashboard holds now is not lost" in confirm_pill["bodyHtml"]
+    # "Nothing is lost..." used to be behind a second, "Current state is
+    # preserved" button. It is now always there whenever there is
+    # anything to say - no click needed - and it sits in its own strip
+    # between the body and the buttons rather than boxed inside the
+    # body, because it reads identically in every dialog every time.
+    assert confirm_pill["footnote"]["hidden"] is False
+    assert confirm_pill["footnote"]["text"] == (
+        "Nothing is lost — the state you leave stays in the history as its own entry."
+    )
+    assert "Nothing is lost" not in confirm_pill["bodyHtml"]
 
 
 _KEEPBOX_CHANGE = """
@@ -6037,16 +6063,35 @@ await settle();
 
 const dialog = el.shadowRoot.querySelector("dialog.confirm");
 const bodyHtml = dialog.querySelector(".body").innerHTML;
+const applyLabel = dialog
+  .querySelector(".actions button[value=\\"apply\\"]").textContent;
 dialog.close("cancel");
 await done;
 
-console.log(JSON.stringify({ bodyHtml }));
+console.log(JSON.stringify({ bodyHtml, applyLabel }));
 """
 
 
 @pytest.fixture(scope="session")
 def undo_intro(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "undo_intro", _UNDO_INTRO)
+
+
+def test_the_undo_dialogs_button_says_undo_not_apply(undo_intro):
+    # The dialog is shared by four flows, so its button used to read
+    # "Apply" in all of them - the one word that says nothing about
+    # which of the four you are in. The last place somebody can notice
+    # they opened the wrong one is the button they are about to press.
+    assert undo_intro["applyLabel"] == "Undo this change"
+
+
+def test_the_consequence_comes_before_the_itemised_account(undo_intro):
+    # "Puts this change back and keeps the 2 changes made since" is the
+    # answer to "what am I about to do"; the card-by-card list under
+    # "What applying this does" is the detail it summarises. Printed
+    # after the list it read as a stray line nobody could place.
+    body = undo_intro["bodyHtml"]
+    assert body.index("Puts this change back") < body.index("What applying this does")
 
 
 def test_the_undo_dialog_carries_the_kept_since_sentence(undo_intro):

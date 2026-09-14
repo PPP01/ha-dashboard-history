@@ -542,9 +542,16 @@ export const STYLE = `
     font-size: 12px;
     color: var(--secondary-text-color, #607d8b);
   }
+  /* 25BC, the full-size triangle, and not 25BE beside it: at the pill's
+     13.5px the small one renders as a speck - it was read as a stray
+     mark rather than as "this opens". Sized down to 10px so the glyph
+     itself carries the weight, and lightened, because a marker that is
+     as dark as the label competes with it. */
   details.raw > summary::after {
-    content: "\\25BE";
+    content: "\\25BC";
     margin-left: 2px;
+    font-size: 10px;
+    opacity: .7;
     color: var(--secondary-text-color, #90a4ae);
     display: inline-block;
     transition: transform .15s ease;
@@ -876,43 +883,55 @@ export const STYLE = `
   .hint { margin-top:18px; }
   .linky { background:none; border:none; padding:0; color:inherit;
          text-decoration:underline; cursor:pointer; font:inherit; }
-  /* Tinted from the theme's own accent rather than from a fixed blue:
-     the left edge below already reads --primary-color, so on a theme
-     that sets another one the fill and the edge used to disagree. The
-     flat rgba stays as the line before, for a browser without
-     color-mix - there it is the old appearance, not a missing one. */
-  .info-callout {
-    background: rgba(3, 169, 244, 0.08);
-    background: color-mix(in srgb, var(--primary-color, #03a9f4) 8%, transparent);
-    border: 1px solid rgba(3, 169, 244, 0.25);
-    border: 1px solid color-mix(in srgb, var(--primary-color, #03a9f4) 25%, transparent);
-    border-left: 4px solid var(--primary-color, #03a9f4);
-    border-radius: 6px;
-    padding: 10px 14px;
+  /* The strip between a dialog's body and its buttons. Deliberately
+     quiet - no accent edge, no tint from the theme colour: it says the
+     same sentence in every dialog every time, and a box that shouts
+     gets read once and skipped for ever after. It earns its place by
+     always being there, not by standing out. */
+  .footnote {
     display: flex;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  .info-callout__icon {
-    flex-shrink: 0;
-    color: var(--primary-color, #03a9f4);
-    margin-top: 1px;
-    display: flex;
-  }
-  .info-callout__content {
-    flex: 1;
-    font-size: 13px;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 26px;
+    border-top: 1px solid var(--divider-color, #eceff1);
+    background: var(--secondary-background-color, #f7f9fb);
+    color: var(--secondary-text-color, #78909c);
+    font-size: 12.5px;
     line-height: 1.45;
   }
-  .info-callout__content .keeps {
-    margin: 0;
+  .footnote[hidden] { display: none; }
+  .footnote__icon { flex-shrink: 0; opacity: .7; }
+
+  /* The one sentence of consequence a dialog opens with, above the
+     itemised account. Not muted like .why: it is the answer to "what
+     am I about to do", and it is read before anything else here. */
+  .lead {
+    margin: 0 0 14px;
+    font-size: 14px;
+    line-height: 1.5;
     color: var(--primary-text-color, #212121);
-    font-size: 13px;
-    line-height: 1.45;
   }
 
+  /* The two dialogs the redesign shapes: narrower than the 900px the
+     rest get, because everything in them is one column of prose and a
+     diff - at 900px the sentences run too wide to scan. */
+  dialog.confirm, dialog.replace {
+    width: min(640px, 92vw);
+    border-radius: 10px;
+  }
+  dialog.confirm > h2, dialog.replace > h2 {
+    padding: 22px 26px 6px;
+    font-size: 19px;
+  }
+  dialog.confirm > .body, dialog.replace > .body {
+    padding: 0 26px 18px;
+  }
+  dialog.confirm > .confirm-footer, dialog.replace > .confirm-footer {
+    padding: 16px 26px;
+  }
   dialog.replace > .why {
-    padding: 0 16px;
+    margin: 0 0 16px;
+    padding: 0 26px;
   }
   .replace-choice {
     padding: 4px 16px 0;
@@ -937,8 +956,17 @@ export const STYLE = `
     color: var(--secondary-text-color, #888);
     font-size: 13px;
   }
+  /* The one colour in this panel that is NOT read from the theme, and
+     the reason is contrast rather than taste: --warning-color is a
+     signal colour, and Home Assistant's default for it is around
+     #ffa600 - white on that measures about 2:1, well under what is
+     readable, and the button carries white text because every filled
+     button here does. The design's own tone sits near 5:1. A theme
+     that sets a darker warning colour would read fine; one that sets a
+     brighter one would not, and this button is the last step before a
+     dashboard is overwritten. */
   button.act.replace-confirm {
-    background: var(--warning-color, #b3541e);
+    background: #b3541e;
   }
 
   /* Confirm dialog footer with conditional version name fields */
