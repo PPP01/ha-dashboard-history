@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.5.0
+
+One action bar instead of three separate controls on a history card,
+and one overlay instead of two for replacing the whole dashboard. No
+change to the Home Assistant version floor — still **2024.11 or
+newer**.
+
+### One action bar, not three
+
+- **Undo this change**, **Version up to here** and **Replace the
+  whole dashboard** used to be three separately stacked blocks on a
+  card, one of them an expander easy to mistake for the technical-diff
+  one right above it. All three now sit in a single row, in that
+  order, and Replace is a plain button that opens a dialog rather than
+  an expander of its own.
+- **Replace the whole dashboard** combines what used to be two
+  independent buttons — "back to the state before" and "back to the
+  state after" this change — into one overlay with a choice between
+  them. Both states' previews are fetched together when the overlay
+  opens, so switching the choice never waits on the network again.
+- The **technical-details** disclosure — the fold that shows the raw
+  diff — is one shared, pill-shaped control now, identical wherever it
+  appears: the card, the confirm dialog, the Replace overlay, and the
+  compare dialog. It used to be a plain link with the browser's own
+  triangle in some of those places and something else again in others.
+- The sentence a confirmation dialog opens with (what applying it
+  does, or that nothing is lost) reads as one line before the itemised
+  list of card changes, not after it — and the button that carries the
+  action out is named for what it does: **Undo this change**, **Put
+  back**, or the state it goes to, never a bare "Apply" that could
+  belong to any of them.
+- The "nothing is lost" reassurance used to sit in a tinted, bordered
+  box inside a dialog's body, behind a second click to reveal it. It
+  is a quiet strip between the body and the buttons now, always
+  visible when it applies — read once, not toggled.
+
+### Put back, for a state already known to be current
+
+Put back inside the compare dialog used to require the newer side to
+be the literal pinned "Current state" pick. It is now offered whenever
+the newer side is *known* to hold today's content — a row or version
+already marked current — which a dashboard whose newest change already
+carries a version could reach without ever landing on that exact pick.
+
 ## v0.4.0
 
 A deliberate way to compare two states, and a steadier panel around it.
