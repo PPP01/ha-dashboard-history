@@ -878,7 +878,7 @@ await press(undefined);
 
 console.log(JSON.stringify({
   previewFirst: sent[0].extra.confirm === false,
-  diffShown: simple.body.includes("Show the technical details"),
+  diffShown: simple.body.includes("Technical details"),
   keepsShown: simple.footnote.includes("Nothing is lost"),
   tickedInSimple: simple.ticked,
   fieldsHiddenInSimple: simple.fieldsHidden,
@@ -1263,7 +1263,7 @@ def confirm_pill(tmp_path_factory):
 def test_the_confirm_dialog_uses_the_same_pill_as_the_card(confirm_pill):
     # One component everywhere, per the redesign - no second
     # disclosure pattern built just for this dialog.
-    assert '<span class="glyph">&lt;/&gt;</span> Show the technical details' in confirm_pill["bodyHtml"]
+    assert '<span class="glyph">&lt;/&gt;</span> Technical details' in confirm_pill["bodyHtml"]
     assert "confirm-seg-bar" not in confirm_pill["bodyHtml"]
     assert "confirm-info-panel" not in confirm_pill["bodyHtml"]
 
@@ -4577,7 +4577,7 @@ def test_expand_renders_explanation_while_undo_is_loading(progressive_expand):
 def test_expand_renders_collapsible_technical_diff(progressive_expand):
     frame1 = progressive_expand["frame1"]
     assert 'details class="raw"' in frame1["html"]
-    assert "Show the technical details" in frame1["html"]
+    assert "Technical details" in frame1["html"]
     assert '<span class="del">-old</span>' in frame1["html"]
     assert '<span class="add">+new</span>' in frame1["html"]
 
@@ -4585,7 +4585,7 @@ def test_expand_renders_collapsible_technical_diff(progressive_expand):
 def test_expand_preserves_diff_open_state_when_undo_resolves(progressive_expand):
     frame2 = progressive_expand["frame2"]
     assert 'details class="raw" open' in frame2["html"]
-    assert "Show the technical details" in frame2["html"]
+    assert "Technical details" in frame2["html"]
 
 
 def test_expand_renders_undo_button_when_undo_resolves(progressive_expand):
@@ -4723,7 +4723,7 @@ def test_undo_failure_preserves_explanation_and_clears_loading_undo(expand_undo_
     frame = expand_undo_failure["frameAfterError"]
     assert frame["detailLoading"] is None
     assert frame["undoLoading"] is None
-    assert "Show the technical details" in frame["html"]
+    assert "Technical details" in frame["html"]
     flat_html = " ".join(frame["html"].split())
     assert "Whether this change can be taken back is not known" in flat_html
 
@@ -5850,8 +5850,8 @@ def test_the_cards_technical_details_summary_carries_the_pill_glyph(card_diff_pi
     # The redesign turns the native triangle into a pill with a `</>`
     # glyph before the label; the label text itself does not change, so
     # the existing progressive-expand tests (which grep for exactly
-    # "Show the technical details") keep passing unmodified.
-    assert '<span class="glyph">&lt;/&gt;</span> Show the technical details' in card_diff_pill["html"]
+    # "Technical details") keep passing unmodified.
+    assert '<span class="glyph">&lt;/&gt;</span> Technical details' in card_diff_pill["html"]
     assert 'details class="raw"' in card_diff_pill["html"]
 
 

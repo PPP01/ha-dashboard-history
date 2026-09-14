@@ -779,8 +779,8 @@ This change cannot be described in terms of cards - see the details
 below.
 ```
 
-The details it points at are behind *Show the technical details*, the
-fold that carries the diff.
+The details it points at are behind *Technical details*, the fold that
+carries the diff.
 
 The diff below it is complete and correct; only the words are missing.
 *Undo this change* refuses with *"this change did not alter any cards"*,

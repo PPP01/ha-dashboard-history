@@ -532,7 +532,7 @@ class DashboardHistoryPanel extends HTMLElement {
           comparison,
           `What changed between ${describe(older, comparison.time_a)} and ${describe(newer, comparison.time_b)}`,
         ) +
-        `<details class="raw"><summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>${renderDiff(diff)}</details>` +
+        `<details class="raw"><summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>${renderDiff(diff)}</details>` +
         missingHtml
       : `<p class="muted">No difference between these two states.</p>`;
 
@@ -1570,7 +1570,7 @@ class DashboardHistoryPanel extends HTMLElement {
       : (intro ? `<p class="lead">${escape(intro)}</p>` : "") +
       renderPlain(preview.explanation, "What applying this does") +
       `<details class="raw">
-         <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
+         <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
          ${renderDiff(preview.preview)}
        </details>`;
     this._sayFootnote(dialog, nothingToDo ? "" : keeps, covered);
@@ -1693,7 +1693,7 @@ class DashboardHistoryPanel extends HTMLElement {
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : `<details class="raw">
-           <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
+           <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
            ${renderDiff(preview.preview)}
          </details>`;
     this._sayFootnote(dialog, nothingToDo ? "" : keeps, covered);
@@ -2718,13 +2718,13 @@ class DashboardHistoryPanel extends HTMLElement {
 
     // `diff` and not `diff != null`: the shapes that carry no change -
     // an unknown revision, the first recorded state - answer with the
-    // empty string, and offering "Show the technical details" there
-    // opens on "No difference.", which reads as an answer about the
-    // dashboard when it is an answer about the request.
+    // empty string, and offering "Technical details" there opens on
+    // "No difference.", which reads as an answer about the dashboard
+    // when it is an answer about the request.
     const technical =
       this._explanation && this._explanation.diff
         ? `<details class="raw"${this._diffOpen ? " open" : ""}>
-             <summary><span class="glyph">&lt;/&gt;</span> Show the technical details</summary>
+             <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
              ${renderDiff(this._explanation.diff)}
            </details>`
         : "";
