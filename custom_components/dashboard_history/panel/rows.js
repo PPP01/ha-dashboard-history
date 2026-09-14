@@ -45,8 +45,13 @@ export function sections(changes) {
  * it matched the other - which is the invariant a copy breaks first.
  * The word "state" is load-bearing (see `renderRow` below), and so is
  * the tooltip; neither belongs to whichever mode happens to draw it.
+ *
+ * `named` is the same fact the ring around this chip's own box answers:
+ * does anything recorded hold this content. A function and not a
+ * constant since that answer differs by dashboard and by the minute -
+ * unlike the chip's words and tooltip, which never do.
  */
-export const NOW_CHIP = `<span class="chip now"
+export const nowChip = (named) => `<span class="chip now${named ? " named" : ""}"
        title="This is the state the dashboard holds right now."
        >current state</span>`;
 
@@ -207,7 +212,7 @@ export function renderRow({
     spokenFor || !change.same_as_now
       ? ""
       : newest
-        ? NOW_CHIP
+        ? nowChip(matching.length > 0)
         : `<span class="chip sameas"
                  title="The change described here left the dashboard in exactly the state it holds right now."
                  >same state as now</span>`;

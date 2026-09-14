@@ -3267,7 +3267,7 @@ const box = (text) => text.split("class=\\"vrow\\"")[0];
 // Whether the block is rendered open. Asked of two pages, so it is
 // named once - the same regex twice four lines apart is the shape that
 // drifts.
-const boxOpen = (text) => /<details class="standing"[^>]*\\sopen/.test(text);
+const boxOpen = (text) => /<details class="standing[^"]*"[^>]*\\sopen/.test(text);
 const plain = el._renderMain();
 // The same page with the block already open. Its fold rides the
 // version's own name now, which is what makes it one fact across both
@@ -3313,7 +3313,7 @@ console.log(JSON.stringify({
     flat: count(plain, "<div class=\\"vrow\\""),
     remembered: /data-key="dash\\/v1\\.0\\.0"\\s+open/.test(plain),
     shut: /data-key="dash\\/v1\\.2\\.0"\\s+open/.test(plain),
-    badge: count(plain, "class=\\"chip now\\""),
+    badge: count(plain, "class=\\"chip now"),
     undo: count(plain, "Undo / Go back"),
     pens: count(plain, "data-retitle="),
     bins: count(plain, "data-remove="),
@@ -3328,8 +3328,13 @@ console.log(JSON.stringify({
     boxSpan: box(plain).includes("The newest 2 changes in this version"),
     boxSince: box(plain).includes("since the last version"),
     boxHere: box(plain).includes("where you are"),
-    keyed: /<details class="standing" data-key="dash\\/v1\\.2\\.0"/.test(plain),
+    keyed: /<details class="standing[^"]*" data-key="dash\\/v1\\.2\\.0"/.test(plain),
     boxShut: boxOpen(plain),
+    // The dashboard holds exactly what v1.2.0 holds, and stands on it -
+    // GitHub issue #11's case 2. Both the box's own ring and the chip
+    // inside it have to say "named", the same fact worn two ways.
+    namedBox: /class="standing named"/.test(plain),
+    namedChip: box(plain).includes("class=\\"chip now named\\""),
   },
   opened: {
     boxOpen: boxOpen(opened),
@@ -3338,6 +3343,11 @@ console.log(JSON.stringify({
     standing: older.includes("in the state of v1.0.0"),
     rows: count(older, "class=\\"vrow\\""),
     here: count(older, "where you are"),
+    // Case 3: clean, but standing on an *older* version - not the top
+    // of the list, and not merged into one block with it either. The
+    // ring answers the same question regardless: something recorded
+    // holds this content, so it is blue.
+    namedBox: /class="standing named"/.test(older),
   },
   hunting: {
     standing: hunting.includes("in the state of v1.2.0"),
@@ -3369,6 +3379,18 @@ def test_the_simple_mode_says_where_the_dashboard_stands(simple_mode):
     assert simple_mode["older"]["standing"] is True
     assert simple_mode["older"]["rows"] == 4
     assert simple_mode["plain"]["standing"] is False
+
+
+def test_the_current_state_rings_blue_wherever_a_version_holds_it(simple_mode):
+    # GitHub issue #11: blue used to mean "this is the current state" in
+    # this mode and "unclean" in the advanced one - two meanings for one
+    # colour. Now it answers one question in both: does anything
+    # recorded hold what the dashboard holds right now. Case 2, merged
+    # into the top version, and case 3, standing on an older one further
+    # down the list, both answer "yes" and both ring blue.
+    assert simple_mode["plain"]["namedBox"] is True
+    assert simple_mode["plain"]["namedChip"] is True
+    assert simple_mode["older"]["namedBox"] is True
 
 
 def test_the_state_and_the_version_it_holds_are_drawn_once(simple_mode):
@@ -3604,6 +3626,11 @@ console.log(JSON.stringify({
     undo: drifted.includes(">Undo / Go back to v1.2.0<"),
     target: /data-state="dash\\/v1\\.2\\.0"[^>]*>Undo/.test(drifted),
     remembered: /data-key="now"\\s+open/.test(drifted),
+    // Case 1, GitHub issue #11: nothing recorded holds this content, so
+    // neither the box nor its chip may carry the "named" modifier that
+    // turns the ring blue.
+    unnamedBox: !drifted.includes("class=\\"standing named\\""),
+    unnamedChip: !drifted.includes("class=\\"chip now named\\""),
   },
   cut: {
     hedged: cut.includes("The newest 2 changes since the last version"),
@@ -3633,6 +3660,14 @@ def test_the_current_state_offers_one_way_back_to_the_last_version(simple_now):
     assert simple_now["drifted"]["target"] is True
     assert simple_now["behind"]["undo"] is True
     assert simple_now["cut"]["undo"] is True
+
+
+def test_the_current_state_rings_orange_where_nothing_holds_it(simple_now):
+    # GitHub issue #11, case 1: unsaved changes, no matching version -
+    # the ring and its chip stay unnamed, which is what turns them
+    # orange in the stylesheet.
+    assert simple_now["drifted"]["unnamedBox"] is True
+    assert simple_now["drifted"]["unnamedChip"] is True
 
 
 def test_the_current_state_opens_onto_the_changes_it_holds(simple_now):
@@ -3880,6 +3915,12 @@ console.log(JSON.stringify({
   ],
   newestChip: row(CHANGE, { newest: true }).includes("current state"),
   lowerChip: row(CHANGE, { newest: false }).includes("same state as now"),
+  // GitHub issue #11: the crowned row's own chip has to agree with the
+  // ring drawn around its card - orange where nothing recorded holds
+  // this content, blue the moment a version does.
+  nowChipUnnamed: row(CHANGE, { newest: true }).includes('class="chip now"'),
+  nowChipNamed: row(CHANGE, { newest: true, matching: ["v1.0.0"] })
+    .includes('class="chip now named"'),
   spokenFor: row(CHANGE, { newest: true, spokenFor: true })
     .includes("current state"),
   // A version sitting on the newest change is known-current for
@@ -3960,6 +4001,11 @@ def test_a_chip_says_which_kind_of_sameness_it_means(row_parts):
     assert row_parts["named"] is True
 
 
+def test_the_now_chip_rings_the_same_colour_as_its_card(row_parts):
+    assert row_parts["nowChipUnnamed"] is True
+    assert row_parts["nowChipNamed"] is True
+
+
 def test_compare_mode_marks_a_pick_that_is_known_to_be_current(row_parts):
     # Found from a real installation: a version sitting on the newest
     # change is already known to be "current state" - the panel says so
@@ -4012,6 +4058,105 @@ def test_a_long_list_of_names_is_cut_and_says_so(row_parts):
         "v1.0.0 and v1.1.0",
         "v1.0.0 and 2 more",
     ]
+
+
+# -- the current-state ring answers one question, in both modes -------------
+# GitHub issue #11: blue used to mean "current state" in the simple view
+# and "unclean" in the advanced one. Now both ask the same question -
+# does anything recorded hold what the dashboard holds right now - and
+# only the crowned row or version section can ever be asked it at all.
+
+_CURRENT_STATE_COLOUR = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+
+// Case 1: unsaved changes, no version holds them.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [], same_as_now: false, timestamp: 1 },
+];
+el._versions = [];
+el._matching = [];
+const unclean = el._renderMain();
+
+// Case 2: the newest change already carries a version, and it is what
+// the dashboard holds right now - the version section itself is the
+// crowned one.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: true, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "a" },
+];
+el._matching = [];
+const cleanOnTop = el._renderMain();
+
+// Case 3: nothing recorded since v1.0.0, but the dashboard's content is
+// still exactly what it holds - a version further down the list, not
+// the newest change, so the ring belongs to the current-state box and
+// not to that version's own section.
+el._changes = [
+  { revision: "b", message: "2 cards moved", versions: [], same_as_now: true, timestamp: 2 },
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "a" },
+];
+el._matching = [{ name: "dash/v1.0.0" }];
+const cleanOnOlder = el._renderMain();
+
+console.log(JSON.stringify({
+  unclean: {
+    current: unclean.includes('class="current"'),
+    named: unclean.includes('class="current named"'),
+    verNow: unclean.includes('class="ver now"'),
+  },
+  cleanOnTop: {
+    verNow: cleanOnTop.includes('class="ver now"'),
+  },
+  cleanOnOlder: {
+    named: cleanOnOlder.includes('class="current named"'),
+    verNow: cleanOnOlder.includes('class="ver now"'),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def current_state_colour(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "current_state_colour", _CURRENT_STATE_COLOUR)
+
+
+def test_the_crowned_row_rings_orange_when_nothing_recorded_holds_it(
+    current_state_colour,
+):
+    assert current_state_colour["unclean"]["current"] is True
+    assert current_state_colour["unclean"]["named"] is False
+    assert current_state_colour["unclean"]["verNow"] is False
+
+
+def test_a_version_section_rings_blue_when_it_is_also_the_current_state(
+    current_state_colour,
+):
+    # Only the first section in the list can start at the newest change
+    # at all, so this is the one place a version's own section can also
+    # carry the current-state ring.
+    assert current_state_colour["cleanOnTop"]["verNow"] is True
+
+
+def test_the_ring_follows_the_content_not_the_position_in_the_list(
+    current_state_colour,
+):
+    # Standing on an older version's state rings the current-state box
+    # blue - the same fact case 2 above marks on a version section
+    # instead - and leaves that older version's own section unmarked,
+    # since it is not the newest change.
+    assert current_state_colour["cleanOnOlder"]["named"] is True
+    assert current_state_colour["cleanOnOlder"]["verNow"] is False
 
 
 # -- writing from a search result keeps the search --------------------------

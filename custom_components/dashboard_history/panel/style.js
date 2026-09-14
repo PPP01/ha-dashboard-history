@@ -400,7 +400,12 @@ export const STYLE = `
     vertical-align: 1px;
     white-space: nowrap;
   }
-  .chip.now { background: var(--primary-color, #03a9f4); color: #fff; }
+  /* Unnamed by default - nothing recorded holds this content yet - and
+     blue where a version does, the same rule the ring around this chip's
+     box follows. Two places say one fact; see the comment on .current
+     below for why it is one fact and not two. */
+  .chip.now { background: var(--accent-color, #ff9800); color: #fff; }
+  .chip.now.named { background: var(--primary-color, #03a9f4); }
   .chip.sameas {
     background: var(--secondary-background-color, #eee);
     color: var(--secondary-text-color, #727272);
@@ -414,7 +419,16 @@ export const STYLE = `
     color: var(--secondary-text-color, #727272);
     white-space: normal;
   }
-  .current .card { box-shadow: 0 0 0 2px var(--primary-color, #03a9f4); }
+  /* The ring answers one question: does anything recorded hold what the
+     dashboard holds right now? Orange where nothing does, blue where a
+     version does - never a statement about being new or being versioned
+     by itself, which is why .named is a second class and not a second
+     selector keyed to a version. The same two colours, the same
+     question, on .standing below and on a version's own row further
+     down; one fact drawn in three places, not three facts that happen to
+     agree. */
+  .current .card { box-shadow: 0 0 0 2px var(--accent-color, #ff9800); }
+  .current.named .card { box-shadow: 0 0 0 2px var(--primary-color, #03a9f4); }
   .heading {
     margin: 0 0 8px;
     color: var(--secondary-text-color, #727272);
@@ -588,10 +602,22 @@ export const STYLE = `
     border-radius: 8px;
     background: var(--card-background-color, #fff);
     box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
-    border-left: 4px solid var(--accent-color, #ff9800);
+    /* Blue, the same as the current-state ring: a version is by
+       definition a name on a state, so it always answers the ring's
+       question with "yes". */
+    border-left: 4px solid var(--primary-color, #03a9f4);
     cursor: pointer;
     user-select: none;
     list-style: none;
+  }
+  /* The one version section that is also where the dashboard stands
+     right now - only the first can be, since only the newest change
+     sits in front of the panel at all. The left border already says
+     "named"; this ring on top says "and it is this one", the same ring
+     .current and .standing wear for the same reason. */
+  details.ver.now > summary {
+    box-shadow: 0 0 0 2px var(--primary-color, #03a9f4),
+      var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
   }
   details.ver > summary::-webkit-details-marker { display: none; }
   /* The same triangle the two other chevrons in this panel use, written
@@ -759,13 +785,16 @@ export const STYLE = `
     outline-offset: 1px;
   }
   /* The card the versions wear, so that the box above them is not the
-     one thing on the page drawn in another language - and the outline
-     the advanced mode puts round its current-state card, out of the
-     same variable. That box and this one are one subject seen from two
-     modes, so they are marked the same way. */
+     one thing on the page drawn in another language - and the ring the
+     advanced mode puts round its current-state card, out of the same
+     two variables. That box and this one are one subject seen from two
+     modes, so they answer the same question the same way: orange where
+     nothing recorded holds this content, blue where a version does -
+     see the comment on .current in the advanced-mode rules above. */
   .standing { border-radius:8px; padding:12px 16px; margin-bottom:14px;
             background:var(--card-background-color,#fff);
-            box-shadow:0 0 0 2px var(--primary-color,#03a9f4); }
+            box-shadow:0 0 0 2px var(--accent-color,#ff9800); }
+  .standing.named { box-shadow:0 0 0 2px var(--primary-color,#03a9f4); }
   /* No opacity here. It took the chip down with it - the one
      deliberately vivid thing in the box went grey for no reason other
      than sitting inside the heading - and the muted colour it was doing

@@ -2960,7 +2960,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const label = newest
       ? `Since ${shortName(newest.versions[0].name)}`
       : "Not in a version yet";
-    const parts = cut.map((section) => {
+    const parts = cut.map((section, sectionIndex) => {
       if (!section.versions) return this._renderTopSection(section, label);
       const rows = section.rows
         .map((index, position) =>
@@ -2968,7 +2968,13 @@ class DashboardHistoryPanel extends HTMLElement {
         )
         .join("");
       const key = section.versions[0].name;
-      return `<details class="ver" data-key="${escape(key)}"
+      // Only the first section in the list can start at the newest
+      // change at all (`sections()` always opens it there when it
+      // carries a mark), so this is the one place a version section can
+      // also be where the dashboard stands right now.
+      const now =
+        sectionIndex === 0 && this._changes[0]?.same_as_now ? " now" : "";
+      return `<details class="ver${now}" data-key="${escape(key)}"
                 ${this._verOpen.has(key) ? "open" : ""}>
                 ${this._renderVersionHead(section)}
                 <div class="inner">${rows}</div>
@@ -3022,7 +3028,10 @@ class DashboardHistoryPanel extends HTMLElement {
       ? `<div class="divider">${escape(label)}</div>${rows.slice(1).join("")}`
       : "";
     const heading = more ? "Current state" : `Current state · ${label}`;
-    return `<div class="current">
+    // The ring's own class: whether anything recorded holds this
+    // content, the same fact `matching` above already answered.
+    const namedClass = matching.length ? " named" : "";
+    return `<div class="current${namedClass}">
               <p class="heading">${escape(heading)}</p>
               ${rows[0]}
             </div>${rest}`;

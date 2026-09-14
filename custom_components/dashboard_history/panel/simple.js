@@ -26,7 +26,7 @@ const { escape, when } = await import(`./render.js${PARTS}`);
 // chips - and says both modes build from exactly those; for these
 // three that is now true. The pen renames a version, the bin removes
 // it, both drawn the same way wherever a version is shown.
-const { NOW_CHIP, pen, bin } = await import(`./rows.js${PARTS}`);
+const { nowChip, pen, bin } = await import(`./rows.js${PARTS}`);
 
 // The way over to the other mode. Offered in both of this mode's
 // states - with versions and without - and written once, because two
@@ -349,11 +349,12 @@ export function renderSimple({
     : "The dashboard has changed since the last version was saved.";
   const says = merged ? vhead(standingOn, "") : `<p>${standing}</p>`;
   // What the block says with itself shut. The chip is the advanced
-  // mode's - the same constant, not the same words typed again - and
+  // mode's - the same function, not the same words typed again - and
   // unlike there it needs no proof: a crowned row has to earn "current
   // state" by matching the live configuration, while "right now" *is*
   // the live state, and the chip labels the box rather than an entry.
-  const nowHead = `<p class="heading">Right now ${NOW_CHIP}</p>
+  // `standingOn` is the same fact the box's own ring is coloured by.
+  const nowHead = `<p class="heading">Right now ${nowChip(Boolean(standingOn))}</p>
       ${says}
       <span class="acts">
         <button class="act ghost" data-version="now">Save this as a version</button>
@@ -373,12 +374,16 @@ export function renderSimple({
   // on one commit and somebody numbered them out of order, and there
   // the two modes fold under different names. Nobody is wrong, and
   // nothing worse happens than a row coming back shut.
+  // The ring's own class, alongside the fold's: whether anything
+  // recorded holds this content is a fact about the state, not about
+  // whether the box happens to be foldable right now.
+  const namedClass = standingOn ? " named" : "";
   const now = nowBody
-    ? `<details class="standing" ${foldAt(merged ? standingOn.name : "now", open)}>
+    ? `<details class="standing${namedClass}" ${foldAt(merged ? standingOn.name : "now", open)}>
          <summary>${nowHead}</summary>
          <div class="vbody">${nowBody}</div>
        </details>`
-    : `<div class="standing">${nowHead}</div>`;
+    : `<div class="standing${namedClass}">${nowHead}</div>`;
 
   // The version drawn inside the block above is not drawn again here.
   // That is the whole of it: one version, one place on the page - and
