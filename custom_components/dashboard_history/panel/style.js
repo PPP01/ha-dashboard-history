@@ -525,7 +525,7 @@ export const STYLE = `
     margin: 8px 0;
     border: 1px solid var(--divider-color, #dfe3e8);
     border-radius: 18px;
-    background: var(--secondary-background-color, #f1f3f5);
+    background: var(--primary-background-color, #f5f5f5);
     color: var(--primary-text-color, #37474f);
     font-size: 13.5px;
     font-weight: 500;
@@ -894,7 +894,7 @@ export const STYLE = `
     gap: 9px;
     padding: 10px 26px;
     border-top: 1px solid var(--divider-color, #eceff1);
-    background: var(--secondary-background-color, #f7f9fb);
+    background: var(--primary-background-color, #f5f5f5);
     color: var(--secondary-text-color, #78909c);
     font-size: 12.5px;
     line-height: 1.45;
@@ -909,7 +909,7 @@ export const STYLE = `
     margin: 0 0 14px;
     font-size: 14px;
     line-height: 1.5;
-    color: var(--primary-text-color, #212121);
+    color: var(--secondary-text-color, #727272);
   }
 
   /* The two dialogs the redesign shapes: narrower than the 900px the
