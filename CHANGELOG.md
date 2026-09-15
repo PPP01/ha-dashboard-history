@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.6.0
+
+The README was one long page trying to be five different things at
+once. It is now four, plus a short front page: what it does, how to
+install it, and the essentials of using it - with everything it used
+to cover in depth split into documents of their own.
+
+### One README, several audiences
+
+- The README is now a short overview, with the detail split into
+  `docs/user-guide.md`, `docs/how-it-works.md`, `docs/limitations.md`,
+  `docs/services.md`, and `docs/development.md`, linked from a
+  Documentation Hub table.
+- Nothing measured was thrown away: the detailed, case-by-case
+  reasoning behind the sections and pathless-view limits - every
+  measurement and refusal message - now lives as a full appendix in
+  `docs/limitations.md`, for whoever wants to read past the summary.
+- New, neutral screenshots throughout, including the Replace overlay
+  and Compare mode, which had none before.
+
 ## v0.5.1
 
 The current-state ring now means the same thing wherever it appears.
