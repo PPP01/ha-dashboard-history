@@ -295,105 +295,69 @@ async def main():
             print("Capturing 02-diff-expanded-light.png...")
             await page.shot("02-diff-expanded-light.png")
 
-            # 3. Restore Dialog Light
-            print("3. Opening undo/restore dialog...")
+            # 3. Replace Dialog Light
+            print("3. Opening replace dialog...")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); '
-                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: .detail [data-state] '
-                'no longer matches (the flow now opens dialog.replace via '
-                '.detail .action-bar [data-replace]) - see the 2026-09-13 '
-                'history-card-redesign plan; this script needs a content rework, '
-                'not a selector fix."); btn.click(); })()'
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail .action-bar [data-replace]"); '
+                'if (!btn) throw new Error(".detail .action-bar [data-replace] not found"); '
+                'btn.click(); })()'
             )
-            await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
-            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+            await page.settle(f'{PANEL}.querySelector("dialog.replace")?.open')
+            await page.settle(f'!!{PANEL}.querySelector("dialog.replace .replace-choice")')
             # Open the raw diff details inside the dialog
             await page.js(
-                f'(() => {{ const raw = {PANEL}.querySelector("dialog.confirm details.raw"); if (raw) raw.open = true; }})()'
+                f'(() => {{ const raw = {PANEL}.querySelector("dialog.replace details.raw"); if (raw) raw.open = true; }})()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 03-restore-dialog-light.png...")
             await page.shot("03-restore-dialog-light.png")
-
-            # Click info segment
-            await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector('
-                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
-                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
-                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
-                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
-                'plan; this script needs a content rework, not a selector fix."); '
-                'btn.click(); })()'
-            )
-            await asyncio.sleep(0.5)
-            print("Capturing 03a-restore-dialog-info-light.png...")
-            await page.shot("03a-restore-dialog-info-light.png")
+            await page.shot("03-replace-dialog-light.png")
 
             # Click checkbox to show keepfields
             await page.js(
-                f'(() => {{ const cb = {PANEL}.querySelector("dialog.confirm .keepbox"); if (cb) cb.click(); }})()'
+                f'(() => {{ const cb = {PANEL}.querySelector("dialog.replace .keepbox"); if (cb) cb.click(); }})()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 03b-restore-dialog-checked-light.png...")
             await page.shot("03b-restore-dialog-checked-light.png")
 
             # Close dialog
-            await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
+            await page.js(f'{PANEL}.querySelector("dialog.replace").close("cancel")')
             await asyncio.sleep(0.5)
 
-            # Open Put back dialog - via compare mode. Task 5 removed the
-            # row-level [data-restore] control entirely; put back now only
-            # exists inside the compare dialog, reached by picking two
-            # states and finding something the historical side had that
-            # today's does not (spec decision 19/vorhaben J). "Current
-            # state" sits first among the checkboxes; among the rest, the
-            # first row still offering "Back to this version" is one the
-            # panel already knows differs from today - the same heuristic
-            # tests/integration/look_at_panel.py uses for the same reason.
+            # 4. Compare Mode
+            print("4. Opening Compare Mode...")
             await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await page.js(
                 f"(() => {{ const boxes = [...{PANEL}.querySelectorAll('.compare-check')];"
                 " boxes[0].click();"
                 " const differs = boxes.slice(1).find("
-                "   (box) => box.closest('.penholder')?.querySelector('[data-state]'));"
+                "   (box) => box.closest('.penholder')?.querySelector('[data-state], [data-replace]'));"
                 " (differs || boxes[boxes.length - 1]).click(); })()"
             )
-            # `dialog.showModal()` runs synchronously, before the `compare`
-            # and `deleted_since` calls it waits on - settling on `[open]`
-            # alone would catch the dialog on its "Comparing..." spinner.
             await page.settle(
                 f'!!{PANEL}.querySelector("dialog.compare[open]") &&'
                 f' !{PANEL}.querySelector("dialog.compare .row-loading")',
                 10,
             )
-            await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector("dialog.compare [data-compare-restore]"); if (btn) btn.click(); }})()'
-            )
-            await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
-            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
             await asyncio.sleep(0.5)
-            print("Capturing 03c-put-back-dialog-light.png...")
-            await page.shot("03c-put-back-dialog-light.png")
+            print("Capturing 04-compare-mode-light.png...")
+            await page.shot("04-compare-mode-light.png")
 
-            # Click info segment on Put back dialog
-            await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector('
-                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
-                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
-                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
-                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
-                'plan; this script needs a content rework, not a selector fix."); '
-                'btn.click(); })()'
+            has_restore = await page.js(
+                f'!!{PANEL}.querySelector("dialog.compare [data-compare-restore]")'
             )
-            await asyncio.sleep(0.5)
-            print("Capturing 03d-put-back-info-light.png...")
-            await page.shot("03d-put-back-info-light.png")
+            if has_restore:
+                await page.js(
+                    f'(() => {{ const btn = {PANEL}.querySelector("dialog.compare [data-compare-restore]"); if (btn) btn.click(); }})()'
+                )
+                await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
+                await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+                await asyncio.sleep(0.5)
+                print("Capturing 03c-put-back-dialog-light.png...")
+                await page.shot("03c-put-back-dialog-light.png")
+                await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
 
-            # Close both dialogs - compare mode's own dialog is still open
-            # behind the confirm one, and would otherwise hold every later
-            # render back (`_render` bails out for as long as any dialog
-            # is open), silently freezing the rest of this script's shots.
-            await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
             await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
             await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await asyncio.sleep(0.5)
@@ -451,59 +415,42 @@ async def main():
             print("Capturing 06-diff-expanded-dark.png...")
             await page.shot("06-diff-expanded-dark.png")
 
-            # 8. Restore Dialog Dark
-            print("8. Opening undo/restore dialog (Dark)...")
+            # 8. Replace Dialog Dark
+            print("8. Opening replace dialog (Dark)...")
             await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector(".detail [data-state]"); '
-                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: .detail [data-state] '
-                'no longer matches (the flow now opens dialog.replace via '
-                '.detail .action-bar [data-replace]) - see the 2026-09-13 '
-                'history-card-redesign plan; this script needs a content rework, '
-                'not a selector fix."); btn.click(); })()'
+                f'(() => {{ const btn = {PANEL}.querySelector(".detail .action-bar [data-replace]"); '
+                'if (!btn) throw new Error(".detail .action-bar [data-replace] not found"); '
+                'btn.click(); })()'
             )
-            await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
-            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+            await page.settle(f'{PANEL}.querySelector("dialog.replace")?.open')
+            await page.settle(f'!!{PANEL}.querySelector("dialog.replace .replace-choice")')
             await page.js(
-                f'(() => {{ const raw = {PANEL}.querySelector("dialog.confirm details.raw"); if (raw) raw.open = true; }})()'
+                f'(() => {{ const raw = {PANEL}.querySelector("dialog.replace details.raw"); if (raw) raw.open = true; }})()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 07-restore-dialog-dark.png...")
             await page.shot("07-restore-dialog-dark.png")
-
-            # Click info segment
-            await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector('
-                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
-                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
-                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
-                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
-                'plan; this script needs a content rework, not a selector fix."); '
-                'btn.click(); })()'
-            )
-            await asyncio.sleep(0.5)
-            print("Capturing 07a-restore-dialog-info-dark.png...")
-            await page.shot("07a-restore-dialog-info-dark.png")
+            await page.shot("07-replace-dialog-dark.png")
 
             # Click checkbox to show keepfields
             await page.js(
-                f'(() => {{ const cb = {PANEL}.querySelector("dialog.confirm .keepbox"); if (cb) cb.click(); }})()'
+                f'(() => {{ const cb = {PANEL}.querySelector("dialog.replace .keepbox"); if (cb) cb.click(); }})()'
             )
             await asyncio.sleep(0.5)
             print("Capturing 07b-restore-dialog-checked-dark.png...")
             await page.shot("07b-restore-dialog-checked-dark.png")
 
             # Close dialog
-            await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
+            await page.js(f'{PANEL}.querySelector("dialog.replace").close("cancel")')
             await asyncio.sleep(0.5)
 
-            # Open Put back dialog (Dark) - via compare mode, the same way
-            # the light section above does; see the comment there for why.
+            # Open Put back dialog (Dark) - via compare mode
             await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await page.js(
                 f"(() => {{ const boxes = [...{PANEL}.querySelectorAll('.compare-check')];"
                 " boxes[0].click();"
                 " const differs = boxes.slice(1).find("
-                "   (box) => box.closest('.penholder')?.querySelector('[data-state]'));"
+                "   (box) => box.closest('.penholder')?.querySelector('[data-state], [data-replace]'));"
                 " (differs || boxes[boxes.length - 1]).click(); })()"
             )
             await page.settle(
@@ -511,31 +458,26 @@ async def main():
                 f' !{PANEL}.querySelector("dialog.compare .row-loading")',
                 10,
             )
-            await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector("dialog.compare [data-compare-restore]"); if (btn) btn.click(); }})()'
-            )
-            await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
-            await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
             await asyncio.sleep(0.5)
-            print("Capturing 07c-put-back-dialog-dark.png...")
-            await page.shot("07c-put-back-dialog-dark.png")
+            print("Capturing 08-compare-mode-dark.png...")
+            await page.shot("08-compare-mode-dark.png")
 
-            # Click info segment on Put back dialog
-            await page.js(
-                f'(() => {{ const btn = {PANEL}.querySelector('
-                '"dialog.confirm .confirm-seg-btn[data-seg=\\"info\\"]"); '
-                'if (!btn) throw new Error("STALE SCREENSHOT SCRIPT: dialog.confirm '
-                '.confirm-seg-btn[data-seg=\\"info\\"] no longer exists (Task 6 made '
-                'the footnote always visible) - see the 2026-09-13 history-card-redesign '
-                'plan; this script needs a content rework, not a selector fix."); '
-                'btn.click(); })()'
+            has_restore_dark = await page.js(
+                f'!!{PANEL}.querySelector("dialog.compare [data-compare-restore]")'
             )
-            await asyncio.sleep(0.5)
-            print("Capturing 07d-put-back-info-dark.png...")
-            await page.shot("07d-put-back-info-dark.png")
+            if has_restore_dark:
+                await page.js(
+                    f'(() => {{ const btn = {PANEL}.querySelector("dialog.compare [data-compare-restore]"); if (btn) btn.click(); }})()'
+                )
+                await page.settle(f'{PANEL}.querySelector("dialog.confirm")?.open')
+                await page.settle(f'!!{PANEL}.querySelector("dialog.confirm .plain")')
+                await asyncio.sleep(0.5)
+                print("Capturing 07c-put-back-dialog-dark.png...")
+                await page.shot("07c-put-back-dialog-dark.png")
+                await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
 
-            await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
             await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
+            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
 
             print("\nAll screenshots captured successfully!")
 
