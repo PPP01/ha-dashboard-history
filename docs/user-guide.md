@@ -159,7 +159,7 @@ Versions are dashboard-scoped annotated git tags (e.g. `living-room/v1.2.0`). Be
 
 Two kinds of versions are created for you automatically:
 - **`v1.0.0` (Initial baseline):** Created the first time Dashboard History encounters a dashboard.
-- **Daily milestones:** On the first save of a new day, the last state of the previous day is tagged with that date (e.g. `14 September 2026`). Days without changes receive no tag.
+- **Daily milestones:** If a dashboard contains unversioned changes from previous days, the next edit automatically generates a new version. This version captures the state immediately prior to the new changes and is tagged with the date of the last modification (e.g. `14 September 2026`). Days without changes receive no tag.
 
 > [!TIP]
 > You can toggle automatic daily versions on or off under **Settings → Devices & Services → Dashboard History → Configure**.
