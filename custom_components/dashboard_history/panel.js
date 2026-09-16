@@ -58,7 +58,7 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, joinNames;
-let sections, someNames, renderRow, versionHead, currentStateRow;
+let sections, someNames, renderRow, versionHead, currentStateRow, nowChip;
 let DIALOGS;
 let renderSimple;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -73,7 +73,7 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead, currentStateRow } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
@@ -174,6 +174,16 @@ class DashboardHistoryPanel extends HTMLElement {
     // and a version below that window is precisely the one that must
     // still be named.
     this._matching = [];
+    // Whether `_versions`/`_matching` above are known to belong to the
+    // dashboard `_changes` is currently showing. `_select` clears both
+    // synchronously, before the fetch that would refill them, while
+    // `_changes` itself is left holding the previous dashboard's rows
+    // until the answer arrives - the one render `_guard` draws in
+    // between would otherwise pair stale, still-displayed rows with a
+    // freshly emptied `_versions`, and the "right now" element read
+    // that as "nothing has ever been recorded here" for a moment. See
+    // `_renderNowSection`/`_renderNowBanner`, the two places that ask.
+    this._versionsLoaded = true;
     // What day it is where Home Assistant runs, as `history` answers
     // it. See `_dayTitle`.
     this._serverToday = null;
@@ -959,6 +969,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._cursor = null;
     this._versions = [];
     this._matching = [];
+    this._versionsLoaded = false;
     this._query = "";
     // Whether somebody has asked for the whole history for this
     // word. It belongs to the word, so it is cleared wherever the
@@ -991,6 +1002,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._matching = history ? history.matching_versions || [] : [];
     this._serverToday = history ? history.today ?? null : null;
     this._versions = versions ? versions.versions || [] : [];
+    this._versionsLoaded = true;
     this._render();
   }
 
@@ -2801,25 +2813,45 @@ class DashboardHistoryPanel extends HTMLElement {
     return this._matching.map((v) => shortName(v.name));
   }
 
-  _renderVersionHead(section) {
+  _renderVersionHead(section, version, crowned = false) {
     const top = section.rows[0];
     return versionHead({
-      section,
+      version,
       top,
+      count: section.rows.length,
       here: this._changes[top]?.same_as_now,
       compareMode: this._compareMode,
-      compareChecked: this._compareSelection.some((s) => s.revision === section.versions[0].name),
+      compareChecked: this._compareSelection.some((s) => s.revision === version.name),
+      crowned,
     });
   }
 
+  /**
+   * The search row, and - in the advanced mode - the compare-mode
+   * toggle beside it rather than on a row of its own beneath.
+   *
+   * The simple mode never had a second row here, so the advanced mode
+   * carrying one meant its own content always opened a few pixels
+   * lower than the simple mode's - visible as a jump on every switch
+   * between them. `.find`'s own width cap (see style.js) keeps the
+   * field the same size whether or not this button is beside it, so
+   * the row's shape does not change with the mode either.
+   */
   _renderSearch() {
     const said = this._searchNote();
+    const compareToggle =
+      this._mode === "advanced"
+        ? `<button class="act ghost" data-compare-toggle="1">
+             ${this._compareMode ? "Exit compare mode" : "Compare mode"}
+           </button>`
+        : "";
     return `<div class="search">
         <input class="text find" type="search" maxlength="100"
                placeholder="${this._mode === "simple"
         ? "Search this dashboard's versions"
         : "Search this dashboard's history"}"
                value="${escape(this._query)}">
+        ${compareToggle}
         ${said ? `<span class="why">${escape(said)}</span>` : ""}
         ${this._offersWider()
         ? `<button class="act ghost wider" data-wider="1">Search the whole history</button>`
@@ -2920,7 +2952,7 @@ class DashboardHistoryPanel extends HTMLElement {
     //
     // Also left out wherever the newest change already stands for the
     // current state - as a crowned row, or as the version head above
-    // it, both marked `now` in `_renderTopSection`/`_renderVersionHead`
+    // it, both marked `now` in `_renderNowSection`/`_renderVersionHead`
     // - because ticking that one already means the same thing, and a
     // second checkbox for one fact reads as two different facts. Kept
     // only for decision 9's own edge case, the one thing it exists
@@ -2928,15 +2960,15 @@ class DashboardHistoryPanel extends HTMLElement {
     // now, so nothing on screen can stand in for "Current state" but
     // this pick itself.
     const somethingIsAlreadyCurrent = Boolean(this._changes[0]?.same_as_now);
-    const compareBar = `<div class="compare-bar">
-           <button class="act ghost" data-compare-toggle="1">
-             ${this._compareMode ? "Exit compare mode" : "Compare mode"}
-           </button>
-         </div>
-         ${this._compareMode && dashboard?.exists !== false && !somethingIsAlreadyCurrent
+    // The toggle itself now sits in the search row (`_renderSearch`),
+    // beside the field rather than on a row of its own beneath it -
+    // this is only the pinned pick that appears once compare mode is
+    // actually on.
+    const comparePin =
+      this._compareMode && dashboard?.exists !== false && !somethingIsAlreadyCurrent
         ? currentStateRow(this._compareSelection.some((s) => s.revision === null))
-        : ""}`;
-    const topBar = banner + compareBar;
+        : "";
+    const topBar = banner + comparePin;
     const shown = this._shown();
     // Nobody has answered yet: the walk is out, or the query is too
     // short to send. The note above the list says which, and a sentence
@@ -2956,85 +2988,189 @@ class DashboardHistoryPanel extends HTMLElement {
     // at the change a version sits on. So the unbundled case is handled
     // once, outside the loop, rather than guarded for on every section.
     const cut = sections(this._changes);
-    const newest = cut.find((s) => s.versions);
-    const label = newest
-      ? `Since ${shortName(newest.versions[0].name)}`
-      : "Not in a version yet";
-    const parts = cut.map((section, sectionIndex) => {
-      if (!section.versions) return this._renderTopSection(section, label);
+    // The one shape a "right now" element cannot fold onto: the newest
+    // change already carries a tag, but the dashboard has drifted since
+    // that tag was made, so nothing here is crowned at all -
+    // `_renderNowBanner` says so with no body of its own. Where the
+    // front is clean, that tag's own section below *is* the right-now
+    // element (see `crowned` on `versionHead`) and needs no banner
+    // above it; where the front is not tagged, `_renderNowSection`
+    // draws the element itself, folding the rows it names.
+    const behind =
+      cut[0]?.versions && !this._changes[0]?.same_as_now
+        ? this._renderNowBanner()
+        : "";
+    // flatMap, not map: two tags can sit on one commit, and each gets
+    // its own stacked section rather than one head naming both (see
+    // rows.js versionHead). Both opened onto the same rows, because
+    // that is the one span there is to show either of them.
+    const parts = cut.flatMap((section, sectionIndex) => {
+      if (!section.versions) return [this._renderNowSection(section)];
       const rows = section.rows
         .map((index, position) =>
           this._renderRow(this._changes[index], position === 0),
         )
         .join("");
-      const key = section.versions[0].name;
       // Only the first section in the list can start at the newest
       // change at all (`sections()` always opens it there when it
       // carries a mark), so this is the one place a version section can
-      // also be where the dashboard stands right now.
-      const now =
-        sectionIndex === 0 && this._changes[0]?.same_as_now ? " now" : "";
-      return `<details class="ver${now}" data-key="${escape(key)}"
+      // also be where the dashboard stands right now - and therefore
+      // the one place a section doubles as the right-now element.
+      const crowned = sectionIndex === 0 && Boolean(this._changes[0]?.same_as_now);
+      const now = crowned ? " now" : "";
+      return section.versions.map((version) => {
+        const key = version.name;
+        return `<details class="ver${now}" data-key="${escape(key)}"
                 ${this._verOpen.has(key) ? "open" : ""}>
-                ${this._renderVersionHead(section)}
+                ${this._renderVersionHead(section, version, crowned)}
                 <div class="inner">${rows}</div>
               </details>`;
+      });
     });
     const older = this._cursor
       ? `<div class="older">
            <button class="act ghost" data-older="1">Load older changes</button>
          </div>`
       : "";
-    return topBar + parts.join("") + older;
+    return topBar + behind + parts.join("") + older;
   }
 
   /**
-   * The newest entry is set apart when it is provably the state in front
-   * of you. Provably: after a change made at Home Assistant's back it is
-   * not, and then nothing is crowned rather than the wrong thing.
+   * The sentence a "right now" element opens with when it is not
+   * crowned - a version's own section never needs one, being crowned
+   * already says everything this does.
+   *
+   * Either/or, never both: a named match (something recorded holds
+   * exactly this content) and "changed since the last version" are the
+   * same question answered two ways, not two different facts - the
+   * simple mode's own `standing` sentence draws the same either/or, and
+   * this is that same choice, not `same_as_now`. A front that is
+   * itself the live state but simply has not been tagged yet is still
+   * "changed since v1.0.1" in every sense that matters here: nothing
+   * recorded carries what it holds.
+   *
+   * Named by the version it drifted from rather than left generic -
+   * `this._versions[0]` is the newest version there is, complete and
+   * ordered regardless of the loaded window, the same source the
+   * simple mode's own "Undo / Go back to" button reads.
    */
-  _renderTopSection(section, label) {
-    const rows = section.rows.map((index) =>
-      this._renderRow(this._changes[index]),
-    );
-    // The panel knew this and kept it to itself: the head of the
-    // version's own section reads "same state as now", the row up here
-    // reads "current state", and nothing joined the two. Somebody had to
-    // read the source to find out which version they were looking at.
-    const matching = this._versionsMatchingNow();
-    // Only for the branch below, where nothing is crowned and so no row
-    // can carry the badge. Where a row *is* crowned, the same fact rides
-    // as a chip beside "current state" instead: inside the frame the eye
-    // stops at, rather than in a line under it that gets read past.
-    const sameVer = matching.length
-      ? `<span class="why matches" title="${escape(joinNames(matching))}"
+  _nowSentence(matching) {
+    if (matching.length)
+      return `<p class="why matches" title="${escape(joinNames(matching))}"
            >What the dashboard holds right now is the same state as
-           ${escape(someNames(matching))}.</span>`
+           ${escape(someNames(matching))}.</p>`;
+    return `<p class="why">The dashboard has changed since ${
+      this._versions.length
+        ? escape(shortName(this._versions[0].name))
+        : "it was first recorded"
+    }.</p>`;
+  }
+
+  /**
+   * The two buttons the simple mode's own "right now" box always
+   * offers where nothing recorded matches - saving the live state as a
+   * version, and undoing back to the last one there is. Reused here
+   * rather than redrawn, because a person switching modes mid-task
+   * should find the same way out in both.
+   */
+  _nowActs(matching) {
+    if (matching.length) return "";
+    const undo = this._versions.length
+      ? `<button class="act ghost" data-state="${escape(this._versions[0].name)}"
+             >Undo / Go back to ${escape(shortName(this._versions[0].name))}</button>`
       : "";
-    // Placed by what it describes. Below, the crowned row *is* the
-    // current state and the sentence belongs under it. Here nothing is
-    // crowned - the dashboard changed at Home Assistant's back, and no
-    // row stands for the present state - so the sentence is the only
-    // thing on the page that speaks for it, and leads.
-    if (!this._changes[0].same_as_now)
-      return `${sameVer}<div class="divider">${escape(label)}</div>${rows.join("")}`;
-    // The crowned row sits above the divider, not under it - so when it
-    // is the only row, the divider has nothing left to head and the
-    // label would disappear with it. It moves into the heading instead:
-    // "which version am I building on" is exactly what somebody looking
-    // at a change that is not in one yet wants to know.
-    const more = rows.length > 1;
-    const rest = more
-      ? `<div class="divider">${escape(label)}</div>${rows.slice(1).join("")}`
-      : "";
-    const heading = more ? "Current state" : `Current state · ${label}`;
-    // The ring's own class: whether anything recorded holds this
-    // content, the same fact `matching` above already answered.
-    const namedClass = matching.length ? " named" : "";
-    return `<div class="current${namedClass}">
-              <p class="heading">${escape(heading)}</p>
-              ${rows[0]}
-            </div>${rest}`;
+    return `<span class="acts">
+        <button class="act ghost" data-version="now">Save this as a version</button>
+        ${undo}
+      </span>`;
+  }
+
+  /**
+   * The badge, sentence and buttons together - all three empty at once
+   * while `_versionsLoaded` is false, because none of them can answer
+   * anything honestly yet.
+   *
+   * `_select` clears `_versions`/`_matching` before the fetch that
+   * would refill them, and the one render `_guard` draws while that
+   * fetch is out would otherwise read the empty arrays as "nothing has
+   * ever been recorded here" - true of no dashboard this box has ever
+   * been drawn for, and false of whichever one is actually loading.
+   * Silence for a frame is honest; a confident wrong answer is not.
+   */
+  _nowFacts(matching) {
+    if (!this._versionsLoaded)
+      return { chip: "", named: false, loading: true, body: "" };
+    return {
+      chip: nowChip(Boolean(matching.length)),
+      named: Boolean(matching.length),
+      loading: false,
+      body: this._nowSentence(matching) + this._nowActs(matching),
+    };
+  }
+
+  /**
+   * The advanced mode's own "right now" - the same element the simple
+   * mode draws, opening onto the full rows rather than the simple
+   * mode's summarised lines, because a single step stays undoable only
+   * here.
+   *
+   * Only reached for the span nothing has named yet: where the newest
+   * change is itself tagged, that version's own section carries the
+   * heading instead (`crowned` on `versionHead`) - there is no second,
+   * bodyless element sitting above an otherwise ordinary section, only
+   * ever one "right now". The ring belongs to `.now-head` alone, never
+   * to `.now-inner` below it: opened onto full change cards rather
+   * than the simple mode's compact steps, a ring around the whole
+   * thing would have framed a list that can run to dozens of rows in
+   * one colour, which said far less than it looked like it said.
+   */
+  _renderNowSection(section) {
+    // `spokenFor` on the very first row alone: that is the one row the
+    // heading's own badge already speaks for when the front is clean,
+    // and letting `renderRow` badge it too said "current state" twice
+    // for one fact - once in the frame the eye stops at, once a few
+    // pixels below it.
+    const rows = section.rows.map((index, position) =>
+      this._renderRow(this._changes[index], position === 0),
+    );
+    // Whether anything *recorded* holds this content - never whether
+    // the front is clean, which only says it matches the live state,
+    // not that a version names it. A front that is itself a tag reads
+    // that same question through `crowned` instead (see versionHead).
+    const matching = this._versionsMatchingNow();
+    const { chip, named, loading, body } = this._nowFacts(matching);
+    const namedClass = (named ? " named" : "") + (loading ? " loading" : "");
+    const count = section.rows.length;
+    const key = "now";
+    return `<details class="now-panel${namedClass}" data-key="${key}"
+              ${this._verOpen.has(key) ? "open" : ""}>
+              <summary class="now-head">
+                <p class="heading">Right now ${chip}
+                  <span class="count">${count} change${count === 1 ? "" : "s"}</span></p>
+                ${body}
+              </summary>
+              <div class="now-inner">
+                ${rows.join("")}
+              </div>
+            </details>`;
+  }
+
+  /**
+   * The one shape neither `_renderNowSection` nor a crowned version
+   * section can draw: the newest change is already tagged, so there is
+   * no unversioned span to fold rows behind, and the dashboard has
+   * drifted since that tag was made, so nothing here is crowned
+   * either. No rows are left unaccounted for, so this carries no body
+   * of its own - only the badge and the sentence.
+   */
+  _renderNowBanner() {
+    const matching = this._versionsMatchingNow();
+    const { chip, named, loading, body } = this._nowFacts(matching);
+    const namedClass = (named ? " named" : "") + (loading ? " loading" : "");
+    return `<div class="now-panel now-head${namedClass}">
+              <p class="heading">Right now ${chip}</p>
+              ${body}
+            </div>`;
   }
 
   _renderRow(change, spokenFor = false) {

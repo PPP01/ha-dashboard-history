@@ -77,8 +77,14 @@ export function someNames(names) {
 }
 
 /**
- * A section head. Two versions can sit on the same state; both are
- * named rather than one of them being silently dropped.
+ * A version's own head, drawn once per version that names a section.
+ *
+ * Two versions can sit on the same state - the same commit, two tags -
+ * and each gets a head of its own rather than one head naming both:
+ * stacked one under the other, the same way the simple mode already
+ * draws every version as a row of its own regardless of what it sits
+ * on. Both heads open onto the same underlying changes; there is
+ * nothing else to show them, since that is the one state they share.
  *
  * The button disappears when its target is what the dashboard holds
  * already - the same rule the row buttons follow, and for the same
@@ -88,46 +94,62 @@ export function someNames(names) {
  * `here` is whether the newest change in this section is the state the
  * dashboard holds. It comes in rather than being worked out, because
  * working it out needs the change list and this function has only the
- * section.
+ * section. `count` is the section's own change count, the same number
+ * on every version stacked on it.
+ *
+ * `crowned` is the advanced mode's whole answer to "where is the right
+ * now element": there is no element beside this one. A version that is
+ * both the newest thing recorded and what the dashboard holds right
+ * now *is* the right-now element, exactly as the simple mode's own
+ * merged block already draws it - not a state repeated in a second box
+ * above an otherwise ordinary section. It adds the heading, the badge
+ * and the date; it takes away the now-redundant "same state as now"
+ * and the button that would only ever open on "No difference."
  */
-export function versionHead({ section, here, top, compareMode = false, compareChecked = false }) {
-  const [first, ...also] = section.versions;
-  const count = section.rows.length;
-  const extra = also
-    .map(
-      (v) =>
-        `<span class="also">also ${escape(v.name)} — ${escape(v.title)}${pen(v)}${bin(v)}</span>`,
-    )
-    .join("");
-  // Two different truths, and one wording for both was an overclaim.
-  // A version sitting on the newest entry *is* where the dashboard is.
-  // A version further down whose state matches only holds the same
-  // thing: going back to it wrote a newer entry, and that entry, not
-  // this version, is where you are. Saying "current state" there
-  // invites the reading Decision 9 exists to prevent.
-  //
-  // "same state as now" and not a wording of its own: three places say
-  // this one fact, and they said it in two vocabularies until somebody
-  // read all three together and asked whether they meant the same
-  // thing. They do.
-  const back = here
-    ? `<span class="count">${top === 0 ? "current state" : "same state as now"}</span>`
-    : `<button class="act ghost" data-state="${escape(first.name)}"
+export function versionHead({
+  version, here, top, count, compareMode = false, compareChecked = false, crowned = false,
+}) {
+  const auto = version.automatic
+    ? `<span class="auto">saved automatically</span>`
+    : "";
+  const made = crowned && version.timestamp
+    ? `<span class="made">${escape(when(version.timestamp))}</span>`
+    : "";
+  // "current state" is said once now, by the crowned section's own
+  // heading, and nowhere else - a version's own line only ever says
+  // "same state as now", top of the list or not, and says nothing at
+  // all where it is the right-now element itself. Going back to a
+  // version writes a newer entry, and that entry, not this version, is
+  // where you are; saying "current state" here as well invited the
+  // reading Decision 9 exists to prevent.
+  const back = crowned
+    ? ""
+    : here
+      ? `<span class="count">same state as now</span>`
+      : `<button class="act ghost" data-state="${escape(version.name)}"
                >Back to this version</button>`;
+  const rightNow = crowned
+    ? `<p class="heading">Right now ${nowChip(true)}</p>`
+    : "";
   return `
-    <summary class="penholder">
-      ${compareMode
-      ? `<input type="checkbox" class="compare-check" data-compare="${escape(first.name)}"
-                 data-compare-label="${escape(first.title || first.name)}"
+    <summary>
+      ${rightNow}
+      <span class="verhead penholder">
+        ${compareMode
+      ? `<input type="checkbox" class="compare-check" data-compare="${escape(version.name)}"
+                 data-compare-label="${escape(version.title || version.name)}"
                  ${here && top === 0 ? 'data-compare-now="1"' : ""}
                  ${compareChecked ? "checked" : ""}>`
       : ""}
-      <span class="name">${escape(first.name.split("/").pop())}</span>
-      <span class="grow">${escape(first.title || first.name)}${extra}</span>
-      <span class="count">${count} change${count === 1 ? "" : "s"}</span>
-      ${back}
-      ${pen(first)}
-      ${bin(first)}
+        <span class="name">${escape(version.name.split("/").pop())}</span>
+        <span class="grow">${escape(version.title || version.name)}${auto}</span>
+        ${made}
+        <span class="count">${count} change${count === 1 ? "" : "s"}</span>
+        ${back}
+        ${pen(version)}
+        ${bin(version)}
+      </span>
+      ${version.description ? `<p class="why">${escape(version.description)}</p>` : ""}
     </summary>`;
 }
 

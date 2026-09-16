@@ -3860,38 +3860,55 @@ const cut = rows.sections([
 
 const head = (here, top) =>
   rows.versionHead({
-    section: {
-      versions: [{ name: "dash/v1.0.0", title: "One", annotated: true }],
-      rows: [top, top + 1],
-    },
+    version: { name: "dash/v1.0.0", title: "One", annotated: true },
     here,
     top,
+    count: 2,
   });
 const headCompare = (here, top) =>
   rows.versionHead({
-    section: {
-      versions: [{ name: "dash/v1.0.0", title: "One", annotated: true }],
-      rows: [top, top + 1],
-    },
+    version: { name: "dash/v1.0.0", title: "One", annotated: true },
     here,
     top,
+    count: 2,
     compareMode: true,
   });
 
-// Two versions on one state: the head names both, so both need a way
-// to be renamed. The second only ever appears here - the simple mode
-// gives it a row of its own - so a pen on the first alone would leave
-// it reachable from one mode and not the other.
-const shared = rows.versionHead({
-  section: {
-    versions: [
-      { name: "dash/v1.0.0", title: "One", annotated: true },
-      { name: "dash/v1.1.0", title: "Also one", annotated: true },
-    ],
-    rows: [0, 1],
-  },
+// Two versions on one state: each gets a head of its own - stacked,
+// not folded into one head naming both - so both need their own way
+// to be renamed. The panel builds one of these per name in a
+// section's `versions`, all opening onto the same rows.
+const stackedFirst = rows.versionHead({
+  version: { name: "dash/v1.0.0", title: "One", annotated: true },
   here: false,
   top: 2,
+  count: 2,
+});
+const stackedSecond = rows.versionHead({
+  version: { name: "dash/v1.1.0", title: "Also one", annotated: true },
+  here: false,
+  top: 2,
+  count: 2,
+});
+const stacked = stackedFirst + stackedSecond;
+
+const auto = rows.versionHead({
+  version: { name: "dash/v1.0.0", title: "One", automatic: true },
+  here: false,
+  top: 2,
+  count: 1,
+});
+const described = rows.versionHead({
+  version: { name: "dash/v1.0.0", title: "One", description: "Why it was made" },
+  here: false,
+  top: 2,
+  count: 1,
+});
+const undescribed = rows.versionHead({
+  version: { name: "dash/v1.0.0", title: "One" },
+  here: false,
+  top: 2,
+  count: 1,
 });
 
 const row = (change, extra) =>
@@ -3904,7 +3921,11 @@ console.log(JSON.stringify({
     named: s.versions ? s.versions[0].name : null,
     rows: s.rows,
   })),
-  crowned: head(true, 0).includes("current state"),
+  // "current state" is said once now, by the right-now element alone -
+  // a version's own head says "same state as now" whether it is the
+  // newest entry (top 0) or one further down (top 2).
+  sameStateOnTop: head(true, 0).includes("same state as now"),
+  noCurrentStateOnTop: head(true, 0).includes("current state"),
   sameState: head(true, 2).includes("same state as now"),
   wayBack: head(false, 2).includes("Back to this version"),
   noWayBackWhereYouAre: head(true, 0).includes("Back to this version"),
@@ -3949,8 +3970,12 @@ console.log(JSON.stringify({
   named: row(CHANGE, { newest: true, matching: ["v1.0.0"] })
     .includes("same state as v1.0.0"),
   pen: head(false, 2).includes('data-retitle="dash/v1.0.0"'),
-  sharedPens: (shared.match(/data-retitle=/g) || []).length,
-  sharedBins: (shared.match(/data-remove=/g) || []).length,
+  stackedPens: (stacked.match(/data-retitle=/g) || []).length,
+  stackedBins: (stacked.match(/data-remove=/g) || []).length,
+  autoBadge: auto.includes("saved automatically"),
+  noAutoBadgeByDefault: head(false, 2).includes("saved automatically"),
+  describedShowsIt: described.includes("Why it was made"),
+  undescribedShowsNothing: undescribed.includes('class="why"'),
   penOnAHandMadeTag: rows.pen({ name: "dash/by-hand", title: "", annotated: false }),
   penOnATitlelessAnnotatedTag: rows.pen({
     name: "dash/odd", title: "", annotated: true,
@@ -3985,9 +4010,11 @@ def test_a_section_head_offers_the_way_back_only_where_it_leads_somewhere(
     # dialog reading "No difference." above a live Apply button.
     assert row_parts["wayBack"] is True
     assert row_parts["noWayBackWhereYouAre"] is False
-    # Two truths, two wordings: a version on the newest entry is where
-    # the dashboard is; one further down only holds the same thing.
-    assert row_parts["crowned"] is True
+    # One wording wherever it sits: "current state" belongs to the
+    # right-now element alone now, so a version's own head says "same
+    # state as now" whether it is the newest entry or one further down.
+    assert row_parts["sameStateOnTop"] is True
+    assert row_parts["noCurrentStateOnTop"] is False
     assert row_parts["sameState"] is True
 
 
@@ -4024,15 +4051,23 @@ def test_compare_mode_marks_a_pick_that_is_known_to_be_current(row_parts):
 
 
 def test_every_version_a_head_names_can_be_renamed(row_parts):
-    # Including the ones the head lists as "also". They sit on the same
-    # state as the first, and this is the only place the advanced mode
-    # shows them at all - so a pen on the first alone would make them
-    # renameable in the simple mode and nowhere else.
+    # Two tags on one state get a head each, stacked - not one head
+    # naming both - so both need their own way to be renamed.
     assert row_parts["pen"] is True
-    assert row_parts["sharedPens"] == 2
+    assert row_parts["stackedPens"] == 2
     # The bin is offered on every version, unlike the pen, so it needs
     # the same twin assertion to be exercised at all in this shape.
-    assert row_parts["sharedBins"] == 2
+    assert row_parts["stackedBins"] == 2
+
+
+def test_a_versions_own_badge_and_note_show_in_the_advanced_head_too(row_parts):
+    # Both used to be simple-mode-only, which made no sense: an
+    # automatic version and a person's own words about a version are
+    # facts about the version, not about which mode happens to draw it.
+    assert row_parts["autoBadge"] is True
+    assert row_parts["noAutoBadgeByDefault"] is False
+    assert row_parts["describedShowsIt"] is True
+    assert row_parts["undescribedShowsNothing"] is False
 
 
 def test_a_version_made_by_hand_gets_no_pen(row_parts):
@@ -4083,9 +4118,12 @@ const unclean = el._renderMain();
 
 // Case 2: the newest change already carries a version, and it is what
 // the dashboard holds right now - the version section itself is the
-// crowned one.
+// crowned one. `sections()` reads a change's own `.versions` entries,
+// not `el._versions` - the date has to sit there for `versionHead` to
+// find it.
 el._changes = [
-  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.0.0" }],
+  { revision: "a", message: "1 card added",
+    versions: [{ name: "dash/v1.0.0", title: "First", timestamp: 1 }],
     same_as_now: true, timestamp: 1 },
 ];
 el._versions = [
@@ -4111,15 +4149,24 @@ const cleanOnOlder = el._renderMain();
 
 console.log(JSON.stringify({
   unclean: {
-    current: unclean.includes('class="current"'),
-    named: unclean.includes('class="current named"'),
+    panel: unclean.includes('class="now-panel"'),
+    named: unclean.includes('class="now-panel named"'),
     verNow: unclean.includes('class="ver now"'),
   },
   cleanOnTop: {
     verNow: cleanOnTop.includes('class="ver now"'),
+    // The crowned section *is* the right-now element now - its own
+    // head carries the "Right now" heading, the blue badge and a
+    // date, and there is no second, bodyless element above it saying
+    // the same thing again.
+    rightNowHeading: cleanOnTop.includes('<p class="heading">Right now'),
+    date: cleanOnTop.includes('class="made"'),
+    noBanner: !cleanOnTop.includes('class="now-panel'),
+    noCountTextAtAll: !cleanOnTop.includes('<span class="count">current state</span>')
+      && !cleanOnTop.includes('<span class="count">same state as now</span>'),
   },
   cleanOnOlder: {
-    named: cleanOnOlder.includes('class="current named"'),
+    named: cleanOnOlder.includes('class="now-panel named"'),
     verNow: cleanOnOlder.includes('class="ver now"'),
   },
 }));
@@ -4134,7 +4181,7 @@ def current_state_colour(tmp_path_factory):
 def test_the_crowned_row_rings_orange_when_nothing_recorded_holds_it(
     current_state_colour,
 ):
-    assert current_state_colour["unclean"]["current"] is True
+    assert current_state_colour["unclean"]["panel"] is True
     assert current_state_colour["unclean"]["named"] is False
     assert current_state_colour["unclean"]["verNow"] is False
 
@@ -4148,6 +4195,21 @@ def test_a_version_section_rings_blue_when_it_is_also_the_current_state(
     assert current_state_colour["cleanOnTop"]["verNow"] is True
 
 
+def test_a_tagged_clean_front_is_the_right_now_element_itself(
+    current_state_colour,
+):
+    # No second, bodyless element above an otherwise ordinary section:
+    # a version that is both the newest thing recorded and what the
+    # dashboard holds right now carries the "Right now" heading and a
+    # date on its own head, exactly the way the simple mode's merged
+    # block draws it - and says neither "current state" nor "same
+    # state as now" there, since the heading already says it once.
+    assert current_state_colour["cleanOnTop"]["rightNowHeading"] is True
+    assert current_state_colour["cleanOnTop"]["date"] is True
+    assert current_state_colour["cleanOnTop"]["noBanner"] is True
+    assert current_state_colour["cleanOnTop"]["noCountTextAtAll"] is True
+
+
 def test_the_ring_follows_the_content_not_the_position_in_the_list(
     current_state_colour,
 ):
@@ -4157,6 +4219,299 @@ def test_the_ring_follows_the_content_not_the_position_in_the_list(
     # since it is not the newest change.
     assert current_state_colour["cleanOnOlder"]["named"] is True
     assert current_state_colour["cleanOnOlder"]["verNow"] is False
+
+
+# -- the advanced mode's own "right now" box, folded like a version's own --
+
+_ADVANCED_NOW_BOX = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+
+// The dashboard has changed at Home Assistant's back since the last
+// recorded change, and nothing recorded holds what it holds now. The
+// box has to appear here too, not only when the state happens to be
+// clean - that is the whole point of aligning it with the simple mode.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "b" },
+];
+el._matching = [];
+const drifted = el._renderMain();
+
+// The rarer shape of the same fact: the newest change is already
+// tagged, so there is no unversioned span left to fold a box around -
+// and yet the dashboard has drifted since that tag was made. Nothing
+// crowned, and nothing to fold behind the sentence either.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "a" },
+];
+el._matching = [];
+const behindTag = el._renderMain();
+
+// The front is drifted (nothing recorded is provably current) *and*
+// an older version happens to hold the exact same content anyway -
+// the either/or a named match always wins, the same choice the simple
+// mode's own box makes.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "b" },
+];
+el._matching = [{ name: "dash/v1.0.0" }];
+const matched = el._renderMain();
+
+// The crowned newest change, unversioned, sits inside the box - point
+// 2: no second "current state" chip on the row itself, and indented
+// with the version-style left rule rather than the lighter one.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "b" },
+];
+el._matching = [];
+const cleanBox = el._renderMain();
+
+console.log(JSON.stringify({
+  drifted: {
+    folds: drifted.includes('<details class="now-panel" data-key="now"'),
+    sentence: drifted.includes("The dashboard has changed since v1.0.0"),
+    noDivider: !drifted.includes('class="divider"'),
+    row: drifted.includes("1 card added"),
+    // Section "a" alone: "b" already carries a mark, so sections()
+    // starts a new section there and "a" is the only unversioned row.
+    count: drifted.includes('<span class="count">1 change</span>'),
+    // The two buttons the simple mode's own box offers wherever
+    // nothing recorded matches - reused rather than redrawn.
+    saveButton: drifted.includes('data-version="now"'),
+    undoButton: drifted.includes('data-state="dash/v1.0.0"')
+      && drifted.includes("Undo / Go back to v1.0.0"),
+  },
+  behindTag: {
+    div: behindTag.includes('class="now-panel now-head"'),
+    sentence: behindTag.includes("The dashboard has changed since v1.0.0"),
+    verNow: behindTag.includes('class="ver now"'),
+    saveButton: behindTag.includes('data-version="now"'),
+  },
+  // The either/or the simple mode's own box already draws: a named
+  // match wins outright, and there is nothing left to explain about a
+  // drift once the dashboard's content is already accounted for
+  // somewhere recorded.
+  matched: {
+    noDrift: !matched.includes("has changed since"),
+    matches: matched.includes("the same state as") && matched.includes('title="v1.0.0"'),
+    // No way back is offered onto a state already known to be held
+    // somewhere - the same rule a version's own row follows.
+    noSaveButton: !matched.includes('data-version="now"'),
+    noUndoButton: !matched.includes("Undo / Go back to"),
+  },
+  cleanBox: {
+    innerClass: cleanBox.includes('<div class="now-inner">'),
+    noVbody: cleanBox.includes('class="vbody"'),
+    // Only one "current state" on the whole page: the heading's own
+    // badge. The row inside must not carry a second one.
+    chipCount: (cleanBox.match(/class="chip now/g) || []).length,
+    // The ring belongs to .now-head; .now-inner (and the cards inside
+    // it) must never carry the panel's own class, or the ring would
+    // reach into the rows through it.
+    innerNotPanel: !cleanBox.includes('class="now-inner now-panel"')
+      && !cleanBox.includes('class="now-panel now-inner"'),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def advanced_now_box(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "advanced_now_box", _ADVANCED_NOW_BOX)
+
+
+def test_the_advanced_mode_gets_its_own_right_now_box_when_drifted(advanced_now_box):
+    assert advanced_now_box["drifted"]["folds"] is True
+    # Named by the version it drifted from, not a generic "the last
+    # version" - and with no separate "Since vX" label needed once the
+    # sentence already names it.
+    assert advanced_now_box["drifted"]["sentence"] is True
+    assert advanced_now_box["drifted"]["noDivider"] is True
+    assert advanced_now_box["drifted"]["row"] is True
+    assert advanced_now_box["drifted"]["count"] is True
+
+
+def test_the_drifted_box_offers_the_simple_modes_own_two_buttons(advanced_now_box):
+    # Switching modes mid-task should find the same way out in both.
+    assert advanced_now_box["drifted"]["saveButton"] is True
+    assert advanced_now_box["drifted"]["undoButton"] is True
+
+
+def test_a_tagged_but_drifted_newest_change_still_says_so(advanced_now_box):
+    # Nothing in `cut` can carry this fact - the tag already owns the
+    # newest change - so it has to be said outside the section loop,
+    # with no rows behind it to fold.
+    assert advanced_now_box["behindTag"]["div"] is True
+    assert advanced_now_box["behindTag"]["sentence"] is True
+    assert advanced_now_box["behindTag"]["verNow"] is False
+    assert advanced_now_box["behindTag"]["saveButton"] is True
+
+
+def test_a_named_match_wins_over_the_drift_sentence(advanced_now_box):
+    # Either/or, the same choice the simple mode's own box makes: a
+    # named match already accounts for the content, so there is
+    # nothing left to explain about drifting, and nowhere left to
+    # offer a way back to.
+    assert advanced_now_box["matched"]["noDrift"] is True
+    assert advanced_now_box["matched"]["matches"] is True
+    assert advanced_now_box["matched"]["noSaveButton"] is True
+    assert advanced_now_box["matched"]["noUndoButton"] is True
+
+
+def test_the_boxed_row_carries_no_second_current_state_chip(advanced_now_box):
+    # The heading's own badge already says it; a chip on the row inside
+    # would say the same fact a second time, a few pixels below it.
+    assert advanced_now_box["cleanBox"]["chipCount"] == 1
+
+
+def test_the_boxed_rows_are_indented_like_a_versions_own(advanced_now_box):
+    assert advanced_now_box["cleanBox"]["innerClass"] is True
+    assert advanced_now_box["cleanBox"]["noVbody"] is False
+
+
+# -- the right-now element stays silent while _select's fetch is out -------
+
+_NOW_WHILE_LOADING = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+
+// The exact shape _select leaves behind for the one render _guard
+// draws before its fetch answers: _versions/_matching already
+// cleared, _changes still the previous dashboard's rows. Without the
+// flag this reads as "nothing has ever been recorded here".
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
+];
+el._versions = [];
+el._matching = [];
+el._versionsLoaded = false;
+const loading = el._renderMain();
+
+// The same shape, moments later, once the fetch has answered.
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "z" },
+];
+el._versionsLoaded = true;
+const loaded = el._renderMain();
+
+console.log(JSON.stringify({
+  loading: {
+    // No chip, no sentence, no buttons - none of them could answer
+    // honestly yet - but the box and its row count still show, since
+    // those come from `_changes` alone and are not stale.
+    noChip: !loading.includes('class="chip now'),
+    noSentence: !loading.includes("has changed since"),
+    noButtons: !loading.includes('data-version="now"'),
+    heading: loading.includes('<p class="heading">Right now'),
+    count: loading.includes('<span class="count">1 change</span>'),
+    row: loading.includes("1 card added"),
+    unnamed: !loading.includes('class="now-panel named"'),
+    // The ring itself, not only the chip and sentence: without this
+    // class the CSS ring still defaults to orange even with an empty
+    // badge, which is the same wrong answer worn silently instead of
+    // out loud.
+    loadingClass: loading.includes('class="now-panel loading"'),
+  },
+  loaded: {
+    sentence: loaded.includes("The dashboard has changed since v1.0.0"),
+    buttons: loaded.includes('data-version="now"'),
+    noLoadingClass: !loaded.includes("loading"),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def now_while_loading(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "now_while_loading", _NOW_WHILE_LOADING)
+
+
+def test_the_right_now_element_says_nothing_while_versions_are_still_loading(
+    now_while_loading,
+):
+    assert now_while_loading["loading"]["noChip"] is True
+    assert now_while_loading["loading"]["noSentence"] is True
+    assert now_while_loading["loading"]["noButtons"] is True
+    assert now_while_loading["loading"]["heading"] is True
+    assert now_while_loading["loading"]["count"] is True
+    assert now_while_loading["loading"]["row"] is True
+    assert now_while_loading["loading"]["unnamed"] is True
+    assert now_while_loading["loading"]["loadingClass"] is True
+
+
+def test_the_right_now_element_speaks_again_once_versions_have_loaded(
+    now_while_loading,
+):
+    assert now_while_loading["loaded"]["sentence"] is True
+    assert now_while_loading["loaded"]["buttons"] is True
+    assert now_while_loading["loaded"]["noLoadingClass"] is True
+
+
+# -- the compare toggle sits beside the search field, not below it ---------
+
+_SEARCH_ROW = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._changes = [{ revision: "a", message: "1 card added", versions: [] }];
+el._versions = [];
+
+el._mode = "advanced";
+const advancedSearch = el._renderSearch();
+
+el._mode = "simple";
+const simpleSearch = el._renderSearch();
+
+console.log(JSON.stringify({
+  // The button is part of the search row's own markup now, not a
+  // second row `_renderMain` used to add beneath it - which is what
+  // put the two modes' first elements at different heights on screen.
+  toggleInAdvancedSearch: advancedSearch.includes("data-compare-toggle"),
+  toggleInSimpleSearch: simpleSearch.includes("data-compare-toggle"),
+  noSeparateBar: el._renderMain().includes('class="compare-bar"'),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def search_row(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "search_row", _SEARCH_ROW)
+
+
+def test_the_compare_toggle_moved_into_the_search_row(search_row):
+    assert search_row["toggleInAdvancedSearch"] is True
+    assert search_row["noSeparateBar"] is False
+
+
+def test_the_simple_mode_never_offers_compare_mode(search_row):
+    # Compare mode is an advanced-only capability - the simple mode's
+    # search row stays exactly as wide as before, with nothing new to
+    # make room for.
+    assert search_row["toggleInSimpleSearch"] is False
 
 
 # -- writing from a search result keeps the search --------------------------

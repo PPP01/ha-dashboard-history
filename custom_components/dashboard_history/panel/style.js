@@ -201,7 +201,13 @@ export const STYLE = `
     border: 0;
   }
   .search { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
-  .search .find { flex:1; }
+  /* Capped rather than left at flex:1 alone, so the field is the same
+     width whether or not the compare-mode toggle sits beside it - the
+     advanced mode carries that button, the simple mode never does, and
+     an uncapped field would make the row a different shape in each,
+     which is what put their own first elements at two different
+     heights on screen. */
+  .search .find { flex: 1 1 auto; max-width: 420px; }
   .dash {
     display: flex;
     flex-direction: column;
@@ -595,9 +601,7 @@ export const STYLE = `
      an assumption about engines, and the two other summaries in this
      file say it outright rather than rely on it. */
   details.ver > summary {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    display: block;
     padding: 10px 16px 10px 12px;
     border-radius: 8px;
     background: var(--card-background-color, #fff);
@@ -620,12 +624,22 @@ export const STYLE = `
       var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
   }
   details.ver > summary::-webkit-details-marker { display: none; }
+  /* The row's own flex line - chevron, number, title, buttons - kept
+     apart from <summary> itself, so that the optional description
+     below it (.why) gets a full-width line of its own instead of
+     fighting the row for flex space. The same split the simple mode's
+     .vhead/.vsum pair already makes, and for the same reason. */
+  details.ver > summary .verhead {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
   /* The same triangle the two other chevrons in this panel use, written
      the same way: 25B8 is the small one, and an escape rather than the
      character itself keeps this file to plain ASCII. It arrived as a
      literal U+25B6 - the large triangle - which was the only byte above
      ASCII in the whole stylesheet and a second glyph for one job. */
-  details.ver > summary::before {
+  details.ver > summary .verhead::before {
     content: "\\25B8";
     display: inline-block;
     width: 9px;
@@ -634,7 +648,7 @@ export const STYLE = `
     transition: transform .15s ease;
     transform-origin: center;
   }
-  details.ver[open] > summary::before {
+  details.ver[open] > summary .verhead::before {
     transform: rotate(90deg);
   }
   details.ver > summary .name {
@@ -647,21 +661,108 @@ export const STYLE = `
     color: var(--secondary-text-color, #727272);
     font-size: 13px;
   }
+  details.ver > summary .auto { margin-left: 8px; font-size: 12px; opacity: .6; }
+  details.ver > summary .made {
+    color: var(--secondary-text-color, #727272);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  /* Indented past the chevron, so the note stands under the title
+     rather than under the marker - the same reasoning .vsum .why
+     follows in the simple mode. */
+  details.ver > summary .why { margin: 4px 0 0 19px; }
+  /* The crowned section's own "Right now" line, drawn by the same
+     heading class the boxes below use - and the same override their
+     chip needs, widened past .standing so this one is not read
+     shouting-case too. */
+  details.ver > summary .heading { margin: 0 0 8px; }
+  .heading .chip { text-transform: none; letter-spacing: normal; }
   details.ver > .inner {
     padding: 12px 0 0 16px;
     border-left: 2px solid var(--divider-color, #e0e0e0);
     margin-left: 14px;
   }
-  details.ver .also {
+  /* The one section whose .inner line is never neutral: a crowned
+     section is the right-now element itself, and every other line this
+     panel draws for the right-now element answers the same "named"
+     question in blue rather than in the plain divider grey every other
+     version's .inner wears. */
+  details.ver.now > .inner { border-left-color: var(--primary-color, #03a9f4); }
+  /* The advanced mode's own "right now" element, for the span nothing
+     has named yet - .now-head carries the ring, .now-inner never does.
+     Opened onto full change cards rather than the simple mode's
+     compact steps, a ring around the whole fold would have framed a
+     list that can run to dozens of rows in one colour, which said far
+     less than it looked like it said - so the ring stops at the head,
+     exactly where a version's own border-left already stops before its
+     .inner. */
+  .now-panel { border-radius: 8px; margin-bottom: 12px; }
+  details.now-panel { display: block; }
+  .now-head {
     display: block;
-    margin-top: 2px;
-    font-size: 12px;
-    color: var(--secondary-text-color, #727272);
+    padding: 10px 16px;
+    border-radius: 8px;
+    background: var(--card-background-color, #fff);
+    box-shadow: 0 0 0 2px var(--accent-color, #ff9800),
+      var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
   }
-  /* The pen on a second version named in the same head belongs to a
-     12px line, not to the row. At the shared size it stood a third
-     taller than the words it sits in and pulled the eye off them. */
-  details.ver .also .pen { padding: 0 6px; font-size: 12px; }
+  /* Two selectors for one fact: _renderNowSection nests .now-head
+     inside .now-panel.named (a details/summary pair), but
+     _renderNowBanner has no body to nest a summary in and puts both
+     classes on the one div it draws - the descendant selector alone
+     would silently miss that second shape. */
+  .now-panel.named .now-head, .now-panel.now-head.named {
+    box-shadow: 0 0 0 2px var(--primary-color, #03a9f4),
+      var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
+  }
+  /* Neither colour while _versionsLoaded is false: the ring answers
+     "does anything recorded hold this content", and for the one render
+     drawn before _select's fetch has answered, this element does not
+     know yet. Orange by default would have answered "no" anyway -
+     confidently, and often wrongly. */
+  .now-panel.loading .now-head, .now-panel.now-head.loading {
+    box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
+  }
+  details.now-panel > summary.now-head {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+  }
+  details.now-panel > summary.now-head::-webkit-details-marker { display: none; }
+  .now-head .heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 4px;
+    font-size: 13px;
+  }
+  .now-head .heading .count { margin-left: auto; font-size: 13px;
+            color: var(--secondary-text-color, #727272); text-transform: none;
+            letter-spacing: normal; }
+  .now-head .heading::before { content: "\\25B8"; display: inline-block;
+            width: 9px; margin-right: 2px; transition: transform .15s; }
+  div.now-head .heading::before { visibility: hidden; }
+  details.now-panel[open] .now-head .heading::before { transform: rotate(90deg); }
+  .now-head > p:not(.heading) { margin: 8px 0 0; }
+  .now-head .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  /* The exact geometry details.ver > .inner uses - no gap of its own
+     above it, flush against the head the same way a version's own
+     .inner is flush against its summary - recoloured rather than
+     redrawn: orange by default, the same accent .now-head wears
+     unnamed, blue the moment the panel is .named. Never the neutral
+     divider-colour a version's own .inner rules with unless it is
+     itself crowned: this line belongs to the one element on the page
+     that is always exactly "right now". */
+  .now-panel > .now-inner {
+    padding: 12px 0 0 16px;
+    border-left: 2px solid var(--accent-color, #ff9800);
+    margin-left: 14px;
+  }
+  .now-panel.named > .now-inner { border-left-color: var(--primary-color, #03a9f4); }
+  /* The one exception the comment above allows itself: while loading,
+     this line is exactly the plain divider grey a version's own .inner
+     wears, for the same reason the head's own ring goes neutral too. */
+  .now-panel.loading > .now-inner { border-left-color: var(--divider-color, #e0e0e0); }
   .levels { display: flex; gap: 8px; margin: 12px 0; }
   .levels button {
     flex: 1 1 0;
@@ -800,11 +901,6 @@ export const STYLE = `
      than sitting inside the heading - and the muted colour it was doing
      by hand is already what the shared .heading sets. */
   .standing .heading { margin:0 0 4px; font-size:13px; }
-  /* The chip keeps its own voice inside a heading that shouts. Uppercase
-     and letter-spaced, it would read as a second heading rather than as
-     a label - and the advanced mode's chip, which is the same words,
-     reads as neither. */
-  .standing .heading .chip { text-transform:none; letter-spacing:normal; }
   /* The box's own two paragraphs, and not every paragraph inside it:
      unscoped, this reached the fold's lines as well and the shared
      .step and .stephead margins had to be restated at higher
@@ -851,7 +947,11 @@ export const STYLE = `
   .vrow { margin-bottom:10px; border-radius:8px;
         background:var(--card-background-color,#fff);
         box-shadow:var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15)); }
-  .vsum { display:block; padding:10px 16px; list-style:none; cursor:pointer; }
+  /* The same blue as the advanced mode's version pill
+     (details.ver > summary) - a row here is a version exactly as much
+     as one there is, and wore no mark of its own until now. */
+  .vsum { display:block; padding:10px 16px 10px 12px; list-style:none;
+        cursor:pointer; border-left:4px solid var(--primary-color, #03a9f4); }
   /* Safari drew its own triangle until 16, and this file brings a
      chevron of its own. Two of them is one too many. */
   .vsum::-webkit-details-marker { display:none; }
@@ -1066,7 +1166,6 @@ export const STYLE = `
       justify-content: flex-end;
     }
   }
-  .compare-bar { display: flex; justify-content: flex-end; padding: 8px 0; }
   .compare-check { margin-right: 8px; width: 16px; height: 16px; flex-shrink: 0; }
   .current-pick .change { background: var(--secondary-background-color, #eee); }
 `;

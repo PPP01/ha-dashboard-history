@@ -406,7 +406,7 @@ export function renderSimple({
         : version.same_as_now
           ? `<span class="count">same state as now</span>`
           : `<button class="act ghost" data-state="${escape(version.name)}"
-                 >Go back to this</button>`;
+                 >Back to this version</button>`;
     // What stays visible when the row is shut: the head, and the words
     // somebody wrote about the version. The note is short, it is the
     // one thing on the row nobody else wrote, and putting it behind a

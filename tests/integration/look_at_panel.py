@@ -561,13 +561,17 @@ async def main():
                 await asyncio.sleep(0.5)
 
             print("\n-- Where am I: the current state --")
+            # Since the "right now" box was aligned with the simple mode's
+            # own (both wear .standing now), the heading's own badge and
+            # a crowned row's redundant one are both `.chip.now` - read
+            # apart by where each sits, summary vs. the folded body.
             shape = await page.js(
                 "(() => { const p = " + PANEL + "; return {"
-                '  heading: p.querySelector(".current .heading")?.innerText,'
-                '  chipNow: p.querySelector(".current .chip.now")?.innerText,'
+                '  heading: p.querySelector(".standing .heading")?.innerText,'
+                '  chipNow: p.querySelector(".standing summary .chip.now")?.innerText,'
                 '  divider: p.querySelector(".divider")?.innerText,'
                 '  sameAsNow: p.querySelectorAll(".chip.sameas").length,'
-                '  rowsInCurrent: p.querySelectorAll(".current .card").length,'
+                '  rowsInCurrent: p.querySelectorAll(".standing .card").length,'
                 " }; })()"
             )
             for name, value in shape.items():
@@ -621,15 +625,15 @@ async def main():
                 " if (p._open !== rev) " + PANEL + '.querySelectorAll(".change")[0].click();'
                 " })()"
             )
-            await page.settle(f'!!{PANEL}.querySelector(".current .detail")')
-            # `.current .detail` runs through the very same
+            await page.settle(f'!!{PANEL}.querySelector(".standing .detail")')
+            # `.standing .detail` runs through the very same
             # `_renderDetail`/`_renderActionBar` path as every other row -
             # since the redesign (Task 2/4) that path emits one
             # `[data-replace]` trigger, not `[data-state]`. textContent,
             # not innerText: the label reads the same regardless of
             # visibility, matching the other `[data-replace]` reads above.
             label = await page.js(
-                f'{PANEL}.querySelector(".current .detail [data-replace]")'
+                f'{PANEL}.querySelector(".standing .detail [data-replace]")'
                 "?.textContent.trim() ?? null"
             )
             print(f"    label: {label!r}")
@@ -1096,7 +1100,7 @@ async def main():
             # two writes to reach - make a version, then set the dashboard
             # back to it - and an inspection script writes nothing. The
             # element renders from `_changes` alone, so handing it that
-            # shape drives the real _sections / _renderTopSection /
+            # shape drives the real _sections / _renderNowSection /
             # _renderVersionHead path without touching the instance.
             #
             # Entry 0 is where the dashboard is and carries no version.
@@ -1129,7 +1133,7 @@ async def main():
             )
             joined = await page.js(
                 "(() => { const p = " + PANEL + "; return {"
-                '  currentSays: p.querySelector(".current .chip.ver")'
+                '  currentSays: p.querySelector(".standing .chip.ver")'
                 '    ?.innerText.replace(/\\s+/g, " ").trim() ?? null,'
                 '  versionHead: [...p.querySelectorAll("details.ver summary .count")]'
                 "    .map(x => x.innerText.trim()),"
@@ -1288,8 +1292,12 @@ async def main():
                 after = await page.js(f"{ELEMENT}._changes[0]?.revision ?? null")
                 print(f"    newest after : {after and after[:7]}")
                 print(f"    refreshed without a reload: {moved}")
+                # .vbody, not just .standing: the box's own heading
+                # always carries a chip.now badge now (aligned with the
+                # simple mode's "Right now" box), so only a row inside
+                # the folded body still tells crowned from not.
                 crowned = await page.js(
-                    f'!!{PANEL}.querySelector(".current .chip.now")'
+                    f'!!{PANEL}.querySelector(".standing .vbody .chip.now")'
                 )
                 # The whole point: not merely refreshed, but refreshed
                 # late enough that the newest entry matches the live
