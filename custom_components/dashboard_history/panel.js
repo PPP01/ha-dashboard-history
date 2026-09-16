@@ -58,7 +58,7 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, joinNames;
-let sections, someNames, renderRow, versionHead, currentStateRow, nowChip;
+let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton;
 let DIALOGS;
 let renderSimple;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -73,7 +73,7 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
@@ -3076,10 +3076,7 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _nowActs(matching) {
     if (matching.length) return "";
-    const undo = this._versions.length
-      ? `<button class="act ghost" data-state="${escape(this._versions[0].name)}"
-             >Undo / Go back to ${escape(shortName(this._versions[0].name))}</button>`
-      : "";
+    const undo = this._versions.length ? undoButton(this._versions[0]) : "";
     return `<span class="acts">
         <button class="act ghost" data-version="now">Save this as a version</button>
         ${undo}
@@ -3087,7 +3084,7 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The badge, sentence and buttons together - all three empty at once
+   * The badge, class and body together - all three silent at once
    * while `_versionsLoaded` is false, because none of them can answer
    * anything honestly yet.
    *
@@ -3097,14 +3094,22 @@ class DashboardHistoryPanel extends HTMLElement {
    * ever been recorded here" - true of no dashboard this box has ever
    * been drawn for, and false of whichever one is actually loading.
    * Silence for a frame is honest; a confident wrong answer is not.
+   *
+   * Reads `_versionsMatchingNow()` itself rather than taking it as a
+   * parameter: both callers computed it only to hand it straight back
+   * in, one call each, for a fact this method already needs. It answers
+   * whether anything *recorded* holds this content - never whether the
+   * front is clean, which only says it matches the live state, not
+   * that a version names it. A front that is itself a tag reads that
+   * same question through `crowned` instead (see `versionHead`).
    */
-  _nowFacts(matching) {
-    if (!this._versionsLoaded)
-      return { chip: "", named: false, loading: true, body: "" };
+  _nowFacts() {
+    if (!this._versionsLoaded) return { chip: "", namedClass: " loading", body: "" };
+    const matching = this._versionsMatchingNow();
+    const named = Boolean(matching.length);
     return {
-      chip: nowChip(Boolean(matching.length)),
-      named: Boolean(matching.length),
-      loading: false,
+      chip: nowChip(named),
+      namedClass: named ? " named" : "",
       body: this._nowSentence(matching) + this._nowActs(matching),
     };
   }
@@ -3134,13 +3139,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const rows = section.rows.map((index, position) =>
       this._renderRow(this._changes[index], position === 0),
     );
-    // Whether anything *recorded* holds this content - never whether
-    // the front is clean, which only says it matches the live state,
-    // not that a version names it. A front that is itself a tag reads
-    // that same question through `crowned` instead (see versionHead).
-    const matching = this._versionsMatchingNow();
-    const { chip, named, loading, body } = this._nowFacts(matching);
-    const namedClass = (named ? " named" : "") + (loading ? " loading" : "");
+    const { chip, namedClass, body } = this._nowFacts();
     const count = section.rows.length;
     const key = "now";
     return `<details class="now-panel${namedClass}" data-key="${key}"
@@ -3165,9 +3164,7 @@ class DashboardHistoryPanel extends HTMLElement {
    * of its own - only the badge and the sentence.
    */
   _renderNowBanner() {
-    const matching = this._versionsMatchingNow();
-    const { chip, named, loading, body } = this._nowFacts(matching);
-    const namedClass = (named ? " named" : "") + (loading ? " loading" : "");
+    const { chip, namedClass, body } = this._nowFacts();
     return `<div class="now-panel now-head${namedClass}">
               <p class="heading">Right now ${chip}</p>
               ${body}

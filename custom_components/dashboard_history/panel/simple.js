@@ -21,12 +21,14 @@
 
 const PARTS = new URL(import.meta.url).search;
 const { escape, when } = await import(`./render.js${PARTS}`);
-// The chip and the two controls this mode borrows. `rows.js` calls
+// The chip and the three controls this mode borrows. `rows.js` calls
 // itself the pieces a history is drawn from - sections, heads, rows,
 // chips - and says both modes build from exactly those; for these
-// three that is now true. The pen renames a version, the bin removes
-// it, both drawn the same way wherever a version is shown.
-const { nowChip, pen, bin } = await import(`./rows.js${PARTS}`);
+// four that is now true. The pen renames a version, the bin removes
+// it, both drawn the same way wherever a version is shown; undoButton
+// is the way back to the last version, offered here and in the
+// advanced mode's own right-now box on the same condition.
+const { nowChip, pen, bin, undoButton } = await import(`./rows.js${PARTS}`);
 
 // The way over to the other mode. Offered in both of this mode's
 // states - with versions and without - and written once, because two
@@ -321,10 +323,7 @@ export function renderSimple({
   // way back that vanished once the window slid past it would be the
   // finding this mode exists to avoid, on the one button nobody can do
   // without.
-  const undo = standingOn
-    ? ""
-    : `<button class="act ghost" data-state="${escape(versions[0].name)}"
-           >Undo / Go back to ${number(versions[0])}</button>`;
+  const undo = standingOn ? "" : undoButton(versions[0]);
   // Where the two are folded together the version itself stands where
   // the sentence about it stood - the same line the rows carry, so the
   // number, the title and the date are written where somebody reading

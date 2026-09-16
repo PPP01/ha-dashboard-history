@@ -697,32 +697,34 @@ export const STYLE = `
      less than it looked like it said - so the ring stops at the head,
      exactly where a version's own border-left already stops before its
      .inner. */
-  .now-panel { border-radius: 8px; margin-bottom: 12px; }
+  /* One colour decision, read by both the ring below and .now-inner's
+     own line further down - not one custom property per consumer. Set
+     here regardless of which of the two shapes carries the class:
+     _renderNowSection nests .now-head inside .now-panel (a
+     details/summary pair), _renderNowBanner puts both classes on the
+     one div it draws, and a custom property resolves the same way
+     whether .now-head reads it from an ancestor or from its own
+     element. */
+  .now-panel {
+    --line-color: var(--accent-color, #ff9800);
+    border-radius: 8px;
+    margin-bottom: 12px;
+  }
+  .now-panel.named { --line-color: var(--primary-color, #03a9f4); }
+  /* Neutral while _versionsLoaded is false: the ring and the line both
+     answer "does anything recorded hold this content", and for the one
+     render drawn before _select's fetch has answered, neither knows
+     yet. Orange by default would have answered "no" anyway -
+     confidently, and often wrongly. */
+  .now-panel.loading { --line-color: var(--divider-color, #e0e0e0); }
   details.now-panel { display: block; }
   .now-head {
     display: block;
     padding: 10px 16px;
     border-radius: 8px;
     background: var(--card-background-color, #fff);
-    box-shadow: 0 0 0 2px var(--accent-color, #ff9800),
+    box-shadow: 0 0 0 2px var(--line-color),
       var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
-  }
-  /* Two selectors for one fact: _renderNowSection nests .now-head
-     inside .now-panel.named (a details/summary pair), but
-     _renderNowBanner has no body to nest a summary in and puts both
-     classes on the one div it draws - the descendant selector alone
-     would silently miss that second shape. */
-  .now-panel.named .now-head, .now-panel.now-head.named {
-    box-shadow: 0 0 0 2px var(--primary-color, #03a9f4),
-      var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
-  }
-  /* Neither colour while _versionsLoaded is false: the ring answers
-     "does anything recorded hold this content", and for the one render
-     drawn before _select's fetch has answered, this element does not
-     know yet. Orange by default would have answered "no" anyway -
-     confidently, and often wrongly. */
-  .now-panel.loading .now-head, .now-panel.now-head.loading {
-    box-shadow: var(--ha-card-box-shadow, 0 1px 3px rgba(0,0,0,.15));
   }
   details.now-panel > summary.now-head {
     cursor: pointer;
@@ -748,23 +750,15 @@ export const STYLE = `
   .now-head .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   /* The exact geometry details.ver > .inner uses - no gap of its own
      above it, flush against the head the same way a version's own
-     .inner is flush against its summary - recoloured rather than
-     redrawn: orange by default, the same accent .now-head wears
-     unnamed, blue the moment the panel is .named. Never the neutral
-     divider-colour a version's own .inner rules with unless it is
-     itself crowned: this line belongs to the one element on the page
-     that is always exactly "right now". */
+     .inner is flush against its summary. Reads --line-color from
+     .now-panel above rather than restating the same three-way colour
+     decision a second time - this line and the head's own ring always
+     agree because they read the one answer. */
   .now-panel > .now-inner {
-    --line-color: var(--accent-color, #ff9800);
     padding: 12px 0 0 16px;
     border-left: 2px solid var(--line-color);
     margin-left: 14px;
   }
-  .now-panel.named > .now-inner { --line-color: var(--primary-color, #03a9f4); }
-  /* The one exception the comment above allows itself: while loading,
-     this line is exactly the plain divider grey a version's own .inner
-     wears, for the same reason the head's own ring goes neutral too. */
-  .now-panel.loading > .now-inner { --line-color: var(--divider-color, #e0e0e0); }
   /* The brand icon's own motif, on every row: a node on the strand,
      connected to its card by a short stroke - not a ring or object of
      its own, echoing the icon's own connector lines and commit nodes.
@@ -777,27 +771,15 @@ export const STYLE = `
      unpadded, unbordered box - so .entry's rendered height already
      tracks .card's own, whatever that turns out to be. */
   .entry { position: relative; }
-  .entry::before {
+  .entry::before, .entry::after {
     content: "";
     position: absolute;
-    left: -16px;
     top: 50%;
     transform: translateY(-50%);
-    width: 16px;
-    height: 2px;
     background: var(--line-color);
   }
-  .entry::after {
-    content: "";
-    position: absolute;
-    left: -21px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--line-color);
-  }
+  .entry::before { left: -16px; width: 16px; height: 2px; }
+  .entry::after { left: -21px; width: 8px; height: 8px; border-radius: 50%; }
   .levels { display: flex; gap: 8px; margin: 12px 0; }
   .levels button {
     flex: 1 1 0;

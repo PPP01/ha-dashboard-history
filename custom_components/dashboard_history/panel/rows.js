@@ -198,6 +198,17 @@ export function bin(version) {
 }
 
 /**
+ * The way back to the last version there is - offered wherever nothing
+ * recorded matches the live state, in both modes, on the same target.
+ * Exported so the two keep saying it identically rather than agreeing
+ * by hand.
+ */
+export function undoButton(version) {
+  return `<button class="act ghost" data-state="${escape(version.name)}"
+               >Undo / Go back to ${escape(version.name.split("/").pop())}</button>`;
+}
+
+/**
  * One change, as a row.
  *
  * The word "state" in both chips is load-bearing, and it was missing.
