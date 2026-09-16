@@ -229,6 +229,7 @@ export function renderRow({
   detail = "",
   compareMode = false,
   compareChecked = false,
+  connector = false,
 }) {
   const chip =
     spokenFor || !change.same_as_now
@@ -256,7 +257,7 @@ export function renderRow({
   // and compare mode needs to know that regardless of whether anything
   // on screen says so out loud.
   const isNow = newest && change.same_as_now;
-  return `
+  const card = `
       <div class="card">
         <div class="change penholder" data-revision="${escape(change.revision)}">
           ${compareMode
@@ -275,6 +276,10 @@ export function renderRow({
         </div>
         ${detail}
       </div>`;
+  // The one place `.entry`'s connector belongs: a row drawn under a
+  // version's own bar. The flat search list has no such bar to point
+  // at, so it renders the card alone rather than a node on nothing.
+  return connector ? `<div class="entry">${card}</div>` : card;
 }
 
 /**

@@ -678,8 +678,9 @@ export const STYLE = `
   details.ver > summary .heading { margin: 0 0 8px; }
   .heading .chip { text-transform: none; letter-spacing: normal; }
   details.ver > .inner {
+    --line-color: var(--divider-color, #e0e0e0);
     padding: 12px 0 0 16px;
-    border-left: 2px solid var(--divider-color, #e0e0e0);
+    border-left: 2px solid var(--line-color);
     margin-left: 14px;
   }
   /* The one section whose .inner line is never neutral: a crowned
@@ -687,7 +688,7 @@ export const STYLE = `
      panel draws for the right-now element answers the same "named"
      question in blue rather than in the plain divider grey every other
      version's .inner wears. */
-  details.ver.now > .inner { border-left-color: var(--primary-color, #03a9f4); }
+  details.ver.now > .inner { --line-color: var(--primary-color, #03a9f4); }
   /* The advanced mode's own "right now" element, for the span nothing
      has named yet - .now-head carries the ring, .now-inner never does.
      Opened onto full change cards rather than the simple mode's
@@ -754,15 +755,49 @@ export const STYLE = `
      itself crowned: this line belongs to the one element on the page
      that is always exactly "right now". */
   .now-panel > .now-inner {
+    --line-color: var(--accent-color, #ff9800);
     padding: 12px 0 0 16px;
-    border-left: 2px solid var(--accent-color, #ff9800);
+    border-left: 2px solid var(--line-color);
     margin-left: 14px;
   }
-  .now-panel.named > .now-inner { border-left-color: var(--primary-color, #03a9f4); }
+  .now-panel.named > .now-inner { --line-color: var(--primary-color, #03a9f4); }
   /* The one exception the comment above allows itself: while loading,
      this line is exactly the plain divider grey a version's own .inner
      wears, for the same reason the head's own ring goes neutral too. */
-  .now-panel.loading > .now-inner { border-left-color: var(--divider-color, #e0e0e0); }
+  .now-panel.loading > .now-inner { --line-color: var(--divider-color, #e0e0e0); }
+  /* The brand icon's own motif, on every row: a node on the strand,
+     connected to its card by a short stroke - not a ring or object of
+     its own, echoing the icon's own connector lines and commit nodes.
+     Inherits --line-color from whichever .inner it sits under, so it
+     answers the same "named" question the bar itself already answers,
+     with no colour logic of its own. */
+  /* Centred on the card's own height, not a guessed pixel offset: a
+     row can run one line or several (a wrapped badge, a description
+     subtitle), and .card's bottom margin collapses through .entry's
+     unpadded, unbordered box - so .entry's rendered height already
+     tracks .card's own, whatever that turns out to be. */
+  .entry { position: relative; }
+  .entry::before {
+    content: "";
+    position: absolute;
+    left: -16px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 2px;
+    background: var(--line-color);
+  }
+  .entry::after {
+    content: "";
+    position: absolute;
+    left: -21px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--line-color);
+  }
   .levels { display: flex; gap: 8px; margin: 12px 0; }
   .levels button {
     flex: 1 1 0;

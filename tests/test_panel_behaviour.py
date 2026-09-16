@@ -4390,6 +4390,68 @@ def test_the_boxed_rows_are_indented_like_a_versions_own(advanced_now_box):
     assert advanced_now_box["cleanBox"]["noVbody"] is False
 
 
+# -- each row gets the brand icon's own node-on-a-strand connector ----------
+
+_ROW_CONNECTOR = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+
+// A row folded under a version's own bar.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: true, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "a" },
+];
+el._matching = [];
+const inVersion = el._renderMain();
+
+// A row folded under the unversioned "right now" box's own bar.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "b" },
+];
+el._matching = [];
+const inNowBox = el._renderMain();
+
+// The flat search list has no bar to draw a node against.
+el._query = "card added";
+const flat = el._renderMain();
+
+console.log(JSON.stringify({
+  inVersion: inVersion.includes('<div class="entry">\\n      <div class="card">'),
+  inNowBox: inNowBox.includes('<div class="entry">\\n      <div class="card">'),
+  flatHasNoEntry: !flat.includes('class="entry"'),
+  flatStillHasCard: flat.includes('class="card"'),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def row_connector(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "row_connector", _ROW_CONNECTOR)
+
+
+def test_a_row_under_a_versions_bar_gets_the_icons_own_connector(row_connector):
+    assert row_connector["inVersion"] is True
+
+
+def test_a_row_in_the_unversioned_right_now_box_gets_it_too(row_connector):
+    assert row_connector["inNowBox"] is True
+
+
+def test_the_flat_search_list_draws_no_node_on_nothing(row_connector):
+    assert row_connector["flatHasNoEntry"] is True
+    assert row_connector["flatStillHasCard"] is True
+
+
 # -- the right-now element stays silent while _select's fetch is out -------
 
 _NOW_WHILE_LOADING = """

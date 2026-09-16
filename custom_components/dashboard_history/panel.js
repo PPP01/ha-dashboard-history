@@ -2982,7 +2982,8 @@ class DashboardHistoryPanel extends HTMLElement {
     // Solely while searching: the list is flat and "Load older" is gone,
     // because a page belongs to a list that goes on, not to one a search
     // just cut down to whatever matched.
-    if (query) return topBar + shown.map((c) => this._renderRow(c)).join("");
+    if (query)
+      return topBar + shown.map((c) => this._renderRow(c, false, false)).join("");
 
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
@@ -3173,12 +3174,15 @@ class DashboardHistoryPanel extends HTMLElement {
             </div>`;
   }
 
-  _renderRow(change, spokenFor = false) {
+  // `connector` off only for the flat search list: that one has no
+  // `.inner`/`.now-inner` bar to the left to draw a line to.
+  _renderRow(change, spokenFor = false, connector = true) {
     const newest = this._isNewest(change);
     return renderRow({
       change,
       newest,
       spokenFor,
+      connector,
       matching: newest ? this._matchingElsewhere(change) : [],
       detail: this._open === change.revision ? this._renderDetail(change) : "",
       compareMode: this._compareMode,
