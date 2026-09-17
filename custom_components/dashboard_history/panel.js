@@ -564,6 +564,98 @@ class DashboardHistoryPanel extends HTMLElement {
       );
     }
     this._listen();
+    // `dockedSidebar` and `kioskMode` arrive here, not through `narrow`.
+    this._refreshMenuButton();
+  }
+
+  /**
+   * Home Assistant's own "the sidebar is not there" flag.
+   *
+   * `ha-panel-custom` assigns `panel`, `hass`, `narrow` and `route` on
+   * this element and keeps them current; `narrow` follows the media
+   * query `(max-width: 870px)`. Read out of the frontend bundle of
+   * 2026.8.3 on 2026-09-17, not assumed. Until now only `hass` was
+   * read, so this arrived and fell on the floor - and with it the one
+   * thing that says whether this page has to provide the menu button.
+   *
+   * The accessor has to exist by the time the element is defined, for
+   * the reason written out at the top of this file: Home Assistant may
+   * assign to a not-yet-upgraded element, and the plain own property
+   * that creates shadows the accessor for good.
+   *
+   * Only the menu button depends on this. How many columns there are is
+   * decided by CSS against the panel's own width, which is a different
+   * question - see the stylesheet's `@container` bands.
+   */
+  set narrow(value) {
+    this._narrow = Boolean(value);
+    this._refreshMenuButton();
+  }
+
+  get narrow() {
+    return this._narrow;
+  }
+
+  /**
+   * Whether this page has to offer the way into the sidebar.
+   *
+   * Home Assistant's own rule, taken from `ha-menu-button` on
+   * 2026-09-17: show it where the sidebar is not there to be clicked -
+   * narrow, or pinned away - and never in kiosk mode, whose whole point
+   * is that there is no chrome.
+   *
+   * One deliberate difference. Home Assistant writes `false ===
+   * kioskMode`, because it reads the flag from a context that always
+   * carries one. Here it comes off `hass`, where an installation
+   * without kiosk mode simply has none - and `=== false` would then be
+   * false for everybody and hide the button always. `!== true` is the
+   * same rule applied to the shape the data actually has here.
+   */
+  _showsMenuButton() {
+    if (this._hass?.kioskMode === true) return false;
+    return Boolean(this._narrow) || this._hass?.dockedSidebar === "always_hidden";
+  }
+
+  /**
+   * Redraw if, and only if, the button's answer changed.
+   *
+   * Called from both setters, because both carry part of the condition:
+   * `narrow` from the window, `dockedSidebar` and `kioskMode` from
+   * `hass`. `set hass` runs on every state change in the house, so a
+   * render there would be a repaint per event - and leaving it out
+   * altogether was the bug: pinning the sidebar away at a wide window
+   * left the button that replaces it invisible until something else
+   * happened to draw.
+   *
+   * Nothing else depends on `narrow`, which is why this is the whole
+   * reaction to it and not a first step.
+   */
+  _refreshMenuButton() {
+    const shows = this._showsMenuButton();
+    if (shows === this._menuShown) return;
+    this._menuShown = shows;
+    // Not before the first picture. The constructor attaches the shadow
+    // root and draws nothing, and the parts this draws from are still
+    // being imported at that point - rendering here would put
+    // `undefined` in the stylesheet. An empty shadow root is exactly
+    // that state.
+    if (this.shadowRoot?.firstChild) this._render();
+  }
+
+  /**
+   * Open Home Assistant's sidebar.
+   *
+   * What `ha-menu-button` does, without being it: that element lives in
+   * a lazily loaded frontend chunk whose presence on a custom panel
+   * page is promised nowhere, and this panel deliberately uses no Home
+   * Assistant components at all. `home-assistant-main` listens for this
+   * event on itself, so it has to leave the shadow root - which is what
+   * `composed` is for. `bubbles` alone would not be enough.
+   */
+  _toggleHassMenu() {
+    this.dispatchEvent(
+      new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }),
+    );
   }
 
   /**
@@ -3244,6 +3336,14 @@ class DashboardHistoryPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="bar">
+        ${this._showsMenuButton()
+        ? `<button class="menu" data-menu="1" title="Open the Home Assistant sidebar"
+                   aria-label="Open the Home Assistant sidebar">
+             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+               <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/>
+             </svg>
+           </button>`
+        : ""}
         <span>Dashboard History</span>
         ${this._renderModeSwitch()}
         <span class="which">${escape(this._selectedTitle())}</span>
@@ -3317,6 +3417,7 @@ class DashboardHistoryPanel extends HTMLElement {
           run(element, event);
         }),
       );
+    onClick(".menu", () => this._toggleHassMenu());
     onClick(".dash", (element) => this._select(element.dataset.key));
     onClick(".change", (element) => this._expand(element.dataset.revision));
     onClick("[data-state]", (element, event) => {

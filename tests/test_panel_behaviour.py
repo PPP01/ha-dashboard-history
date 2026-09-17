@@ -6709,3 +6709,98 @@ def test_the_undo_dialog_counts_changes_made_since_the_oldest_loaded_change(
         "Puts this change back and keeps the 2 changes made since."
         in undo_intro_oldest["bodyHtml"]
     )
+
+
+# -- when the panel has to offer the way into the sidebar -------------------
+#
+# Home Assistant hides its sidebar below 870px and expects the page to
+# provide the button. The condition is not only `narrow`: pinning the
+# sidebar away changes it too, and it arrives through `hass`, which is
+# assigned again and again without ever drawing.
+
+_HARNESS_MENU = """
+const make = () => {
+  const p = new Panel();
+  p._renders = 0;
+  p._render = () => { p._renders += 1; };
+  p._listen = () => {};
+  // As if a first picture had been drawn: the setters below only redraw
+  // once there is something to redraw.
+  p.shadowRoot = { firstChild: {} };
+  // So that assigning `hass` does not start loading dashboards.
+  p._loaded = true;
+  return p;
+};
+
+const asks = (hass, narrow) => {
+  const p = make();
+  p._hass = hass;
+  p._narrow = narrow;
+  return p._showsMenuButton();
+};
+
+// A dock change while the window stays wide still has to reach the bar,
+// and an ordinary state update must not redraw the whole page.
+const live = make();
+live._hass = { dockedSidebar: "docked" };
+live._menuShown = false;
+live.hass = { dockedSidebar: "always_hidden" };
+const drewOnDockChange = live._renders;
+live.hass = { dockedSidebar: "always_hidden", states: {} };
+const drewAgainOnNoChange = live._renders - drewOnDockChange;
+
+console.log(JSON.stringify({
+  narrowAlone: asks({}, true),
+  pinnedAway: asks({ dockedSidebar: "always_hidden" }, false),
+  wideAndDocked: asks({ dockedSidebar: "docked" }, false),
+  kioskBeatsBoth: asks({ kioskMode: true, dockedSidebar: "always_hidden" }, true),
+  withoutAnyKioskFlag: asks({ dockedSidebar: "always_hidden" }, false),
+  drewOnDockChange,
+  drewAgainOnNoChange,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def menu(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "menu", _HARNESS_MENU)
+
+
+def test_the_menu_button_shows_when_the_window_is_narrow(menu):
+    assert menu["narrowAlone"] is True
+
+
+def test_the_menu_button_shows_when_the_sidebar_is_pinned_away(menu):
+    # Home Assistant's own rule, and the half that is easy to forget:
+    # a wide window with `always_hidden` has no sidebar to click either.
+    assert menu["pinnedAway"] is True
+
+
+def test_the_menu_button_stays_away_where_the_sidebar_is(menu):
+    assert menu["wideAndDocked"] is False
+
+
+def test_kiosk_mode_beats_both(menu):
+    assert menu["kioskBeatsBoth"] is False
+
+
+def test_an_installation_without_kiosk_mode_still_gets_the_button(menu):
+    # The one deliberate difference from Home Assistant's code, which
+    # writes `false === kioskMode` because it reads the flag from a
+    # context that always has one. Off `hass` it is simply absent, and
+    # `=== false` would hide the button for everybody.
+    assert menu["withoutAnyKioskFlag"] is True
+
+
+def test_pinning_the_sidebar_away_redraws_the_bar(menu):
+    # `set hass` runs on every state change in the house and never drew.
+    # Without this the button appears only after something else happens
+    # to redraw the page.
+    assert menu["drewOnDockChange"] == 1
+
+
+def test_an_ordinary_state_update_does_not_redraw(menu):
+    # And the other side of it: comparing the condition rather than
+    # rendering on every assignment, or the panel repaints per event.
+    assert menu["drewAgainOnNoChange"] == 0
+

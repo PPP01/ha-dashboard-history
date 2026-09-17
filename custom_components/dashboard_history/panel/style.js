@@ -81,6 +81,28 @@ export const STYLE = `
     opacity: .8;
   }
   .bar .reload:hover { opacity: 1; }
+  /* Home Assistant's menu button, drawn here because a custom panel has
+     to provide its own - see _showsMenuButton for the rule that
+     decides when. Sized like the built-in one and inheriting the bar's
+     colour, so it does not read as a control belonging to this panel
+     rather than to the page around it. */
+  .bar .menu {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    margin-left: -8px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .bar .menu svg { width: 24px; height: 24px; fill: currentColor; }
+  .bar .menu:hover { background: rgba(127, 127, 127, 0.16); }
   .layout { display: flex; align-items: stretch; height: calc(100% - 56px); }
   .side {
     width: 280px;
