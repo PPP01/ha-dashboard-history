@@ -273,7 +273,7 @@ export const STYLE = `
     white-space: nowrap;
     border: 0;
   }
-  .search { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+  .search { display:flex; flex-wrap: wrap; align-items:center; gap:12px; margin-bottom:12px; }
   /* Capped rather than left at flex:1 alone, so the field is the same
      width whether or not the compare-mode toggle sits beside it - the
      advanced mode carries that button, the simple mode never does, and
@@ -281,6 +281,15 @@ export const STYLE = `
      which is what put their own first elements at two different
      heights on screen. */
   .search .find { flex: 1 1 auto; max-width: 420px; }
+  /* The 420px cap exists so that simple and advanced mode have the same
+     row shape whether or not the compare toggle sits beside the field -
+     the note above says so. That reason stops applying once every
+     element has a row of its own anyway, and the cap then only makes
+     the field narrower than the space it has. */
+  @container panel (max-width: 560px) {
+    .search { gap: 8px; }
+    .search .find { flex: 1 1 100%; max-width: none; }
+  }
   .dash {
     display: flex;
     flex-direction: column;
