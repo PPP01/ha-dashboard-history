@@ -60,6 +60,7 @@ Damit nachlesbar ist, dass nichts aus Entscheidung 20 unter den Tisch fällt:
 | Festlegung 5 — Balken bricht um, `calc(100% - 56px)` fällt | 3 |
 | Festlegung 6 — Suchzeile bricht um, 360-px-Kriterium | 4 |
 | Festlegung 7 — Tippziele unter `@media (hover: none)` | 6 |
+| Festlegung 8 — keine `nowrap`-Flexzeile im Inhalt (`.verhead`) | 5b |
 | Abnahme — Aufnahmen, `hover`-Nachweis in beide Richtungen, 900-px-Bild | 7 |
 | Abnahme — die fünf Übergänge von Hand | 5, Schritt 11 |
 | Prüfung der Logik hinter Festlegung 1 und 4 | 1 Schritt 1–4, 5 Schritt 1–6 (Node, `test_panel_behaviour.py`) |
@@ -73,7 +74,7 @@ Die Reihenfolge der Aufgaben folgt nicht der Nummerierung der Festlegungen, sond
 | Datei | Was sich ändert |
 |---|---|
 | `custom_components/dashboard_history/panel.js` | `set narrow`, der Menüknopf und sein Ereignis, `_pane` samt den drei Übergängen, die Weiche in `_select`, der Zurück-Knopf, `data-pane` am Layout |
-| `custom_components/dashboard_history/panel/style.js` | `container-type` auf dem Host, drei Bänder, Master/Detail-Regeln, umbrechender Balken, Flex statt `calc(100% - 56px)`, umbrechende Suchzeile, Tippziele |
+| `custom_components/dashboard_history/panel/style.js` | `container-type` auf dem Host, drei Bänder, Master/Detail-Regeln, umbrechender Balken, Flex statt `calc(100% - 56px)`, umbrechende Such- und Versionskopfzeile, Tippziele |
 | `tools/capture_demo_screenshots.py` | Chrome-Startoption für den Desktop-Zweig, Umschalten auf den Berührungszweig, vier schmale Aufnahmen, die 900-px-Aufnahme, `matchMedia`-Nachweis je Bild |
 | `tests/test_panel_behaviour.py` | Zwei neue Szenarien: der Menüknopf und seine Bedingung (Aufgabe 1), `_pane` samt Renn-Fall bei der Vorauswahl (Aufgabe 5) |
 
@@ -1291,6 +1292,106 @@ list shows, and a hidden element answers 0.
 Tapping the already selected row no longer runs _select, which used to
 clear the search word and refetch. On a wide screen that makes such a
 click do nothing, which is what the reload button is for.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+MSG
+)"
+```
+
+---
+
+## Aufgabe 5b: Der Versionskopf bricht um
+
+Klein, und trotzdem eine eigene Aufgabe: Sie hat eine andere Ursache als Aufgabe 5 und einen eigenen Beleg. Sie steht **hinter** 5, weil sie erst dort messbar wird — solange die Seitenspalte 280 px festhält, ist die Inhaltsspalte auf einem Handy ohnehin für alles zu schmal.
+
+Spec: Entscheidung 20, **Festlegung 8**.
+
+**Dateien:**
+- Ändern: `custom_components/dashboard_history/panel/style.js` (das 560er Band, das Aufgabe 5 angelegt hat)
+
+- [ ] **Schritt 1: Den Befund selbst sehen**
+
+Vor der Änderung, damit die Zahl danach etwas bedeutet. Bei 390 px, erweiterter Modus, eine Zeile aufgeklappt:
+
+```js
+host._setMode("advanced"); host._pane = "detail"; host._render();
+await host._expand(host._changes[0].revision);
+host._render();
+```
+
+Dann messen:
+
+```js
+const m = host.shadowRoot.querySelector(".main");
+const vh = host.shadowRoot.querySelector(".verhead");
+({ mainW: m.clientWidth, mainScrollW: m.scrollWidth,
+   verheadW: vh.clientWidth, verheadScrollW: vh.scrollWidth })
+```
+
+**Erwartet vor der Änderung** (am 2026-09-17 gemessen): `.main` 380 gegen 456, `.verhead` 316 gegen 424. Kommt hier kein Überlauf heraus, ist entweder keine Versionszeile offen oder der einfache Modus aktiv — dann misst Du nichts.
+
+- [ ] **Schritt 2: Umbrechen lassen**
+
+In `style.js`, **in das vorhandene** `@container panel (max-width: 560px)`-Band aus Aufgabe 5, hinter die `.back`-Regeln:
+
+```css
+    /* The same illness as .search had, in the head of a version row:
+       a flex row with no wrap, carrying a title plus the pen and the
+       bin. Measured at 390px on 2026-09-17 - it asked for 424px in a
+       316px row, and the bin sat 76px past the content column.
+       Nobody saw it until task 5 gave that column the full width,
+       because before then it was too narrow for everything.
+
+       min-width on the children because auto is the flex default and
+       means min-content: without it the title refuses to give way and
+       the row stays as wide as its longest word. */
+    details.ver > summary .verhead { flex-wrap: wrap; }
+    .verhead > * { min-width: 0; }
+```
+
+- [ ] **Schritt 3: Syntax und Tests**
+
+```bash
+node --input-type=module --check < custom_components/dashboard_history/panel/style.js
+python3 -m pytest tests/ -q
+```
+
+- [ ] **Schritt 4: Denselben Befund noch einmal messen**
+
+```bash
+docker compose -f docker/compose.yaml restart
+```
+
+Dann Schritt 1 wiederholen. **Erwartet: `.main` 380 gegen 380, `.verhead` 316 gegen 316** — beides am 2026-09-17 mit genau dieser Regel vorab gemessen.
+
+Und die Ausnahme gegenprüfen, damit die Regel nicht zu weit greift:
+
+```js
+const pre = host.shadowRoot.querySelector(".detail details.raw[open] pre");
+({ overflowX: getComputedStyle(pre).overflowX,
+   scrollW: pre.scrollWidth, clientW: pre.clientWidth })
+```
+
+**Erwartet:** `overflowX: "auto"` und `scrollW > clientW` — der technische Diff **soll** waagerecht scrollen (gemessen 407 gegen 284). Bricht er plötzlich um, hat die Regel zu weit gegriffen und macht Diffs unlesbar.
+
+- [ ] **Schritt 5: Committen**
+
+```bash
+git add custom_components/dashboard_history/panel/style.js
+git commit -m "$(cat <<'MSG'
+Let the version row's head wrap as well
+
+The same illness the search row had, one row further down: a flex row
+with no wrap, carrying a title plus the pen and the bin. At 390px it
+asked for 424px in a 316px row and put the delete button 76px past the
+content column.
+
+Nobody saw it until the column got the full width, because before that
+it was too narrow for everything - and the document never scrolled,
+because .main swallows the overflow it cannot show.
+
+The technical diff keeps its own horizontal scroll. Wrapping monospace
+would make a diff unreadable in order to satisfy a rule about rows.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 MSG
