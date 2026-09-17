@@ -2,7 +2,13 @@
 
 export const STYLE = `
   :host {
-    display: block;
+    /* A column, so that .layout can take the rest of the height
+       without anybody having to name the bar's height twice. The bar
+       used to be exactly 56px and .layout was told calc(100% - 56px)
+       - two places that had to agree, and they stop agreeing the moment
+       the bar is allowed to wrap. */
+    display: flex;
+    flex-direction: column;
     /* Two different questions are easy to mistake for one. "Is Home
        Assistant's sidebar hidden?" decides the menu button, and
        narrow answers it. "How much room do I have?" decides how many
@@ -48,7 +54,13 @@ export const STYLE = `
     display: flex;
     align-items: center;
     gap: 16px;
-    height: 56px;
+    /* A floor, not a height. Below the narrow band the bar carries a
+       second row - the mode switch drops under the title rather than
+       being taken away from a phone, which would cost it one of the two
+       modes. align-items: center keeps a single row looking exactly
+       as it did. */
+    min-height: 56px;
+    flex-wrap: wrap;
     padding: 0 16px;
     background: var(--app-header-background-color, var(--primary-color, #03a9f4));
     color: var(--app-header-text-color, #fff);
@@ -116,7 +128,19 @@ export const STYLE = `
   }
   .bar .menu svg { width: 24px; height: 24px; fill: currentColor; }
   .bar .menu:hover { background: rgba(127, 127, 127, 0.16); }
-  .layout { display: flex; align-items: stretch; height: calc(100% - 56px); }
+  /* Below the narrow band the title gets the first row to itself,
+     between the two round buttons, and the mode switch takes the
+     second. order rather than a different markup: the switch is one
+     element drawn once, and moving it in JavaScript would mean either
+     duplicate radio inputs sharing a name - which makes one group out of
+     two controls - or measuring the width in JavaScript, which is what
+     the _pane note argues against. */
+  @container panel (max-width: 560px) {
+    .bar { gap: 8px 12px; padding: 6px 12px; }
+    .bar > .segmented-control { order: 10; flex-basis: 100%; }
+    .bar .which { flex: 1 1 auto; }
+  }
+  .layout { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
   .side {
     width: 280px;
     flex: 0 0 280px;
