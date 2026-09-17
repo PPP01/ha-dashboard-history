@@ -715,6 +715,8 @@ class DashboardHistoryPanel extends HTMLElement {
     // that outlives the element would keep fetching a history nobody is
     // looking at.
     this._unlisten();
+    // And an observer waiting for a column that will never appear now.
+    this._unwatchDiff();
     // And so would a keystroke's 400 ms. Type, then leave the panel,
     // and the walk over the whole history - about half a second per
     // thousand commits - runs for a page nobody is on, to write its
@@ -3371,6 +3373,54 @@ class DashboardHistoryPanel extends HTMLElement {
       </fieldset>`;
   }
 
+  /**
+   * Put the diff's offset back when the column appears without a render.
+   *
+   * Tapping the row again renders, and `_render` restores the offset on
+   * the spot. Widening the window does not: CSS reveals the column by
+   * itself, nothing redraws, and the reader who had scrolled into a long
+   * diff finds line one. Measured on 2026-09-17 - and worse than a plain
+   * loss, because an unrelated render happening to arrive first hides
+   * it: the same gesture then works or does not, depending on whether
+   * Home Assistant said anything in the meantime.
+   *
+   * An observer and not a render, which is not the thing the stylesheet
+   * argues against. What that argues against is redrawing on every
+   * resize, because `_render` replaces the whole shadow root and has to
+   * put this very offset and the search box's caret back by hand. This
+   * writes one number on one element and then lets go.
+   *
+   * Guarded rather than assumed: the Node harness in
+   * `tests/test_panel_behaviour.py` has a stand-in for the DOM and no
+   * `ResizeObserver`, and losing a scroll offset there would be a test
+   * failure about nothing.
+   */
+  _watchDiff(pre) {
+    this._unwatchDiff();
+    if (typeof ResizeObserver !== "function") return;
+    this._diffWatch = new ResizeObserver(() => {
+      // Zero while the column is still hidden: a display:none element
+      // reports no box, and assigning `scrollTop` to it does nothing.
+      if (pre.offsetHeight <= 0) return;
+      pre.scrollTop = this._diffScroll;
+      this._unwatchDiff();
+    });
+    this._diffWatch.observe(pre);
+  }
+
+  /**
+   * Let go of the element being watched.
+   *
+   * Called before every render, because the next line replaces the whole
+   * shadow root and the node under observation stops existing - and from
+   * `disconnectedCallback`, for the same reason the subscription is
+   * dropped there.
+   */
+  _unwatchDiff() {
+    this._diffWatch?.disconnect();
+    this._diffWatch = null;
+  }
+
   _render() {
     if (!this.shadowRoot) return;
     // Never while a dialog is open. Everything below replaces the
@@ -3409,6 +3459,12 @@ class DashboardHistoryPanel extends HTMLElement {
     // rule on one cannot reach the other. "list" whenever nothing is
     // selected, so the back arrow cannot appear over an empty choice.
     this.setAttribute?.("data-pane", this._selected ? this._pane : "list");
+    // The next line replaces every node, including any the diff watcher
+    // is holding. Here and not at the top of this method: a render that
+    // turned back at the open-dialog guard above has replaced nothing,
+    // and dropping the watcher there would lose an offset for a render
+    // that never happened.
+    this._unwatchDiff();
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="bar">
@@ -3482,6 +3538,7 @@ class DashboardHistoryPanel extends HTMLElement {
       // one clamps to its own end by itself, which is the right answer
       // and not worth a branch.
       if (pre && pre.offsetHeight > 0) pre.scrollTop = this._diffScroll;
+      else if (pre) this._watchDiff(pre);
     }
     // Every click below is wired the same way, so the wiring is written
     // once and each line says only the two things that differ: what was
