@@ -3428,7 +3428,7 @@ class DashboardHistoryPanel extends HTMLElement {
              </svg>
            </button>`
         : ""}
-        <span>Dashboard History</span>
+        <span class="app">Dashboard History</span>
         ${this._renderModeSwitch()}
         <span class="which">${escape(this._selectedTitle())}</span>
         ${this._busy ? '<span class="muted" style="font-size:14px">working\u2026</span>' : ""}

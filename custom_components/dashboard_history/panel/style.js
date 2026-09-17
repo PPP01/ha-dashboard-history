@@ -139,6 +139,19 @@ export const STYLE = `
     .bar { gap: 8px 12px; padding: 6px 12px; }
     .bar > .segmented-control { order: 10; flex-basis: 100%; }
     .bar .which { flex: 1 1 auto; }
+    /* The panel's own name goes, and the dashboard's stays. Written as
+       "the first row holds the menu, the back arrow, the title and
+       reload" and built without this, the bar came out three rows tall:
+       "Dashboard History" filled the first one by itself, the dashboard
+       name dropped to the second, and reload stranded at the right of
+       it with margin-left: auto. Measured on a screenshot at 390px -
+       124px of bar for four controls, against 86px with this rule.
+
+       Nothing is lost by it. Home Assistant's sidebar entry and the
+       page title both say "Dashboard History" already; what is missing
+       on a phone is which dashboard one is looking at, and that is the
+       one label this leaves standing. */
+    .bar .app { display: none; }
   }
   .layout { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
   .side {
