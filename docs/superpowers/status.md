@@ -1,6 +1,6 @@
 # Aktueller Stand
 
-Stand: 2026-09-12. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
+Stand: 2026-09-17. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
 was noch offen ist, welche Module es gibt. Es ersetzt nicht die Spec — die
 bleibt bindend bei Widersprüchen — und nicht das Journal unter `plans/` und
 `reviews/`, das chronologisch und unverändert stehen bleibt. Bei jedem
@@ -24,11 +24,19 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | H | Die zwei Modi — Tagesversionen, Moduswechsel, Oberfläche für beide Modi | Erledigt (v0.3.0) | `plans/2026-09-04-versionen-von-selbst.md`, `plans/2026-09-04-die-zwei-modi.md` |
 | I | Versionen aufheben | Erledigt (v0.3.0) | `plans/2026-09-08-versionen-aufheben.md` |
 | J | Der Vergleichsmodus — ersetzt das zeilenweise Put-back aus Entscheidung 15 durch den Vergleich zweier frei gewählter Stände | Erledigt | `plans/2026-09-12-vergleichsmodus.md` |
+| K | Schmal bedienbar — HA-Hamburger, mitwandernde Seitenspalte, Master/Detail unterhalb eines schmalen Bandes | **Nicht begonnen**, Entscheidung 20 getroffen am 2026-09-17 | Spec, Entscheidung 20 und »Nachgetragen am 2026-09-17: K« |
 
 ## Bekannte offene Punkte
 
 Aus der Spec, Abschnitt »Offene Punkte« (dort mit vollem Messbefund). Bei
 Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
+
+- **Umkehrbarkeit endet an einem nie aufgezeichneten Stand.** *(Gefunden am
+  2026-09-17.)* Misslingt das Nachtragen des lebenden Stands, wird trotzdem
+  geschrieben, und ein Stand, den der Rekorder nie gehört hat, ist damit fort.
+  Betrifft Entscheidung 13, nicht Vorhaben K. Drei Wege stehen in der Spec
+  unter »Offene Punkte«; der Nutzer tendiert zum Abbrechen, hat die
+  Entscheidung aber ausdrücklich vertagt. GitHub-Issue #18.
 
 - **D1 — Ein unterbrochenes `forget` ist nicht wiederaufnehmbar.**
   `HistoryStore._forget` (`store.py:879`) schreibt HEAD, Notizen und Tags
