@@ -266,6 +266,7 @@ async def main():
                 await p._select("living-room");
                 p._setMode("advanced");
                 p._open = null;
+                p._verOpen.add("now");
                 p._verOpen.add("living-room/v1.1.0");
                 p._render();
             }})()"""
@@ -367,6 +368,7 @@ async def main():
             simple_js = f"""(async () => {{
                 const p = {ELEMENT};
                 p._open = null;
+                p._verOpen.delete("now");
                 p._setMode("simple");
             }})()"""
             await page.js(simple_js)
@@ -394,6 +396,7 @@ async def main():
                 const p = {ELEMENT};
                 p._setMode("advanced");
                 p._open = null;
+                p._verOpen.add("now");
                 p._verOpen.add("living-room/v1.1.0");
                 p._render();
             }})()"""
