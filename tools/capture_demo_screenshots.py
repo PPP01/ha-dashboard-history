@@ -163,6 +163,28 @@ class CDPSession:
         target.write_bytes(base64.b64decode(result["data"]))
         print(f"Captured: {target.name} ({len(result['data'])} bytes base64)")
 
+    async def expect_media(self, *, hover_none, scheme=None):
+        """Refuse to let a screenshot stand for something it does not show.
+
+        Which branch Chrome is in is not visible in the image, and the
+        answer surprised us once already: headless Chrome sits in the
+        touch branch unless it is launched out of it.
+
+        The colour scheme is asked here too, for a duller reason: these
+        passes are appended to one another, and a block that forgets to
+        set its own would quietly save a dark picture under a light name.
+        """
+        got = await self.js('matchMedia("(hover: none)").matches')
+        if got is not hover_none:
+            sys.exit(
+                f"expected (hover: none) to be {hover_none}, got {got} - "
+                "the screenshots would be of the wrong branch"
+            )
+        if scheme is not None:
+            dark = await self.js('matchMedia("(prefers-color-scheme: dark)").matches')
+            if dark is not (scheme == "dark"):
+                sys.exit(f"expected the {scheme} scheme, got dark={dark}")
+
 
 async def main():
     if shutil.which("google-chrome") is None:
@@ -179,6 +201,17 @@ async def main():
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions",
+            # Headless Chrome has no hover-capable pointing device, so
+            # `(hover: none)` matches by default - every screenshot taken
+            # so far has been rendering the touch branch, desktop ones
+            # included. Measured on 2026-09-17; unnoticed until now
+            # because only `.pen` lived in that block.
+            #
+            # There is no CDP call for this: `Emulation.setEmulatedMedia`
+            # accepts `hover` and `pointer` and does nothing with them,
+            # measured the same day. Only this launch option moves it.
+            "--blink-settings=availableHoverTypes=2,primaryHoverType=2,"
+            "availablePointerTypes=4,primaryPointerType=4",
             "--lang=en-US",
             "--window-size=1400,900",
             "about:blank",
@@ -221,6 +254,7 @@ async def main():
                     "mobile": False,
                 },
             )
+            await page.expect_media(hover_none=False)
 
             # Navigate to lovelace and set token
             print("Navigating to Lovelace and setting auth...")
@@ -376,6 +410,36 @@ async def main():
             print("Capturing 04-simple-mode-versions-light.png...")
             await page.shot("04-simple-mode-versions-light.png")
 
+            print("Capturing 11-docked-sidebar-900.png...")
+            await page.send(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": 900, "height": 900, "deviceScaleFactor": 2, "mobile": False},
+            )
+            await asyncio.sleep(0.5)
+            await page.expect_media(hover_none=False, scheme="light")
+            # The whole point of this picture is that the panel is
+            # narrower than the window - a media query inside it would
+            # see 900 and be wrong. Measured rather than trusted: with a
+            # collapsed sidebar this would be an ordinary 900px shot and
+            # would prove nothing, while looking exactly the same.
+            room = await page.js(
+                f"(() => {{ const el = {ELEMENT};"
+                " return el ? Math.round(el.getBoundingClientRect().width) : null; })()"
+            )
+            print(f"    the panel has {room}px inside a 900px window")
+            if room is None or room >= 880:
+                sys.exit(
+                    f"the sidebar is not docked (panel {room}px of 900) - this shot is "
+                    "meant to show the case a media query gets wrong"
+                )
+            await page.shot("11-docked-sidebar-900.png")
+            # Back to the width the rest of the light pass was taken at,
+            # in case anything is appended after this.
+            await page.send(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": 1400, "height": 900, "deviceScaleFactor": 2, "mobile": False},
+            )
+
             # -------------------------------------------------------------
             # DARK THEME
             # -------------------------------------------------------------
@@ -481,6 +545,64 @@ async def main():
 
             await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
             await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
+
+            # The narrow pass. Last, and not by preference: turning touch
+            # emulation off does not bring the hover branch back in the
+            # page already open - only a navigation does.
+            print("\n=== NARROW PASS (390x844) ===")
+            await page.send(
+                "Emulation.setDeviceMetricsOverride",
+                {"width": 390, "height": 844, "deviceScaleFactor": 2, "mobile": True},
+            )
+            await page.send(
+                "Emulation.setTouchEmulationEnabled",
+                {"enabled": True, "maxTouchPoints": 5},
+            )
+            await page.send("Page.navigate", {"url": f"{BASE}/dashboard-history"})
+            await page.settle('document.readyState === "complete"')
+            # readyState says the document arrived, not that the panel's
+            # modules did - they are fetched separately and drawn from a
+            # promise. The bar is the first thing `_render` puts down.
+            await page.settle(f'!!{PANEL}?.querySelector(".bar")')
+            await page.settle(f'{PANEL}?.querySelectorAll(".dash").length >= 2')
+
+            for scheme in ("light", "dark"):
+                await page.send(
+                    "Emulation.setEmulatedMedia",
+                    {"features": [{"name": "prefers-color-scheme", "value": scheme}]},
+                )
+                await asyncio.sleep(0.8)
+                await page.expect_media(hover_none=True, scheme=scheme)
+
+                # Driven through the panel rather than by clicking, the
+                # same way the two passes above do it: a click would
+                # leave which dashboard is showing up to whichever row
+                # happened to come first.
+                print(f"Capturing 09-narrow-list-{scheme}.png...")
+                await page.js(
+                    f"(() => {{ const p = {ELEMENT}; p._pane = 'list'; p._render(); }})()"
+                )
+                await page.settle(f'!!{PANEL}?.querySelector(".side .dash")')
+                await page.settle(f'!{PANEL}?.querySelector(".spin")')
+                await page.shot(f"09-narrow-list-{scheme}.png")
+
+                print(f"Capturing 10-narrow-detail-{scheme}.png...")
+                await page.js(f"""(async () => {{
+                    const p = {ELEMENT};
+                    await p._select("living-room");
+                    p._setMode("advanced");
+                    p._pane = "detail";
+                    p._render();
+                }})()""")
+                # All three, and each one answers a different doubt: that
+                # the history arrived, that nothing is still in flight,
+                # and that the column on screen is the one being named.
+                await page.settle(f'{PANEL}?.querySelectorAll(".change").length >= 3')
+                await page.settle(f'!{PANEL}?.querySelector(".spin")')
+                await page.settle(
+                    f"{ELEMENT}?.getAttribute('data-pane') === 'detail'"
+                )
+                await page.shot(f"10-narrow-detail-{scheme}.png")
 
             print("\nAll screenshots captured successfully!")
 
