@@ -519,7 +519,9 @@ Zurueckholen
 
     **Festlegung 6: Die Suchzeile bricht um, und das Feld gibt nach.** *(Am 2026-09-17 nach einem Review ergänzt: Der Befund oben nennt `.search` als eigenständige, von der Seitenspalte unabhängige Ursache — und keine der ursprünglichen Festlegungen hat sie behoben. Master/Detail verbreitert die Inhaltsspalte, es ändert aber nichts daran, dass vier nebeneinander gesetzte Elemente ohne `flex-wrap` mehr Platz verlangen, als eine Zeile hat.)* `.search` bekommt `flex-wrap: wrap`; im schmalen Band nimmt das Suchfeld eine eigene Zeile und gibt seine Deckelung auf 420 px auf. Die Deckelung bleibt oberhalb bestehen: Sie existiert laut Kommentar, damit einfacher und erweiterter Modus dieselbe Zeilenform haben, und dieser Grund verschwindet, sobald ohnehin jedes Element eine eigene Zeile bekommt.
 
-    **Das Abnahmekriterium dazu ist hart und gilt für beide Modi:** Bei 360 px sind **alle** Suchbedienelemente erreichbar — Feld, »Compare mode«, die Ergebnis-Notiz und »Search the whole history« — ohne waagerechtes Scrollen der Seite. Der erweiterte Modus ist der Prüffall, weil nur dort alle vier zugleich auftreten können.
+    **Das Abnahmekriterium dazu ist hart und gilt für beide Modi:** Bei 360 px sind **alle** Suchbedienelemente erreichbar — Feld, »Compare mode«, die Ergebnis-Notiz und »Search the whole history«. Der erweiterte Modus ist der Prüffall, weil nur dort alle vier zugleich auftreten können.
+
+    *(Am 2026-09-17 nachgeschärft, nachdem die erste Fassung »ohne waagerechtes Scrollen der Seite« sagte und damit zu wenig verlangte.* **»Erreichbar« ist nicht dasselbe wie »die Seite scrollt nicht«.** `.main` trägt `overflow-y: auto`, und CSS hebt die waagerechte Achse mit auf `auto` — zu breiter Inhalt scrollt dann in der Spalte und erreicht das Dokument nie. Bei 390 px im erweiterten Modus gemessen: Die Seite scrollte **nicht**, und trotzdem stand `.main` 179 px breit um 440 px Inhalt, mit fünf Elementen jenseits der rechten Kante. Das Kriterium ist deshalb, dass die Inhaltsspalte selbst nichts abschneidet — `scrollWidth` gleich `clientWidth` — und nicht, dass das Dokument stillhält. Gemessen wird es an **einer** Spalte: Mit zweien bleiben bei 360 px rund 149 px übrig, und dort passt keine Suchzeile hinein, gleich wie sie umbricht.*)
 
     **Festlegung 7: Tippziele wachsen nach Berührung, nicht nach Breite.** Der Reload-Knopf ist heute rechnerisch knapp 30 px hoch (`line-height: 1.2` auf `font-size: 18px`, dazu 6 px Polsterung und 2 px Rahmen) — etwa zwei Drittel eines brauchbaren Ziels. Er und die Klapp-Zusammenfassungen der Seitenspalte wachsen im bereits vorhandenen `@media (hover: none)`-Block, nicht im `@container`-Band. Ein Handy im Querformat ist breit und trotzdem ein Finger; ein schmales Browserfenster am Desktop ist schmal und trotzdem eine Maus. Die Breite ist hier das falsche Merkmal.
 
@@ -537,7 +539,27 @@ Zurueckholen
     4. Das Home-Assistant-Menü: geht auf, und die Seitenleiste führt aus dem Panel heraus.
     5. Vergessen des gerade angesehenen Dashboards am schmalen Schirm: landet auf der Liste, nicht im Verlauf eines anderen (Festlegung 4, dritter Spiegelstrich).
 
-    **Und eine Falle, die beim Review auffiel:** `capture_demo_screenshots.py` setzt heute `"mobile": False`. Kleinere Fenstermaße allein lassen `@media (hover: none)` **nicht** greifen — die Tippziele aus Festlegung 7 wären damit unbelegt, während die Bilder danach aussähen, als wären sie geprüft. Welcher CDP-Weg diesen Zweig tatsächlich einschaltet (`mobile: true`, `Emulation.setTouchEmulationEnabled`, oder eine Kombination), gehört in den Plan und ist dort **zu messen, nicht zu wählen**: Der Beleg ist, dass `matchMedia("(hover: none)").matches` in der aufgenommenen Seite `true` liefert. Ohne diesen Nachweis wird die Aufnahme nicht als Beleg für Festlegung 7 gewertet.
+    **Und eine Falle, die beim Review vermutet und beim Nachmessen umgedreht wurde.** Die Vermutung lautete: `capture_demo_screenshots.py` setzt `"mobile": False`, also greift `@media (hover: none)` nicht, und die Tippziele aus Festlegung 7 blieben unbelegt. Am 2026-09-17 in headless Chrome gemessen (`google-chrome --headless=new`, Seite mit Viewport-Meta wie das HA-Frontend) ist es **genau andersherum**:
+
+    | Konfiguration | `(hover: none)` | `(pointer: coarse)` |
+    |---|---|---|
+    | nichts gesetzt | **wahr** | falsch |
+    | `setDeviceMetricsOverride` 390 × 844, `mobile: false` | wahr | falsch |
+    | dasselbe mit `mobile: true` | wahr | falsch |
+    | dazu `Emulation.setTouchEmulationEnabled` | wahr | **wahr** |
+    | `Emulation.setEmulatedMedia` mit `hover`/`pointer` | wahr | falsch |
+    | Start mit `--blink-settings=availableHoverTypes=2,primaryHoverType=2,availablePointerTypes=4,primaryPointerType=4` | **falsch** | falsch |
+
+    **Headless Chrome hat gar kein hoverfähiges Zeigegerät**, `(hover: none)` trifft also immer zu. Nicht der Berührungszweig fehlt in den heutigen Aufnahmen — der **Desktop**-Zweig fehlt. Dass das bisher niemandem auffiel, liegt daran, dass in diesem Block heute nur `.pen { opacity: 1 }` steht. Mit Festlegung 7 kommen vergrößerte Tippziele hinzu, und dann zeigte jede angeblich am Desktop aufgenommene Abbildung Finger-Maße.
+
+    **Vier Folgerungen für den Plan, alle gemessen und keine gewählt:**
+
+    1. Der Desktop-Zweig ist nur über eine **Startoption** erreichbar (`--blink-settings=…` oben), nicht über CDP. Sie gehört in den Chrome-Start des Aufnahme-Werkzeugs — dadurch werden auch die **bestehenden** Abbildungen erstmals richtig.
+    2. `Emulation.setEmulatedMedia` nimmt `hover` und `pointer` entgegen und **bewirkt nichts**. Sackgasse, namentlich vermerkt, damit sie nicht ein zweites Mal probiert wird.
+    3. Der Berührungszweig kommt über `Emulation.setTouchEmulationEnabled` — und der überschreibt die Startoption, so dass **beide Zweige in einem einzigen Chrome-Lauf** erreichbar sind.
+    4. **Das Abschalten wirkt nicht sofort:** Nach `setTouchEmulationEnabled: false` bleibt `(hover: none)` in der laufenden Seite wahr; erst ein Seitenwechsel stellt den Desktop-Zweig wieder her. Die Aufnahmen sind deshalb zu ordnen — erst alle Desktop-Bilder, dann die Berührungs-Bilder —, oder es ist neu zu laden.
+
+    Der Nachweis bleibt derselbe, er wird jetzt nur in beide Richtungen geführt: `matchMedia("(hover: none)").matches` muss in der aufgenommenen Seite den erwarteten Wert liefern — `false` für eine Desktop-Abbildung, `true` für eine Handy-Abbildung. Ohne diesen Nachweis gilt keine der beiden als Beleg.
 
     **Steht noch aus.** Diese Entscheidung ist getroffen, nicht umgesetzt. Der aktuelle Stand steht in `status.md`.
 
