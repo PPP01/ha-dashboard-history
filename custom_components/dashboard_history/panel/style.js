@@ -139,19 +139,25 @@ export const STYLE = `
     .bar { gap: 8px 12px; padding: 6px 12px; }
     .bar > .segmented-control { order: 10; flex-basis: 100%; }
     .bar .which { flex: 1 1 auto; }
-    /* The panel's own name goes, and the dashboard's stays. Written as
-       "the first row holds the menu, the back arrow, the title and
-       reload" and built without this, the bar came out three rows tall:
-       "Dashboard History" filled the first one by itself, the dashboard
-       name dropped to the second, and reload stranded at the right of
-       it with margin-left: auto. Measured on a screenshot at 390px -
-       124px of bar for four controls, against 86px with this rule.
+    /* One label in the bar, and which one depends on the column.
+       Built with both, the bar came out three rows tall: "Dashboard
+       History" filled the first by itself, the dashboard name dropped
+       to the second, and reload stranded at the right of it on
+       margin-left: auto. 124px of bar for four controls, against 86px
+       with one label. Seen on a screenshot; the measurement reported
+       the height and said nothing about the shape.
 
-       Nothing is lost by it. Home Assistant's sidebar entry and the
-       page title both say "Dashboard History" already; what is missing
-       on a phone is which dashboard one is looking at, and that is the
-       one label this leaves standing. */
-    .bar .app { display: none; }
+       On the history it is the dashboard's name: Home Assistant's
+       sidebar entry and the page title already say "Dashboard History",
+       and what a phone is missing is which dashboard it is showing.
+
+       On the list it is the other way round, and that came from
+       somebody using it. Nothing is chosen there yet - the first row is
+       preselected, but the person is standing in front of the choice,
+       not looking at a result. A dashboard's name over a list of
+       dashboards answers a question nobody has asked yet. */
+    :host([data-pane="detail"]) .bar .app { display: none; }
+    :host([data-pane="list"]) .bar .which { display: none; }
   }
   .layout { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
   .side {
