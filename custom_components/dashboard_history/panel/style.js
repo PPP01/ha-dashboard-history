@@ -195,6 +195,18 @@ export const STYLE = `
       cursor: pointer;
     }
     .bar .back svg { width: 24px; height: 24px; fill: currentColor; }
+    /* The same illness as .search had, in the head of a version row:
+       a flex row with no wrap, carrying a title plus the pen and the
+       bin. Measured at 390px on 2026-09-17 - it asked for 424px in a
+       316px row, and the bin sat 76px past the content column.
+       Nobody saw it until task 5 gave that column the full width,
+       because before then it was too narrow for everything.
+
+       min-width on the children because auto is the flex default and
+       means min-content: without it the title refuses to give way and
+       the row stays as wide as its longest word. */
+    details.ver > summary .verhead { flex-wrap: wrap; }
+    .verhead > * { min-width: 0; }
   }
   /* Holds the main column and the spinner that covers it. The wrapper
      exists so the veil can sit still: laid inside .main, which is the
