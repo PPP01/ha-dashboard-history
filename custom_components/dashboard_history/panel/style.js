@@ -3,6 +3,19 @@
 export const STYLE = `
   :host {
     display: block;
+    /* Two different questions are easy to mistake for one. "Is Home
+       Assistant's sidebar hidden?" decides the menu button, and
+       narrow answers it. "How much room do I have?" decides how many
+       columns there are - and narrow answers that one wrongly. At a
+       900px window narrow is false, Home Assistant docks its 256px
+       sidebar, and this panel really has about 640px. A media query
+       inside the panel measures the window regardless and says "wide".
+       Measured on 2026-09-17.
+
+       Containment on the inline axis only: the height still follows the
+       content, which the long note beside .main below relies on. */
+    container-type: inline-size;
+    container-name: panel;
     height: 100%;
     background: var(--primary-background-color, #f5f5f5);
     color: var(--primary-text-color, #212121);
@@ -110,6 +123,20 @@ export const STYLE = `
     overflow-y: auto;
     border-right: 1px solid var(--divider-color, #e0e0e0);
     background: var(--card-background-color, #fff);
+  }
+  /* Below a wide window the fixed 280px stops being a width and starts
+     being a claim on space there is not. It gives way before the main
+     column does - a history nobody can read is worse than a list of
+     names set a little tighter - but never below 200px, where the two
+     lines of a row start wrapping.
+
+     The band starts at 1000px of PANEL width, not window width. With
+     the sidebar docked that is roughly a 1260px window. */
+  @container panel (max-width: 1000px) {
+    .side {
+      flex: 0 0 clamp(200px, 30cqw, 280px);
+      width: clamp(200px, 30cqw, 280px);
+    }
   }
   /* Holds the main column and the spinner that covers it. The wrapper
      exists so the veil can sit still: laid inside .main, which is the
