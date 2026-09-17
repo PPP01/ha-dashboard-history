@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.7.0
+
+The panel works on a phone. It did not before: below 870px Home
+Assistant hides its sidebar and expects a page to offer the way back
+into it, and this one offered nothing - so the only way out was the
+browser's own back gesture. The dashboard list was pinned at 280px and
+would not give way, which left the history about 100px on a phone, and
+the page slid sideways.
+
+### On a narrow screen
+
+- Home Assistant's menu button is in the bar, following Home
+  Assistant's own rule for when it belongs there: when the sidebar is
+  narrow-hidden or pinned away, and never in kiosk mode.
+- One column at a time, with a back arrow between them - the same
+  shape Home Assistant uses under Settings. The list gets the whole
+  screen, which it needs: it is three lists, not one.
+- Going back keeps what you had. The history is not fetched again, the
+  open row stays open, and the place you had scrolled to in a diff is
+  still there when you return - whether you tap back in or widen the
+  window.
+- Rows that used to demand more width than they had now wrap: the
+  search row and the head of a version row. The technical diff keeps
+  its own sideways scroll, because wrapping monospace makes a diff
+  unreadable.
+- Controls a finger has to hit are big enough to hit, decided by
+  whether there is a finger rather than by how wide the screen is.
+
+### In between
+
+- The dashboard list now gives way before the history does, down to a
+  readable minimum, and how much room there is is measured on the
+  panel itself rather than on the window. The two are not the same:
+  with the sidebar docked at a 900px window, the panel has 644px, and
+  a rule that asked the window would get it wrong.
+
+### For contributors
+
+- The screenshot tool photographs both the hover and the touch branch,
+  and each shot now states which one it expects. Headless Chrome sits
+  in the touch branch unless it is launched out of it, so every
+  screenshot taken before this one was of the wrong branch - unnoticed,
+  because until now nothing in that branch looked different.
+
 ## v0.6.0
 
 The README was one long page trying to be five different things at
