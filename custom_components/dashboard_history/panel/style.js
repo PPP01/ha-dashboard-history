@@ -214,18 +214,6 @@ export const STYLE = `
       cursor: pointer;
     }
     .bar .back svg { width: 24px; height: 24px; fill: currentColor; }
-    /* The same illness as .search had, in the head of a version row:
-       a flex row with no wrap, carrying a title plus the pen and the
-       bin. Measured at 390px on 2026-09-17 - it asked for 424px in a
-       316px row, and the bin sat 76px past the content column.
-       Nobody saw it until task 5 gave that column the full width,
-       because before then it was too narrow for everything.
-
-       min-width on the children because auto is the flex default and
-       means min-content: without it the title refuses to give way and
-       the row stays as wide as its longest word. */
-    details.ver > summary .verhead { flex-wrap: wrap; }
-    .verhead > * { min-width: 0; }
   }
   /* Holds the main column and the spinner that covers it. The wrapper
      exists so the veil can sit still: laid inside .main, which is the
@@ -785,9 +773,28 @@ export const STYLE = `
      .vhead/.vsum pair already makes, and for the same reason. */
   details.ver > summary .verhead {
     display: flex;
+    /* Wraps everywhere, and not inside a width band - the same way
+       .search does, and for the same reason: flex-wrap: wrap is not a
+       narrow-screen rule, it is "give way rather than demand room that
+       is not there", and a row with room never uses it.
+
+       It sat in the 560px band first, which measured the wrong thing.
+       That band asks how wide the PANEL is, and what decides this is
+       how wide the content COLUMN is - two numbers that come apart the
+       moment there are two columns. Measured on 2026-09-17: at a 900px
+       window with Home Assistant's sidebar docked, the panel is 644px,
+       far outside the band, while the content column is 433px and this
+       row wanted 424px of its 369px. It overflowed at every width from
+       580px up, invisibly, because .main swallows what it cannot show.
+
+       min-width on the children because auto is the flex default and
+       means min-content: without it the title refuses to give way and
+       the row stays as wide as its longest word. */
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
   }
+  details.ver > summary .verhead > * { min-width: 0; }
   /* The same triangle the two other chevrons in this panel use, written
      the same way: 25B8 is the small one, and an escape rather than the
      character itself keeps this file to plain ASCII. It arrived as a
