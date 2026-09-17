@@ -506,6 +506,13 @@ export const STYLE = `
      - they are all shown there. */
   @media (hover: none) {
     .pen { opacity: 1; pointer-events: auto; }
+    /* Touch, not width, is the criterion: a phone in landscape is wide
+       and still a finger, a narrow browser window on a desktop is
+       narrow and still a mouse. The reload button works out to just
+       under 30px tall from its line-height and padding - about two
+       thirds of a usable target. */
+    .bar .reload { min-height: 44px; padding: 8px 14px; }
+    details.fold > summary { padding: 16px; }
   }
   .change .what .auto {
     display: block;
