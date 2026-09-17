@@ -24,7 +24,12 @@ PANEL = PACKAGE / "panel.js"
 # `settle` lets pending promises run, `answer` settles one held call the
 # way the server would.
 _PRELUDE = """
-globalThis.HTMLElement = class { attachShadow() { return {}; } };
+globalThis.HTMLElement = class {
+  attachShadow() { return {}; }
+  setAttribute(name, value) { (this._attrs ||= {})[name] = String(value); }
+  getAttribute(name) { return this._attrs?.[name] ?? null; }
+  removeAttribute(name) { delete this._attrs?.[name]; }
+};
 let Panel;
 globalThis.customElements = {
   get() { return undefined; },
@@ -6803,4 +6808,94 @@ def test_an_ordinary_state_update_does_not_redraw(menu):
     # And the other side of it: comparing the condition rather than
     # rendering on every assignment, or the panel repaints per event.
     assert menu["drewAgainOnNoChange"] == 0
+
+
+# -- one column: which one, and what a tap means ---------------------------
+#
+# `_pane` is read by CSS alone, so none of this is visible in a
+# screenshot - and the one failure that matters is a race: the panel
+# picks a dashboard for you at load time, and while that request is in
+# flight the list is already on screen and clickable.
+
+_HARNESS_PANE = """
+// 1. A tap during the automatic first selection must not be undone by it.
+const p = new Panel();
+p._render = () => {};
+p._loadSidebar = async () => {};
+const calls = [];
+p._call = (type, extra) =>
+  new Promise((resolve, reject) => calls.push({ type, extra, resolve, reject }));
+const find = (type, dashboard) =>
+  calls.find((c) => c.type === type && (!dashboard || c.extra?.dashboard === dashboard));
+
+const loading = p._loadDashboards();
+await settle();
+find("dashboards").resolve({
+  dashboards: [{ key: "a", exists: true }, { key: "b", exists: true }],
+});
+await settle();
+// `_select("a")` is in flight. The list is drawn and can be tapped.
+const paneWhileLoading = p._pane;
+p._pick("b");
+const paneRightAfterTap = p._pane;
+for (const type of ["history", "versions"]) {
+  find(type, "a")?.resolve({ changes: [], versions: [] });
+  find(type, "b")?.resolve({ changes: [], versions: [] });
+}
+await settle();
+await loading;
+const paneAfterItAllSettled = p._pane;
+
+// 2. Tapping the row that is already selected only switches columns.
+const q = new Panel();
+q._render = () => {};
+const qCalls = [];
+q._call = (type, extra) => new Promise((resolve) => qCalls.push({ type, extra, resolve }));
+q._selected = "a";
+q._query = "kept";
+q._pane = "list";
+q._pick("a");
+const sameRow = { pane: q._pane, calls: qCalls.length, query: q._query };
+q._pick("b");
+const otherRow = { pane: q._pane, calls: qCalls.length, query: q._query };
+
+console.log(JSON.stringify({
+  paneWhileLoading, paneRightAfterTap, paneAfterItAllSettled, sameRow, otherRow,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def pane(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "pane", _HARNESS_PANE)
+
+
+def test_the_automatic_first_pick_stays_on_the_list(pane):
+    # Wide, the preselection keeps the second column from being empty.
+    # Narrow, it would drop somebody into a dashboard they never chose.
+    assert pane["paneWhileLoading"] == "list"
+
+
+def test_a_tap_during_the_first_pick_wins(pane):
+    # The race this test exists for: `_loadDashboards` awaits `_select`,
+    # and the list is clickable throughout that await. Setting the pane
+    # after the await put the panel back on the list under the finger
+    # of somebody who had already chosen.
+    assert pane["paneRightAfterTap"] == "detail"
+    assert pane["paneAfterItAllSettled"] == "detail"
+
+
+def test_tapping_the_selected_row_asks_the_server_for_nothing(pane):
+    # `_select` clears the search word and refetches. Running it for the
+    # row that is already selected turns "back, then in again" into a
+    # reload with a second of grey in the middle - which is the opposite
+    # of what the back arrow promises.
+    assert pane["sameRow"] == {"pane": "detail", "calls": 0, "query": "kept"}
+
+
+def test_tapping_another_row_is_still_a_full_switch(pane):
+    # Two calls: history and versions, as `_select` has asked since
+    # initiative G.
+    assert pane["otherRow"] == {"pane": "detail", "calls": 2, "query": ""}
+
 

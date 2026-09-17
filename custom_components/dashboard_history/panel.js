@@ -167,6 +167,25 @@ class DashboardHistoryPanel extends HTMLElement {
     // see the end of `_render`, which puts the caret back only where it
     // was.
     this._inBox = false;
+    // Which of the two columns is on screen while there is room for one.
+    // Read by CSS alone - see the `@container` band in the stylesheet -
+    // so JavaScript never learns how wide it is. A ResizeObserver
+    // setting a `_wide` flag was the obvious alternative and the wrong
+    // one: `_render` replaces the whole shadow root and has to put the
+    // diff's scroll offset and the search box's caret back by hand, so
+    // turning a phone would fire the most expensive path in this class
+    // over and over.
+    //
+    // It becomes "detail" only through a deliberate tap on a dashboard
+    // row. Every other way `_selected` gets a value leaves it on the
+    // list: the automatic first pick at load time, and whatever
+    // `_loadDashboards` picks after a dashboard was forgotten.
+    this._pane = "list";
+    // The diff's scroll offset, kept out here rather than read off the
+    // page at render time. See `_render`, where the reason is written
+    // out: with one column the detail is still drawn while the list is
+    // showing, and a hidden element answers 0.
+    this._diffScroll = 0;
     this._caret = null;
     // The versions holding exactly what the dashboard holds now, worked
     // out by the server against *every* version. Read rather than
@@ -993,7 +1012,19 @@ class DashboardHistoryPanel extends HTMLElement {
     // picks an arbitrary gravestone, and they are behind a fold now
     // anyway.
     const [first] = this._orderedDashboards().listed;
-    if (first) await this._select(first.key);
+    if (first) {
+      // Before the await, not after it. This selection is the panel's
+      // own, not anybody's finger, so with one column it starts on the
+      // list - but `_select` below takes as long as the server does,
+      // and the list can be tapped throughout. Setting it afterwards
+      // would put somebody who had already chosen back on the list.
+      // Wide, the preselection is what keeps the second column from
+      // being empty; and it is no wasted request either way, because it
+      // is what makes the first tap on that very row open without
+      // waiting.
+      this._pane = "list";
+      await this._select(first.key);
+    }
   }
 
   /**
@@ -1030,6 +1061,33 @@ class DashboardHistoryPanel extends HTMLElement {
       // A view that stays where it was is a poor answer; a switch that
       // throws is a worse one.
     }
+  }
+
+  /**
+   * A tap on a row in the dashboard list.
+   *
+   * Two things that used to be one. `_select` clears everything that
+   * belonged to the old dashboard - the search word, compare mode and
+   * its selection, the open row, the detail cache, the loaded versions -
+   * and asks the server for history and versions again. That is right
+   * for a switch and wrong for the row that is already selected: with
+   * one column, "back to the list, then in again" would run it, and the
+   * immediate return this panel promises would be a reload with a
+   * second of grey in the middle.
+   *
+   * Tapping the row that is already selected therefore only decides
+   * which column is on screen. On a wide screen that makes such a click
+   * do nothing at all, where it used to reload and throw away a typed
+   * search word on the way. Deliberate: reloading is the button that
+   * says so.
+   */
+  _pick(key) {
+    this._pane = "detail";
+    if (key === this._selected) {
+      this._render();
+      return;
+    }
+    return this._select(key);
   }
 
   async _select(key) {
@@ -2497,6 +2555,13 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     if (done?.error) this._error = done.error;
     this._selected = null;
+    // You just removed what you were looking at. _loadDashboards
+    // below picks the first live dashboard again, and with one column
+    // that would put you in some other dashboard's history without
+    // having asked - a screen that looks right and is not. Covered by
+    // _loadDashboards already; said here as well so it survives
+    // somebody editing that.
+    this._pane = "list";
     this._changes = [];
     await this._loadDashboards();
   }
@@ -3331,8 +3396,19 @@ class DashboardHistoryPanel extends HTMLElement {
     // - a save announced from elsewhere, or `_guard` on its way in and
     // out of the next call. The open/closed state was already carried
     // across in `_diffOpen`; this is the other half of the same idea.
-    const diffScroll =
-      this.shadowRoot.querySelector(".detail details.raw[open] pre")?.scrollTop ?? 0;
+    // Only while the column it sits in is on screen. With one column
+    // the detail is still drawn when the list is showing - `display:
+    // none`, and a hidden element answers 0 for `scrollTop`. Reading
+    // that would overwrite the offset with a zero nobody scrolled to,
+    // and the way back into the row would land at line one. `offsetHeight`
+    // rather than `checkVisibility()`, which Safari only learned late
+    // and this panel has to run in.
+    const openDiff = this.shadowRoot.querySelector(".detail details.raw[open] pre");
+    if (openDiff && openDiff.offsetHeight > 0) this._diffScroll = openDiff.scrollTop;
+    // On the host, because the bar and the layout are siblings and a
+    // rule on one cannot reach the other. "list" whenever nothing is
+    // selected, so the back arrow cannot appear over an empty choice.
+    this.setAttribute?.("data-pane", this._selected ? this._pane : "list");
     this.shadowRoot.innerHTML = `
       <style>${STYLE}</style>
       <div class="bar">
@@ -3341,6 +3417,14 @@ class DashboardHistoryPanel extends HTMLElement {
                    aria-label="Open the Home Assistant sidebar">
              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                <path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/>
+             </svg>
+           </button>`
+        : ""}
+        ${this._selected
+        ? `<button class="back" data-back="1" title="Back to the dashboard list"
+                   aria-label="Back to the dashboard list">
+             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+               <path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6z"/>
              </svg>
            </button>`
         : ""}
@@ -3389,13 +3473,15 @@ class DashboardHistoryPanel extends HTMLElement {
         this._diffOpen = element.open;
       });
     });
-    if (diffScroll) {
+    if (this._diffScroll) {
       const pre = root.querySelector(".detail details.raw[open] pre");
-      // Only where the new diff is long enough to hold the old offset.
-      // A shorter one clamps to its own end by itself, which is the
-      // right answer and not worth a branch; a missing one is the row
-      // having closed, and there is nothing to put back.
-      if (pre) pre.scrollTop = diffScroll;
+      // Setting `scrollTop` on a hidden element does nothing, so this
+      // puts the offset back at the first render where the column is on
+      // screen again - which is the very render `_pick` triggers.
+      // Only where the new diff is long enough to hold it; a shorter
+      // one clamps to its own end by itself, which is the right answer
+      // and not worth a branch.
+      if (pre && pre.offsetHeight > 0) pre.scrollTop = this._diffScroll;
     }
     // Every click below is wired the same way, so the wiring is written
     // once and each line says only the two things that differ: what was
@@ -3418,7 +3504,11 @@ class DashboardHistoryPanel extends HTMLElement {
         }),
       );
     onClick(".menu", () => this._toggleHassMenu());
-    onClick(".dash", (element) => this._select(element.dataset.key));
+    onClick(".back", () => {
+      this._pane = "list";
+      this._render();
+    });
+    onClick(".dash", (element) => this._pick(element.dataset.key));
     onClick(".change", (element) => this._expand(element.dataset.revision));
     onClick("[data-state]", (element, event) => {
       // Or the click reaches the row underneath and collapses it. The

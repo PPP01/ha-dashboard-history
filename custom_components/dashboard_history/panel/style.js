@@ -162,6 +162,40 @@ export const STYLE = `
       width: clamp(200px, 30cqw, 280px);
     }
   }
+  /* Below this the two columns stop fitting: a 200px list next to a
+     main column of less than about 360px is two things neither of which
+     can be read. One column then, and which one is the only thing
+     _pane decides. Everything is drawn on every render; this band is
+     the only thing that knows there is a narrow case at all. */
+  .bar .back { display: none; }
+  @container panel (max-width: 560px) {
+    .side {
+      flex: 1 1 auto;
+      width: auto;
+      border-right: 0;
+    }
+    :host([data-pane="list"]) .mainwrap { display: none; }
+    :host([data-pane="detail"]) .side { display: none; }
+    /* Bound to the pane as well, not only to the band: with the
+       automatic first pick something is selected the moment the panel
+       opens, so a back arrow that asked only about the width would sit
+       on the list doing nothing. */
+    :host([data-pane="detail"]) .bar .back {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+    .bar .back svg { width: 24px; height: 24px; fill: currentColor; }
+  }
   /* Holds the main column and the spinner that covers it. The wrapper
      exists so the veil can sit still: laid inside .main, which is the
      element that scrolls, it would be pinned to the content and scroll
