@@ -1187,6 +1187,12 @@ class HistoryStore:
         # and is now 0.3 s of 14.7 (measured 2026-09-18, 782 marks):
         # announcing it would put a name on the screen that nobody can
         # read before it is gone again.
+        #
+        # `say` is therefore unused in here, and stays in the signature
+        # on purpose - it is not a leftover to tidy away. Keeping it
+        # wired costs one parameter; removing it costs the caller, the
+        # signature and this decision again the day anything here is
+        # worth reporting.
         changed: dict[bytes, bytes | None] = {}
         for ref, old, target in versions:
             name = b"refs/tags/" + ref
