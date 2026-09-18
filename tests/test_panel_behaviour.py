@@ -7290,46 +7290,6 @@ def test_the_lock_holds_off_automatic_refreshes(lock_silences_refresh):
     assert lock_silences_refresh["whenLocked"] == []
 
 
-_EMPTY_BEFORE_ANSWER = """
-const el = new Panel();
-el.shadowRoot = node();
-for (let i = 0; i < 50; i++) await settle();
-
-// Nothing asked yet - the state a reload starts in, and the state it
-// stays in for as long as a forget holds the answer back.
-el._selected = null;
-const unasked = { side: el._renderSide(), main: el._renderMain() };
-
-// Asked, and there really is nothing.
-el._dashboards = [];
-const empty = { side: el._renderSide(), main: el._renderMain() };
-
-console.log(JSON.stringify({ unasked, empty }));
-"""
-
-
-@pytest.fixture(scope="session")
-def empty_before_answer(tmp_path_factory):
-    return _run_in_node(tmp_path_factory, "empty_before_answer", _EMPTY_BEFORE_ANSWER)
-
-
-def test_an_unanswered_list_does_not_claim_to_be_empty(empty_before_answer):
-    # Seen in a screenshot on 2026-09-18: somebody reloaded while a
-    # forget was running, the list's answer waited behind the rewrite,
-    # and the page said "Nothing recorded yet." beside an invitation to
-    # pick from it. Two statements about a state nobody had been told
-    # yet - and the first of them is the worst thing this integration
-    # can say, since its whole promise is that nothing is lost.
-    assert "Nothing recorded yet" not in empty_before_answer["unasked"]["side"]
-    assert "Reading the history" in empty_before_answer["unasked"]["side"]
-    assert empty_before_answer["unasked"]["main"] == ""
-
-
-def test_an_answered_empty_list_says_so(empty_before_answer):
-    # And the other half: once the answer is in and it really is empty,
-    # the old sentence is the right one.
-    assert "Nothing recorded yet" in empty_before_answer["empty"]["side"]
-    assert "Pick a dashboard on the left" in empty_before_answer["empty"]["main"]
 _RING_KEEPS_TURNING = """
 const el = new Panel();
 el.shadowRoot = node();
@@ -7439,3 +7399,89 @@ def test_an_answered_empty_list_says_so(empty_before_answer):
     # the old sentence is the right one.
     assert "Nothing recorded yet" in empty_before_answer["empty"]["side"]
     assert "Pick a dashboard on the left" in empty_before_answer["empty"]["main"]
+
+
+_BORROWED_LOCK = """
+const el = new Panel();
+el.shadowRoot = node();
+for (let i = 0; i < 50; i++) await settle();
+
+let loads = 0;
+el._loadDashboards = () => { loads += 1; return Promise.resolve(); };
+el._loadSidebar = () => Promise.resolve();
+el._call = () => Promise.resolve({ dashboards: [] });
+
+// A page that started nothing, hearing a rewrite for the first time -
+// somebody reloaded into the middle of one.
+el._onForgetting({
+  data: { dashboard: "kitchen", phase: "rewriting", done: 400, total: 7403 },
+});
+const picked = {
+  locked: !!el._forgetting,
+  borrowed: el._forgetting?.borrowed ?? null,
+  title: el._forgetting?.title ?? null,
+  says: el._renderLock().includes("400 of 7403"),
+};
+
+// The last report ends it, since this page has no call of its own.
+el._onForgetting({ data: { dashboard: "kitchen", phase: "done", done: 0, total: 0 } });
+const reloading = {
+  stillLocked: !!el._forgetting,
+  phase: el._forgetting?.phase ?? null,
+  loads,
+};
+await settle();
+await settle();
+const released = { locked: !!el._forgetting, loads };
+
+// And a lock of our own must NOT end on that report: the rewrite
+// finishing is not the end of the wait.
+el._forgetting = {
+  key: "kitchen", title: "Kitchen", borrowed: false,
+  phase: "rewriting", done: 0, total: 0, heard: Date.now(),
+};
+loads = 0;
+el._onForgetting({ data: { dashboard: "kitchen", phase: "done", done: 0, total: 0 } });
+const ownKept = { locked: !!el._forgetting, loads };
+
+el._unwatchSilence();
+console.log(JSON.stringify({ picked, reloading, released, ownKept }));
+"""
+
+
+@pytest.fixture(scope="session")
+def borrowed_lock(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "borrowed_lock", _BORROWED_LOCK)
+
+
+def test_a_reload_into_a_running_rewrite_picks_the_lock_up(borrowed_lock):
+    # Seen in a screenshot on 2026-09-18: reloading during a forget gave
+    # a page that looked idle while every question it asked waited
+    # behind the rewrite. The reports go to every open panel, so a page
+    # that hears one knows what is happening even though it started
+    # nothing.
+    assert borrowed_lock["picked"] == {
+        "locked": True,
+        "borrowed": True,
+        "title": "kitchen",  # the list has not answered; the key stands in
+        "says": True,
+    }
+
+
+def test_a_borrowed_lock_ends_on_the_last_report(borrowed_lock):
+    # It has no call of its own to wait on. The reload happens inside
+    # the lock, as it does for the panel that asked - the index rebuild
+    # afterwards is part of the wait, not after it.
+    assert borrowed_lock["reloading"] == {
+        "stillLocked": True,
+        "phase": "reloading",
+        "loads": 1,
+    }
+    assert borrowed_lock["released"] == {"locked": False, "loads": 1}
+
+
+def test_our_own_lock_ignores_the_last_report(borrowed_lock):
+    # The panel that started the forget lifts its lock when its own call
+    # returns. Lifting it on the report would hand back an interface
+    # that then hangs for the index rebuild - 25 s in the container.
+    assert borrowed_lock["ownKept"] == {"locked": True, "loads": 0}

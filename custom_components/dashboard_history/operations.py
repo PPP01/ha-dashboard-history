@@ -1422,7 +1422,16 @@ async def async_forget(
             {"dashboard": key, "phase": phase, "done": done, "total": total},
         )
 
-    removed = await hass.async_add_executor_job(store.forget, key, announce)
+    try:
+        removed = await hass.async_add_executor_job(store.forget, key, announce)
+    finally:
+        # A last word, and it is not for the panel that asked: that one
+        # has this call to wait on. It is for every other open panel -
+        # somebody who reloaded into the middle of the rewrite has no
+        # call of their own and would otherwise sit behind a lock that
+        # never lifts. In a `finally`, because a rewrite that failed
+        # ended just as much as one that worked.
+        announce("done", 0, 0)
     _LOGGER.warning(
         "Forgot the history of dashboard %s for good: %s commits removed",
         key,

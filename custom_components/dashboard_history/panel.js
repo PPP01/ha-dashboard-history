@@ -783,15 +783,67 @@ class DashboardHistoryPanel extends HTMLElement {
    * the way it notices any other change.
    */
   _onForgetting(event) {
-    if (!this._forgetting) return;
     const data = event?.data || {};
-    if (data.dashboard !== this._forgetting.key) return;
+    if (!data.dashboard) return;
+    if (this._forgetting && data.dashboard !== this._forgetting.key) return;
+    if (data.phase === "done") {
+      this._releaseBorrowedLock();
+      return;
+    }
+    if (!this._forgetting) {
+      // A rewrite this page did not start, heard for the first time -
+      // somebody reloaded into the middle of one. Seen in a screenshot
+      // on 2026-09-18: the page came up as if nothing were happening,
+      // its questions waited behind the rewrite, and the wait had no
+      // explanation at all.
+      //
+      // `borrowed`, because it ends differently: the panel that asked
+      // has its own call to wait on, and this one has only the last
+      // report. The key stands in for the title, which lives in a list
+      // that has not answered yet and will not until this is over.
+      this._forgetting = {
+        key: data.dashboard,
+        title: data.dashboard,
+        borrowed: true,
+        phase: data.phase,
+        done: data.done,
+        total: data.total,
+        heard: Date.now(),
+      };
+      this._watchForSilence();
+      this._render();
+      return;
+    }
     this._forgetting.phase = data.phase;
     this._forgetting.done = data.done;
     this._forgetting.total = data.total;
     this._forgetting.heard = Date.now();
     this._watchForSilence();
     this._repaintStep();
+  }
+
+  /**
+   * End a lock this page is only watching, once the rewrite reports it.
+   *
+   * Only a borrowed one. The panel that started the forget lifts its
+   * own lock when its call returns, and not a moment earlier: the
+   * rewrite finishing is not the end of the wait, because the first
+   * question asked afterwards still costs a full index rebuild. Lifting
+   * it here as well would hand that panel back an interface that hangs.
+   *
+   * The reload is inside the lock for the same reason - see `_forget`.
+   */
+  _releaseBorrowedLock() {
+    if (!this._forgetting?.borrowed) return;
+    this._forgetting.phase = "reloading";
+    this._forgetting.heard = Date.now();
+    this._watchForSilence();
+    this._render();
+    this._loadDashboards().finally(() => {
+      this._unwatchSilence();
+      this._forgetting = null;
+      this._render();
+    });
   }
 
   /**
@@ -831,7 +883,6 @@ class DashboardHistoryPanel extends HTMLElement {
     const what = phases[state.phase] || "Working";
     return state.total > 0 ? `${what} — ${state.done} of ${state.total}` : what;
   }
-
 
   /**
    * Redraw the lock screen once the reports have stopped long enough.
@@ -2751,6 +2802,12 @@ class DashboardHistoryPanel extends HTMLElement {
     this._forgetting = {
       key: asked,
       title: dashboard?.title || asked,
+      // Ours, so the last report does not end it - the call below
+      // does, once the history has been read back in. See
+      // `_releaseBorrowedLock`. Written out rather than left undefined,
+      // because the difference between the two locks is the whole
+      // reason either of them behaves correctly.
+      borrowed: false,
       phase: "rewriting",
       done: 0,
       total: 0,
