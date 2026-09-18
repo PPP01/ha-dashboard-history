@@ -2788,8 +2788,13 @@ class DashboardHistoryPanel extends HTMLElement {
       <p>The dashboard itself is already gone; this removes the record of
          what was on it. <strong>It cannot be undone.</strong></p>
       <p class="muted" style="font-size:13px">One side effect worth knowing:
-         the stored history is rewritten, so every revision changes. A
-         revision you noted down somewhere will no longer resolve.</p>`;
+         the stored history is rewritten, so <strong>every revision
+         changes</strong>.</p>
+      <ul class="loss muted" style="font-size:13px">
+        <li>A revision you noted down somewhere will no longer resolve.</li>
+        <li><strong>This takes a while, and the page is unavailable while
+            it runs.</strong> Expect seconds rather than an instant.</li>
+      </ul>`;
     dialog.returnValue = "";
     dialog.showModal();
     const answer = await this._answerFrom(dialog);

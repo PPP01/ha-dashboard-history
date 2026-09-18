@@ -32,6 +32,10 @@ operation that rewrites history.
   from the reports and shows the same screen, instead of looking idle
   while every answer waits behind the rewrite.
 
+- **The dialog says so beforehand.** The note about revisions changing
+  now also warns that it takes a while and that the page will be
+  unavailable, before you commit to it rather than after.
+
 ### Elsewhere
 
 - The dashboard list no longer says "Nothing recorded yet." before it
