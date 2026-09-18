@@ -26,7 +26,7 @@ from .analyze import (
     plan_undo,
 )
 from . import versions as versioning
-from .const import DOMAIN
+from .const import DOMAIN, EVENT_FORGET_PROGRESS
 from .keys import is_absent, is_live
 from .restore import apply_undo, reinsert
 from .snapshot import (
@@ -1408,7 +1408,21 @@ async def async_forget(
     if not confirm:
         return {"applied": False, **facts}
 
-    removed = await hass.async_add_executor_job(store.forget, key)
+    def announce(phase: str, done: int, total: int) -> None:
+        """Pass one step of the rewrite to whoever is watching.
+
+        Runs in the executor thread the rewrite runs in, and the event
+        bus belongs to the event loop - hence the hand-over. `async_fire`
+        called straight from here would be a threading bug that shows up
+        as a corrupted loop rather than as an error anybody can read.
+        """
+        hass.loop.call_soon_threadsafe(
+            hass.bus.async_fire,
+            EVENT_FORGET_PROGRESS,
+            {"dashboard": key, "phase": phase, "done": done, "total": total},
+        )
+
+    removed = await hass.async_add_executor_job(store.forget, key, announce)
     _LOGGER.warning(
         "Forgot the history of dashboard %s for good: %s commits removed",
         key,

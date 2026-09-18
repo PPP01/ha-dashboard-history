@@ -1346,4 +1346,35 @@ export const STYLE = `
   }
   .compare-check { margin-right: 8px; width: 16px; height: 16px; flex-shrink: 0; }
   .current-pick .change { background: var(--secondary-background-color, #eee); }
+  /* The lock screen a running forget puts over everything. Centred in
+     the viewport rather than in a layout, because at that moment there
+     is no layout - see _renderLock. No backticks in here: one ends the
+     template literal and takes the rest of the sheet with it. */
+  .lock {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px 16px;
+    box-sizing: border-box;
+  }
+  .lockbox {
+    max-width: 30rem;
+    text-align: center;
+  }
+  .lockbox h2 { margin: 0 0 8px; font-size: 20px; font-weight: 500; }
+  .lockbox .step {
+    margin: 0 0 20px;
+    font-variant-numeric: tabular-nums;
+    color: var(--primary-color, #03a9f4);
+  }
+  .lockbox .muted { margin: 20px 0 0; font-size: 14px; line-height: 1.5; }
+  .lockbox .doubt {
+    margin: 16px 0 0;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    background: var(--secondary-background-color, #f5f5f5);
+  }
 `;

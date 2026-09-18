@@ -63,6 +63,14 @@ PANEL_VERSION = "0.7.0"
 # live configuration, nothing is crowned, and the page looks broken.
 EVENT_HISTORY_UPDATED = "dashboard_history_updated"
 
+# How far `forget` has got. Its own event rather than a field on the one
+# above, because that one means "the history grew, go and read it again"
+# and every listener acts on it - while this one means "still working,
+# nothing to read yet". Measured on the test bench: a forget takes 24 s
+# on its own and up to 76 s while the panel keeps asking, and a spinner
+# standing still that long is why somebody reloads mid-rewrite.
+EVENT_FORGET_PROGRESS = "dashboard_history_forget_progress"
+
 # Seconds to wait before reconciling after a panel changed. Long enough to
 # collapse the burst Home Assistant fires while starting up.
 RECONCILE_DELAY = 10

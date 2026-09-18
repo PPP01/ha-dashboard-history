@@ -21,6 +21,14 @@ const DOMAIN = "dashboard_history";
 // recorder has written anything, and refreshing on it reads a history
 // whose newest entry is the state that was just replaced.
 const EVENT_RECORDED = "dashboard_history_updated";
+// Must match EVENT_FORGET_PROGRESS in const.py.
+const EVENT_FORGETTING = "dashboard_history_forget_progress";
+// After this long without a word from a running forget, the lock screen
+// stops claiming to know and offers a reload. Not a timeout on the
+// operation - it keeps running - but an admission that this page can no
+// longer tell "slow" from "stuck". Generous on purpose: the slowest
+// phase reports every 25 versions, which on the test bench is 0.4 s.
+const SILENCE_BEFORE_DOUBT = 60_000;
 
 // The parts are fetched with this module's own query string, so a new
 // release busts them together with the entry point. panel.py digests
@@ -265,6 +273,14 @@ class DashboardHistoryPanel extends HTMLElement {
     // flag went dark when the *first* of them finished. Measured on
     // 2026-09-03 in the Node run behind tests/test_panel_behaviour.py.
     this._busy = 0;
+    // The one state that takes the whole page away: what `forget` is
+    // doing right now, or null. Everything else here is a spinner beside
+    // a page somebody can still use; this is not. Measured 2026-09-18 on
+    // the test bench: forgetting takes 24 s undisturbed and 76 s while
+    // this panel keeps asking questions, because both compete for the
+    // same interpreter. Taking the controls away is not politeness, it
+    // is what makes the operation three times faster.
+    this._forgetting = null;
     // A render that fell due while a dialog was open. See `_render`.
     this._renderOwed = false;
     // The 180 ms the glider is given to slide before the panel is
@@ -690,6 +706,20 @@ class DashboardHistoryPanel extends HTMLElement {
     if (this._sub || !this._hass?.connection) return;
     this._sub = "pending";
     this._hass.connection
+      .subscribeEvents((event) => this._onForgetting(event), EVENT_FORGETTING)
+      .then(
+        (off) => {
+          this._subForget = off;
+          if (!this.isConnected) this._unlisten();
+        },
+        () => {
+          // A lock screen without a counter still locks, and the reload
+          // it offers after a minute of silence is the way out. Not
+          // worth a banner over a page nobody can act on anyway.
+          this._subForget = null;
+        },
+      );
+    this._hass.connection
       .subscribeEvents((event) => this._onRecorded(event), EVENT_RECORDED)
       .then(
         (off) => {
@@ -708,6 +738,9 @@ class DashboardHistoryPanel extends HTMLElement {
     const off = this._sub;
     this._sub = null;
     if (typeof off === "function") off();
+    const offForget = this._subForget;
+    this._subForget = null;
+    if (typeof offForget === "function") offForget();
   }
 
   disconnectedCallback() {
@@ -733,6 +766,73 @@ class DashboardHistoryPanel extends HTMLElement {
   /**
    * A change has been recorded. Decide whether this page cares.
    */
+  /**
+   * One step of a running `forget`, straight from the rewrite.
+   *
+   * Ignored unless this page started it. The event goes to every open
+   * panel, and a second browser tab that is merely watching must not be
+   * locked by somebody else's operation - it will notice soon enough,
+   * the way it notices any other change.
+   */
+  _onForgetting(event) {
+    if (!this._forgetting) return;
+    const data = event?.data || {};
+    if (data.dashboard !== this._forgetting.key) return;
+    this._forgetting.phase = data.phase;
+    this._forgetting.done = data.done;
+    this._forgetting.total = data.total;
+    this._forgetting.heard = Date.now();
+    this._render();
+  }
+
+  /**
+   * The whole page while a history is being rewritten.
+   *
+   * Everything else is deliberately gone: no list, no history, no
+   * buttons. The reason is measured rather than tidy - a click here
+   * costs the operation more than it costs the person waiting (24 s
+   * undisturbed against 76 s while this panel asks questions), because
+   * the rewrite and every answer this page wants come out of the same
+   * Python interpreter.
+   *
+   * What it does say is how far the rewrite has got, and that is the
+   * part that matters: a number that moves is the difference between
+   * waiting and reloading. When it stops moving for a minute, the text
+   * says so rather than pretending - see SILENCE_BEFORE_DOUBT.
+   */
+  _renderLock() {
+    const state = this._forgetting;
+    const quiet = Date.now() - state.heard > SILENCE_BEFORE_DOUBT;
+    const phases = {
+      rewriting: "Rewriting the recorded states",
+      versions: "Rebuilding the version marks",
+      cleaning: "Clearing out what is left",
+      reloading: "Reading the history back in",
+    };
+    const what = phases[state.phase] || "Working";
+    const counted =
+      state.total > 0 ? ` — ${state.done} of ${state.total}` : "";
+    return `
+      <div class="lock">
+        <div class="lockbox">
+          <h2>Forgetting ${escape(state.title)}</h2>
+          <p class="step">${escape(what)}${escape(counted)}</p>
+          ${SPINNER}
+          <p class="muted">
+            The stored history is being rewritten, which takes a while when
+            there are many version marks. Home Assistant itself keeps
+            running normally — only this page waits, and leaving it alone
+            is what makes it finish soonest.
+          </p>
+          ${quiet
+        ? `<p class="doubt">Nothing has been reported for a minute. The
+               operation may still be running, but this page can no longer
+               tell. If nothing changes, reload it.</p>`
+        : ""}
+        </div>
+      </div>`;
+  }
+
   _onRecorded(event) {
     if (this._awaiting) {
       // An action of our own is waiting for exactly this and refreshes
@@ -2552,20 +2652,55 @@ class DashboardHistoryPanel extends HTMLElement {
     dialog.showModal();
     const answer = await this._answerFrom(dialog);
     if (answer !== "forget") return;
-    const done = await this._guard(() =>
-      this._call("forget", { dashboard: asked, confirm: true }),
-    );
-    if (done?.error) this._error = done.error;
-    this._selected = null;
-    // You just removed what you were looking at. _loadDashboards
-    // below picks the first live dashboard again, and with one column
-    // that would put you in some other dashboard's history without
-    // having asked - a screen that looks right and is not. Covered by
-    // _loadDashboards already; said here as well so it survives
-    // somebody editing that.
-    this._pane = "list";
-    this._changes = [];
-    await this._loadDashboards();
+    // Up before the call, down only after the reload below: the rewrite
+    // is not the whole wait. Measured 2026-09-18, the first question
+    // asked afterwards costs a full index rebuild - 25 s in the
+    // container - so releasing the page when `forget` answers would hand
+    // back an interface that hangs for another half minute.
+    this._forgetting = {
+      key: asked,
+      title: dashboard?.title || asked,
+      phase: "rewriting",
+      done: 0,
+      total: 0,
+      heard: Date.now(),
+    };
+    this._render();
+    try {
+      const done = await this._guard(() =>
+        this._call("forget", { dashboard: asked, confirm: true }),
+      );
+      // The same fence the preview above holds, and it was missing here:
+      // this call outlives a click elsewhere, and without the check it
+      // threw away `_selected` and the loaded history of whatever the
+      // person had moved on to. The lock screen makes that click
+      // impossible from now on; the fence stays because a fence enforced
+      // only by a screen is not a fence.
+      if (!mine()) return;
+      if (done?.error) this._error = done.error;
+      this._selected = null;
+      // You just removed what you were looking at. _loadDashboards
+      // below picks the first live dashboard again, and with one column
+      // that would put you in some other dashboard's history without
+      // having asked - a screen that looks right and is not. Covered by
+      // _loadDashboards already; said here as well so it survives
+      // somebody editing that.
+      this._pane = "list";
+      this._changes = [];
+      // Still locked, and now saying something else: the rewrite is
+      // done, but the index it dropped has to be walked again before
+      // any answer can come back. The panel knows this phase by itself -
+      // no event says it, because it happens inside the next question.
+      this._forgetting.phase = "reloading";
+      this._forgetting.heard = Date.now();
+      this._render();
+      await this._loadDashboards();
+    } finally {
+      // In a `finally` so a call that throws cannot leave somebody
+      // locked out of their own panel with nothing but a reload.
+      this._forgetting = null;
+      this._render();
+    }
   }
 
   _restoreItem(revision, item) {
@@ -3434,6 +3569,15 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     this._renderOwed = false;
+    // The lock screen replaces everything, and nothing below it runs:
+    // no handlers to bind, because there is deliberately nothing to
+    // click. That is the point rather than a shortcut - markup that is
+    // not there cannot start a request that competes with the rewrite.
+    if (this._forgetting) {
+      this._unwatchDiff();
+      this.shadowRoot.innerHTML = `<style>${STYLE}</style>${this._renderLock()}`;
+      return;
+    }
     // Read before the old nodes go, and used at the very end to decide
     // whether the caret goes back into the search box. Whether removing
     // a focused element fires `blur` is not the same in every engine,

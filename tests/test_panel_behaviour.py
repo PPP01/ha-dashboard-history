@@ -6899,3 +6899,220 @@ def test_tapping_another_row_is_still_a_full_switch(pane):
     assert pane["otherRow"] == {"pane": "detail", "calls": 2, "query": ""}
 
 
+
+
+_FORGET_LOCKS = """
+const el = new Panel();
+el._render = () => {};
+el.shadowRoot = node();
+el._selected = "kitchen";
+el._dashboards = [{ key: "kitchen", title: "Kitchen" }];
+// The dialog is not what is under test here; its answer is.
+el._answerFrom = () => Promise.resolve("forget");
+el._loadSidebar = () => Promise.resolve();
+
+let release;
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  if (type === "forget" && extra.confirm) {
+    // Held open, which is the whole point: everything below happens
+    // while the rewrite is still running.
+    return new Promise((resolve) => { release = resolve; });
+  }
+  if (type === "forget") {
+    return Promise.resolve({ states: 3, described: 0, first: 1000, last: 2000 });
+  }
+  if (type === "dashboards") return Promise.resolve({ dashboards: [] });
+  return Promise.resolve({});
+};
+
+const running = el._forget();
+await settle();
+await settle();
+
+const whileRunning = {
+  locked: !!el._forgetting,
+  key: el._forgetting?.key ?? null,
+  title: el._forgetting?.title ?? null,
+  phase: el._forgetting?.phase ?? null,
+};
+
+// A step of the rewrite, as the bus delivers it.
+el._onForgetting({
+  data: { dashboard: "kitchen", phase: "versions", done: 100, total: 782 },
+});
+const counted = {
+  phase: el._forgetting?.phase ?? null,
+  done: el._forgetting?.done ?? null,
+  total: el._forgetting?.total ?? null,
+};
+
+// Another dashboard's progress, which this page did not start.
+const heardBefore = el._forgetting?.heard ?? null;
+el._onForgetting({
+  data: { dashboard: "garden", phase: "cleaning", done: 0, total: 0 },
+});
+const ignoredOther = {
+  phase: el._forgetting?.phase ?? null,
+  done: el._forgetting?.done ?? null,
+  untouched: (el._forgetting?.heard ?? null) === heardBefore,
+};
+
+release({ applied: true, removed: 5 });
+await running;
+const afterwards = { locked: !!el._forgetting };
+
+// And the same once more, with the call failing: a lock nobody can
+// leave is worse than no lock.
+el.shadowRoot = node();
+el._selected = "kitchen";
+el._dashboards = [{ key: "kitchen", title: "Kitchen" }];
+el._call = (type, extra) => {
+  if (type === "forget" && extra.confirm) return Promise.reject(new Error("boom"));
+  if (type === "forget") {
+    return Promise.resolve({ states: 1, described: 0, first: 1, last: 2 });
+  }
+  if (type === "dashboards") return Promise.resolve({ dashboards: [] });
+  return Promise.resolve({});
+};
+await el._forget();
+const afterFailure = { locked: !!el._forgetting };
+
+console.log(JSON.stringify({
+  whileRunning, counted, ignoredOther, afterwards, afterFailure,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def forget_locks(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "forget_locks", _FORGET_LOCKS)
+
+
+def test_the_page_is_locked_while_the_rewrite_runs(forget_locks):
+    # Not decoration. Measured on the test bench on 2026-09-18: the same
+    # forget takes 24 s undisturbed and 76 s while this panel keeps
+    # asking questions, because the rewrite and every answer come out of
+    # one Python interpreter. Taking the controls away is what makes it
+    # finish three times sooner.
+    assert forget_locks["whileRunning"] == {
+        "locked": True,
+        "key": "kitchen",
+        "title": "Kitchen",
+        "phase": "rewriting",
+    }
+
+
+def test_the_lock_counts_what_the_rewrite_reports(forget_locks):
+    # A spinner that stands still for a minute is indistinguishable from
+    # one that is stuck, and somebody who cannot tell presses reload -
+    # in the middle of the one operation that rewrites history.
+    assert forget_locks["counted"] == {"phase": "versions", "done": 100, "total": 782}
+
+
+def test_another_dashboards_progress_does_not_touch_this_lock(forget_locks):
+    # The event reaches every open panel. A second tab merely watching
+    # must not have its own lock repainted by somebody else's rewrite -
+    # and `heard` least of all, since a stale one is what the silence
+    # warning reads.
+    assert forget_locks["ignoredOther"] == {
+        "phase": "versions",
+        "done": 100,
+        "untouched": True,
+    }
+
+
+def test_the_lock_is_released_whatever_happens(forget_locks):
+    # Both ways out, and the second is the one that matters: a lock left
+    # standing by a failed call leaves somebody with a spinner and no way
+    # back except the reload this whole screen exists to prevent.
+    assert forget_locks["afterwards"] == {"locked": False}
+    assert forget_locks["afterFailure"] == {"locked": False}
+
+
+_LOCK_SCREEN = """
+const el = new Panel();
+el.shadowRoot = node();
+// The module starts loading its parts on import; STYLE and escape are
+// undefined until that settles, and a lock screen built too early would
+// throw where nobody is watching.
+for (let i = 0; i < 50; i++) await settle();
+
+el._forgetting = {
+  key: "kitchen",
+  title: "Kitchen <script>alert(1)</script>",
+  phase: "versions",
+  done: 100,
+  total: 782,
+  heard: Date.now(),
+};
+const screen = el._renderLock();
+
+el._forgetting.heard = Date.now() - 120000;
+const afterSilence = el._renderLock();
+
+el._forgetting.heard = Date.now();
+el._forgetting.phase = "cleaning";
+el._forgetting.total = 0;
+const uncounted = el._renderLock();
+
+// And the render that puts it there, which must not bind anything.
+el._render();
+const painted = el.shadowRoot.innerHTML;
+
+console.log(JSON.stringify({
+  names: screen.includes("Kitchen"),
+  escaped: !screen.includes("<script>alert"),
+  counted: screen.includes("100") && screen.includes("782"),
+  phrase: screen.includes("Rebuilding the version marks"),
+  noControls: !/data-[a-z-]+=/i.test(screen),
+  quietYet: screen.includes("reload it"),
+  doubtsAfterSilence: afterSilence.includes("reload it"),
+  uncountedHasNoNumbers: !/\\d+ of \\d+/.test(uncounted),
+  paintedTheLock: painted.includes("lockbox"),
+  paintedNoLayout: !painted.includes('class="layout"'),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def lock_screen(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "lock_screen", _LOCK_SCREEN)
+
+
+def test_the_lock_screen_says_what_is_happening(lock_screen):
+    # Built for real rather than read as source: STYLE and `escape` are
+    # loaded asynchronously, and a lock screen that throws while building
+    # leaves a blank page in the one moment somebody is watching hardest.
+    assert lock_screen["names"] is True
+    assert lock_screen["counted"] is True
+    assert lock_screen["phrase"] is True
+    # A dashboard title is somebody's own text and goes through `escape`
+    # like every other one.
+    assert lock_screen["escaped"] is True
+
+
+def test_the_lock_screen_offers_nothing_to_click(lock_screen):
+    # The point of the screen, and the measured one: markup that is not
+    # there cannot start a request that competes with the rewrite for the
+    # same interpreter. Not disabled buttons - no buttons.
+    assert lock_screen["noControls"] is True
+    assert lock_screen["paintedTheLock"] is True
+    assert lock_screen["paintedNoLayout"] is True
+
+
+def test_the_lock_screen_admits_when_it_stops_hearing(lock_screen):
+    # It never claims to know more than it does: while steps arrive it
+    # shows them, and after a minute of silence it says the page can no
+    # longer tell slow from stuck - which is the honest version of the
+    # reload somebody would press anyway.
+    assert lock_screen["quietYet"] is False
+    assert lock_screen["doubtsAfterSilence"] is True
+
+
+def test_a_phase_without_numbers_shows_none(lock_screen):
+    # `cleaning` reports no count, because the collection walks the whole
+    # object store and reports nothing back. "0 of 0" would be a lie
+    # dressed as precision.
+    assert lock_screen["uncountedHasNoNumbers"] is True

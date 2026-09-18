@@ -81,6 +81,29 @@ def test_the_panel_listens_for_the_event_the_recorder_fires():
     assert fired.group(1) == heard.group(1)
 
 
+def test_the_panel_listens_for_the_progress_the_rewrite_reports():
+    """The second name written twice, and it fails more quietly still.
+
+    A rename on one side alone leaves the lock screen without a counter:
+    it still locks, still spins, and after a minute of silence it offers
+    a reload - which looks exactly like the stuck operation it was built
+    to rule out. Nothing errors, and the one signal that says "this is
+    progressing" is gone.
+    """
+    fired = re.search(
+        r'^EVENT_FORGET_PROGRESS = "([^"]+)"',
+        (PANEL / "const.py").read_text(encoding="utf-8"),
+        re.M,
+    )
+    heard = re.search(
+        r'^const EVENT_FORGETTING = "([^"]+)";',
+        (PANEL / "panel.js").read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert fired and heard, "one of the two declarations was not found at all"
+    assert fired.group(1) == heard.group(1)
+
+
 def test_the_panel_spells_the_default_dashboard_the_way_the_store_does():
     """The third name written twice, and the quietest of them.
 

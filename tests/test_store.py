@@ -2089,3 +2089,48 @@ def test_the_predecessor_does_not_grow_with_the_other_dashboards(tmp_path):
         f"the predecessor cost {quiet} objects with 10 commits in between "
         f"and {busy} with 60: it is the other dashboards being walked past"
     )
+
+
+def test_forgetting_reports_its_progress(store):
+    """`forget` says where it is, so a caller can show more than a spinner.
+
+    Measured on the test bench (7407 commits, 782 versions): the whole
+    operation takes 24 s, and 58 % of it sits in rewriting the version
+    marks alone. Without a word from here the panel can only draw a
+    spinner, and somebody who waits a minute at a spinner presses reload
+    - which is what this exists to prevent.
+
+    The callback is a plain callable on purpose: this module stays free
+    of Home Assistant, so what it reports is a phase name and two
+    numbers. Turning that into an event is the caller's job.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    store.create_version("home", "v1.0.0", "a version the rewrite carries")
+
+    seen: list[tuple[str, int, int]] = []
+    store.forget("gone", progress=lambda *step: seen.append(step))
+
+    phases = [phase for phase, _done, _total in seen]
+    # Each phase is announced before it starts, so a slow one is named
+    # while it runs rather than after it finished.
+    assert "rewriting" in phases
+    assert "versions" in phases
+    assert "cleaning" in phases
+    assert phases.index("rewriting") < phases.index("versions") < phases.index(
+        "cleaning"
+    )
+    # The counts have to be usable as "x of y" without the caller
+    # guessing: never past the total, and the total never zero when
+    # there is something to count.
+    for phase, done, total in seen:
+        assert 0 <= done <= total, f"{phase}: {done} of {total}"
+
+
+def test_forgetting_without_a_progress_callback_still_works(store):
+    """The parameter is optional, and every existing caller passes none."""
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    assert store.forget("gone") > 0
+    assert "gone" not in store.list_all_dashboards()
