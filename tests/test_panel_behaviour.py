@@ -7072,6 +7072,12 @@ console.log(JSON.stringify({
   uncountedHasNoNumbers: !/\\d+ of \\d+/.test(uncounted),
   paintedTheLock: painted.includes('class="lockbox"'),
   paintedNoLayout: !painted.includes('class="layout"'),
+  hasRing: screen.includes('class="ring"'),
+  // The ring belongs under the wording, not over it: the shared
+  // SPINNER is absolutely positioned for the main column and left the
+  // text stranded when it was used here.
+  ringAfterWords: screen.indexOf('class="ring"') > screen.indexOf('class="muted"'),
+  noVeil: !screen.includes('class="spin"'),
 }));
 """
 
@@ -7100,6 +7106,18 @@ def test_the_lock_screen_offers_nothing_to_click(lock_screen):
     assert lock_screen["noControls"] is True
     assert lock_screen["paintedTheLock"] is True
     assert lock_screen["paintedNoLayout"] is True
+
+
+def test_the_lock_screen_turns_its_ring_below_the_words(lock_screen):
+    # The shared SPINNER is `position: absolute; inset: 0` with a veil,
+    # built to lie over the main column. Dropped into the lock screen it
+    # put the ring at the top of the page and left the wording halfway
+    # down - seen in a screenshot on 2026-09-18, after the tests had
+    # been green for hours. So the ring is asked for by position here,
+    # not merely by presence.
+    assert lock_screen["hasRing"] is True
+    assert lock_screen["ringAfterWords"] is True
+    assert lock_screen["noVeil"] is True
 
 
 def test_the_lock_screen_admits_when_it_stops_hearing(lock_screen):
@@ -7270,6 +7288,115 @@ def test_the_lock_holds_off_automatic_refreshes(lock_silences_refresh):
     # Reported as a review finding on 2026-09-18.
     assert lock_silences_refresh["whenFree"] != []
     assert lock_silences_refresh["whenLocked"] == []
+
+
+_EMPTY_BEFORE_ANSWER = """
+const el = new Panel();
+el.shadowRoot = node();
+for (let i = 0; i < 50; i++) await settle();
+
+// Nothing asked yet - the state a reload starts in, and the state it
+// stays in for as long as a forget holds the answer back.
+el._selected = null;
+const unasked = { side: el._renderSide(), main: el._renderMain() };
+
+// Asked, and there really is nothing.
+el._dashboards = [];
+const empty = { side: el._renderSide(), main: el._renderMain() };
+
+console.log(JSON.stringify({ unasked, empty }));
+"""
+
+
+@pytest.fixture(scope="session")
+def empty_before_answer(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "empty_before_answer", _EMPTY_BEFORE_ANSWER)
+
+
+def test_an_unanswered_list_does_not_claim_to_be_empty(empty_before_answer):
+    # Seen in a screenshot on 2026-09-18: somebody reloaded while a
+    # forget was running, the list's answer waited behind the rewrite,
+    # and the page said "Nothing recorded yet." beside an invitation to
+    # pick from it. Two statements about a state nobody had been told
+    # yet - and the first of them is the worst thing this integration
+    # can say, since its whole promise is that nothing is lost.
+    assert "Nothing recorded yet" not in empty_before_answer["unasked"]["side"]
+    assert "Reading the history" in empty_before_answer["unasked"]["side"]
+    assert empty_before_answer["unasked"]["main"] == ""
+
+
+def test_an_answered_empty_list_says_so(empty_before_answer):
+    # And the other half: once the answer is in and it really is empty,
+    # the old sentence is the right one.
+    assert "Nothing recorded yet" in empty_before_answer["empty"]["side"]
+    assert "Pick a dashboard on the left" in empty_before_answer["empty"]["main"]
+_RING_KEEPS_TURNING = """
+const el = new Panel();
+el.shadowRoot = node();
+for (let i = 0; i < 50; i++) await settle();
+
+let renders = 0;
+const realRender = el._render.bind(el);
+el._render = () => { renders += 1; realRender(); };
+
+el._forgetting = {
+  key: "kitchen", title: "Kitchen", phase: "rewriting",
+  done: 0, total: 7403, heard: Date.now(),
+};
+el._render();
+const after = { renders };
+
+// Ten reports in a row, the way the first phase sends them.
+for (let n = 1; n <= 10; n++) {
+  el._onForgetting({
+    data: { dashboard: "kitchen", phase: "rewriting", done: n * 200, total: 7403 },
+  });
+}
+const reporting = {
+  renders: renders - after.renders,
+  says: el.shadowRoot.querySelector(".lockbox .step").textContent,
+};
+
+// The notice is up: now a report has to rebuild, or it would stand for
+// the rest of the operation.
+el._forgetting.heard = Date.now() - 120000;
+el._render();
+const drawnDoubting = renders;
+el._onForgetting({
+  data: { dashboard: "kitchen", phase: "cleaning", done: 0, total: 0 },
+});
+const afterDoubt = { renders: renders - drawnDoubting };
+
+// Or node waits out the silence watch's minute before it exits.
+el._unwatchSilence();
+
+console.log(JSON.stringify({ reporting, afterDoubt }));
+"""
+
+
+@pytest.fixture(scope="session")
+def ring_keeps_turning(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "ring_keeps_turning", _RING_KEEPS_TURNING)
+
+
+def test_a_report_moves_the_counter_without_rebuilding(ring_keeps_turning):
+    # `_render` replaces the whole shadow root, so it builds a fresh ring
+    # element - and a fresh element starts its animation at zero. The
+    # first phase reports several times a second, and the ring visibly
+    # jumped back on every one of them instead of turning. Seen on
+    # 2026-09-18, in the running panel rather than in a test.
+    assert ring_keeps_turning["reporting"]["renders"] == 0
+    assert ring_keeps_turning["reporting"]["says"] == (
+        "Rewriting the recorded states — 2000 of 7403"
+    )
+
+
+def test_a_report_does_rebuild_once_the_notice_is_up(ring_keeps_turning):
+    # The one case where more than the counter changes: the silence
+    # notice has to go now that something has been heard, and only a
+    # rebuild takes it away. One jump of the ring, against a notice that
+    # would otherwise stand for the rest of the operation.
+    assert ring_keeps_turning["afterDoubt"]["renders"] == 1
 
 
 _EMPTY_BEFORE_ANSWER = """

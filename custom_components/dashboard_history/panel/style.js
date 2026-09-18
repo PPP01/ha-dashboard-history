@@ -291,6 +291,15 @@ export const STYLE = `
     height: 40px;
     margin: 28px auto 0;
   }
+  /* Under the wording on the lock screen, in the flow rather than over
+     it: there is no page behind it to veil, and nothing to be sticky
+     against. */
+  .lockspin .ring {
+    display: block;
+    width: 36px;
+    height: 36px;
+    margin: 32px auto 0;
+  }
   /* In a row rather than over the page: beside the words that say what
      is being waited for. Only the border width here, so the colours
      stay in the one place above. */
@@ -1352,17 +1361,29 @@ export const STYLE = `
      template literal and takes the rest of the sheet with it. */
   .lock {
     display: flex;
-    align-items: center;
     justify-content: center;
-    min-height: 100vh;
-    padding: 24px 16px;
+    padding: 16px;
     box-sizing: border-box;
   }
+  /* Near the top, not in the middle of the viewport. Centred vertically
+     it drifted with the window height: on a tall screen the wording sat
+     far below where somebody looks after clicking, and the taller the
+     monitor the further it fell. The top gap scales with the height
+     instead - a tenth of it, never less than 32px so it does not touch
+     the edge on a laptop, never more than 96px so it does not run away
+     on a large display. */
   .lockbox {
-    max-width: 30rem;
+    width: 100%;
+    max-width: 34rem;
+    margin-top: clamp(32px, 10vh, 96px);
     text-align: center;
   }
-  .lockbox h2 { margin: 0 0 8px; font-size: 20px; font-weight: 500; }
+  .lockbox h2 {
+    margin: 0 0 8px;
+    font-size: clamp(19px, 1.2vw + 16px, 24px);
+    font-weight: 500;
+    color: var(--primary-text-color, #212121);
+  }
   .lockbox .step {
     margin: 0 0 20px;
     font-variant-numeric: tabular-nums;

@@ -791,8 +791,47 @@ class DashboardHistoryPanel extends HTMLElement {
     this._forgetting.total = data.total;
     this._forgetting.heard = Date.now();
     this._watchForSilence();
-    this._render();
+    this._repaintStep();
   }
+
+  /**
+   * Update the line that moves, without rebuilding the screen.
+   *
+   * `_render` replaces the whole shadow root, which builds a fresh ring
+   * element - and a fresh element starts its animation from zero. With
+   * a report every fraction of a second, which is what the first phase
+   * sends, the ring visibly jumped back on each one instead of turning.
+   *
+   * Falls back to a full render in the two cases where more than the
+   * counter changes: when the screen is not up yet, and when the
+   * silence notice is showing - that one has to disappear now that
+   * something has been heard, and only a rebuild takes it away.
+   */
+  _repaintStep() {
+    const step = this.shadowRoot?.querySelector(".lockbox .step");
+    // `doubted` rather than a look at the DOM: what was drawn is
+    // something this object knows, and asking the page to remember it
+    // makes the answer depend on a selector matching.
+    if (!step || this._forgetting.doubted) {
+      this._render();
+      return;
+    }
+    step.textContent = this._lockStep();
+  }
+
+  /** The phase and its count as one line, or just the phase. */
+  _lockStep() {
+    const state = this._forgetting;
+    if (!state) return "";
+    const phases = {
+      rewriting: "Rewriting the recorded states",
+      cleaning: "Clearing out what is left - the slowest part",
+      reloading: "Reading the history back in",
+    };
+    const what = phases[state.phase] || "Working";
+    return state.total > 0 ? `${what} — ${state.done} of ${state.total}` : what;
+  }
+
 
   /**
    * Redraw the lock screen once the reports have stopped long enough.
@@ -841,20 +880,22 @@ class DashboardHistoryPanel extends HTMLElement {
   _renderLock() {
     const state = this._forgetting;
     const quiet = Date.now() - state.heard > SILENCE_BEFORE_DOUBT;
-    const phases = {
-      rewriting: "Rewriting the recorded states",
-      cleaning: "Clearing out what is left - the slowest part",
-      reloading: "Reading the history back in",
-    };
-    const what = phases[state.phase] || "Working";
-    const counted =
-      state.total > 0 ? ` — ${state.done} of ${state.total}` : "";
+    // Remembered for `_repaintStep`: while the notice stands, a new
+    // report has to rebuild the screen, because only a rebuild takes
+    // the notice away again.
+    state.doubted = quiet;
+    // Its own ring rather than SPINNER: that one is built for the main
+    // column, where it lies over the page as an absolutely positioned
+    // veil with a sticky ring inside. Dropped in here it left the
+    // wording stranded halfway down the screen while the ring floated
+    // at the top - seen in a screenshot on 2026-09-18. Only the
+    // placement differs; the colours, the radius and the turn come from
+    // the shared `.ring` rule, reduced-motion included.
     return `
       <div class="lock">
         <div class="lockbox">
           <h2>Forgetting ${escape(state.title)}</h2>
-          <p class="step">${escape(what)}${escape(counted)}</p>
-          ${SPINNER}
+          <p class="step">${escape(this._lockStep())}</p>
           <p class="muted">
             The stored history is being rewritten, which takes a while when
             there are many version marks. Home Assistant itself keeps
@@ -866,6 +907,9 @@ class DashboardHistoryPanel extends HTMLElement {
                operation may still be running, but this page can no longer
                tell. If nothing changes, reload it.</p>`
         : ""}
+          <div class="lockspin" role="status" aria-live="polite">
+            <span class="ring"></span><span class="sr">Working</span>
+          </div>
         </div>
       </div>`;
   }
