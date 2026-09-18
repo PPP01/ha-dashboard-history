@@ -48,15 +48,15 @@ emoji fail.
 
 ## `dulwich` rewrites packed-refs on every removal
 
-**`dulwich` schreibt `packed-refs` bei jedem Entfernen einer
-gepackten Ref komplett neu.** `del repo.refs[x]` schreibt die ganze
-Datei und benennt sie um — gemessen 11,1 ms bei 58 KB und 782 Marken.
-`repo.refs[x] = y` dagegen schreibt eine **lose** Datei und ruft
-`fsync`, 5,5 ms, und lässt `packed-refs` unberührt; »jede
-Ref-Operation schreibt `packed-refs`« ist also falsch und war die
-erste, zu weit gefasste Fassung dieses Absatzes. Zusammen 12,46 s
-gegenüber 0,02 s mit `repo.refs.add_packed_refs(mapping)`, das alles
-in einem Zug erledigt und mit einem Ziel von `None` auch löscht.
+**`dulwich` rewrites the whole `packed-refs` file every time a packed
+ref is removed.** `del repo.refs[x]` writes the entire file and renames
+it into place — measured at 11.1 ms against 58 KB and 782 marks.
+`repo.refs[x] = y` does something else: it writes a **loose** file and
+fsyncs that, 5.5 ms, and leaves `packed-refs` alone. "Every ref
+operation rewrites `packed-refs`" is therefore wrong, and was the first,
+too broad version of this paragraph. Together 12.46 s, against 0.02 s
+for `repo.refs.add_packed_refs(mapping)`, which does all of it in one go
+and removes a ref wherever the target is `None`.
 
-**Vor jeder Schleife über Refs in diesem oder einem Nachbarprojekt:**
-prüfen, ob die Batch-Form es auch tut.
+**Before writing any loop over refs, in this project or a neighbouring
+one:** check whether the batch form would do it as well.
