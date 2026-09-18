@@ -248,12 +248,20 @@ class HistoryCapture:
                 touched.append(name)
                 revisions.append(revision)
                 # TEMPORARY DIAGNOSIS (2026-09-18) - remove again.
-                _LOGGER.warning(
-                    "DIAG wrote-as-config: %s@%s (reason=%s)",
-                    name,
-                    revision[:8],
-                    reason,
-                )
+                #
+                # Reconciliation passes only. Both times a forgotten
+                # dashboard came back it was written by one of those,
+                # never by an ordinary save - and an ordinary save is
+                # every time anybody edits a dashboard, which would put
+                # a warning in the log of a live installation for
+                # something entirely normal.
+                if reason == "reconcile":
+                    _LOGGER.warning(
+                        "DIAG wrote-as-config: %s@%s (reason=%s)",
+                        name,
+                        revision[:8],
+                        reason,
+                    )
         # One line per pass, at debug: which dashboards were looked at and
         # which were written. When a change does not show up in the
         # history, this is the line that says whether the recorder saw
