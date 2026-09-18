@@ -269,113 +269,129 @@ the mapping is walked."
 
 ### Aufgabe 3: Die Fortschrittsanzeige an die neue Verteilung anpassen
 
-Nach Aufgabe 2 dauert die Phase »Versionsmarken« Millisekunden, und die verbleibende Zeit verteilt sich völlig anders. Das Panel würde sonst eine Phase anzeigen, die nie zu sehen ist, und dafür die Bereinigung — jetzt der größte Posten — weiterhin ohne Zahl lassen.
+**Schritt 1 und 2 der ursprünglichen Fassung sind erledigt** — gemessen am 2026-09-18 im Container, unmittelbar nach Aufgabe 2, gegen dieselbe Prüfbank:
+
+| Phase | vorher | nachher | Anteil nachher |
+|---|---|---|---|
+| Stände umschreiben | 5,9 s | 6,6 s | 45 % |
+| **Versionsmarken** | **13,2 s** | **0,3 s** | **2 %** |
+| Aufräumen | 4,5 s | ~6,6 s | 45 % |
+| **gesamt** | **26,6 s** | **14,7 s** | |
+
+**Entschieden, und das ist der Auftrag dieser Aufgabe:**
+
+1. **Die Phase `versions` fällt ganz weg** — im Store wird sie nicht mehr gemeldet, im Panel nicht mehr benannt. 0,3 von 14,7 Sekunden: Sie erscheint und verschwindet im selben Wimpernschlag, und ein Phasenname, den nie jemand liest, ist toter Code in der Anzeige.
+2. **Das Aufräumen bekommt keinen Zähler.** Es ist jetzt die Hälfte der Wartezeit und die einzige Phase ohne Zahl, weil `garbage_collect` von sich aus nichts meldet. Einen zu bauen hieße, `dulwich`s Objektspeicher selbst zu durchlaufen — eigener Aufwand, eigenes Vorhaben. Stattdessen sagt der Text, dass hier das Warten ist: ein stehender Text, den man erwartet, ist kein verdächtiger.
 
 **Dateien:**
-- Ändern: `custom_components/dashboard_history/panel.js` (die `phases`-Tabelle in `_renderLock`)
-- Test: `tests/test_panel_behaviour.py` (das Szenario `_LOCK_SCREEN`)
-- **Nur wenn die Phase `versions` entfällt**, zusätzlich:
-  - Ändern: `custom_components/dashboard_history/store.py` (die beiden `say("versions", …)` in `_rewrite_tags`)
-  - Ändern: `tests/test_store.py` — `test_forgetting_reports_its_progress` verlangt `"versions" in phases` ausdrücklich und wird sonst rot
-
-Der Panel-Testlauf allein findet das nicht: Die Phasennamen stehen auf beiden Seiten getrennt, und nur `tests/test_store.py` prüft, welche der Store überhaupt meldet. **Vor dem Commit deshalb `python3 -m pytest tests/ -q`, nicht nur `-k lock`.**
+- Ändern: `custom_components/dashboard_history/store.py:1185` und `:1220` (die beiden `say("versions", …)`)
+- Ändern: `tests/test_store.py` — `test_forgetting_reports_its_progress`
+- Ändern: `custom_components/dashboard_history/panel.js:839-842` (die `phases`-Tabelle in `_renderLock`)
+- Ändern: `tests/test_panel_behaviour.py` — das Szenario `_LOCK_SCREEN` und zwei Phasennamen in anderen Szenarien
+- Ändern: `docs/superpowers/status.md`
 
 **Schnittstellen:**
-- Nutzt: `this._forgetting.phase` aus `_onForgetting`, gespeist von `EVENT_FORGET_PROGRESS`.
-- Liefert: nichts.
+- Nutzt: `_Progress` (`say`) in `_rewrite_tags`, den Event `dashboard_history_forget_progress`.
+- Liefert: gemeldete Phasen sind danach `rewriting`, `cleaning` (Store) und zusätzlich `reloading` (nur das Panel setzt sie selbst).
 
-- [ ] **Schritt 1: Neu messen, bevor irgendein Text geändert wird**
+- [ ] **Schritt 1: Die Meldung im Store entfernen**
 
-Der Container muss laufen; die Phasenmessung von oben noch einmal fahren, gegen dieselbe Prüfbank:
+In `_rewrite_tags` beide Zeilen streichen — `say("versions", 0, len(versions))` am Anfang und `say("versions", len(versions), len(versions))` am Ende. Der Parameter `say` bleibt in der Signatur: Er wird gebraucht, sobald jemand hier wieder etwas zu melden hat, und seine Entfernung wäre eine Änderung an fünf Aufrufstellen für nichts.
 
-```bash
-docker compose -f docker/compose.yaml up -d
-docker restart dashboard-history-test
-```
-
-Dann messen, welche Phase jetzt wie lange dauert. Ohne diese Zahl ist jede Textänderung geraten. Das Messen geht ohne Home Assistant, weil `store.py` frei davon ist — gegen eine **Kopie** des Repositorys der Testinstanz, nie gegen das Original:
+An die Stelle der ersten Zeile gehört ein Satz, der erklärt, warum hier nichts mehr gemeldet wird:
 
 ```python
-# Wegwerfskript, gehoert in das Scratchpad-Verzeichnis, nicht ins Repo.
-import functools, pathlib, shutil, sys, time
-sys.path.insert(0, "custom_components/dashboard_history")
-import store as st
-import dulwich.gc
-
-SRC = pathlib.Path("../ha-dashboard-history-test/config/dashboard_history")
-WORK = pathlib.Path("/tmp/forget-bench")
-shutil.rmtree(WORK, ignore_errors=True)
-shutil.copytree(SRC, WORK)
-
-timings = {}
-
-def clock(name, fn):
-    @functools.wraps(fn)
-    def wrapped(*a, **kw):
-        t = time.perf_counter()
-        try:
-            return fn(*a, **kw)
-        finally:
-            timings[name] = timings.get(name, 0.0) + time.perf_counter() - t
-    return wrapped
-
-for name in ("_rewrite_tags", "_rewrite_notes", "_tree_without", "_drop_from_index"):
-    raw = vars(st.HistoryStore)[name]
-    fn = raw.__func__ if isinstance(raw, (staticmethod, classmethod)) else raw
-    wrapped = clock(name, fn)
-    setattr(st.HistoryStore, name,
-            type(raw)(wrapped) if isinstance(raw, (staticmethod, classmethod)) else wrapped)
-dulwich.gc.garbage_collect = clock("garbage_collect", dulwich.gc.garbage_collect)
-
-s = st.HistoryStore(WORK)
-key = sorted(s.list_all_dashboards())[0]      # irgendeines, es wird nur gemessen
-t = time.perf_counter()
-s.forget(key)
-total = time.perf_counter() - t
-print(f"GESAMT {total:.2f} s")
-for name, secs in sorted(timings.items(), key=lambda kv: -kv[1]):
-    print(f"  {name:20s} {secs:6.2f} s  {secs / total * 100:5.1f} %")
-print(f"  {'Rest':20s} {total - sum(timings.values()):6.2f} s")
+        # No progress from here any more. This phase was 58 % of a forget
+        # and is now 0.3 s of 14.7 (measured 2026-09-18, 782 marks):
+        # announcing it would put a name on the screen that nobody can
+        # read before it is gone again.
 ```
 
-`type(raw)(wrapped)` wickelt `staticmethod` und `classmethod` wieder richtig ein — ohne das scheitert der Lauf an `_raw_tags`, einer `classmethod`.
+- [ ] **Schritt 2: Den Store-Test nachziehen und rot sehen**
 
-Erwartet nach Aufgabe 2, als Vorhersage zum Prüfen: etwa 11 s insgesamt, davon rund 4,5 s Bereinigung (dann **40 %** statt 20) und rund 4,7 s Umschreiben.
+In `test_forgetting_reports_its_progress` verlangen heute drei Zeilen die Phase:
 
-- [ ] **Schritt 2: Entscheiden und festhalten, was das Panel sagt**
+```python
+    assert "versions" in phases
+    assert phases.index("rewriting") < phases.index("versions") < phases.index(
+        "cleaning"
+    )
+```
 
-Zwei Fragen, die die Messung aus Schritt 1 beantwortet, und die hier bewusst offen stehen, statt geraten zu werden:
+Daraus wird:
 
-1. Ist »Rebuilding the version marks« noch eine eigene Phase wert, wenn sie 10 ms dauert? Wahrscheinlich nein — dann fällt sie aus der Tabelle und der Store meldet sie gar nicht erst.
-2. Braucht die Bereinigung jetzt einen Zähler, wo sie der größte Posten ist? `garbage_collect` meldet von sich aus nichts; ein Zähler hieße, `dulwich`s Objektspeicher selbst zu durchlaufen — Aufwand, der in einem eigenen Vorhaben gehört, nicht hier.
+```python
+    # `versions` is deliberately not among them: since the marks are
+    # written in one go it lasts 0.3 s, and a phase nobody can read is
+    # not worth announcing. See `_rewrite_tags`.
+    assert "versions" not in phases
+    assert phases.index("rewriting") < phases.index("cleaning")
+```
 
-Die Antwort in `docs/superpowers/status.md` festhalten, mit den Messwerten aus Schritt 1.
+Ausführen: `python3 -m pytest tests/test_store.py::test_forgetting_reports_its_progress -v`
 
-- [ ] **Schritt 3: Die Tabelle anpassen und den Test nachziehen**
+Erwartet: PASS. **Wird er rot, ist Schritt 1 unvollständig** — dann meldet der Store die Phase noch irgendwo.
 
-Der Test `test_the_lock_screen_says_what_is_happening` prüft heute auf `"Rebuilding the version marks"`. Entfällt die Phase, muss dort die Phase stehen, die an ihre Stelle tritt — **nicht** die Zusicherung entfernen: Sie ist das einzige, was prüft, dass ein Phasenname überhaupt beim Leser ankommt.
+Zur Gegenprobe, dass der Test überhaupt greifen kann: eine der beiden `say`-Zeilen versuchsweise zurücksetzen, den Test laufen lassen (muss rot werden), Zeile wieder entfernen.
 
-- [ ] **Schritt 4: Tests laufen lassen**
+- [ ] **Schritt 3: Das Panel anpassen**
 
-Ausführen: `python3 -m pytest tests/test_panel_behaviour.py -k lock -v`
+Die `phases`-Tabelle in `_renderLock` verliert einen Eintrag und benennt einen um:
 
-Erwartet: PASS.
+```javascript
+    const phases = {
+      rewriting: "Rewriting the recorded states",
+      cleaning: "Clearing out what is left - the slowest part",
+      reloading: "Reading the history back in",
+    };
+```
 
-- [ ] **Schritt 5: Committen**
+`versions` wird nicht durch etwas ersetzt: Käme die Phase doch noch an, greift der vorhandene Rückfall auf `"Working"`, und das ist die richtige Antwort auf einen Namen, den diese Fassung nicht kennt.
+
+- [ ] **Schritt 4: Die Panel-Tests nachziehen**
+
+Drei Stellen in `tests/test_panel_behaviour.py`, und nur die dritte ist inhaltlich:
+
+1. Im Szenario `_FORGET_LOCKS` (`data: { …, phase: "versions", done: 100, total: 782 }`) und im Szenario `_LOCK_KEEPS_QUIET_WATCH` (`phase: "versions", done: 5, total: 10`): Diese beiden benutzen den Namen nur als Beispiel und prüfen, dass Zähler und Uhr davon bewegt werden. **Auf `"rewriting"` umstellen**, sonst prüfen sie ab jetzt den Rückfall statt einer echten Phase. Die zugehörigen Erwartungen in den Testfunktionen (`{"phase": "versions", …}`) mit ändern.
+2. Im Szenario `_LOCK_SCREEN`: `phase: "versions"` wird zu `phase: "rewriting"`, und die Zusicherung
+
+```python
+    assert lock_screen["phrase"] is True
+```
+
+prüft weiter denselben Schlüssel — im Szenario wird aber der erwartete Text ausgetauscht:
+
+```javascript
+  phrase: screen.includes("Rewriting the recorded states"),
+```
+
+Die Zusicherung bleibt stehen, sie wird nicht entfernt: Sie ist das einzige, was prüft, dass überhaupt ein Phasenname beim Leser ankommt.
+
+- [ ] **Schritt 5: Die ganze Suite laufen lassen**
+
+Ausführen: `python3 -m pytest tests/ -q`
+
+Erwartet: `0 failed`. **`-k lock` genügt hier ausdrücklich nicht** — die Phasennamen stehen auf beiden Seiten getrennt, und nur `tests/test_store.py` prüft, welche der Store meldet.
+
+- [ ] **Schritt 6: Die Messung festhalten**
+
+In `docs/superpowers/status.md` die Tabelle vom Anfang dieser Aufgabe eintragen, mit dem Datum und der Prüfbank, gegen die sie gemessen wurde (7407 Commits, 782 Marken). Sie ist die Grundlage für jede weitere Entscheidung über diesen Vorgang — vor allem für die Frage, ob das Aufräumen irgendwann einen Zähler bekommt.
+
+- [ ] **Schritt 7: Committen**
 
 ```bash
-# store.py und tests/test_store.py nur, wenn die Phase `versions` entfiel.
-git add custom_components/dashboard_history/panel.js tests/test_panel_behaviour.py \
-        custom_components/dashboard_history/store.py tests/test_store.py \
+git add custom_components/dashboard_history/store.py tests/test_store.py \
+        custom_components/dashboard_history/panel.js tests/test_panel_behaviour.py \
         docs/superpowers/status.md
 git commit -m "Name the phases that are still worth naming
 
-Rewriting the version marks went from 58 % of a forget to milliseconds,
-so the lock screen announced a phase nobody ever saw while the
-collection - now the largest part - went unnamed."
+Rewriting the version marks was 58 % of a forget and is now 0.3 s of
+14.7, so the lock screen announced a phase that appears and vanishes
+in the same blink. The collection is half the wait now and the only
+phase without a count, because the collector reports nothing - so the
+text says that this is where the waiting is, which makes a standing
+line expected rather than suspect."
 ```
-
----
 
 ### Aufgabe 4: Im Container nachweisen und die Werte festschreiben
 
