@@ -19,6 +19,7 @@ about once you are using it.
 - [Why does forgetting a dashboard take so long?](#why-does-forgetting-a-dashboard-take-so-long)
 - [How long does forgetting a dashboard take?](#how-long-does-forgetting-a-dashboard-take)
 - [Why is the whole panel locked while one dashboard is forgotten?](#why-is-the-whole-panel-locked-while-one-dashboard-is-forgotten)
+- [How much disk space does forgetting a dashboard free?](#how-much-disk-space-does-forgetting-a-dashboard-free)
 - [How do I get back a dashboard I forgot for good?](#how-do-i-get-back-a-dashboard-i-forgot-for-good)
 
 ## Versions
@@ -175,6 +176,53 @@ protectiveness; it is what makes the wait as short as it can be.
 Home Assistant itself is unaffected throughout — only this page waits.
 A dashboard you save in the meantime is recorded as usual, once the
 rewrite is out of the way.
+
+### How much disk space does forgetting a dashboard free?
+
+Close to nothing. If clearing space is the reason you are reaching for
+it, the numbers are worth seeing first: this is the one step here that
+cannot be undone, and it is a poor way to buy a megabyte.
+
+Measured on the same installation as the timings above — 7518 recorded
+revisions, **9.2 MB** for the entire history, against 1.1 MB for the
+dashboards themselves the way Home Assistant stores them. Two
+dashboards were then forgotten, each starting from that same history:
+
+- **The busiest one** — 850 of the 7518 revisions were its own —
+  freed **0.71 MB, or 7.7 %**.
+- **The largest one** — ten states, 1.6 MB of YAML between them —
+  freed **0.47 MB, or 5.1 %**.
+
+Three things keep that small.
+
+**A state that did not change is stored once.** A revision is recorded
+whenever anything is saved, but a dashboard nobody touched costs
+nothing at that revision: it is the same state, kept once and pointed
+at again. A dashboard left alone for a year takes up one copy, not a
+year's worth.
+
+**What is kept is compressed and written as differences.** The ten
+states of that largest dashboard are 1.6 MB as YAML and 0.18 MB
+compressed — and less again stored against each other, because two
+consecutive states of the same dashboard usually differ by a line or
+two.
+
+**Most of the history is not dashboard text at all.** All the distinct
+states of every dashboard together come to 2.8 MB of YAML, inside a
+9.2 MB history. The rest is what recording a revision costs whatever
+is in it — who, when, and how it hangs off the revision before —
+around 0.8 KB each. Forgetting a dashboard reclaims that only for
+revisions that existed for it alone, and that, rather than the text,
+is where nearly all of the 0.71 MB above came from: 850 such
+revisions, against 17 KB of actual content.
+
+So the little you get back follows how often a dashboard was changed,
+not how big it is. And if the history really has outgrown its disk,
+what to remove is the history, not one dashboard inside it: it is a
+single directory, `dashboard_history`, next to your
+`configuration.yaml`. Deleting it with Home Assistant stopped gives
+back every megabyte at once, and an empty history starts again with
+the next save.
 
 ### How do I get back a dashboard I forgot for good?
 
