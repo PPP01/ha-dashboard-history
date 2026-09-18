@@ -1168,11 +1168,14 @@ class HistoryStore:
         """
         say("versions", 0, len(versions))
         for position, (ref, old, target) in enumerate(versions):
-            # The slowest phase per item by a wide margin: every ref
-            # operation rewrites the whole packed-refs file and renames
-            # it into place. Measured 2026-09-18 on the test bench: 16 ms
-            # per version, 12.55 s for 782 of them, 58 % of the whole
-            # operation. Said often enough that the count visibly moves.
+            # The slowest phase per item by a wide margin. Measured
+            # 2026-09-18 on the test bench, 782 marks with packed refs:
+            # 15.9 ms each, 12.46 s in total, 58 % of the whole
+            # operation. The two halves cost differently - removing a ref
+            # rewrites the whole `packed-refs` file and renames it into
+            # place (11.1 ms), while setting one writes a loose file and
+            # fsyncs it (5.5 ms), leaving `packed-refs` alone. Said often
+            # enough that the count visibly moves.
             say.every(25, "versions", position, len(versions))
             del repo.refs[b"refs/tags/" + ref]
             if _owns(ref, key):
