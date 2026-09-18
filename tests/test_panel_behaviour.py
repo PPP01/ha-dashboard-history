@@ -7070,7 +7070,7 @@ console.log(JSON.stringify({
   quietYet: screen.includes("reload it"),
   doubtsAfterSilence: afterSilence.includes("reload it"),
   uncountedHasNoNumbers: !/\\d+ of \\d+/.test(uncounted),
-  paintedTheLock: painted.includes("lockbox"),
+  paintedTheLock: painted.includes('class="lockbox"'),
   paintedNoLayout: !painted.includes('class="layout"'),
 }));
 """
@@ -7116,3 +7116,157 @@ def test_a_phase_without_numbers_shows_none(lock_screen):
     # object store and reports nothing back. "0 of 0" would be a lie
     # dressed as precision.
     assert lock_screen["uncountedHasNoNumbers"] is True
+
+
+_LOCK_KEEPS_QUIET_WATCH = """
+const el = new Panel();
+el.shadowRoot = node();
+for (let i = 0; i < 50; i++) await settle();
+
+// Hold every timer the panel asks for, so the silence can be made to
+// fall due without waiting a real minute for it.
+const timers = [];
+const realSetTimeout = globalThis.setTimeout;
+globalThis.setTimeout = (fn, ms) => {
+  // `settle` uses setTimeout too; only the long waits are the panel's.
+  if (ms && ms > 1000) { timers.push({ fn, ms }); return timers.length; }
+  return realSetTimeout(fn, ms);
+};
+globalThis.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; };
+
+let release;
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  if (type === "forget" && extra.confirm) {
+    return new Promise((resolve) => { release = resolve; });
+  }
+  if (type === "forget") {
+    return Promise.resolve({ states: 1, described: 0, first: 1, last: 2 });
+  }
+  if (type === "dashboards") return Promise.resolve({ dashboards: [] });
+  return Promise.resolve({});
+};
+el._loadSidebar = () => Promise.resolve();
+// Closes the dialog, which is what the real `_answerFrom` ends up doing:
+// it waits for `close`. Left open, the stand-in answers `dialog[open]`
+// for ever and `_render` draws nothing at all - a test that would then
+// be measuring its own stub.
+el._answerFrom = (dialog) => { dialog.open = false; return Promise.resolve("forget"); };
+el._selected = "kitchen";
+el._dashboards = [{ key: "kitchen", title: "Kitchen" }];
+
+const running = el._forget();
+await settle();
+await settle();
+
+// A watch has to exist at all, or nothing will ever redraw the screen
+// once the reports stop - which is precisely when the notice is needed.
+const armed = { waiting: timers.filter((t) => !t.cleared).length };
+
+// Let the silence fall due: the panel heard nothing for over a minute.
+el._forgetting.heard = Date.now() - 120000;
+const pending = timers.filter((t) => !t.cleared);
+pending.forEach((t) => t.fn());
+const painted = el.shadowRoot.innerHTML;
+const doubts = painted.includes("reload it");
+
+// A fresh report must restart the watch rather than leave a stale one.
+timers.length = 0;
+el._onForgetting({
+  data: { dashboard: "kitchen", phase: "versions", done: 5, total: 10 },
+});
+const rearmed = { waiting: timers.filter((t) => !t.cleared).length };
+
+release({ applied: true, removed: 1 });
+await running;
+const afterwards = {
+  locked: !!el._forgetting,
+  leftRunning: timers.filter((t) => !t.cleared).length,
+};
+
+globalThis.setTimeout = realSetTimeout;
+console.log(JSON.stringify({ armed, doubts, rearmed, afterwards }));
+"""
+
+
+@pytest.fixture(scope="session")
+def lock_quiet_watch(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "lock_quiet_watch", _LOCK_KEEPS_QUIET_WATCH)
+
+
+def test_the_lock_watches_for_its_own_silence(lock_quiet_watch):
+    # The notice is worked out while drawing, and the screen is drawn
+    # when a report arrives - so without a timer of its own the one
+    # message about reports having stopped is the one message that can
+    # never appear. Reported as a review finding on 2026-09-18.
+    assert lock_quiet_watch["armed"]["waiting"] >= 1
+    assert lock_quiet_watch["doubts"] is True
+
+
+def test_a_fresh_report_restarts_the_silence_watch(lock_quiet_watch):
+    # Otherwise the first minute of the operation decides for the whole
+    # of it: either the notice never comes, or it comes while steps are
+    # still arriving and calls a working rewrite stuck.
+    assert lock_quiet_watch["rearmed"]["waiting"] >= 1
+
+
+def test_the_silence_watch_is_called_off_with_the_lock(lock_quiet_watch):
+    # A timer outliving the screen it redraws would repaint a lock over
+    # a page somebody is using again.
+    assert lock_quiet_watch["afterwards"] == {"locked": False, "leftRunning": 0}
+
+
+_LOCK_SILENCES_AUTO_REFRESH = """
+const el = new Panel();
+el.shadowRoot = node();
+el._render = () => {};
+
+const sent = [];
+el._call = (type, extra) => {
+  sent.push({ type, extra });
+  return Promise.resolve({ dashboards: [], changes: [], versions: [] });
+};
+el._loadSidebar = () => Promise.resolve();
+el._selected = "kitchen";
+el._dashboards = [{ key: "kitchen", title: "Kitchen" }];
+
+// Not locked: the recorder's announcements are what keeps the page live.
+el._onRecorded({ data: { dashboards: ["garden"] } });
+await settle();
+const whenFree = sent.map((c) => c.type);
+
+// Locked: the same announcements must not start anything. A forget is
+// three times slower while this panel asks questions, and an automatic
+// refresh is a question nobody even chose to ask.
+sent.length = 0;
+el._forgetting = {
+  key: "kitchen", title: "Kitchen", phase: "rewriting",
+  done: 0, total: 0, heard: Date.now(),
+};
+el._onRecorded({ data: { dashboards: ["garden"] } });
+el._onRecorded({ data: { dashboards: ["kitchen"] } });
+await settle();
+await settle();
+const whenLocked = sent.map((c) => c.type);
+
+console.log(JSON.stringify({ whenFree, whenLocked }));
+"""
+
+
+@pytest.fixture(scope="session")
+def lock_silences_refresh(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "lock_silences_refresh", _LOCK_SILENCES_AUTO_REFRESH
+    )
+
+
+def test_the_lock_holds_off_automatic_refreshes(lock_silences_refresh):
+    # Taking the controls away is only half of it: the recorder keeps
+    # announcing while a forget runs - a save waiting behind the lock, a
+    # reconciliation pass - and each announcement used to start a request
+    # of its own. That is the same competition for one interpreter the
+    # lock exists to end, arriving through a door nobody thought to shut.
+    # Reported as a review finding on 2026-09-18.
+    assert lock_silences_refresh["whenFree"] != []
+    assert lock_silences_refresh["whenLocked"] == []

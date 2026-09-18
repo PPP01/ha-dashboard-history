@@ -761,6 +761,8 @@ class DashboardHistoryPanel extends HTMLElement {
     // `_setMode`, which puts a standing search again.
     clearTimeout(this._modeSlide);
     this._modeSlide = null;
+    // And the minute the lock screen waits before doubting itself.
+    this._unwatchSilence();
   }
 
   /**
@@ -782,7 +784,37 @@ class DashboardHistoryPanel extends HTMLElement {
     this._forgetting.done = data.done;
     this._forgetting.total = data.total;
     this._forgetting.heard = Date.now();
+    this._watchForSilence();
     this._render();
+  }
+
+  /**
+   * Redraw the lock screen once the reports have stopped long enough.
+   *
+   * Without this the one message about reports having stopped is the
+   * one message that can never appear: `_renderLock` works the notice
+   * out while drawing, and the screen is drawn when a report arrives.
+   * No reports, no drawing, no notice - exactly inverted. Found in
+   * review on 2026-09-18, after the screen had been built, tested and
+   * committed with the hole in it.
+   *
+   * Restarted by every report, so the clock measures the silence rather
+   * than the operation. A minute plus a second: the notice belongs
+   * after the threshold, not on it.
+   */
+  _watchForSilence() {
+    this._unwatchSilence();
+    this._quietWatch = setTimeout(() => {
+      this._quietWatch = null;
+      if (this._forgetting) this._render();
+    }, SILENCE_BEFORE_DOUBT + 1000);
+  }
+
+  _unwatchSilence() {
+    if (this._quietWatch) {
+      clearTimeout(this._quietWatch);
+      this._quietWatch = null;
+    }
   }
 
   /**
@@ -843,6 +875,16 @@ class DashboardHistoryPanel extends HTMLElement {
       return;
     }
     if (this.shadowRoot?.querySelector("dialog[open]")) return;
+    // Nothing automatic while a history is being rewritten. Taking the
+    // controls away was only half the job: the recorder goes on
+    // announcing throughout - a save queued behind the lock, a
+    // reconciliation pass - and each announcement used to start a
+    // request of its own. That is the same competition for one
+    // interpreter the lock screen exists to end (24 s undisturbed
+    // against 76 s while this panel asks questions), arriving through a
+    // door nobody had thought to shut. Nothing is lost by skipping:
+    // `_loadDashboards` reads everything again when the lock comes off.
+    if (this._forgetting) return;
     const named = event?.data?.dashboards;
     if (
       Array.isArray(named) &&
@@ -2665,6 +2707,7 @@ class DashboardHistoryPanel extends HTMLElement {
       total: 0,
       heard: Date.now(),
     };
+    this._watchForSilence();
     this._render();
     try {
       const done = await this._guard(() =>
@@ -2693,11 +2736,15 @@ class DashboardHistoryPanel extends HTMLElement {
       // no event says it, because it happens inside the next question.
       this._forgetting.phase = "reloading";
       this._forgetting.heard = Date.now();
+      this._watchForSilence();
       this._render();
       await this._loadDashboards();
     } finally {
       // In a `finally` so a call that throws cannot leave somebody
-      // locked out of their own panel with nothing but a reload.
+      // locked out of their own panel with nothing but a reload. The
+      // watch goes with it, or it would repaint a lock over a page
+      // somebody is using again.
+      this._unwatchSilence();
       this._forgetting = null;
       this._render();
     }
