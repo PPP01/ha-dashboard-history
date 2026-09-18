@@ -1,5 +1,45 @@
 # Changelog
 
+## v0.7.1
+
+Forgetting a deleted dashboard was slow and said nothing while it was.
+On a history of 7400 commits it took 26.6 seconds, and the panel showed
+a spinner that stood still - indistinguishable from one that is stuck,
+which is how somebody ends up reloading in the middle of the one
+operation that rewrites history.
+
+### Forgetting
+
+- **It is faster.** 26.6 s down to 14.7 s on the same history. Almost
+  all of that was in one place: every version mark was written to disk
+  on its own, and removing a packed ref rewrites the whole
+  `packed-refs` file. They go in one batch now - 12.46 s to 0.02 s for
+  that phase.
+- **It says where it is.** The panel counts along: which phase, and
+  how far. Reports arrive throughout, never more than half a second
+  apart.
+- **The panel locks while it runs**, and that is not only about
+  keeping hands off. The rewrite and every question the page asks come
+  out of the same Python interpreter, so clicking during the wait
+  costs the operation more than it costs the person waiting - measured
+  24 s undisturbed against 76 s while the panel kept asking. The lock
+  holds until the history has been read back in, because the first
+  question afterwards costs a full index rebuild.
+- **It admits when it loses track.** After a minute without a report
+  the screen says so, rather than spinning on as if nothing were
+  wrong.
+- **Reload during one and the page knows.** It picks the rewrite up
+  from the reports and shows the same screen, instead of looking idle
+  while every answer waits behind the rewrite.
+
+### Elsewhere
+
+- The dashboard list no longer says "Nothing recorded yet." before it
+  has been answered. An empty list and an unasked one looked the same,
+  and the panel said the first while the truth was the second - for a
+  moment on any load, and for the whole of a forget when somebody
+  reloaded into one.
+
 ## v0.7.0
 
 The panel works on a phone. It did not before: below 870px Home

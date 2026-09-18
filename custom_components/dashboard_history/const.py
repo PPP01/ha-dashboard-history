@@ -52,7 +52,7 @@ PANEL_COMPONENT = "dashboard-history-panel"
 # cache key is a digest of panel.js and every part it is built from (see
 # panel.py). Keeping a hand-maintained number as the cache key served
 # everyone a stale panel until somebody remembered to raise it.
-PANEL_VERSION = "0.7.0"
+PANEL_VERSION = "0.7.1"
 
 # Fired once the recorder has written something, naming the dashboards it
 # wrote. The panel listens for this and not for `lovelace_updated`,
