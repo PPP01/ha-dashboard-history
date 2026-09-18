@@ -10,9 +10,20 @@ about once you are using it.
 
 ## Contents
 
+**Versions**
+
 - [Why can't I change a version number afterwards?](#why-cant-i-change-a-version-number-afterwards)
 
-## Why can't I change a version number afterwards?
+**Deleting dashboards**
+
+- [Why does forgetting a dashboard take so long?](#why-does-forgetting-a-dashboard-take-so-long)
+- [How long does forgetting a dashboard take?](#how-long-does-forgetting-a-dashboard-take)
+- [Why is the whole panel locked while one dashboard is forgotten?](#why-is-the-whole-panel-locked-while-one-dashboard-is-forgotten)
+- [How do I get back a dashboard I forgot for good?](#how-do-i-get-back-a-dashboard-i-forgot-for-good)
+
+## Versions
+
+### Why can't I change a version number afterwards?
 
 Because the number is not a field on the version. It **is** the
 version's name.
@@ -50,7 +61,7 @@ have to explain all of this, or refuse things for reasons that read as
 arbitrary. Three buttons carrying the finished numbers explain
 themselves.
 
-### What to do instead
+#### What to do instead
 
 **Put a second version beside the first.** That is one click, it costs
 nothing, and it loses nothing: the old version stays exactly where it
@@ -75,7 +86,7 @@ another is two acts, and the second is addressed at whatever state you
 point it at. That is the difference from renaming a number, and it is
 the reason the number still is not typed.
 
-### What you *can* change, at any time
+#### What you *can* change, at any time
 
 - The **title** and the **description** of any version, in both views,
   through the pencil on the version — or with the
@@ -100,3 +111,82 @@ again — and because leaving a field blank is not a way of saying
 anything. If what you want is for the version to be gone, the bin says
 that plainly and asks you first; a form whose emptiness destroys
 something would be a trap.
+
+## Deleting dashboards
+
+### Why does forgetting a dashboard take so long?
+
+Because git cannot remove anything without rewriting it.
+
+A commit's identity is a hash of what it contains, including its
+parent. Take one file out of one commit and that commit becomes a
+different commit — and so does every commit after it, all the way to
+the newest. There is no way to cut a dashboard out of the middle and
+leave the rest untouched; that is not a shortcoming of this integration
+but what a hash chain is.
+
+So `forget` walks the whole history, writes every commit again without
+that dashboard's files, moves the version marks onto the new commits,
+and finally collects what nothing points at any more. Deleting the
+files and leaving it at that is not an option: the old commits would
+still be there, and the text you asked to be forgotten would still be
+readable.
+
+### How long does forgetting a dashboard take?
+
+**It depends on the size of your whole history, not on the size of the
+dashboard you are deleting.** That is the part that surprises people,
+and the dialog makes it worse by showing how many states the doomed
+dashboard has — nine states cost the same as a thousand, because what
+is being rewritten is everything else.
+
+Measured on a real installation with 7403 commits, 70 dashboards and
+782 version marks: **14.7 seconds**, split roughly
+
+- 45 % rewriting the commits,
+- 45 % collecting what became unreachable,
+- 2 % moving the version marks.
+
+A small history is done in a second or two. A much larger one takes
+proportionally longer. The panel counts along while it works, so you
+can see it moving rather than guess.
+
+*(The version marks used to be the expensive part by far — 58 % of the
+whole operation, because each one was written to disk on its own. Since
+v0.7.1 they go in a single batch, which is where most of the former
+26.6 seconds went.)*
+
+### Why is the whole panel locked while one dashboard is forgotten?
+
+Two reasons, and the second one is the one that is easy to miss.
+
+**Nothing you could do there would be true.** Every revision is
+changing while the rewrite runs. A history opened in that moment lists
+states by identifiers that are about to stop existing, and a button
+pressed there would act on one of them.
+
+**Clicking makes it slower — measured, by a factor of three.** The
+rewrite and every question the panel asks are Python running in the
+same Home Assistant process, and they take turns. The same forget took
+24 seconds when left alone and 76 seconds while the panel kept asking
+for histories in the background. Taking the controls away is not
+protectiveness; it is what makes the wait as short as it can be.
+
+Home Assistant itself is unaffected throughout — only this page waits.
+A dashboard you save in the meantime is recorded as usual, once the
+rewrite is out of the way.
+
+### How do I get back a dashboard I forgot for good?
+
+You don't.
+
+*Wat fott es, es fott.*
+
+The only way back is a working backup of your Home Assistant
+configuration. This is the one operation in this integration that takes
+something away permanently — everything else only ever adds, which is
+why it is the only one that asks you twice and says so in bold.
+
+If what you actually want is for a deleted dashboard to stop cluttering
+the list, that is what the list's **Deleted** fold is for. It keeps the
+history and keeps it out of your way.
