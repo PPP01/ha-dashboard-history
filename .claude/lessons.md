@@ -45,3 +45,18 @@ goes red, `_Dumper` was given a C base class.
 implementation:** check with an emoji in the text, beyond your own
 test data, not just with umlauts — those pass the test unnoticed while
 emoji fail.
+
+## `dulwich` rewrites packed-refs on every removal
+
+**`dulwich` schreibt `packed-refs` bei jedem Entfernen einer
+gepackten Ref komplett neu.** `del repo.refs[x]` schreibt die ganze
+Datei und benennt sie um — gemessen 11,1 ms bei 58 KB und 782 Marken.
+`repo.refs[x] = y` dagegen schreibt eine **lose** Datei und ruft
+`fsync`, 5,5 ms, und lässt `packed-refs` unberührt; »jede
+Ref-Operation schreibt `packed-refs`« ist also falsch und war die
+erste, zu weit gefasste Fassung dieses Absatzes. Zusammen 12,46 s
+gegenüber 0,02 s mit `repo.refs.add_packed_refs(mapping)`, das alles
+in einem Zug erledigt und mit einem Ziel von `None` auch löscht.
+
+**Vor jeder Schleife über Refs in diesem oder einem Nachbarprojekt:**
+prüfen, ob die Batch-Form es auch tut.
