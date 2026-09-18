@@ -7270,3 +7270,45 @@ def test_the_lock_holds_off_automatic_refreshes(lock_silences_refresh):
     # Reported as a review finding on 2026-09-18.
     assert lock_silences_refresh["whenFree"] != []
     assert lock_silences_refresh["whenLocked"] == []
+
+
+_EMPTY_BEFORE_ANSWER = """
+const el = new Panel();
+el.shadowRoot = node();
+for (let i = 0; i < 50; i++) await settle();
+
+// Nothing asked yet - the state a reload starts in, and the state it
+// stays in for as long as a forget holds the answer back.
+el._selected = null;
+const unasked = { side: el._renderSide(), main: el._renderMain() };
+
+// Asked, and there really is nothing.
+el._dashboards = [];
+const empty = { side: el._renderSide(), main: el._renderMain() };
+
+console.log(JSON.stringify({ unasked, empty }));
+"""
+
+
+@pytest.fixture(scope="session")
+def empty_before_answer(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "empty_before_answer", _EMPTY_BEFORE_ANSWER)
+
+
+def test_an_unanswered_list_does_not_claim_to_be_empty(empty_before_answer):
+    # Seen in a screenshot on 2026-09-18: somebody reloaded while a
+    # forget was running, the list's answer waited behind the rewrite,
+    # and the page said "Nothing recorded yet." beside an invitation to
+    # pick from it. Two statements about a state nobody had been told
+    # yet - and the first of them is the worst thing this integration
+    # can say, since its whole promise is that nothing is lost.
+    assert "Nothing recorded yet" not in empty_before_answer["unasked"]["side"]
+    assert "Reading the history" in empty_before_answer["unasked"]["side"]
+    assert empty_before_answer["unasked"]["main"] == ""
+
+
+def test_an_answered_empty_list_says_so(empty_before_answer):
+    # And the other half: once the answer is in and it really is empty,
+    # the old sentence is the right one.
+    assert "Nothing recorded yet" in empty_before_answer["empty"]["side"]
+    assert "Pick a dashboard on the left" in empty_before_answer["empty"]["main"]

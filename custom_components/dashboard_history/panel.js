@@ -214,7 +214,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // What day it is where Home Assistant runs, as `history` answers
     // it. See `_dayTitle`.
     this._serverToday = null;
-    this._dashboards = [];
+    // `null`, not `[]`: an empty array would mean two different things
+    // - "asked, and there is nothing" and "not asked yet" - and the
+    // panel said the first while the truth was the second. Visible for
+    // a moment on any load, and for as long as a `forget` runs when
+    // somebody reloads during one: the answer waits behind the rewrite,
+    // and the page meanwhile claimed nothing had ever been recorded.
+    this._dashboards = null;
     this._changes = [];
     // Where the next page starts, or null when there is nothing older.
     // A commit and not a count: save something while somebody is
@@ -2659,7 +2665,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // sentence saying in bold that it cannot be undone.
     const asked = this._selected;
     const mine = this._claim("write");
-    const dashboard = this._dashboards.find((d) => d.key === asked);
+    const dashboard = (this._dashboards ?? []).find((d) => d.key === asked);
     const facts = await this._guard(
       () => this._call("forget", { dashboard: asked }),
       mine,
@@ -2858,8 +2864,8 @@ class DashboardHistoryPanel extends HTMLElement {
    * exotic: it is every render before the first answer arrives.
    */
   _orderedDashboards() {
-    const live = this._dashboards.filter((d) => d.exists);
-    const dead = this._dashboards.filter((d) => !d.exists);
+    const live = (this._dashboards ?? []).filter((d) => d.exists);
+    const dead = (this._dashboards ?? []).filter((d) => !d.exists);
     const view = this._sidebarView();
     const { sidebar, apart } = view
       ? splitBySidebar(live, view)
@@ -2879,6 +2885,8 @@ class DashboardHistoryPanel extends HTMLElement {
    * whose order it is and why the browser has to work it out.
    */
   _renderSide() {
+    if (this._dashboards === null)
+      return '<p class="empty muted">Reading the history\u2026</p>';
     if (!this._dashboards.length)
       return '<p class="empty muted">Nothing recorded yet.</p>';
     const { sidebar, apart, dead } = this._orderedDashboards();
@@ -3037,7 +3045,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // live state) - this jump ends up picking exactly that "current
     // state", so offering it here for the same dashboard would open a
     // door the compare bar was built to keep closed.
-    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    const dashboard = (this._dashboards ?? []).find((d) => d.key === this._selected);
     const compareFromOffer =
       dashboard?.exists === false
         ? ""
@@ -3244,15 +3252,22 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _selectedTitle() {
     if (!this._selected) return "";
-    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    const dashboard = (this._dashboards ?? []).find((d) => d.key === this._selected);
     return dashboard?.title || this._selected;
   }
 
   _renderMain() {
+    // Same distinction as in `_renderSide`, and only over this one
+    // sentence: inviting somebody to pick from a list that has not
+    // arrived is an instruction they cannot follow. Everything else
+    // here belongs to a dashboard already chosen and is drawn whether
+    // the list has answered or not.
     if (!this._selected)
-      return '<p class="empty muted">Pick a dashboard on the left.</p>';
+      return this._dashboards === null
+        ? ""
+        : '<p class="empty muted">Pick a dashboard on the left.</p>';
     const query = this._query.trim();
-    const dashboard = this._dashboards.find((d) => d.key === this._selected);
+    const dashboard = (this._dashboards ?? []).find((d) => d.key === this._selected);
     const banner =
       dashboard && !dashboard.exists
         ? `<div class="banner">
