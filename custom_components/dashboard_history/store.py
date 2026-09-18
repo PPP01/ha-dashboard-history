@@ -1166,25 +1166,43 @@ class HistoryStore:
         tag object for it would hand somebody back a different kind of tag
         than the one they made.
         """
+        # One write for all of them. `del repo.refs[...]` rewrites the
+        # whole `packed-refs` file and renames it into place, once per
+        # mark; the assignment after it writes a loose file and fsyncs
+        # that. Measured 2026-09-18 on the test bench with 782 packed
+        # marks: 11.1 ms and 5.5 ms each, 12.46 s together, against
+        # 0.02 s for the single call below.
+        #
+        # `add_packed_refs` takes the whole mapping at once, and a target
+        # of None removes that ref - exactly the two things this method
+        # does. It also unlinks any loose ref of the same name, so both
+        # shapes are covered without asking which one a mark has.
+        #
+        # Not a transaction over all the marks, and nothing here should
+        # be written as though it were: the loose files are unlinked as
+        # the mapping is walked, and only the packed file is replaced in
+        # one move at the end.
         say("versions", 0, len(versions))
-        for position, (ref, old, target) in enumerate(versions):
-            # The slowest phase per item by a wide margin. Measured
-            # 2026-09-18 on the test bench, 782 marks with packed refs:
-            # 15.9 ms each, 12.46 s in total, 58 % of the whole
-            # operation. The two halves cost differently - removing a ref
-            # rewrites the whole `packed-refs` file and renames it into
-            # place (11.1 ms), while setting one writes a loose file and
-            # fsyncs it (5.5 ms), leaving `packed-refs` alone. Said often
-            # enough that the count visibly moves.
-            say.every(25, "versions", position, len(versions))
-            del repo.refs[b"refs/tags/" + ref]
+        changed: dict[bytes, bytes | None] = {}
+        for ref, old, target in versions:
+            name = b"refs/tags/" + ref
             if _owns(ref, key):
-                continue  # this dashboard's own version; forgotten with it
+                # This dashboard's own version, forgotten with it. Since
+                # decision 13 a version belongs to one dashboard, and
+                # carrying it onto a surviving ancestor left `gone/v1.0.0`
+                # sitting on a stranger's commit (measured 2026-09-02).
+                changed[name] = None
+                continue
             moved = nearest.get(target)
             if moved is None:
-                continue  # nothing left for it to mark
+                changed[name] = None  # nothing left for it to mark
+                continue
             if old is None:
-                repo.refs[b"refs/tags/" + ref] = moved
+                # A lightweight tag has no object to rebuild - the ref IS
+                # the tag - so it is re-pointed. Inventing a tag object
+                # would hand somebody back a different kind than the one
+                # they made.
+                changed[name] = moved
                 continue
             fresh = tag_class()
             fresh.object = (old.object[0], moved)
@@ -1194,7 +1212,12 @@ class HistoryStore:
             fresh.tag_time = old.tag_time
             fresh.tag_timezone = old.tag_timezone
             repo.object_store.add_object(fresh)
-            repo.refs[b"refs/tags/" + ref] = fresh.id
+            changed[name] = fresh.id
+        # Empty is not a special case for `add_packed_refs`; it returns
+        # at once. Said here because a repository without a single mark
+        # is the ordinary case for a young installation.
+        repo.refs.add_packed_refs(changed)
+        say("versions", len(versions), len(versions))
 
     # -- reading -------------------------------------------------------
 

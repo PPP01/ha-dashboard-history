@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import pytest
 from dulwich.object_store import DiskObjectStore
 from dulwich.repo import Repo
+import dulwich.refs
 import store as store_module
 from store import HistoryStore, Version, _as_text
 import versions
@@ -2134,3 +2135,53 @@ def test_forgetting_without_a_progress_callback_still_works(store):
     store.write_snapshot("gone", "b: 1\n", "gone first")
     assert store.forget("gone") > 0
     assert "gone" not in store.list_all_dashboards()
+
+
+def test_forgetting_does_not_write_packed_refs_once_per_version(
+    store, monkeypatch
+):
+    """One write for all the marks, not one per mark.
+
+    The cost this guards is the largest single part of a `forget`:
+    measured on the test bench on 2026-09-18, 782 marks took 12.46 s,
+    58 % of the whole operation, because removing a ref rewrites the
+    whole `packed-refs` file and renames it into place - 11.1 ms each.
+
+    Counted rather than looked at afterwards. The state at the end
+    proves nothing: `garbage_collect` finishes with `pack_refs()`, so
+    every `forget` leaves the refs packed whichever way they got there.
+
+    Packed on purpose before the count starts: against loose refs the
+    removal never touches `packed-refs` and the number would be zero
+    either way.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    for n in range(20):
+        store.write_snapshot("home", f"a: {n + 2}\n", f"home {n}")
+        store.create_version(f"home/v1.0.{n}", f"Mark {n}", "kept over the rewrite")
+    store.create_version("gone/v1.0.0", "Goes away", "with its dashboard")
+    store._repo().refs.pack_refs()
+
+    writes = []
+    real = dulwich.refs.GitFile
+
+    def spy(path, mode="rb", *args, **kwargs):
+        name = path if isinstance(path, bytes) else str(path).encode()
+        if name.endswith(b"packed-refs") and "w" in mode:
+            writes.append(name)
+        return real(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(dulwich.refs, "GitFile", spy)
+    store.forget("gone")
+
+    # Measured: 22 writes for 21 marks before the change, 2 after - the
+    # batch itself and the collection's own `pack_refs`. Five leaves
+    # room for a dulwich that writes once more somewhere without
+    # letting a per-mark write back in.
+    assert len(writes) <= 5, f"{len(writes)} writes for 21 marks"
+    # And the marks that survive are still readable, under their full
+    # names: `Version.name` carries the dashboard's key.
+    kept = {v.name for v in store.list_versions("home")}
+    assert kept == {f"home/v1.0.{n}" for n in range(20)}
+
