@@ -227,6 +227,13 @@ class HistoryCapture:
                 for name, revision in await self._async_record_deletions(known):
                     touched.append(name)
                     revisions.append(revision)
+                    # TEMPORARY DIAGNOSIS (2026-09-18) - remove again.
+                    _LOGGER.warning(
+                        "DIAG wrote-as-deletion: %s@%s (reason=%s)",
+                        name,
+                        revision[:8],
+                        reason,
+                    )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Could not record deleted dashboards")
         for name, config in sorted(configs.items()):
@@ -240,6 +247,13 @@ class HistoryCapture:
             if revision is not None:
                 touched.append(name)
                 revisions.append(revision)
+                # TEMPORARY DIAGNOSIS (2026-09-18) - remove again.
+                _LOGGER.warning(
+                    "DIAG wrote-as-config: %s@%s (reason=%s)",
+                    name,
+                    revision[:8],
+                    reason,
+                )
         # One line per pass, at debug: which dashboards were looked at and
         # which were written. When a change does not show up in the
         # history, this is the line that says whether the recorder saw
@@ -300,6 +314,15 @@ class HistoryCapture:
         """
         tracked = await self._hass.async_add_executor_job(
             self._store.list_dashboards
+        )
+        # TEMPORARY DIAGNOSIS (2026-09-18) - remove again. What this pass
+        # saw when it decided, and when it saw it: `list_dashboards` takes
+        # no lock, so a `forget` running right now is invisible here.
+        _LOGGER.warning(
+            "DIAG deletions-decided: tracked=%d known=%s to_record=%s",
+            len(tracked),
+            "None" if known is None else len(known),
+            deletions_to_record(tracked, known),
         )
         gone: list[tuple[str, str]] = []
         for name in deletions_to_record(tracked, known):
