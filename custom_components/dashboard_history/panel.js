@@ -837,8 +837,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const quiet = Date.now() - state.heard > SILENCE_BEFORE_DOUBT;
     const phases = {
       rewriting: "Rewriting the recorded states",
-      versions: "Rebuilding the version marks",
-      cleaning: "Clearing out what is left",
+      cleaning: "Clearing out what is left - the slowest part",
       reloading: "Reading the history back in",
     };
     const what = phases[state.phase] || "Working";

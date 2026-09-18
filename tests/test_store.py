@@ -2117,11 +2117,12 @@ def test_forgetting_reports_its_progress(store):
     # Each phase is announced before it starts, so a slow one is named
     # while it runs rather than after it finished.
     assert "rewriting" in phases
-    assert "versions" in phases
+    # `versions` is deliberately not among them: since the marks are
+    # written in one go it lasts 0.3 s, and a phase nobody can read is
+    # not worth announcing. See `_rewrite_tags`.
+    assert "versions" not in phases
     assert "cleaning" in phases
-    assert phases.index("rewriting") < phases.index("versions") < phases.index(
-        "cleaning"
-    )
+    assert phases.index("rewriting") < phases.index("cleaning")
     # The counts have to be usable as "x of y" without the caller
     # guessing: never past the total, and the total never zero when
     # there is something to count.

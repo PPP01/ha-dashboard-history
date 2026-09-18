@@ -1,6 +1,6 @@
 # Aktueller Stand
 
-Stand: 2026-09-17. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
+Stand: 2026-09-18. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
 was noch offen ist, welche Module es gibt. Es ersetzt nicht die Spec — die
 bleibt bindend bei Widersprüchen — und nicht das Journal unter `plans/` und
 `reviews/`, das chronologisch und unverändert stehen bleibt. Bei jedem
@@ -25,6 +25,19 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | I | Versionen aufheben | Erledigt (v0.3.0) | `plans/2026-09-08-versionen-aufheben.md` |
 | J | Der Vergleichsmodus — ersetzt das zeilenweise Put-back aus Entscheidung 15 durch den Vergleich zweier frei gewählter Stände | Erledigt | `plans/2026-09-12-vergleichsmodus.md` |
 | K | Schmal bedienbar — HA-Hamburger, mitwandernde Seitenspalte, Master/Detail unterhalb eines schmalen Bandes | Erledigt | `plans/2026-09-17-schmal-bedienbar.md` |
+
+## Laufzeit `forget` (Versionsmarken in einem Zug)
+
+Gemessen am 2026-09-18 im Container gegen die Prüfbank (7407 Commits, 45 lebende + 25 gelöschte Dashboards, 782 Marken, 11 MB; Plan `plans/2026-09-18-versionsmarken-in-einem-zug.md`):
+
+| Phase | vorher | nachher | Anteil nachher |
+|---|---|---|---|
+| Stände umschreiben | 5,9 s | 6,6 s | 45 % |
+| **Versionsmarken** | **13,2 s** | **0,3 s** | **2 %** |
+| Aufräumen | 4,5 s | ~6,6 s | 45 % |
+| **gesamt** | **26,6 s** | **14,7 s** | |
+
+Die Phase `versions` (»Rebuilding the version marks«) entfällt in UI und Store, da 0,3 s im selben Wimpernschlag verschwinden. Das Aufräumen (`garbage_collect`) ist nun rund die Hälfte der Wartezeit, bleibt aber vorerst ohne Zähler (Grundlage für spätere Entscheidungen, s. Plan).
 
 ## Bekannte offene Punkte
 

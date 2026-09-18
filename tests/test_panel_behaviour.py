@@ -6940,7 +6940,7 @@ const whileRunning = {
 
 // A step of the rewrite, as the bus delivers it.
 el._onForgetting({
-  data: { dashboard: "kitchen", phase: "versions", done: 100, total: 782 },
+  data: { dashboard: "kitchen", phase: "rewriting", done: 100, total: 782 },
 });
 const counted = {
   phase: el._forgetting?.phase ?? null,
@@ -7008,7 +7008,7 @@ def test_the_lock_counts_what_the_rewrite_reports(forget_locks):
     # A spinner that stands still for a minute is indistinguishable from
     # one that is stuck, and somebody who cannot tell presses reload -
     # in the middle of the one operation that rewrites history.
-    assert forget_locks["counted"] == {"phase": "versions", "done": 100, "total": 782}
+    assert forget_locks["counted"] == {"phase": "rewriting", "done": 100, "total": 782}
 
 
 def test_another_dashboards_progress_does_not_touch_this_lock(forget_locks):
@@ -7017,7 +7017,7 @@ def test_another_dashboards_progress_does_not_touch_this_lock(forget_locks):
     # and `heard` least of all, since a stale one is what the silence
     # warning reads.
     assert forget_locks["ignoredOther"] == {
-        "phase": "versions",
+        "phase": "rewriting",
         "done": 100,
         "untouched": True,
     }
@@ -7042,7 +7042,7 @@ for (let i = 0; i < 50; i++) await settle();
 el._forgetting = {
   key: "kitchen",
   title: "Kitchen <script>alert(1)</script>",
-  phase: "versions",
+  phase: "rewriting",
   done: 100,
   total: 782,
   heard: Date.now(),
@@ -7065,7 +7065,7 @@ console.log(JSON.stringify({
   names: screen.includes("Kitchen"),
   escaped: !screen.includes("<script>alert"),
   counted: screen.includes("100") && screen.includes("782"),
-  phrase: screen.includes("Rebuilding the version marks"),
+  phrase: screen.includes("Rewriting the recorded states"),
   noControls: !/data-[a-z-]+=/i.test(screen),
   quietYet: screen.includes("reload it"),
   doubtsAfterSilence: afterSilence.includes("reload it"),
@@ -7174,7 +7174,7 @@ const doubts = painted.includes("reload it");
 // A fresh report must restart the watch rather than leave a stale one.
 timers.length = 0;
 el._onForgetting({
-  data: { dashboard: "kitchen", phase: "versions", done: 5, total: 10 },
+  data: { dashboard: "kitchen", phase: "rewriting", done: 5, total: 10 },
 });
 const rearmed = { waiting: timers.filter((t) => !t.cleared).length };
 

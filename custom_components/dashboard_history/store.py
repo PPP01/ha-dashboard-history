@@ -1182,7 +1182,11 @@ class HistoryStore:
         # be written as though it were: the loose files are unlinked as
         # the mapping is walked, and only the packed file is replaced in
         # one move at the end.
-        say("versions", 0, len(versions))
+        #
+        # No progress from here any more. This phase was 58 % of a forget
+        # and is now 0.3 s of 14.7 (measured 2026-09-18, 782 marks):
+        # announcing it would put a name on the screen that nobody can
+        # read before it is gone again.
         changed: dict[bytes, bytes | None] = {}
         for ref, old, target in versions:
             name = b"refs/tags/" + ref
@@ -1217,7 +1221,6 @@ class HistoryStore:
         # at once. Said here because a repository without a single mark
         # is the ordinary case for a young installation.
         repo.refs.add_packed_refs(changed)
-        say("versions", len(versions), len(versions))
 
     # -- reading -------------------------------------------------------
 
