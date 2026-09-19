@@ -130,7 +130,25 @@ Ein `DataUpdateCoordinator` ruft `measure()` über `hass.async_add_executor_job`
 1. **`EVENT_HISTORY_UPDATED`.** Der eingebaute Debouncer des Coordinators fängt dabei ab, was ein `restore_state` an Burst erzeugt, wenn viele Dashboards in einem Zug geschrieben werden.
 2. **Ein Intervall als Rückfall.** Damit die Größe auch dann stimmt, wenn außerhalb der Integration etwas aufgeräumt hat, und damit die Werte einen Neustart überstehen, an dem nichts geschrieben wird.
 
-**Das Intervall wird nicht geraten, sondern gemessen.** Die Hälfte der Arbeit ist bereits gecacht – `survey()` und der Revisionsindex kosten bei unverändertem HEAD nichts. Unbekannt sind genau zwei Dinge: der Verzeichnis-Walk über hunderte lose Objekte und `list_versions()` über 782 Marken. Der Plan misst beides auf der Prüfbank (7407 Commits, 11 MB, 782 Marken) und leitet die Zahl daraus ab. **Vorgabe bis zur Messung: 15 Minuten.** Bleibt `measure()` unter 50 ms, darf es enger werden; liegt es bei mehreren hundert Millisekunden, wird es weiter.
+**Das Intervall wurde nicht geraten, sondern gemessen** – und die Messung hat die Annahme dieses Abschnitts widerlegt. Was hier ursprünglich stand, ist als Lehrstück stehengeblieben:
+
+> »Die Hälfte der Arbeit ist bereits gecacht – `survey()` und der Revisionsindex kosten bei unverändertem HEAD nichts. Unbekannt sind genau zwei Dinge: der Verzeichnis-Walk über hunderte lose Objekte und `list_versions()` über 782 Marken.«
+
+Von diesen drei Aussagen hielt genau eine. Gemessen am 2026-09-19 auf der Prüfbank, ein **warmes** `measure()` von 154,6 ms, aufgeschlüsselt:
+
+| Posten | Dauer | Anteil | war hier vorhergesagt |
+|---|---|---|---|
+| Blob-Längen, 68 Dashboards | 67,9 ms | 44 % | **nein** |
+| `commit_times`, 122 Revisionen | 45,2 ms | 29 % | **nein** |
+| `_versions_by_key` | 17,9 ms | 12 % | als »kostet nichts« |
+| `_measure_disk` (der Walk) | 10,0 ms | 6 % | als eine der **zwei Unbekannten** |
+| `survey()` (gecacht) | 0,9 ms | 0,6 % | richtig |
+
+**Die beiden größten Posten waren hier gar nicht bedacht.** `_bytes_of_newest_content` muss den jüngsten Blob jedes Dashboards **entpacken**, um seine Länge zu erfahren – git kennt keine Größe ohne Inhalt –, und `commit_times` lädt für zwei Revisionen je Dashboard ein Commit-Objekt. Beides skaliert mit der **Zahl der Dashboards mal ihrer Größe**, nicht mit der Zahl der Commits. `list_versions()` wiederum wurde in der Umsetzung durch `_versions_by_key` ersetzt, das nur Ref-Namen liest, und kommt im Aufrufpfad überhaupt nicht mehr vor.
+
+**Die Zahl bleibt dennoch 15 Minuten**, und das ist kein Durchwinken. 154,6 ms sind bei einem Intervall von 15 Minuten eine Auslastung von 0,017 %, und der Posten läuft im Executor. Falsch war die Begründung, nicht die Entscheidung – und die alte Begründung hätte den nächsten Leser in die Irre geführt, der eine Verkürzung des Intervalls erwägt: Er hätte am Verzeichnis-Walk optimiert und 6 % gefunden.
+
+**Wer dieses Intervall künftig ändern will**, misst zuerst die Blob-Längen. Dort liegt die Hälfte, dort wächst es mit der Anlage, und dort läge auch die Abhilfe – eine Größe je Blob-ID zu merken, die inhaltsadressiert und damit unveränderlich ist. Nicht gebaut, weil 155 ms alle 15 Minuten keinen Anlass geben; benannt, damit niemand erst wieder messen muss.
 
 ### B4 – Der Start bleibt unangetastet, und das Entladen räumt auf
 
@@ -333,15 +351,19 @@ Dies ist der `data`-Block; darum liegt der Umschlag aus B6.
 - **Ein Reload.** Den Config-Eintrag neu laden und danach prüfen: weiterhin genau fünf Entitäten, keine verwaisten, und der Zeitstempel rückt nach der nächsten Änderung immer noch vor – also hängt kein zweiter Listener am alten Store (B4).
 - **Das Secret entsteht beim ersten Bedarf und bleibt dann gleich.** Ausdrücklich nicht »beim ersten Bericht«: Die ID-Zuordnung am Sensor braucht es schon beim ersten Refresh, also lange vor jedem Download. Geprüft wird, dass es nach dem ersten Refresh da ist und nach dem Download dasselbe ist.
 
-## Was noch gemessen werden muss
+## Was gemessen wurde
 
-Vom Plan zu erheben, bevor Zahlen in den Code wandern – auf der Prüfbank mit 7407 Commits, 45 lebenden und 25 gelöschten Dashboards, 782 Marken und 11 MB:
+Erhoben am 2026-09-19 im Test-Container, auf der Prüfbank mit **7518 Commits, 68 Dashboards (42 lebend, 26 gelöscht), 793 Marken, 9.182.768 Bytes logisch und 9.629.696 Bytes belegt.** Die Zahlen weichen von denen ab, die in dieser Spec sonst genannt sind (7407 Commits, 70 Dashboards, 11 MB) – die Prüfbank verändert sich mit jedem Lauf von `run_checks.py`, das dort Dashboards anlegt, ändert und löscht. Für die Größenordnung ist das ohne Belang, für die Nachvollziehbarkeit einer einzelnen Zahl nicht: Wer nachmisst, misst gegen eine andere Bank.
 
-| Offen | Wofür |
-|---|---|
-| Dauer des Verzeichnis-Walks | entscheidet über das Intervall aus B3 |
-| Dauer von `list_versions()` über 782 Marken | dasselbe; fällt sie ins Gewicht, wird der Versionszähler seltener geholt als der Rest |
-| Dauer eines vollständigen `measure()` bei unverändertem HEAD | die Zahl, die im Betrieb wirklich zählt, weil die Caches dann greifen |
+| Frage | Antwort | Folge |
+|---|---|---|
+| Dauer eines **warmen** `measure()` | **154,6 ms** (ein zweiter Lauf 193 ms – die Streuung ist Cache-Verhalten des Containers) | Intervall bleibt bei 15 Minuten. Auslastung 0,017 %. |
+| Dauer eines **kalten** `measure()` | 6.981 ms | Unkritisch, weil der erste Refresh laut B4 nicht abgewartet wird. Er trifft genau die Situation, für die B4 geschrieben wurde. |
+| Dauer des Verzeichnis-Walks | 10,0 ms | 6 % des warmen Werts – **nicht** der Posten, für den ihn B3 gehalten hat. |
+| Dauer von `list_versions()` über 793 Marken | 169,2 ms | Ohne Belang für `measure()`: Der Aufrufpfad benutzt `_versions_by_key`, das nur Ref-Namen liest (17,9 ms). Die Messung belegt, dass sich das Ersetzen gelohnt hat. |
+| Wo die Zeit **wirklich** steckt | Blob-Längen 67,9 ms, `commit_times` 45,2 ms | In B3 aufgeschlüsselt. Beide waren in der ursprünglichen Fassung dieser Spec nicht bedacht. |
+
+**Wie diese Korrektur zustande kam**, weil der Weg dorthin mehr wert ist als die Zahl: Die Messung lief im Rahmen des Implementierungsplans, und dessen Aufgabe 4 trug den Satz »Weicht eine Zahl stark von der Erwartung ab, stimmt eine Annahme nicht mehr: dann anhalten, nicht die Schwelle anpassen.« Genau das trat ein. Ein Review verweigerte dreimal die Freigabe, weil die Messwerte eingetragen, die widerlegte Begründung in B3 aber stehen geblieben war. Das Anhalten war richtig: Eine Spec, deren Zahl stimmt und deren Begründung nicht, ist schlimmer als eine ohne Zahl – sie schickt den nächsten Leser an die falsche Stelle.
 
 ## Offene Punkte
 

@@ -664,12 +664,21 @@ git commit -m "Give every dashboard its own row in the measurement"
 
 ---
 
-## Aufgabe 4: Messen, was ein `measure()` kostet — und erst dann das Intervall festlegen
+## Aufgabe 4: Messen, was ein `measure()` kostet ✅ erledigt am 2026-09-19
 
-**Dateien:**
-- Keine. Diese Aufgabe erzeugt eine Zahl und eine Entscheidung.
+**Erledigt.** Die Messung lief, und sie hat mehr ergeben als eine Zahl: Die Kostenannahme in Spec-Entscheidung B3 war falsch. Beides steht jetzt in der Spec, Abschnitt »Was gemessen wurde« und B3 selbst.
 
-> **Hier ist eine Rückfrage fällig.** Die Spec legt das Intervall ausdrücklich nicht fest, sondern verlangt diese Messung (Abschnitt »Was noch gemessen werden muss«). Das Ergebnis vorlegen und entscheiden lassen, statt 15 Minuten zu übernehmen, weil sie in der Spec als Vorgabe stehen.
+| | |
+|---|---|
+| warmes `measure()` | 154,6 ms (zweiter Lauf 193 ms) |
+| kaltes `measure()` | 6.981 ms |
+| Verzeichnis-Walk | 10,0 ms — nur 6 % |
+| wo die Zeit steckt | Blob-Längen 67,9 ms, `commit_times` 45,2 ms |
+| **Entschieden** | **`MEASURE_INTERVAL = timedelta(minutes=15)`** |
+
+**Für Aufgabe 6 ist das die verbindliche Zahl:** In `const.py` steht `timedelta(minutes=15)`, und der Kommentar darüber verweist auf diese Aufgabe.
+
+Der Ablauf, mit dem gemessen wurde, bleibt hier stehen — falls jemand gegen eine andere Anlage nachmessen will:
 
 - [ ] **Schritt 1: Gegen die Prüfbank messen**
 
