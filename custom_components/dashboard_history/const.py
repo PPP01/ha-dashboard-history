@@ -1,6 +1,9 @@
 """Constants for the Dashboard History integration."""
 
+from datetime import timedelta
+
 import voluptuous as vol
+from homeassistant.const import Platform
 
 DOMAIN = "dashboard_history"
 
@@ -80,3 +83,19 @@ RECONCILE_DELAY = 10
 # an installation that has to be configured before it works is one that
 # does not work. Switched off by people who keep their own milestones.
 OPTION_DAILY_VERSIONS = "daily_versions"
+
+# The first entity platform of this integration. A list, because
+# `async_forward_entry_setups` and `async_unload_platforms` both want one
+# and a mismatch between the two leaves entities behind after a reload.
+PLATFORMS = [Platform.SENSOR]
+
+# How often the measurement is taken when nothing is being recorded. The
+# event does the rest, and does it sooner. Measured before it was set;
+# see the plan of 2026-09-19, task 4.
+MEASURE_INTERVAL = timedelta(minutes=15)
+
+# Where the per-installation secret behind the report ids lives, inside
+# `entry.data`. Not in the repository folder: that is the one directory
+# the README invites people to look into, and it is copied as a whole by
+# anyone who shares their history to help with a bug.
+DATA_REPORT_SECRET = "report_secret"

@@ -10,7 +10,8 @@ from homeassistant.core import HomeAssistant
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
-from .const import DOMAIN, REPO_DIRNAME
+from .const import DOMAIN, EVENT_HISTORY_UPDATED, REPO_DIRNAME
+from .coordinator import MeasurementCoordinator
 from .milestones import Milestones
 from .services import async_register
 from .store import HistoryStore
@@ -27,10 +28,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
     capture = HistoryCapture(hass, store)
     milestones = Milestones(hass, store, entry)
+    coordinator = MeasurementCoordinator(hass, store)
     hass.data[DOMAIN] = {
         "store": store,
         "capture": capture,
         "milestones": milestones,
+        "coordinator": coordinator,
     }
 
     # Registered before the recording starts, on purpose: if the repository
@@ -39,6 +42,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await async_register(hass)
     websocket_api.async_register(hass)
     await panel.async_register(hass)
+
+    async def _remeasure(_event) -> None:
+        await coordinator.async_request_refresh()
+
+    # Through `entry.async_on_unload`, so that unloading drops it. A
+    # listener remembered in a second place is a listener forgotten in
+    # one of them, and after a reload it would measure against a store
+    # nobody uses any more.
+    entry.async_on_unload(hass.bus.async_listen(EVENT_HISTORY_UPDATED, _remeasure))
 
     # Armed before the recorder rather than after it, and `async_arm`
     # carries the whole reason: the opening pass announces what it
@@ -74,7 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # `write_snapshot` compares against HEAD rather than against the
     # working tree exactly so that an interrupted run repairs itself.
     entry.async_create_background_task(
-        hass, _async_open(hass, capture, milestones), f"{DOMAIN} opening pass"
+        hass, _async_open(hass, capture, milestones, coordinator), f"{DOMAIN} opening pass"
     )
 
     _LOGGER.debug("Dashboard History set up")
@@ -82,7 +94,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def _async_open(
-    hass: HomeAssistant, capture: HistoryCapture, milestones: Milestones
+    hass: HomeAssistant,
+    capture: HistoryCapture,
+    milestones: Milestones,
+    coordinator: MeasurementCoordinator,
 ) -> None:
     """The opening pass and the first versions, off the start.
 
@@ -111,6 +126,11 @@ async def _async_open(
         await milestones.async_lay_the_floor()
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not make its first versions")
+
+    # Last, and deliberately: the first measurement of an empty history
+    # is an honest zero, but a measurement taken after the opening pass
+    # is the one somebody wants to see on the integration page.
+    await coordinator.async_refresh()
 
     _LOGGER.debug("Dashboard History finished its opening pass")
 
