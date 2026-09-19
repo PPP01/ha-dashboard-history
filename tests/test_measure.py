@@ -93,3 +93,47 @@ def test_loose_objects_are_counted_and_packing_moves_them(store):
     after = store.measure()
     assert after.packs >= 1
     assert after.loose_objects < before.loose_objects
+
+
+def test_each_dashboard_gets_a_row_sorted_by_revisions(store):
+    store.write_snapshot("quiet", "a: 1\n", "first")
+    for n in range(3):
+        store.write_snapshot("busy", f"b: {n}\n", f"change {n}")
+    rows = store.measure().dashboards
+    assert [row.key for row in rows] == ["busy", "quiet"]
+    assert rows[0].revisions == 3
+    assert rows[1].revisions == 1
+    assert all(not row.gone for row in rows)
+
+
+def test_a_live_dashboard_reports_the_length_of_its_current_state(store):
+    text = "a: 1\nb: 2\n"
+    store.write_snapshot("home", text, "first")
+    row = store.measure().dashboards[0]
+    assert row.bytes == len(text.encode("utf-8"))
+
+
+def test_a_deleted_dashboard_reports_what_a_restore_would_bring_back(store):
+    text = "a: 1\nb: 2\nc: 3\n"
+    store.write_snapshot("home", text, "first")
+    store.mark_deleted("home", "home was deleted")
+    row = store.measure().dashboards[0]
+    assert row.gone is True
+    # Not the deletion commit, which holds no dashboard text at all.
+    assert row.bytes == len(text.encode("utf-8"))
+
+
+def test_first_and_last_bracket_a_dashboards_own_commits(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    row = store.measure().dashboards[0]
+    assert row.first <= row.last
+
+
+def test_versions_are_attributed_to_their_own_dashboard(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("other", "b: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "")
+    rows = {row.key: row for row in store.measure().dashboards}
+    assert rows["home"].versions == 1
+    assert rows["other"].versions == 0

@@ -2127,12 +2127,39 @@ class HistoryStore:
             None,
         )
 
+        live = self.survey().live
+        marks = self._versions_by_key(repo)
+        wanted = set()
+        for revisions in index.by_key.values():
+            if revisions:
+                wanted.add(revisions[0])
+                wanted.add(revisions[-1])
+        times = self.commit_times(wanted)
+
+        rows = []
+        for key, revisions in index.by_key.items():
+            if not revisions:
+                continue
+            rows.append(
+                DashboardFacts(
+                    key=key,
+                    revisions=len(revisions),
+                    bytes=self._bytes_of_newest_content(repo, key, revisions),
+                    versions=marks.get(key, 0),
+                    first=times.get(revisions[-1], 0),
+                    last=times.get(revisions[0], 0),
+                    gone=key not in live,
+                )
+            )
+        rows.sort(key=lambda row: (-row.revisions, row.key))
+
         return Measurement(
             revisions=len(index.order),
             oldest=edges.get(oldest_revision) if oldest_revision else None,
             newest=edges.get(newest_revision) if newest_revision else None,
             newest_key=newest_key,
             versions=len(repo.refs.as_dict(b"refs/tags")),
+            dashboards=tuple(rows),
             **sizes,
         )
 
@@ -2245,6 +2272,31 @@ class HistoryStore:
             key = ref.rsplit(b"/", 1)[0].decode()
             counted[key] = counted.get(key, 0) + 1
         return counted
+
+    def _bytes_of_newest_content(self, repo: Repo, key: str, revisions: list) -> int:
+        """The length of the newest state of `key` that had any.
+
+        For a live dashboard that is the state at HEAD and the first
+        revision answers. For a deleted one the newest revision is the
+        deletion commit, whose tree no longer holds the file at all - so
+        the loop steps back to the state before it, which is exactly what
+        a restore would bring back.
+
+        Zero where nothing is found. A dashboard that never held content
+        cannot occur through `write_snapshot`, but a history rewritten by
+        an interrupted `forget` is not worth an exception here.
+        """
+        path = f"{key}.yaml"
+        for revision in revisions:
+            blob_id = self._blob_at(repo, path, revision)
+            if blob_id is None:
+                continue
+            try:
+                return len(repo[blob_id].data)
+            except KeyError:
+                # Pruned between the tree lookup and the read.
+                return 0
+        return 0
 
     def list_versions(self, key: str | None = None) -> list[Version]:
         """Every named point, newest first. One dashboard's, or all of them.
