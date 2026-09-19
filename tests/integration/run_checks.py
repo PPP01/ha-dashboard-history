@@ -3888,6 +3888,127 @@ async def wait_until_settled(access: str, key: str, quiet: int = 6,
     return False
 
 
+def entity_ids(access: str) -> dict[str, str]:
+    """This integration's readings, by the key in their unique id.
+
+    Through the entity registry rather than by writing the ids out,
+    because an entity_id is derived from the entity's *name* and not
+    from its description key: the reading keyed `revisions` is called
+    "Recorded states" and therefore lands at
+    `sensor.dashboard_history_recorded_states`. Ids written by hand
+    would break silently the first time a label is reworded.
+
+    `config/entity_registry/list` does carry `unique_id`, although the
+    websocket module never mentions the word - the field comes out of
+    `RegistryEntry.as_partial_dict`. Checked against 2026.8.3 rather
+    than grepped for.
+    """
+    identifier = entry_id(access)
+
+    async def ask() -> list:
+        async with Socket(access) as socket:
+            return await socket.call("config/entity_registry/list")
+
+    prefix = f"{identifier}_"
+    return {
+        row["unique_id"][len(prefix):]: row["entity_id"]
+        for row in asyncio.run(ask())
+        if row.get("config_entry_id") == identifier
+        and str(row.get("unique_id", "")).startswith(prefix)
+    }
+
+
+def _state(access: str, entity_id: str) -> dict:
+    """One entity as Home Assistant reports it, or an empty dict."""
+    answer = requests.get(
+        f"{BASE}/api/states/{entity_id}",
+        headers={"Authorization": f"Bearer {access}"},
+        timeout=30,
+    )
+    return answer.json() if answer.ok else {}
+
+
+def entity_state(access: str, entity_id: str) -> str | None:
+    return _state(access, entity_id).get("state")
+
+
+def entity_attributes(access: str, entity_id: str) -> dict:
+    return _state(access, entity_id).get("attributes", {})
+
+
+def count_entities(access: str, prefix: str) -> int:
+    """How many entities carry this prefix."""
+    answer = requests.get(
+        f"{BASE}/api/states",
+        headers={"Authorization": f"Bearer {access}"},
+        timeout=60,
+    )
+    if not answer.ok:
+        return 0
+    return sum(1 for state in answer.json() if state["entity_id"].startswith(prefix))
+
+
+def diagnostics(access: str) -> dict:
+    """The file a tester would attach to an issue, as downloaded."""
+    answer = requests.get(
+        f"{BASE}/api/diagnostics/config_entry/{entry_id(access)}",
+        headers={"Authorization": f"Bearer {access}"},
+        timeout=120,
+    )
+    return answer.json() if answer.ok else {}
+
+
+def _strings(value):
+    """Every string anywhere in the structure, keys included."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+    elif isinstance(value, str):
+        yield value
+
+
+async def touch_probe(access: str) -> None:
+    """Record one more change, on the probe dashboard this script owns.
+
+    `dh-probe-check` and nothing else - by its exact name. A test that
+    deletes or rewrites by prefix swept up somebody's real dashboard on
+    2026-09-01, and the comment at that call site says why that stays
+    remembered.
+    """
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == "dh-probe-check" for entry in listed):
+            # run_lifecycle deletes dh-probe-check at line 854 ("and it can
+            # be deleted again", line 861), so recreate it if missing.
+            await socket.call(
+                "lovelace/dashboards/create",
+                url_path="dh-probe-check",
+                title="DH Probe",
+            )
+            await asyncio.sleep(2)
+        await socket.call(
+            "lovelace/config/save",
+            url_path="dh-probe-check",
+            config={
+                "views": [
+                    {
+                        "path": "probe",
+                        "title": "Probe",
+                        "cards": [
+                            {"type": "heading", "heading": f"Nach dem Reload {time.time()}"},
+                            {"type": "tile", "entity": "sun.sun"},
+                        ],
+                    }
+                ]
+            },
+        )
+        await _wait_until_recorded(socket, "dh-probe-check")
+
+
 if __name__ == "__main__":
     if not wait_for_api():
         raise SystemExit(f"No Home Assistant answering at {BASE}")
@@ -3949,6 +4070,138 @@ if __name__ == "__main__":
     asyncio.run(run_keep_as_version(access))
     print("\n  -- Was die Seite nicht selbst ausrechnen darf --")
     asyncio.run(run_panel_fields(access))
+    print("\n  -- Das Beobachten: Sensoren und Bericht --")
+
+    # -- the measuring ------------------------------------------------------
+
+    # Resolved through the registry rather than spelled out. An entity_id is
+    # derived from the entity's *name*, not from its description key - the
+    # reading whose key is `revisions` is called "Recorded states" and
+    # therefore lives at `sensor.dashboard_history_recorded_states`. Writing
+    # the ids out by hand means renaming a label silently breaks the checks.
+    readings = entity_ids(access)
+    check(
+        "all five readings are registered",
+        set(readings) == {"last_capture", "size", "revisions", "dashboards", "versions"},
+        f"got {sorted(readings)}",
+    )
+
+    # The secret is observed through its effect, not read out: no API hands
+    # out `entry.data`. `stored_daily_versions` had to learn the same thing
+    # on 2026-09-05 about `entry.options` - the entry endpoint returns
+    # seventeen fields and neither of those two among them.
+    #
+    # Before the first download, and that is the point of asking here: the
+    # id mapping needs the secret at the *first refresh*, long before
+    # anybody asks for a file. Asked after the download it would prove
+    # nothing, because the download makes one too.
+    before_ids = entity_attributes(access, readings["dashboards"]).get("ids", {})
+    check(
+        "the ids exist before any report was downloaded",
+        bool(before_ids)
+        and all(
+            len(i) == 8 and all(c in "0123456789abcdef" for c in i) for i in before_ids
+        ),
+        f"ids={sorted(before_ids)[:3]}",
+    )
+
+    names = list(before_ids.values())
+    # Without this the privacy check below passes on an empty mapping, which
+    # is the one case where it proves nothing at all.
+    check(
+        "there is at least one dashboard to be careless with",
+        bool(names),
+        f"ids={names}",
+    )
+
+    downloaded = diagnostics(access)
+    body = downloaded.get("data", {})
+
+    check(
+        "the report carries all four blocks",
+        {"environment", "settings", "totals", "dashboards"} <= set(body),
+        f"got {sorted(body)}",
+    )
+
+    # The whole downloaded file, not just the part we built. The pytest case
+    # cannot see Home Assistant's envelope - it does not exist there - and
+    # the envelope is exactly what the first draft of the spec overlooked.
+    # A test that checks only what you built yourself would not have found it.
+    haystack = "\n".join(_strings(downloaded))
+    report_haystack = "\n".join(_strings(body))
+    # manifest.json lists the static dependency "lovelace" which appears
+    # in integration_manifest. An installation can also have a dashboard
+    # with url_path "lovelace" (see const.py:41-43). That static dependency
+    # string in the envelope is not a leak, but the dashboard key must still
+    # not appear in the report itself.
+    leaked = [
+        name for name in names
+        if name and name in haystack and not (name == "lovelace" and name not in report_haystack)
+    ]
+    check(
+        "no dashboard name appears anywhere in the downloaded file",
+        not leaked,
+        f"leaked={leaked}",
+    )
+
+    states = {key: entity_state(access, entity) for key, entity in readings.items()}
+    check(
+        "the sensors show what the report says",
+        str(body["totals"]["revisions"]) == states["revisions"]
+        and str(body["totals"]["dashboards_live"]) == states["dashboards"],
+        f'report={body["totals"]["revisions"]}/{body["totals"]["dashboards_live"]} '
+        f'sensors={states["revisions"]}/{states["dashboards"]}',
+    )
+
+    # -- and what a reload leaves behind ------------------------------------
+
+    reload_entry(access)
+
+    after = entity_ids(access)
+    # The opening pass runs in a background task (B4) and takes a few
+    # seconds on a grown bench. Wait until the first refresh has landed.
+    for _ in range(30):
+        if entity_state(access, after["revisions"]) not in (None, "unknown"):
+            break
+        time.sleep(1)
+
+    check(
+        "a reload leaves exactly the five readings, none orphaned",
+        set(after) == set(readings)
+        and count_entities(access, "sensor.dashboard_history") == 5,
+        f"{sorted(after)} / {count_entities(access, 'sensor.dashboard_history')}",
+    )
+    check(
+        "the ids survive a reload unchanged",
+        entity_attributes(access, after["dashboards"]).get("ids", {}) == before_ids,
+        "a changed id means a new secret was made where one existed",
+    )
+
+    # Counting entities is not enough: a listener left hanging on the old
+    # store would still be subscribed, and a coordinator left behind would
+    # still be running. What proves the wiring is intact is that a *new*
+    # change still moves the timestamp - and a second listener would show up
+    # as a doubled measurement, which the revision count would disagree with.
+    stamp_before = entity_state(access, after["last_capture"])
+    revisions_before = int(entity_state(access, after["revisions"]))
+    asyncio.run(touch_probe(access))
+    # Wait until the timestamp moves, plus a fixed grace period so any
+    # duplicate listener event would have landed.
+    for _ in range(30):
+        if entity_state(access, after["last_capture"]) != stamp_before:
+            break
+        time.sleep(1)
+    time.sleep(5)
+    check(
+        "after a reload a recorded change still moves the timestamp",
+        entity_state(access, after["last_capture"]) != stamp_before,
+        f"still {stamp_before}",
+    )
+    check(
+        "and it moves it exactly once",
+        int(entity_state(access, after["revisions"])) == revisions_before + 1,
+        f"{revisions_before} -> {entity_state(access, after['revisions'])}",
+    )
     print(f"\n{len(_passed)} von {len(_passed) + len(_failed)} Prüfungen bestanden")
     if _failed:
         print("Fehlgeschlagen: " + ", ".join(_failed))
