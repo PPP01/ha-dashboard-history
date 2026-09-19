@@ -15,7 +15,7 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 |---|---|---|---|
 | — | Eigene Texte und Klartext (Notizen, Klartext-Beschreibungen) | Erledigt | `plans/2026-08-31-eigene-texte-und-klartext.md` |
 | A | Versionen — benannte Tags je Dashboard | Erledigt (v0.3.0) | `plans/2026-09-02-versionen-pro-dashboard.md` |
-| B | Beobachten — Options-Flow und Entity-Plattform (Repo-Größe, Zahl der Stände/Dashboards, letzte Erfassung) | **Nicht begonnen** | noch kein Plan |
+| B | Beobachten — Entity-Plattform und Diagnose-Bericht (Repo-Größe, Zahl der Stände/Dashboards, letzte Erfassung). Der Options-Flow-Teil war bereits erledigt. | Spec geschrieben, noch nicht gebaut | `specs/2026-09-19-beobachten-design.md` |
 | C | Aufräumen — verlustfreies Verdichten, danach ggf. eine Aufbewahrungsregel | **Nicht begonnen**, wartet laut Spec auf Messwerte aus B | noch kein Plan |
 | D | Sechs Befunde am älteren Kern (unabhängiges Review 2026-09-02) | Teilweise — Details unten | Spec, Abschnitt »Offene Punkte« |
 | E | Die gezielte Rücknahme — `undo_change` für einzelne Änderungen | Erledigt (v0.3.0) | `plans/2026-09-03-gezielte-ruecknahme.md` |
