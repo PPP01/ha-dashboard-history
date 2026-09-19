@@ -1,6 +1,6 @@
 # Aktueller Stand
 
-Stand: 2026-09-18. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
+Stand: 2026-09-19. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
 was noch offen ist, welche Module es gibt. Es ersetzt nicht die Spec — die
 bleibt bindend bei Widersprüchen — und nicht das Journal unter `plans/` und
 `reviews/`, das chronologisch und unverändert stehen bleibt. Bei jedem
@@ -15,8 +15,8 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 |---|---|---|---|
 | — | Eigene Texte und Klartext (Notizen, Klartext-Beschreibungen) | Erledigt | `plans/2026-08-31-eigene-texte-und-klartext.md` |
 | A | Versionen — benannte Tags je Dashboard | Erledigt (v0.3.0) | `plans/2026-09-02-versionen-pro-dashboard.md` |
-| B | Beobachten — Entity-Plattform und Diagnose-Bericht (Repo-Größe, Zahl der Stände/Dashboards, letzte Erfassung). Der Options-Flow-Teil war bereits erledigt. | Spec geschrieben, noch nicht gebaut | `specs/2026-09-19-beobachten-design.md` |
-| C | Aufräumen — verlustfreies Verdichten, danach ggf. eine Aufbewahrungsregel | **Nicht begonnen**, wartet laut Spec auf Messwerte aus B | noch kein Plan |
+| B | Beobachten — Entity-Plattform und Diagnose-Bericht (5 Sensoren für Repo-Größe, Stände, Dashboards, Versionen, Zeitstempel; downloadbarer Bericht via HA-Standardpfad; `report.py` als 7. HA-freies Modul). Der Options-Flow-Teil war bereits erledigt. | Erledigt | `plans/2026-09-19-beobachten.md` |
+| C | Aufräumen — verlustfreies Verdichten, danach ggf. eine Aufbewahrungsregel | **Wartet auf Messwerte von Testern** (Vorhaben B ist bereit) | noch kein Plan |
 | D | Sechs Befunde am älteren Kern (unabhängiges Review 2026-09-02) | Teilweise — Details unten | Spec, Abschnitt »Offene Punkte« |
 | E | Die gezielte Rücknahme — `undo_change` für einzelne Änderungen | Erledigt (v0.3.0) | `plans/2026-09-03-gezielte-ruecknahme.md` |
 | F | Die Identitätskette (3 Pakete: Verweigern statt falsch schreiben / Identität / Section als Stück) | Paket 1 erledigt (2026-09-04); Pakete 2–3 vermutlich mit den Section-Arbeiten miterledigt — im Zweifel `reviews/2026-09-04-pfadlose-views-und-sections.md` und `plans/2026-09-09-sections-zurueckholen.md` direkt prüfen | s. o. |
@@ -38,6 +38,16 @@ Gemessen am 2026-09-18 im Container gegen die Prüfbank (7407 Commits, 45 lebend
 | **gesamt** | **26,6 s** | **14,7 s** | |
 
 Die Phase `versions` (»Rebuilding the version marks«) entfällt in UI und Store, da 0,3 s im selben Wimpernschlag verschwinden. Das Aufräumen (`garbage_collect`) ist nun rund die Hälfte der Wartezeit, bleibt aber vorerst ohne Zähler (Grundlage für spätere Entscheidungen, s. Plan).
+
+## Laufzeit Messung (`report` / Sensoren)
+
+Gemessen am 2026-09-19 im Container gegen die Prüfbank (7518 Commits, 68 Dashboards [42 lebend, 26 gelöscht], 793 Marken, 9.182.768 Bytes logisch / 9.629.696 Bytes belegt; Plan `plans/2026-09-19-beobachten.md`, Spec-Abschnitt »Was gemessen wurde« und B3):
+
+- **Kaltstart (erster Lauf):** 6.981 ms (unkritisch, erster Refresh wird laut B4 nicht abgewartet)
+- **Warm (wiederkehrende Messung, HEAD unverändert):** 154,6 ms
+- **Auslastung im Executor:** 0,017 % bei `MEASURE_INTERVAL = timedelta(minutes=15)` (154,6 ms / 900 s)
+- **Aufschlüsselung warm:** Blob-Längen ermitteln 44 %, `commit_times` 29 %, `_versions_by_key` 12 %, Verzeichnis-Walk (`_measure_disk`) 6 % (Details siehe Spec B3)
+
 
 ## Bekannte offene Punkte
 
@@ -80,9 +90,9 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
 
 ## Modul-Übersicht
 
-`custom_components/dashboard_history/`, nach Aufgabe geordnet. Die sechs
+`custom_components/dashboard_history/`, nach Aufgabe geordnet. Die sieben
 mit ✓ müssen HA-frei bleiben (siehe CLAUDE.md, »Harte Regeln«) und sind es
-laut Grep auch (Stand 2026-09-12).
+laut Grep auch (Stand 2026-09-19).
 
 | Datei | Aufgabe |
 |---|---|
@@ -92,6 +102,7 @@ laut Grep auch (Stand 2026-09-12).
 | `versions.py` ✓ | Versionsnummern und Tagesmarken: lesen, ordnen, hochzählen |
 | `keys.py` ✓ | Welcher Dashboard-Schlüssel gültig/gelöscht ist |
 | `store.py` ✓ | Das Git-Repository selbst: Commits, Tags, Notizen, Indizes |
+| `report.py` ✓ | Erzeugt den anonymisierten Diagnose-Bericht (reine Zahlen, keine Dashboard-Inhalte) |
 | `capture.py` | Hört auf `lovelace_updated`, liest den Stand aus dem Speicher |
 | `snapshot.py` | Liest Dashboard-Konfigurationen direkt aus Home Assistant |
 | `milestones.py` | Legt automatische Tages-/Initial-Versionen an |
@@ -102,6 +113,9 @@ laut Grep auch (Stand 2026-09-12).
 | `panel.js` | Die eigentliche Panel-Oberfläche (Vanilla JS, kein Bauschritt) |
 | `config_flow.py` | Einrichtung: eine Bestätigung, ein Schalter danach |
 | `const.py` | Konstanten |
+| `coordinator.py` | DataUpdateCoordinator für periodische Messung (15 min) und Event-Entprellung |
+| `sensor.py` | Fünf Diagnose-Sensoren (Größe, Stände, Dashboards, Versionen, Zeitstempel) |
+| `diagnostics.py` | Downloadbarer Diagnose-Bericht über Home Assistants Standardpfad |
 | `__init__.py` | Einstiegspunkt der Integration |
 
 ## Wie man sich im Journal orientiert
