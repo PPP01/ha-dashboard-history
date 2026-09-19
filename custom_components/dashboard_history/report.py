@@ -17,11 +17,17 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import secrets
 from datetime import UTC, datetime
 
 import yaml
 
 SCHEMA = 1
+
+
+def new_secret() -> str:
+    """A fresh per-installation secret for the report ids."""
+    return secrets.token_hex(16)
 
 
 def dashboard_id(key: str, secret: str) -> str:

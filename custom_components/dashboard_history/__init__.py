@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
-from .const import DOMAIN, EVENT_HISTORY_UPDATED, REPO_DIRNAME
+from .const import DOMAIN, EVENT_HISTORY_UPDATED, PLATFORMS, REPO_DIRNAME
 from .coordinator import MeasurementCoordinator
 from .milestones import Milestones
 from .services import async_register
@@ -42,6 +42,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await async_register(hass)
     websocket_api.async_register(hass)
     await panel.async_register(hass)
+
+    # The platform goes up, the first refresh is not waited for. The
+    # reason is two screens further down in this file: the opening pass
+    # was moved into a background task on 2026-09-07 because it cost
+    # 6.2 s of a 7.3 s setup and Home Assistant said so in the log.
+    # Sensors that read `unknown` for a minute are harmless; a start
+    # that waits for a directory walk is not.
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
 
     async def _remeasure(_event) -> None:
         await coordinator.async_request_refresh()
@@ -136,7 +145,22 @@ async def _async_open(
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Tear the integration down."""
+    """Tear the integration down.
+
+    The platform goes first and the runtime data only if it went: the
+    entities read from `hass.data`, so emptying it before they are gone
+    leaves them reading into nothing. This is the first entity platform
+    of this integration, which is why there was no unload for one until
+    now - without it, a reload leaves entities and an event listener
+    hanging on a store nobody uses any more.
+
+    The listener itself needs nothing here. It was registered through
+    `entry.async_on_unload`, so Home Assistant drops it at exactly this
+    point, and a second place to remember it is a second place to forget
+    it.
+    """
+    if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        return False
     panel.async_unregister(hass)
     data = hass.data.pop(DOMAIN, None)
     if data and (milestones := data.get("milestones")) is not None:

@@ -23,5 +23,24 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "last_capture": {
+        "name": "Last capture"
+      },
+      "size": {
+        "name": "Size"
+      },
+      "revisions": {
+        "name": "Recorded states"
+      },
+      "dashboards": {
+        "name": "Dashboards"
+      },
+      "versions": {
+        "name": "Versions"
+      }
+    }
   }
 }

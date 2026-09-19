@@ -5,10 +5,12 @@ from __future__ import annotations
 import logging
 import time
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, MEASURE_INTERVAL
+from . import report
+from .const import DATA_REPORT_SECRET, DOMAIN, MEASURE_INTERVAL
 from .store import HistoryStore, Measurement
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,3 +57,25 @@ class MeasurementCoordinator(DataUpdateCoordinator[Measurement]):
             raise UpdateFailed(f"could not measure the history: {error}") from error
         self.measured_at = time.time()
         return found
+
+
+def report_secret(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    """The installation's own secret, made on first need.
+
+    On first need rather than in the config flow, so that an
+    installation set up before this existed needs no migration and
+    `VERSION` stays at 1. Writing it fires no reload: no update listener
+    is attached to this entry, and `config_flow.py` says why.
+
+    First need is the first refresh of the sensors, not the first
+    report - the id mapping hangs off an entity attribute and is there
+    long before anybody downloads anything.
+    """
+    existing = entry.data.get(DATA_REPORT_SECRET)
+    if existing:
+        return existing
+    made = report.new_secret()
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, DATA_REPORT_SECRET: made}
+    )
+    return made
