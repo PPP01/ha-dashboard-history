@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
@@ -51,9 +51,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # that waits for a directory walk is not.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    @callback
+    def _remeasure(_event) -> None:
+        """Measure again - off the startup path, and that is the point.
 
-    async def _remeasure(_event) -> None:
-        await coordinator.async_request_refresh()
+        A `@callback` that starts a background task, rather than an
+        `async def` listener. The difference is the hard rule about not
+        blocking the start, and it is not theoretical.
+
+        An `async def` listener is dispatched through
+        `async_run_hass_job(..., background=False)`, which makes a
+        *tracked* task - one that `async_block_till_done` waits for while
+        Home Assistant is coming up. And `Debouncer.async_call` does not
+        debounce its own first call: with no timer running it executes
+        the job inline and awaits it. Cold, that measurement took 6.98 s
+        on the test bench on 2026-09-19.
+
+        The opening pass fires this very event, so the two together would
+        have put seven seconds back onto the start - through the side
+        door, six months after the opening pass was moved off it for
+        six. A background task of the config entry is ignored by
+        `async_block_till_done` and cancelled when the entry unloads.
+        """
+        entry.async_create_background_task(
+            hass, coordinator.async_request_refresh(), f"{DOMAIN} remeasure"
+        )
 
     # Through `entry.async_on_unload`, so that unloading drops it. A
     # listener remembered in a second place is a listener forgotten in

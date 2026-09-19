@@ -4108,10 +4108,14 @@ if __name__ == "__main__":
     names = list(before_ids.values())
     # Without this the privacy check below passes on an empty mapping, which
     # is the one case where it proves nothing at all.
+    # The count, not the names. This check exists because the privacy
+    # check below passes vacuously on an empty mapping - printing the very
+    # names it guards would be a poor way to make that point, and a run of
+    # this script is a thing people paste into issues.
     check(
         "there is at least one dashboard to be careless with",
         bool(names),
-        f"ids={names}",
+        f"{len(names)} dashboards",
     )
 
     downloaded = diagnostics(access)
@@ -4197,8 +4201,17 @@ if __name__ == "__main__":
         entity_state(access, after["last_capture"]) != stamp_before,
         f"still {stamp_before}",
     )
+    # Deliberately NOT called a proof that no second listener survived the
+    # reload, which is what an earlier version of this comment claimed.
+    # `revisions` counts commits in the repository, and a duplicated
+    # listener would cause two *measurements* of the same history, not two
+    # commits - this check could not go red for it. What it does prove is
+    # that one save still makes exactly one revision after a reload, which
+    # is worth having on its own. That no second listener exists rests on
+    # `entry.async_on_unload` and the platform unload in
+    # `async_unload_entry`, and is not observable from outside the process.
     check(
-        "and it moves it exactly once",
+        "after a reload one save still makes exactly one revision",
         int(entity_state(access, after["revisions"])) == revisions_before + 1,
         f"{revisions_before} -> {entity_state(access, after['revisions'])}",
     )
