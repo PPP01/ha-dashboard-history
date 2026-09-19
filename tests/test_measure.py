@@ -47,3 +47,49 @@ def test_versions_are_counted_without_reading_the_tags(store):
     store.write_snapshot("other", "b: 1\n", "first")
     store.create_version("other/v1.0.0", "First", "")
     assert store.measure().versions == 2
+
+import os
+
+
+def _walked(path):
+    """Sum the same tree independently, for the test to compare against."""
+    logical = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            logical += os.lstat(os.path.join(root, name)).st_size
+    return logical
+
+
+def test_the_logical_size_is_the_sum_of_every_file(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    found = store.measure()
+    assert found.bytes_logical == _walked(store.path)
+
+
+def test_git_and_worktree_add_up_to_the_whole(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    found = store.measure()
+    assert found.bytes_git_logical + found.bytes_worktree_logical == found.bytes_logical
+    assert found.bytes_worktree_logical > 0
+
+
+def test_allocated_size_is_whole_blocks_or_absent(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    allocated = store.measure().bytes_allocated
+    assert allocated is None or allocated % 512 == 0
+
+
+def test_loose_objects_are_counted_and_packing_moves_them(store):
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    before = store.measure()
+    assert before.loose_objects > 0
+    assert before.packs == 0
+
+    from dulwich.repo import Repo
+
+    with Repo(str(store.path)) as repo:
+        repo.object_store.pack_loose_objects()
+    after = store.measure()
+    assert after.packs >= 1
+    assert after.loose_objects < before.loose_objects
