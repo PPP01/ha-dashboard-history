@@ -119,6 +119,8 @@ Ein loses git-Objekt ist ein paar hundert Bytes groß und belegt trotzdem einen 
 
 **Der Zustand des Sensors ist die belegte Summe**, weil das die Zahl ist, die dem Plattenplatz eines Nutzers entspricht. Logisch, `.git` gegen Arbeitskopie, lose Objekte und Packs stehen in den Attributen.
 
+**Woher die Zahl der losen Objekte und der Packs kommt: von `dulwich`**, nicht vom Verzeichnis-Walk. Die erste Fassung erkannte beide an ihrem Ort — `objects/xx/` für die losen, `objects/pack/*.pack` für die anderen — und baute damit git-Layout-Wissen in einem `os.walk` nach, in einem Projekt, dessen erste harte Regel lautet, dass nur `dulwich` solche Dinge wissen soll. `object_store.count_loose_objects()` und `count_pack_files()` sind zudem genauer als der Ortstipp: Ersteres prüft die Namenslänge gegen das Hash-Format, zählt also eine gerade geschriebene Temporärdatei nicht mit, und Letzteres lässt Packs mit `.keep`-Datei aus. Der Walk misst nur noch Bytes.
+
 Beide Zahlen kommen aus **einem** `os.lstat` je Datei – ein Verzeichnis-Walk, nicht zwei, und der belegte Wert kostet nichts zusätzlich.
 
 **Wo `st_blocks` fehlt** – Windows kennt es nicht –, bleibt der belegte Wert `null`, und der Sensor zeigt die logische Summe. Kein Schätzen, kein Hochrechnen auf eine geratene Blockgröße: Eine fehlende Zahl ist ehrlich, eine erfundene verdirbt genau die Auswertung, für die sie erfunden wurde.
@@ -134,7 +136,7 @@ Ein `DataUpdateCoordinator` ruft `measure()` über `hass.async_add_executor_job`
 
 > »Die Hälfte der Arbeit ist bereits gecacht – `survey()` und der Revisionsindex kosten bei unverändertem HEAD nichts. Unbekannt sind genau zwei Dinge: der Verzeichnis-Walk über hunderte lose Objekte und `list_versions()` über 782 Marken.«
 
-Von diesen drei Aussagen hielt genau eine. Gemessen am 2026-09-19 auf der Prüfbank, ein **warmes** `measure()` von 154,6 ms, aufgeschlüsselt:
+Von diesen drei Aussagen hielt genau eine. Gemessen am 2026-09-19 auf der Prüfbank, ein **warmes** `measure()` von 154,6 ms:
 
 | Posten | Dauer | Anteil | war hier vorhergesagt |
 |---|---|---|---|
@@ -144,11 +146,25 @@ Von diesen drei Aussagen hielt genau eine. Gemessen am 2026-09-19 auf der Prüfb
 | `_measure_disk` (der Walk) | 10,0 ms | 6 % | als eine der **zwei Unbekannten** |
 | `survey()` (gecacht) | 0,9 ms | 0,6 % | richtig |
 
-**Die beiden größten Posten waren hier gar nicht bedacht.** `_bytes_of_newest_content` muss den jüngsten Blob jedes Dashboards **entpacken**, um seine Länge zu erfahren – git kennt keine Größe ohne Inhalt –, und `commit_times` lädt für zwei Revisionen je Dashboard ein Commit-Objekt. Beides skaliert mit der **Zahl der Dashboards mal ihrer Größe**, nicht mit der Zahl der Commits. `list_versions()` wiederum wurde in der Umsetzung durch `_versions_by_key` ersetzt, das nur Ref-Namen liest, und kommt im Aufrufpfad überhaupt nicht mehr vor.
+**Die beiden größten Posten waren hier gar nicht bedacht.** `_bytes_of_newest_content` musste den jüngsten Blob jedes Dashboards **entpacken**, um seine Länge zu erfahren – git kennt keine Größe ohne Inhalt –, und `commit_times` lud für zwei Revisionen je Dashboard ein Commit-Objekt. Beides skaliert mit der **Zahl der Dashboards mal ihrer Größe**, nicht mit der Zahl der Commits. `list_versions()` wiederum wurde in der Umsetzung durch `_versions_by_key` ersetzt, das nur Ref-Namen liest, und kommt im Aufrufpfad überhaupt nicht mehr vor.
 
-**Die Zahl bleibt dennoch 15 Minuten**, und das ist kein Durchwinken. 154,6 ms sind bei einem Intervall von 15 Minuten eine Auslastung von 0,017 %, und der Posten läuft im Executor. Falsch war die Begründung, nicht die Entscheidung – und die alte Begründung hätte den nächsten Leser in die Irre geführt, der eine Verkürzung des Intervalls erwägt: Er hätte am Verzeichnis-Walk optimiert und 6 % gefunden.
+**Die Aufschlüsselung wurde daraufhin abgearbeitet** (2026-09-20). Vier Dinge änderten sich, alle ohne Verhaltensänderung: die Blob-IDs der lebenden Dashboards kommen jetzt in **einem** Tree-Lesevorgang statt aus 68 Einzelsuchen, Blobs werden über `object_store.get_raw` gelesen statt über `repo[sha].data`, das SHA-1 über den ganzen entpackten Inhalt nachrechnet; Commit-Zeiten werden direkt aus dem offenen Repository gelesen statt über `commit_times`, das jede Revision erst auflöst (drei Objektladungen statt einer); und `refs/tags` wird einmal statt zweimal gelesen.
 
-**Wer dieses Intervall künftig ändern will**, misst zuerst die Blob-Längen. Dort liegt die Hälfte, dort wächst es mit der Anlage, und dort läge auch die Abhilfe – eine Größe je Blob-ID zu merken, die inhaltsadressiert und damit unveränderlich ist. Nicht gebaut, weil 155 ms alle 15 Minuten keinen Anlass geben; benannt, damit niemand erst wieder messen muss.
+Stand danach, am selben Tag gemessen – die Prüfbank war inzwischen auf 8023 Revisionen und 833 Marken gewachsen, der Vergleich ist also leicht zugunsten des neuen Stands verzerrt:
+
+| Posten | Dauer | Anteil |
+|---|---|---|
+| Blob-Längen der **gelöschten** Dashboards (25) | 30,2 ms | 34 % |
+| `_versions_by_key` | 14,5 ms | 17 % |
+| `_measure_disk` (der Walk) | 13,7 ms | 16 % |
+| `_commit_times_at`, 122 Revisionen | 13,4 ms | 15 % |
+| Blob-Längen der **lebenden** Dashboards (43) | 5,7 ms | 6 % |
+| `survey()` (gecacht) | 0,8 ms | 0,9 % |
+| **gesamt, warm** | **85–88 ms** | |
+
+**Der größte verbliebene Posten sind die gelöschten Dashboards**, und das liegt in der Sache: Ein gelöschtes Dashboard steht nicht mehr im Baum an HEAD, also hilft der eine Tree-Lesevorgang dort nicht. Jedes muss von seinem Löschcommit aus einen Schritt zurückgehen, und das ist eine Suche je Dashboard. Wer das angehen will, misst zuerst, wie viele gelöschte Dashboards eine gewachsene Anlage wirklich hat – auf der Prüfbank sind es 25 von 68, und die Prüfbank ist in dieser Hinsicht kein guter Zeuge: `run_checks.py` legt Dashboards an und löscht sie wieder.
+
+**Die Zahl bleibt 15 Minuten.** 85 ms alle 15 Minuten sind eine Auslastung von 0,009 %, und der Posten läuft im Executor. Ein Cache je Blob-ID wäre der nächste Schritt – Blob-IDs sind inhaltsadressiert, eine gemerkte Länge kann also nie veralten – und ist ausdrücklich **nicht** gebaut: Er nähme 36 ms und brächte eine dritte Invalidierungsfläche neben `survey` und dem Revisionsindex, für eine Messung, die zweimal in der Stunde läuft. Benannt, damit niemand erst wieder messen muss.
 
 ### B4 – Der Start bleibt unangetastet, und das Entladen räumt auf
 
@@ -357,11 +373,11 @@ Erhoben am 2026-09-19 im Test-Container, auf der Prüfbank mit **7518 Commits, 6
 
 | Frage | Antwort | Folge |
 |---|---|---|
-| Dauer eines **warmen** `measure()` | **154,6 ms** (ein zweiter Lauf 193 ms – die Streuung ist Cache-Verhalten des Containers) | Intervall bleibt bei 15 Minuten. Auslastung 0,017 %. |
+| Dauer eines **warmen** `measure()` | **154,6 ms** (ein zweiter Lauf 193 ms – die Streuung ist Cache-Verhalten des Containers), nach der Überarbeitung vom 2026-09-20 **85 ms** | Intervall bleibt bei 15 Minuten. Auslastung 0,009 %. |
 | Dauer eines **kalten** `measure()` | 6.981 ms | Unkritisch, weil der erste Refresh laut B4 nicht abgewartet wird. Er trifft genau die Situation, für die B4 geschrieben wurde. |
 | Dauer des Verzeichnis-Walks | 10,0 ms | 6 % des warmen Werts – **nicht** der Posten, für den ihn B3 gehalten hat. |
 | Dauer von `list_versions()` über 793 Marken | 169,2 ms | Ohne Belang für `measure()`: Der Aufrufpfad benutzt `_versions_by_key`, das nur Ref-Namen liest (17,9 ms). Die Messung belegt, dass sich das Ersetzen gelohnt hat. |
-| Wo die Zeit **wirklich** steckt | Blob-Längen 67,9 ms, `commit_times` 45,2 ms | In B3 aufgeschlüsselt. Beide waren in der ursprünglichen Fassung dieser Spec nicht bedacht. |
+| Wo die Zeit **wirklich** steckte | Blob-Längen 67,9 ms, `commit_times` 45,2 ms | In B3 aufgeschlüsselt. Beide waren in der ursprünglichen Fassung dieser Spec nicht bedacht — und beide wurden daraufhin am 2026-09-20 abgearbeitet, siehe B3. Warm danach 85 ms. |
 
 **Wie diese Korrektur zustande kam**, weil der Weg dorthin mehr wert ist als die Zahl: Die Messung lief im Rahmen des Implementierungsplans, und dessen Aufgabe 4 trug den Satz »Weicht eine Zahl stark von der Erwartung ab, stimmt eine Annahme nicht mehr: dann anhalten, nicht die Schwelle anpassen.« Genau das trat ein. Ein Review verweigerte dreimal die Freigabe, weil die Messwerte eingetragen, die widerlegte Begründung in B3 aber stehen geblieben war. Das Anhalten war richtig: Eine Spec, deren Zahl stimmt und deren Begründung nicht, ist schlimmer als eine ohne Zahl – sie schickt den nächsten Leser an die falsche Stelle.
 

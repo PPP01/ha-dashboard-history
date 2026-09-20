@@ -16,8 +16,11 @@ FACTS = Measurement(
         DashboardFacts("wohnzimmer", 2, 268341, 2, 1740873600, 1758153600, False),
         DashboardFacts("heizung-keller", 1, 4012, 0, 1740873600, 1740873600, True),
     ),
-    bytes_logical=9182768,
     bytes_allocated=9629696,
+    # 8627657 + 555111 = 9182768, which is what `bytes_logical` answers.
+    # It is a property now rather than a field, because it was exactly
+    # that sum and nothing else - and a stored sum is a sum that can
+    # drift from its parts.
     bytes_git_logical=8627657,
     bytes_worktree_logical=555111,
     loose_objects=18,
@@ -123,7 +126,13 @@ def test_an_id_is_eight_hex_characters():
 
 
 def _every_string(value):
-    """Every string anywhere in the structure, keys included."""
+    """Every string anywhere in the structure, keys included.
+
+    The twin of `_strings` in `tests/integration/run_checks.py`, and
+    that file says why the two are copies rather than one import. **If
+    you change one, change the other** - between them they carry the
+    only promise this initiative makes about what leaves the house.
+    """
     if isinstance(value, dict):
         for key, item in value.items():
             yield key

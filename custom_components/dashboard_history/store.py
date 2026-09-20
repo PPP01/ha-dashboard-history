@@ -134,12 +134,46 @@ class Measurement:
     newest_key: str | None = None
     versions: int = 0
     dashboards: tuple[DashboardFacts, ...] = ()
-    bytes_logical: int = 0
     bytes_allocated: int | None = None
     bytes_git_logical: int = 0
     bytes_worktree_logical: int = 0
     loose_objects: int = 0
     packs: int = 0
+
+    # Derived rather than stored, all four of them. Each was a field
+    # once, and each was computed a second time by a reader that wanted
+    # it - `live` and `gone` in both `report.py` and `sensor.py`, from
+    # the same list. Two derivations of one number are two chances to
+    # disagree, and a check whose whole job is to catch that
+    # disagreement is a check that only exists because the number has
+    # two homes.
+
+    @property
+    def bytes_logical(self) -> int:
+        """What the store contains, as opposed to what it occupies."""
+        return self.bytes_git_logical + self.bytes_worktree_logical
+
+    @property
+    def bytes_on_disk(self) -> int:
+        """What it costs, falling back where the platform cannot say.
+
+        `st_blocks` does not exist on Windows, and the logical sum is
+        the honest stand-in there - a number that is too small rather
+        than one that is made up.
+        """
+        return (
+            self.bytes_allocated if self.bytes_allocated is not None
+            else self.bytes_logical
+        )
+
+    @property
+    def gone(self) -> int:
+        """Dashboards the history still holds but the installation lost."""
+        return sum(1 for facts in self.dashboards if facts.gone)
+
+    @property
+    def live(self) -> int:
+        return len(self.dashboards) - self.gone
 
 
 @dataclass(frozen=True)
@@ -2104,66 +2138,130 @@ class HistoryStore:
         half-rewritten history, and every step below survives that by
         skipping rather than raising.
         """
-        sizes = self._measure_disk()
         repo = self._repo()
-        if repo is None:
-            return Measurement(**sizes)
-        index = self._revision_index(repo)
+        sizes = self._measure_disk(repo)
+        # One exit for both, because they are one answer: there is
+        # nothing indexed to describe. Sizes are still real - a folder
+        # can hold bytes before it holds a commit.
+        index = self._revision_index(repo) if repo is not None else None
         if index is None:
             return Measurement(**sizes)
+
+        # Filtered once here rather than guarded at each of the three
+        # places below that read it.
+        by_key = {key: revs for key, revs in index.by_key.items() if revs}
 
         by_position = {position: revision for revision, position in index.order.items()}
         newest_revision = by_position.get(0)
         oldest_revision = by_position.get(max(by_position)) if by_position else None
-        edges = self.commit_times(
-            [r for r in (newest_revision, oldest_revision) if r is not None]
-        )
+
+        # One lookup for the two ends of every dashboard *and* the two
+        # ends of the whole history. They overlap almost entirely, and
+        # asking twice used to open a second repository to learn two
+        # timestamps it already had.
+        wanted = {r for revs in by_key.values() for r in (revs[0], revs[-1])}
+        wanted.update(r for r in (newest_revision, oldest_revision) if r is not None)
+        times = self._commit_times_at(repo, wanted)
+
         newest_key = next(
-            (
-                key
-                for key, revisions in index.by_key.items()
-                if revisions and revisions[0] == newest_revision
-            ),
-            None,
+            (key for key, revs in by_key.items() if revs[0] == newest_revision), None
         )
 
         live = self.survey().live
-        marks = self._versions_by_key(repo)
-        wanted = set()
-        for revisions in index.by_key.values():
-            if revisions:
-                wanted.add(revisions[0])
-                wanted.add(revisions[-1])
-        times = self.commit_times(wanted)
+        marks, total_marks = self._versions_by_key(repo)
+        at_head = self._blob_sizes_at_head(repo)
 
-        rows = []
-        for key, revisions in index.by_key.items():
-            if not revisions:
-                continue
-            rows.append(
-                DashboardFacts(
-                    key=key,
-                    revisions=len(revisions),
-                    bytes=self._bytes_of_newest_content(repo, key, revisions),
-                    versions=marks.get(key, 0),
-                    first=times.get(revisions[-1], 0),
-                    last=times.get(revisions[0], 0),
-                    gone=key not in live,
-                )
+        rows = [
+            DashboardFacts(
+                key=key,
+                revisions=len(revs),
+                bytes=(
+                    at_head[key]
+                    if key in at_head
+                    else self._bytes_of_newest_content(repo, key, revs)
+                ),
+                versions=marks.get(key, 0),
+                first=times.get(revs[-1], 0),
+                last=times.get(revs[0], 0),
+                gone=key not in live,
             )
+            for key, revs in by_key.items()
+        ]
         rows.sort(key=lambda row: (-row.revisions, row.key))
 
         return Measurement(
             revisions=len(index.order),
-            oldest=edges.get(oldest_revision) if oldest_revision else None,
-            newest=edges.get(newest_revision) if newest_revision else None,
+            oldest=times.get(oldest_revision),
+            newest=times.get(newest_revision),
             newest_key=newest_key,
-            versions=len(repo.refs.as_dict(b"refs/tags")),
+            versions=total_marks,
             dashboards=tuple(rows),
             **sizes,
         )
 
-    def _measure_disk(self) -> dict:
+    @staticmethod
+    def _commit_times_at(repo: Repo, revisions) -> dict[str, int]:
+        """When each of these commits was made, straight from an open repo.
+
+        Not `commit_times`, although it answers the same question. That
+        one puts every revision through `_resolve` first, because its
+        callers hand it whatever a person typed - an abbreviation, a
+        version name, `HEAD`. These revisions come out of the index and
+        are full commit hashes by construction, so the resolving is
+        three object loads apiece to learn what was already known.
+        Measured on 2026-09-20 over 122 revisions: 29.9 ms against
+        10.3 ms.
+        """
+        found: dict[str, int] = {}
+        for revision in revisions:
+            try:
+                found[revision] = repo[revision.encode()].commit_time
+            except KeyError:
+                # Pruned by a `forget` between the walk and this read.
+                continue
+        return found
+
+    @staticmethod
+    def _blob_sizes_at_head(repo: Repo) -> dict[str, int]:
+        """Every live dashboard's length, out of one tree.
+
+        The alternative is asking `_blob_at` per dashboard, and that is
+        where this measurement used to spend most of its time: measured
+        on 2026-09-20, finding 68 blob ids that way cost 33.9 ms against
+        0.3 ms for reading them all out of the tree at HEAD once.
+
+        `get_raw` rather than `repo[sha].data`: the latter rebuilds the
+        object through `ShaFile.from_raw_string`, which recomputes the
+        SHA-1 over the whole inflated blob to verify it. For a few
+        hundred kilobytes apiece that is about a third of the read, and
+        nothing here needs the check - the id came out of the tree a
+        line ago.
+
+        Deleted dashboards are absent from HEAD by definition and are
+        not in the answer; `_bytes_of_newest_content` covers those, and
+        that is the only case it is needed for now.
+        """
+        head = HistoryStore._resolve(repo, "HEAD")
+        if head is None:
+            return {}
+        try:
+            entries = repo[repo[head.encode()].tree].items()
+        except KeyError:
+            return {}
+        found: dict[str, int] = {}
+        for entry in entries:
+            if not entry.path.endswith(b".yaml"):
+                continue
+            try:
+                found[entry.path.decode()[: -len(".yaml")]] = len(
+                    repo.object_store.get_raw(entry.sha)[1]
+                )
+            except KeyError:
+                # Pruned between the tree read and this one.
+                continue
+        return found
+
+    def _measure_disk(self, repo: Repo | None) -> dict:
         """Walk the store once and weigh it in two ways.
 
         Two numbers rather than one, and that is the point of this
@@ -2179,10 +2277,21 @@ class HistoryStore:
         Both numbers come out of one `lstat` per file. It is one walk,
         not two, and the allocated figure costs nothing on top.
 
-        `st_blocks` does not exist on Windows. There the allocated sum
-        stays `None` rather than being estimated against a guessed block
-        size: a missing number is honest, an invented one spoils the very
-        analysis it was invented for.
+        `st_blocks` does not exist on Windows, and that is a property of
+        the platform, asked once here rather than of every file. There
+        the allocated sum stays `None` rather than being estimated
+        against a guessed block size: a missing number is honest, an
+        invented one spoils the very analysis it was invented for.
+
+        The loose and pack counts come from `dulwich`, not from this
+        walk. Recognising them by their place - `objects/xx/` for the
+        loose ones, `objects/pack/*.pack` for the others - meant
+        rebuilding git's layout inside an `os.walk`, in a project whose
+        first hard rule is that only `dulwich` may know such things.
+        Its own counters are better than the guess as well:
+        `count_loose_objects` checks the name length against the hash
+        format, so a temporary file being written is not counted, and
+        `count_pack_files` leaves out packs marked `.keep`.
 
         Only a *vanished* file is skipped. A permission error or a bad
         disk is not skipped, it is raised: the coordinator turns that
@@ -2192,68 +2301,48 @@ class HistoryStore:
         than no measurement at all. `os.walk` is given `onerror` for the
         same reason - without it, it hides directory errors by design.
         """
-        if not self.path.exists():
-            return {
-                "bytes_logical": 0,
-                "bytes_allocated": 0 if hasattr(os.stat_result, "st_blocks") else None,
-                "bytes_git_logical": 0,
-                "bytes_worktree_logical": 0,
-                "loose_objects": 0,
-                "packs": 0,
-            }
 
         def _raise(error: OSError) -> None:
             raise error
 
+        # Built like the walk's own roots rather than taken from
+        # `repo.controldir()`: the comparison below is between paths,
+        # and one absolute path against one relative path is a
+        # comparison that quietly answers no.
         git = self.path / ".git"
-        objects = git / "objects"
-        packs = objects / "pack"
-        logical = allocated = git_logical = worktree_logical = 0
-        loose_count = pack_count = 0
-        have_blocks = True
+        have_blocks = hasattr(os.stat_result, "st_blocks")
+        git_logical = worktree_logical = allocated = 0
 
-        for root, _dirs, files in os.walk(self.path, onerror=_raise):
-            here = Path(root)
-            in_git = here == git or git in here.parents
-            for name in files:
-                try:
-                    stat = os.lstat(here / name)
-                except FileNotFoundError:
-                    # A `garbage_collect` is pruning while we count. One
-                    # file missing from a size is nothing. Every other
-                    # OSError travels on - see the docstring.
-                    continue
-                logical += stat.st_size
-                blocks = getattr(stat, "st_blocks", None)
-                if blocks is None:
-                    have_blocks = False
-                else:
-                    allocated += blocks * 512
-                if in_git:
-                    git_logical += stat.st_size
-                else:
-                    worktree_logical += stat.st_size
-                if here == packs:
-                    if name.endswith(".pack"):
-                        pack_count += 1
-                elif here.parent == objects and len(here.name) == 2:
-                    # git fans loose objects out over two-character
-                    # directories. `objects/info` is neither, which is
-                    # why the name length is asked and not just the parent.
-                    loose_count += 1
+        if self.path.exists():
+            for root, _dirs, files in os.walk(self.path, onerror=_raise):
+                here = Path(root)
+                in_git = here == git or git in here.parents
+                for name in files:
+                    try:
+                        stat = os.lstat(here / name)
+                    except FileNotFoundError:
+                        # A `garbage_collect` is pruning while we count.
+                        # One file missing from a size is nothing. Every
+                        # other OSError travels on - see the docstring.
+                        continue
+                    if in_git:
+                        git_logical += stat.st_size
+                    else:
+                        worktree_logical += stat.st_size
+                    if have_blocks:
+                        allocated += stat.st_blocks * 512
 
         return {
-            "bytes_logical": logical,
             "bytes_allocated": allocated if have_blocks else None,
             "bytes_git_logical": git_logical,
             "bytes_worktree_logical": worktree_logical,
-            "loose_objects": loose_count,
-            "packs": pack_count,
+            "loose_objects": repo.object_store.count_loose_objects() if repo else 0,
+            "packs": repo.object_store.count_pack_files() if repo else 0,
         }
 
     @staticmethod
-    def _versions_by_key(repo: Repo) -> dict[str, int]:
-        """How many version marks each dashboard has.
+    def _versions_by_key(repo: Repo) -> tuple[dict[str, int], int]:
+        """How many version marks each dashboard has, and how many there are.
 
         Counted from the ref *names* alone - `refs/tags/<key>/vX.Y.Z` -
         without loading a single tag object. `list_versions` would read
@@ -2264,23 +2353,37 @@ class HistoryStore:
         dashboard recorded before the key rule existed can be named
         `foo/bar`, and splitting from the left would file its versions
         under `foo`.
+
+        The total comes out of the same pass, and it is not the sum of
+        the per-key counts: a mark without a slash - `refs/tags/v1` -
+        belongs to no dashboard, so it appears in the total and in no
+        row. `as_dict` caches nothing, and scanning `packed-refs` twice
+        cost 17.9 ms a second time on the bench for a number this loop
+        already had.
         """
         counted: dict[str, int] = {}
+        total = 0
         for ref in repo.refs.as_dict(b"refs/tags"):
+            total += 1
             if b"/" not in ref:
                 continue
             key = ref.rsplit(b"/", 1)[0].decode()
             counted[key] = counted.get(key, 0) + 1
-        return counted
+        return counted, total
 
     def _bytes_of_newest_content(self, repo: Repo, key: str, revisions: list) -> int:
         """The length of the newest state of `key` that had any.
 
-        For a live dashboard that is the state at HEAD and the first
-        revision answers. For a deleted one the newest revision is the
-        deletion commit, whose tree no longer holds the file at all - so
-        the loop steps back to the state before it, which is exactly what
-        a restore would bring back.
+        For **deleted** dashboards only. The live ones come out of
+        `_blob_sizes_at_head` in one tree read; this walks back one
+        revision at a time, which is the right shape for a dashboard
+        whose newest commit is its deletion - that commit's tree no
+        longer holds the file, so the loop steps back to the state
+        before it, which is exactly what a restore would bring back.
+
+        `get_raw` rather than `repo[blob_id].data`, for the reason given
+        in `_blob_sizes_at_head`: the verifying path recomputes SHA-1
+        over the whole inflated blob, and the id came from a tree.
 
         Zero where nothing is found. A dashboard that never held content
         cannot occur through `write_snapshot`, but a history rewritten by
@@ -2292,7 +2395,7 @@ class HistoryStore:
             if blob_id is None:
                 continue
             try:
-                return len(repo[blob_id].data)
+                return len(repo.object_store.get_raw(blob_id)[1])
             except KeyError:
                 # Pruned between the tree lookup and the read.
                 return 0

@@ -3959,7 +3959,16 @@ def diagnostics(access: str) -> dict:
 
 
 def _strings(value):
-    """Every string anywhere in the structure, keys included."""
+    """Every string anywhere in the structure, keys included.
+
+    Deliberately a second copy: `tests/test_report.py` holds the same
+    function as `_every_string`, and the two are kept identical by hand.
+    Sharing it would mean a module that both a pytest file and this
+    script can import, and this script may import nothing from the
+    pytest suite - it has to run where pytest is not installed. A
+    ten-line generator duplicated on purpose is cheaper than that
+    machinery; **if you change one, change the other.**
+    """
     if isinstance(value, dict):
         for key, item in value.items():
             yield key
@@ -4106,8 +4115,6 @@ if __name__ == "__main__":
     )
 
     names = list(before_ids.values())
-    # Without this the privacy check below passes on an empty mapping, which
-    # is the one case where it proves nothing at all.
     # The count, not the names. This check exists because the privacy
     # check below passes vacuously on an empty mapping - printing the very
     # names it guards would be a poor way to make that point, and a run of
@@ -4127,23 +4134,40 @@ if __name__ == "__main__":
         f"got {sorted(body)}",
     )
 
-    # The whole downloaded file, not just the part we built. The pytest case
-    # cannot see Home Assistant's envelope - it does not exist there - and
-    # the envelope is exactly what the first draft of the spec overlooked.
-    # A test that checks only what you built yourself would not have found it.
-    haystack = "\n".join(_strings(downloaded))
+    # Two checks, because the two halves of this file carry two different
+    # promises (spec B6), and one check over both could only hold the
+    # weaker of them.
+    #
+    # Ours is the `data` block, and there the promise is absolute.
     report_haystack = "\n".join(_strings(body))
-    # manifest.json lists the static dependency "lovelace" which appears
-    # in integration_manifest. An installation can also have a dashboard
-    # with url_path "lovelace" (see const.py:41-43). That static dependency
-    # string in the envelope is not a leak, but the dashboard key must still
-    # not appear in the report itself.
-    leaked = [
-        name for name in names
-        if name and name in haystack and not (name == "lovelace" and name not in report_haystack)
-    ]
+    leaked = [name for name in names if name in report_haystack]
     check(
-        "no dashboard name appears anywhere in the downloaded file",
+        "no dashboard name appears in the report itself",
+        not leaked,
+        f"leaked={leaked}",
+    )
+
+    # The envelope is Home Assistant's, and the pytest case cannot see it
+    # at all - it does not exist there, and it is exactly what the first
+    # draft of the spec overlooked. A test that checks only what you built
+    # yourself would not have found that.
+    #
+    # `integration_manifest` comes out of the haystack rather than one
+    # name coming out of the needles. It lists this integration's static
+    # dependency "lovelace", and an installation may have a dashboard of
+    # that url_path - so the earlier form excused the *name* everywhere
+    # in the file, including places where it would have been a real leak.
+    # Excusing the one block with fixed, known content excuses it only
+    # where it is known to be harmless, and the next such constant needs
+    # no new exception.
+    envelope = {
+        key: value
+        for key, value in downloaded.items()
+        if key not in ("data", "integration_manifest")
+    }
+    leaked = [name for name in names if name in "\n".join(_strings(envelope))]
+    check(
+        "no dashboard name appears in Home Assistant's envelope either",
         not leaked,
         f"leaked={leaked}",
     )
@@ -4162,18 +4186,30 @@ if __name__ == "__main__":
     reload_entry(access)
 
     after = entity_ids(access)
-    # The opening pass runs in a background task (B4) and takes a few
-    # seconds on a grown bench. Wait until the first refresh has landed.
-    for _ in range(30):
-        if entity_state(access, after["revisions"]) not in (None, "unknown"):
-            break
-        time.sleep(1)
 
+    async def _reading(entity: str):
+        return entity_state(access, entity)
+
+    # Through `_wait_for`, the one loop behind every wait in this file -
+    # it hands back the last answer, so a check that follows can say what
+    # was there. The opening pass runs in a background task (B4) and takes
+    # a few seconds on a grown bench.
+    asyncio.run(
+        _wait_for(
+            lambda: _reading(after["revisions"]),
+            lambda value: value not in (None, "unknown"),
+            30,
+        )
+    )
+
+    # Asked once. Two calls each pulled a full `/api/states` dump, and the
+    # number in the failure message could differ from the one the check
+    # failed on.
+    standing = count_entities(access, "sensor.dashboard_history")
     check(
         "a reload leaves exactly the five readings, none orphaned",
-        set(after) == set(readings)
-        and count_entities(access, "sensor.dashboard_history") == 5,
-        f"{sorted(after)} / {count_entities(access, 'sensor.dashboard_history')}",
+        set(after) == set(readings) and standing == 5,
+        f"{sorted(after)} / {standing}",
     )
     check(
         "the ids survive a reload unchanged",
@@ -4183,19 +4219,23 @@ if __name__ == "__main__":
 
     # Counting entities is not enough: a listener left hanging on the old
     # store would still be subscribed, and a coordinator left behind would
-    # still be running. What proves the wiring is intact is that a *new*
-    # change still moves the timestamp - and a second listener would show up
-    # as a doubled measurement, which the revision count would disagree with.
+    # still be running. What this can show is that a *new* change still
+    # arrives after a reload - that the wiring is intact. It cannot show
+    # that nothing is wired twice; see the note on the second check below.
     stamp_before = entity_state(access, after["last_capture"])
     revisions_before = int(entity_state(access, after["revisions"]))
     asyncio.run(touch_probe(access))
-    # Wait until the timestamp moves, plus a fixed grace period so any
-    # duplicate listener event would have landed.
-    for _ in range(30):
-        if entity_state(access, after["last_capture"]) != stamp_before:
-            break
-        time.sleep(1)
-    time.sleep(5)
+    asyncio.run(
+        _wait_for(
+            lambda: _reading(after["last_capture"]),
+            lambda value: value != stamp_before,
+            30,
+        )
+    )
+    # A fixed grace period on top: the debouncer's cooldown is ten
+    # seconds, and a second measurement arriving late must have landed
+    # before the counts below are read.
+    time.sleep(12)
     check(
         "after a reload a recorded change still moves the timestamp",
         entity_state(access, after["last_capture"]) != stamp_before,

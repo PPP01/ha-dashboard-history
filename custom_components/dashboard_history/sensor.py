@@ -21,7 +21,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import report
 from .const import DOMAIN, OPTION_DAILY_VERSIONS
-from .coordinator import MeasurementCoordinator, report_secret
+from .coordinator import MeasurementCoordinator
 from .store import Measurement
 
 
@@ -69,12 +69,10 @@ READINGS: tuple[Reading, ...] = (
         native_unit_of_measurement=UnitOfInformation.BYTES,
         suggested_unit_of_measurement=UnitOfInformation.MEGABYTES,
         state_class=SensorStateClass.MEASUREMENT,
-        # The allocated figure is the state, because that is what costs a
-        # user disk space. Where the platform has no `st_blocks` -
-        # Windows - it is absent and the logical sum stands in.
-        value=lambda m: (
-            m.bytes_allocated if m.bytes_allocated is not None else m.bytes_logical
-        ),
+        # What it costs, not what it contains - and `bytes_on_disk`
+        # carries the platform fallback so that a second reader cannot
+        # decide it differently.
+        value=lambda m: m.bytes_on_disk,
         extra=lambda m, secret, daily: {
             "bytes_logical": m.bytes_logical,
             "bytes_allocated": m.bytes_allocated,
@@ -104,9 +102,9 @@ READINGS: tuple[Reading, ...] = (
         key="dashboards",
         translation_key="dashboards",
         state_class=SensorStateClass.MEASUREMENT,
-        value=lambda m: sum(1 for d in m.dashboards if not d.gone),
+        value=lambda m: m.live,
         extra=lambda m, secret, daily: {
-            "gone": sum(1 for d in m.dashboards if d.gone),
+            "gone": m.gone,
             "ever": len(m.dashboards),
             # The lookup table, and the reason it lives on an entity
             # rather than in the report: attributes stay on this
@@ -179,6 +177,6 @@ class HistoryReading(CoordinatorEntity[MeasurementCoordinator], SensorEntity):
             return {}
         return self.entity_description.extra(
             self.coordinator.data,
-            report_secret(self.hass, self._entry),
+            self.coordinator.secret,
             self._entry.options.get(OPTION_DAILY_VERSIONS, True),
         )

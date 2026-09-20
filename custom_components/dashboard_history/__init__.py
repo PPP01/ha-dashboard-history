@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 
 from . import panel, websocket_api
 from .capture import HistoryCapture
@@ -28,7 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
     capture = HistoryCapture(hass, store)
     milestones = Milestones(hass, store, entry)
-    coordinator = MeasurementCoordinator(hass, store)
+    coordinator = MeasurementCoordinator(hass, entry, store)
     hass.data[DOMAIN] = {
         "store": store,
         "capture": capture,
@@ -50,38 +50,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Sensors that read `unknown` for a minute are harmless; a start
     # that waits for a directory walk is not.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    @callback
-    def _remeasure(_event) -> None:
-        """Measure again - off the startup path, and that is the point.
-
-        A `@callback` that starts a background task, rather than an
-        `async def` listener. The difference is the hard rule about not
-        blocking the start, and it is not theoretical.
-
-        An `async def` listener is dispatched through
-        `async_run_hass_job(..., background=False)`, which makes a
-        *tracked* task - one that `async_block_till_done` waits for while
-        Home Assistant is coming up. And `Debouncer.async_call` does not
-        debounce its own first call: with no timer running it executes
-        the job inline and awaits it. Cold, that measurement took 6.98 s
-        on the test bench on 2026-09-19.
-
-        The opening pass fires this very event, so the two together would
-        have put seven seconds back onto the start - through the side
-        door, six months after the opening pass was moved off it for
-        six. A background task of the config entry is ignored by
-        `async_block_till_done` and cancelled when the entry unloads.
-        """
-        entry.async_create_background_task(
-            hass, coordinator.async_request_refresh(), f"{DOMAIN} remeasure"
-        )
-
-    # Through `entry.async_on_unload`, so that unloading drops it. A
-    # listener remembered in a second place is a listener forgotten in
-    # one of them, and after a reload it would measure against a store
-    # nobody uses any more.
-    entry.async_on_unload(hass.bus.async_listen(EVENT_HISTORY_UPDATED, _remeasure))
 
     # Armed before the recorder rather than after it, and `async_arm`
     # carries the whole reason: the opening pass announces what it
@@ -117,7 +85,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # `write_snapshot` compares against HEAD rather than against the
     # working tree exactly so that an interrupted run repairs itself.
     entry.async_create_background_task(
-        hass, _async_open(hass, capture, milestones, coordinator), f"{DOMAIN} opening pass"
+        hass,
+        _async_open(hass, entry, capture, milestones, coordinator),
+        f"{DOMAIN} opening pass",
     )
 
     _LOGGER.debug("Dashboard History set up")
@@ -126,6 +96,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_open(
     hass: HomeAssistant,
+    entry: ConfigEntry,
     capture: HistoryCapture,
     milestones: Milestones,
     coordinator: MeasurementCoordinator,
@@ -162,6 +133,31 @@ async def _async_open(
     # is an honest zero, but a measurement taken after the opening pass
     # is the one somebody wants to see on the integration page.
     await coordinator.async_refresh()
+
+    # And only now does the recorder's event start a measurement. The
+    # opening pass fires `EVENT_HISTORY_UPDATED` for every dashboard it
+    # records, and a listener armed before it would measure a history
+    # that is still being written - twice, once at the first event and
+    # once when the debouncer's cooldown runs out - only for the line
+    # above to replace both answers a moment later. Two cold
+    # measurements of a half-written repository, about seven seconds of
+    # executor and disk work, thrown away on arrival.
+    #
+    # `entry.async_on_unload` all the same: it holds whatever is
+    # registered by the time the entry unloads, and a listener
+    # remembered in a second place is a listener forgotten in one of
+    # them.
+    #
+    # A plain listener, and no wrapper around it. What used to make this
+    # a `@callback` starting its own background task now sits where it
+    # belongs, on the coordinator's debouncer: with `immediate=False`
+    # this call only arms a timer and returns, and with
+    # `background=True` the measurement it eventually starts is
+    # untracked. See `coordinator.py`.
+    async def _remeasure(_event) -> None:
+        await coordinator.async_request_refresh()
+
+    entry.async_on_unload(hass.bus.async_listen(EVENT_HISTORY_UPDATED, _remeasure))
 
     _LOGGER.debug("Dashboard History finished its opening pass")
 

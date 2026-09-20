@@ -134,8 +134,6 @@ def build(
         }
         for facts in measurement.dashboards
     ]
-    gone = sum(1 for facts in measurement.dashboards if facts.gone)
-    live = len(measurement.dashboards) - gone
     return {
         "schema": SCHEMA,
         "measured_at": (
@@ -147,8 +145,8 @@ def build(
         "environment": _environment(),
         "settings": {"daily_versions": daily_versions},
         "totals": {
-            "dashboards_live": live,
-            "dashboards_gone": gone,
+            "dashboards_live": measurement.live,
+            "dashboards_gone": measurement.gone,
             # Written out rather than left to be worked out, so that an
             # inconsistency in the report shows up instead of cancelling
             # itself.

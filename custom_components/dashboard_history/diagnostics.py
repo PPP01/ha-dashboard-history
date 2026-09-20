@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 
 from . import report
 from .const import DOMAIN, OPTION_DAILY_VERSIONS
-from .coordinator import MeasurementCoordinator, report_secret
+from .coordinator import MeasurementCoordinator
 
 
 async def async_get_config_entry_diagnostics(
@@ -38,7 +38,7 @@ async def async_get_config_entry_diagnostics(
     # zeros, because zeros are what a real but empty history looks like.
     return report.build(
         coordinator.data,
-        report_secret(hass, entry),
+        coordinator.secret,
         daily_versions=entry.options.get(OPTION_DAILY_VERSIONS, True),
         # The coordinator's own timestamp. `DataUpdateCoordinator` has
         # no `last_update_time` - checked against 2026.8.3 - and it
