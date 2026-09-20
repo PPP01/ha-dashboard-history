@@ -20,6 +20,27 @@ def store(tmp_path):
     return s
 
 
+def test_ensure_clears_stale_lock_files(tmp_path):
+    """A lock left by an interrupted `forget` must not disable the next one.
+
+    `ensure()` runs once per Home Assistant start, before this process
+    has touched the repository, so a `.lock` file already on disk was
+    left by a process that no longer exists — see issue #19.
+    """
+    history = HistoryStore(tmp_path / "history")
+    history.ensure()
+    packed_refs_lock = history.path / ".git" / "packed-refs.lock"
+    packed_refs_lock.write_bytes(b"stale")
+    tag_lock = history.path / ".git" / "refs" / "tags" / "dashboard" / "v1.lock"
+    tag_lock.parent.mkdir(parents=True)
+    tag_lock.touch()
+
+    history.ensure()
+
+    assert not packed_refs_lock.exists()
+    assert not tag_lock.exists()
+
+
 def test_first_snapshot_creates_a_revision(store):
     assert store.write_snapshot("home", "a: 1\n", "first") is not None
 

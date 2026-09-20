@@ -436,17 +436,49 @@ class HistoryStore:
     # -- writing -------------------------------------------------------
 
     def ensure(self) -> None:
-        """Create the repository if it does not exist yet."""
+        """Create the repository, or clear locks left by a killed process."""
         with self._lock:
             self._ensure()
 
     def _ensure(self) -> None:
         """Same, for callers that already hold the lock."""
-        if (self.path / ".git").exists():
+        git_dir = self.path / ".git"
+        if git_dir.exists():
+            self._clear_stale_locks(git_dir)
             return
         self.path.mkdir(parents=True, exist_ok=True)
         porcelain.init(str(self.path))
         _LOGGER.info("Created dashboard history repository at %s", self.path)
+
+    def _clear_stale_locks(self, git_dir: Path) -> None:
+        """Remove `.lock` files left by a git operation that was killed.
+
+        dulwich writes packed and loose refs atomically through a
+        sibling `.lock` file. `ensure()` runs once per Home Assistant
+        start, before this process has written anything, so any lock
+        already on disk was left by a process that no longer exists -
+        removing it is always safe. Leaving it disables `forget` for
+        good, since every later attempt fails taking the same lock
+        (issue #19).
+
+        Restricted to `refs/` rather than the whole `.git` directory:
+        that is the only place besides the top level where dulwich
+        takes this kind of lock, and the top level is checked directly.
+        Objects are written through a rename, not a lock file, and a
+        history can hold thousands of them - walking that tree on every
+        start would cost what `ensure()` is meant not to.
+        """
+        locks = list(git_dir.glob("*.lock"))
+        refs_dir = git_dir / "refs"
+        if refs_dir.is_dir():
+            locks.extend(refs_dir.rglob("*.lock"))
+        for lock in locks:
+            lock.unlink(missing_ok=True)
+            _LOGGER.warning(
+                "Removed stale lock file left by an interrupted git "
+                "operation: %s",
+                lock,
+            )
 
     def _file_for(self, key: str, *folders: str) -> Path:
         """The file a key names in the store, or a refusal.
