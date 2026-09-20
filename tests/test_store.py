@@ -802,6 +802,20 @@ def test_a_lightweight_tag_is_rewritten_rather_than_left_stale(store):
         assert sha in alive, f"{_as_text(sha)} is not in the rewritten history"
 
 
+def test_forgetting_clears_the_reflog_that_still_named_it(store):
+    """`forget` moves refs without passing dulwich a message, so its own
+    writes add no reflog line - but every earlier, ordinary commit did,
+    and those lines survive the rewrite untouched. See issue #21.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone: 1 added")
+
+    store.forget("gone")
+
+    reflog = store.path / ".git" / "logs" / "refs" / "heads" / "master"
+    assert not reflog.exists()
+
+
 def test_forgetting_an_unknown_dashboard_changes_nothing(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     before = [c.revision for c in store.list_changes("home")]

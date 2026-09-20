@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -1175,6 +1176,16 @@ class HistoryStore:
         # still worth saying - it is a fifth of the wait.
         say("cleaning", 0, 0)
         garbage_collect(repo, prune=True, grace_period=0)
+
+        # The rewrite above moves refs without passing dulwich a message,
+        # so none of it adds a reflog line - but every ordinary commit
+        # before it did, and those lines outlive the objects they name:
+        # the collection just above only prunes what refs and notes point
+        # to. Nothing in this project reads `.git/logs` (it exists for
+        # git's own tooling, which this integration never shells out to),
+        # so there is nothing to preserve - and dulwich recreates whatever
+        # reflog file it next needs to write to. See issue #21.
+        shutil.rmtree(self.path / ".git" / "logs", ignore_errors=True)
         return removed
 
     def _drop_from_index(self, repo: Repo, key: str) -> None:
