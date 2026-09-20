@@ -465,12 +465,25 @@ class HistoryStore:
         """Remove `.lock` files left by a git operation that was killed.
 
         dulwich writes packed and loose refs atomically through a
-        sibling `.lock` file. `ensure()` runs once per Home Assistant
-        start, before this process has written anything, so any lock
-        already on disk was left by a process that no longer exists -
-        removing it is always safe. Leaving it disables `forget` for
-        good, since every later attempt fails taking the same lock
-        (issue #19).
+        sibling `.lock` file. The *first* `ensure()` this process makes
+        for this path runs before this process has written anything, so
+        any lock already on disk at that point was left by a process
+        that no longer exists - removing it is always safe. Leaving it
+        disables `forget` for good, since every later attempt fails
+        taking the same lock (issue #19).
+
+        Never repeated after that first call, and that restriction is
+        load-bearing, not a minor optimisation: a *reload* builds a new
+        `HistoryStore` - a new instance, a new `threading.Lock` - while
+        a write dispatched through `hass.async_create_task` before the
+        reload can still be running in the executor, unwaited, holding
+        a lock of its own. That process is not dead. Sweeping on every
+        call raced exactly that write in the review of issue #19's
+        first fix, breaking its rename with `FileNotFoundError`. `_ensure`
+        already serialises every call to this store instance through
+        `self._lock`, but a reload's old and new instances share no
+        lock at all - `_swept_paths` is what stands in for one, across
+        instances, for the life of this process.
 
         Restricted to `refs/` rather than the whole `.git` directory:
         that is the only place besides the top level where dulwich
@@ -1063,12 +1076,36 @@ class HistoryStore:
                 # paths as a tuple, which was the whole of the report in
                 # issue #19 - naming what happened and how to clear it
                 # replaces it here rather than at every caller.
+                #
+                # Which sentence is true depends on *where* the lock was
+                # met. `_point_head` and `_rewrite_notes` write only
+                # loose refs, never `packed-refs.lock`; `_rewrite_tags`
+                # is the one call that does, and it runs after both have
+                # already succeeded. A lock met there means `key` is
+                # already gone from HEAD - claiming the history is
+                # unaffected there is the false reassurance the review
+                # of the first fix found, and a repeat `forget` cannot
+                # repair it: `list_all_dashboards` below no longer lists
+                # `key`, so a second call returns 0 without ever
+                # reaching the tags this one did not finish.
+                lockfile = os.fsdecode(exc.lockfilename)
+                if key in set(self.list_all_dashboards()):
+                    raise ValueError(
+                        "forget could not finish: a lock file from an "
+                        f"earlier attempt is still in place ({lockfile}). "
+                        "Nothing was written yet, so the history is "
+                        "unaffected. Restart Home Assistant to clear the "
+                        "lock, then try again."
+                    ) from exc
                 raise ValueError(
                     "forget could not finish: a lock file from an earlier "
-                    f"attempt is still in place ({os.fsdecode(exc.lockfilename)}). "
-                    "The history is unaffected - nothing was lost. "
-                    "Restart Home Assistant to clear the lock, then try "
-                    "again."
+                    f"attempt is still in place ({lockfile}), after {key} "
+                    "was already removed from the history. Restarting "
+                    "Home Assistant clears the lock, but running forget "
+                    "again will not repair this by itself - it will find "
+                    f"{key} already gone and report nothing removed, "
+                    "while other dashboards' tags may still be the old "
+                    "ones."
                 ) from exc
 
     def _forget(self, repo: Repo, key: str, say: _Progress) -> int:

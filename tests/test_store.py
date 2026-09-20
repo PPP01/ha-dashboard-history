@@ -847,6 +847,35 @@ def test_forgetting_reports_a_held_lock_plainly(store):
     assert not message.startswith("(")
 
 
+def test_forgetting_reports_a_lock_hit_after_head_already_moved(store):
+    """A lock met after HEAD has already moved must not claim otherwise.
+
+    `_point_head` and `_rewrite_notes` touch loose refs only and do not
+    need `packed-refs.lock` at all; `_rewrite_tags` is what calls
+    `add_packed_refs`, after both have already succeeded. A lock found
+    only there means the forgotten dashboard is already gone from HEAD
+    and its notes have already moved - "the history is unaffected"
+    would be the exact false reassurance the review of issue #19's
+    first fix found. A second `forget` cannot repair this by itself:
+    `key` is no longer in `list_all_dashboards()`, so it returns 0
+    without touching the tags `_rewrite_tags` never got to.
+    """
+    revision = store.write_snapshot("vanished", "a: 1\n", "first")
+    store.create_version("vanished/v1.0.0", "Vanished", "", revision)
+    store.write_snapshot("staying", "b: 1\n", "first")
+    lock = store.path / ".git" / "packed-refs.lock"
+    lock.touch()
+
+    with pytest.raises(ValueError, match="lock") as excinfo:
+        store.forget("vanished")
+
+    assert "vanished" not in store.list_all_dashboards()
+    message = str(excinfo.value)
+    assert "vanished" in message
+    assert "unaffected" not in message.lower()
+    assert "nothing was lost" not in message.lower()
+
+
 def _lightweight_tag(store, name: str, revision: str) -> None:
     """A tag made by hand: a ref straight to the commit, no tag object.
 
