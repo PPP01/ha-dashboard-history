@@ -810,10 +810,35 @@ def test_forgetting_clears_the_reflog_that_still_named_it(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     store.write_snapshot("gone", "b: 1\n", "gone: 1 added")
 
+    logs_dir = store.path / ".git" / "logs"
+    before = [f for f in logs_dir.rglob("*") if f.is_file()]
+    assert before, "expected a reflog before forget"
+    assert any("gone" in f.read_text() for f in before)
+
     store.forget("gone")
 
-    reflog = store.path / ".git" / "logs" / "refs" / "heads" / "master"
-    assert not reflog.exists()
+    assert not logs_dir.exists()
+
+
+def test_forgetting_reports_a_reflog_it_could_not_clear(store, monkeypatch, caplog):
+    """`ignore_errors=True` treated a permission problem exactly like the
+    common, harmless case of no reflog existing yet - only the second is
+    safe to stay silent about. A real failure must stay visible, and
+    must not turn an otherwise-successful forget into a reported one.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+
+    def refuse(path, *args, **kwargs):
+        raise PermissionError("no permission to remove the reflog")
+
+    monkeypatch.setattr(store_module.shutil, "rmtree", refuse)
+
+    with caplog.at_level("WARNING"):
+        assert store.forget("gone") > 0
+
+    assert "gone" not in store.list_all_dashboards()
+    assert any("reflog" in record.message.lower() for record in caplog.records)
 
 
 def test_forgetting_an_unknown_dashboard_changes_nothing(store):

@@ -1185,7 +1185,22 @@ class HistoryStore:
         # git's own tooling, which this integration never shells out to),
         # so there is nothing to preserve - and dulwich recreates whatever
         # reflog file it next needs to write to. See issue #21.
-        shutil.rmtree(self.path / ".git" / "logs", ignore_errors=True)
+        #
+        # Only a missing directory is tolerated here - the ordinary case,
+        # since a freshly created repository has no reflog yet. Anything
+        # else (no permission, a read-only filesystem) is a real failure
+        # and stays visible instead of vanishing behind `ignore_errors`:
+        # `forget` already renamed refs, rewrote notes and pruned objects
+        # by this point, so raising here would report the whole operation
+        # as failed when it had, in fact, already succeeded - and a
+        # second attempt could not repair anything, since the dashboard
+        # is already gone from HEAD.
+        try:
+            shutil.rmtree(self.path / ".git" / "logs")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            _LOGGER.exception("Could not clear the reflog after forgetting %s", key)
         return removed
 
     def _drop_from_index(self, repo: Repo, key: str) -> None:
