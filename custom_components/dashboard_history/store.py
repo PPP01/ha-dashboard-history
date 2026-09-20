@@ -33,6 +33,7 @@ except ImportError:  # pragma: no cover - the flat path, used by pytest
 
 from dulwich import porcelain
 from dulwich.errors import MissingCommitError, RefFormatError
+from dulwich.file import FileLocked
 from dulwich.repo import Repo
 
 _LOGGER = logging.getLogger(__name__)
@@ -1041,7 +1042,24 @@ class HistoryStore:
             # failure halfway through must not leave one behind either.
             self._index = None
             self._survey = None
-            return self._forget(repo, key, _Progress(progress))
+            try:
+                return self._forget(repo, key, _Progress(progress))
+            except FileLocked as exc:
+                # `ensure()` clears a lock left by a *dead* process before
+                # any call can reach here - see issue #19. What can still
+                # arrive is the other case: an earlier `forget` in this
+                # same, still-running process left one behind without
+                # crashing. `str(exc)` on the bare exception is the two
+                # paths as a tuple, which was the whole of the report in
+                # issue #19 - naming what happened and how to clear it
+                # replaces it here rather than at every caller.
+                raise ValueError(
+                    "forget could not finish: a lock file from an earlier "
+                    f"attempt is still in place ({os.fsdecode(exc.lockfilename)}). "
+                    "The history is unaffected - nothing was lost. "
+                    "Restart Home Assistant to clear the lock, then try "
+                    "again."
+                ) from exc
 
     def _forget(self, repo: Repo, key: str, say: _Progress) -> int:
         from dulwich.objects import Commit, Tag, Tree  # noqa: PLC0415

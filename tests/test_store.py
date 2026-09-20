@@ -795,6 +795,29 @@ def test_forgetting_is_refused_for_nothing_and_survives_an_empty_repo(tmp_path):
     assert fresh.forget("home") == 0
 
 
+def test_forgetting_reports_a_held_lock_plainly(store):
+    """A lock left by an earlier, still-uncleared attempt gets a sentence.
+
+    Not the raw `dulwich.file.FileLocked` - its default `str()` is the
+    two paths as a bare tuple, exactly the message issue #19 was filed
+    over. `ensure()` already clears a lock left by a *dead* process, so
+    what reaches here is the one case it cannot: an earlier `forget` in
+    this same, still-running process left one behind without crashing.
+    """
+    store.write_snapshot("gone", "a: 1\n", "first")
+    lock = store.path / ".git" / "refs" / "heads" / "master.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch()
+
+    with pytest.raises(ValueError, match="lock") as excinfo:
+        store.forget("gone")
+
+    message = str(excinfo.value)
+    assert "master.lock" in message
+    assert "restart" in message.lower()
+    assert not message.startswith("(")
+
+
 def _lightweight_tag(store, name: str, revision: str) -> None:
     """A tag made by hand: a ref straight to the commit, no tag object.
 

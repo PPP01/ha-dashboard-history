@@ -1424,6 +1424,12 @@ async def async_forget(
 
     try:
         removed = await hass.async_add_executor_job(store.forget, key, announce)
+    except ValueError as err:
+        # A lock left by an earlier attempt that has not been cleared
+        # yet - `store.py` turns dulwich's `FileLocked` into this same
+        # ValueError, with a sentence naming the lock and how to clear
+        # it, rather than the bare tuple issue #19 was filed over.
+        return {"applied": False, "error": str(err)}
     finally:
         # A last word, and it is not for the panel that asked: that one
         # has this call to wait on. It is for every other open panel -
