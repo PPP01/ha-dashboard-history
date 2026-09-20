@@ -40,6 +40,13 @@ _LOGGER = logging.getLogger(__name__)
 
 _IDENTITY = b"Dashboard History <dashboard-history@localhost>"
 
+# Repository paths whose stale locks this process has already swept
+# once. Keyed by path rather than held on `HistoryStore` itself, because
+# what has to be remembered across a reload is that *this process* has
+# done the sweep for *this repository* - not anything an instance that
+# a reload throws away could carry forward. See `_clear_stale_locks`.
+_swept_paths: set[str] = set()
+
 
 @dataclass(frozen=True)
 class Change:
@@ -445,7 +452,10 @@ class HistoryStore:
         """Same, for callers that already hold the lock."""
         git_dir = self.path / ".git"
         if git_dir.exists():
-            self._clear_stale_locks(git_dir)
+            key = str(self.path.resolve())
+            if key not in _swept_paths:
+                self._clear_stale_locks(git_dir)
+                _swept_paths.add(key)
             return
         self.path.mkdir(parents=True, exist_ok=True)
         porcelain.init(str(self.path))

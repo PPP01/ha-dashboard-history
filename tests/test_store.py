@@ -41,6 +41,35 @@ def test_ensure_clears_stale_lock_files(tmp_path):
     assert not tag_lock.exists()
 
 
+def test_ensure_does_not_repeat_the_cleanup_within_one_process(tmp_path):
+    """A reload must not delete a lock a still-running write is holding.
+
+    A reload builds a fresh `HistoryStore` with its own `threading.Lock`,
+    while a write dispatched through `hass.async_create_task` before the
+    reload can still be running in the executor - `capture.async_stop`
+    does not wait for it. That write holds its own lock file, unrelated
+    to the crash `_clear_stale_locks` is for. Clearing it out from under
+    the write breaks its rename with `FileNotFoundError`.
+
+    The first `ensure()` in this process is the only one that may ever
+    have raced a truly dead process rather than a live one, so it is the
+    only one allowed to sweep. Reproduces the finding from the review of
+    issue #19's fix.
+    """
+    first = HistoryStore(tmp_path / "history")
+    first.ensure()  # creates the repository - no sweep yet, nothing to sweep
+    first.ensure()  # the first sweep for this path in this process
+
+    second = HistoryStore(tmp_path / "history")
+    lock = second.path / ".git" / "refs" / "heads" / "master.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch()
+
+    second.ensure()
+
+    assert lock.exists()
+
+
 def test_first_snapshot_creates_a_revision(store):
     assert store.write_snapshot("home", "a: 1\n", "first") is not None
 
