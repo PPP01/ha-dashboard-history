@@ -1293,6 +1293,61 @@ def test_repair_reconciliation_surfaces_a_corrupted_tree_instead_of_deleting_eve
     assert set(store._repo().open_index().paths()) == {b"home.yaml", b"other.yaml"}
 
 
+def test_repair_reconciliation_preserves_committed_nested_legacy_dashboards(store):
+    """Reconciliation must not remove committed nested legacy dashboards.
+
+    Keys with slashes (e.g. 'foo/bar') produce nested paths like
+    'foo/bar.yaml' and 'meta/foo/bar.yaml'. Dulwich commit trees store
+    these in subtrees, not at the root tree level. `live` must collect
+    all recursive tree paths so a generic index reconciliation (e.g.
+    from an unreadable checkpoint `{}`) does not prune existing legacy
+    dashboards from the index and working tree. Issue #24.
+    """
+    store.write_snapshot("foo/bar", "x: 1\n", "nested first")
+    store.write_snapshot("home", "a: 1\n", "home first")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert (store.path / "foo" / "bar.yaml").exists()
+    assert b"foo/bar.yaml" in store._repo().open_index()
+    assert store.write_snapshot("home", "a: 2\n", "home second") is not None
+    assert store.read_at("foo/bar", "HEAD") == "x: 1\n"
+
+
+def test_repair_recovers_from_corrupted_unicode_key_in_checkpoint(store, caplog):
+    """A checkpoint with an unencodable surrogate key must be removed cleanly.
+
+    JSON with `"key": "\\ud800"` yields a Python string containing a
+    lone surrogate code point. `_best_effort_checkpoint_key` must catch
+    `UnicodeEncodeError` and return `None` rather than crashing during
+    `candidates` path encoding, and `_validate_checkpoint_semantics`
+    must reject such keys with `ValueError` so repair removes the broken
+    checkpoint and leaves writes unblocked. Issue #24.
+    """
+    import logging
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        r'{"key": "\ud800", "head": null, "notes": {}, "tags": {}}',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any(
+        "key" in record.message or "invalid value" in record.message
+        for record in caplog.records
+    )
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
 def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     doomed = store.write_snapshot("gone", "b: 1\n", "gone first")

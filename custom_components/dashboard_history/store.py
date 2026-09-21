@@ -782,9 +782,10 @@ class HistoryStore:
         failed to parse at all.
         """
         try:
+            key.encode("utf-8")
             self._file_for(key)
             self._file_for(key, "meta")
-        except ValueError as exc:
+        except (ValueError, UnicodeEncodeError) as exc:
             raise ValueError(f"key {key!r} does not name a file in the store") from exc
         if head is not None and not self._is_valid_commit(repo, head):
             raise ValueError(f"head {head!r} is not a valid, existing commit")
@@ -815,15 +816,19 @@ class HistoryStore:
         try:
             payload = json.loads(self._checkpoint_path().read_text(encoding="utf-8"))
             key = payload["key"]
+            if not isinstance(key, str):
+                return None
+            key.encode("utf-8")
+            return key
         except (
             json.JSONDecodeError,
             KeyError,
             TypeError,
             UnicodeDecodeError,
+            UnicodeEncodeError,
             OSError,
         ):
             return None
-        return key if isinstance(key, str) else None
 
     def _reconcile_index_with_head(self, repo: Repo, key: str | None) -> None:
         """Drop any index entry whose path HEAD's tree no longer has.
@@ -862,33 +867,36 @@ class HistoryStore:
         remove every index entry.
         """
         index = repo.open_index()
-        candidates = (
-            [f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()]
-            if key is not None
-            else list(index.paths())
-        )
+        candidates: list[bytes]
+        if key is not None:
+            try:
+                candidates = [
+                    f"{key}.yaml".encode("utf-8"),
+                    f"meta/{key}.yaml".encode("utf-8"),
+                ]
+            except UnicodeEncodeError:
+                candidates = list(index.paths())
+        else:
+            candidates = list(index.paths())
 
         try:
             head = repo.head()
         except KeyError:
             live: set[bytes] = set()
         else:
+            from dulwich.object_store import iter_tree_contents  # noqa: PLC0415
+
             commit = repo[head]
-            tree = repo[commit.tree]
-            live = set()
-            for entry in tree.items():
-                if entry.path == b"meta":
-                    inner = repo[entry.sha]
-                    for item in inner.items():
-                        live.add(b"meta/" + item.path)
-                    continue
-                live.add(entry.path)
+            live = {
+                entry.path
+                for entry in iter_tree_contents(repo.object_store, commit.tree)
+            }
 
         changed = False
         for path in candidates:
             if path in index and path not in live:
                 del index[path]
-                (self.path / path.decode()).unlink(missing_ok=True)
+                (self.path / path.decode("utf-8", "surrogateescape")).unlink(missing_ok=True)
                 changed = True
         if changed:
             index.write()
