@@ -79,6 +79,18 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
   Reparatur läuft im bestehenden Hintergrund-Task vor dem Öffnungslauf,
   nicht im awaited `store.ensure()`. Heilt sich beim nächsten
   Home-Assistant-Start selbst, ohne einen zweiten `forget`-Aufruf.
+- ~~**`_finish_forget`s Aufräumen prunte auch einen vorgemerkten, aber
+  unbeteiligten Speicherstand.**~~ **Behoben am 2026-09-21** (Entscheidung
+  22, GitHub-Issue #25 — beim Review von Entscheidung 21 gefunden und dort
+  bewusst zurückgestellt, siehe Spec). `garbage_collect(prune=True,
+  grace_period=0)` prüfte Erreichbarkeit nur über `repo.refs`, nie über
+  den Index: Blieb ein `write_snapshot` nach `porcelain.add`, aber vor
+  `porcelain.commit` stecken, konnte ein völlig unbeteiligtes `forget`
+  dessen vorgemerktes Blob prunen — und weil `porcelain.commit` immer den
+  ganzen Index committet, riss der nächste erfolgreiche Speichervorgang
+  eines dritten Dashboards den toten Verweis dann unbemerkt mit in seinen
+  eigenen Baum. `_garbage_collect_protecting_index` schützt seither jedes
+  vom Index noch referenzierte Blob, beim losen Löschen wie beim Repack.
 - **D3 — Löschen und schnelles Wiederanlegen desselben `url_path`
   verschmelzen zwei Dashboards.** Die zehnsekündige Entprellung verwirft
   den Zwischenzustand »gelöscht«. In dieser Runde nicht erneut am Code

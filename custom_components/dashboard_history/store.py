@@ -1696,14 +1696,18 @@ class HistoryStore:
         # contradicts. The grace period is zero on purpose - the usual
         # fourteen days protect objects another writer may be building, and
         # the only other writer here is this class, holding the lock this
-        # method runs under.
-        from dulwich.gc import garbage_collect  # noqa: PLC0415
+        # method runs under. That leaves one gap a grace period cannot
+        # close: a *past* writer, no longer holding anything, whose
+        # `write_snapshot` staged a blob and then failed before
+        # `porcelain.commit` - the index still names it, no ref ever did.
+        # `_garbage_collect_protecting_index` closes that one. See issue
+        # #25.
 
         # No counting here: the collection walks the object store on its
         # own and reports nothing back. A phase name without numbers is
         # still worth saying - it is a fifth of the wait.
         say("cleaning", 0, 0)
-        garbage_collect(repo, prune=True, grace_period=0)
+        self._garbage_collect_protecting_index(repo)
 
         # The rewrite above moves refs without passing dulwich a message,
         # so none of it adds a reflog line - but every ordinary commit
@@ -1730,6 +1734,46 @@ class HistoryStore:
         except OSError:
             _LOGGER.exception("Could not clear the reflog after forgetting %s", key)
         self._checkpoint_path().unlink(missing_ok=True)
+
+    @staticmethod
+    def _garbage_collect_protecting_index(repo: Repo) -> None:
+        """`garbage_collect(repo, prune=True, grace_period=0)`, except a
+        blob the index still stages is never pruned.
+
+        `dulwich.gc.garbage_collect` has no argument for this - its
+        reachability walk works from refs alone, exactly like the
+        default `grace_period` comment above already relies on. Run
+        after `_drop_from_index`, so a key just forgotten is out of the
+        index by the time this reads it and stays exactly as unprotected
+        as before; run against the *whole* index, not just the key
+        being forgotten, since `porcelain.commit` always commits the
+        whole index and any dashboard's still-staged, uncommitted save
+        can be the one this sweep would otherwise destroy. See issue
+        #25.
+
+        Repairs nothing: an index entry whose blob an earlier,
+        unprotected run already pruned stays broken. This only stops it
+        from happening again.
+        """
+        from dulwich.gc import find_unreachable_objects  # noqa: PLC0415
+
+        object_store = repo.object_store
+        staged = {sha for _path, sha, _mode in repo.open_index().iterobjects()}
+        to_prune = find_unreachable_objects(object_store, repo.refs) - staged
+
+        repo.refs.pack_refs()
+        for sha in to_prune:
+            if object_store.contains_loose(sha):
+                try:
+                    object_store.delete_loose_object(sha)
+                except OSError:
+                    pass
+        # Same set as the loose deletion above, on purpose: a blob
+        # already packed from an earlier, harmless repack is just as
+        # unreachable, and `repack`'s own `exclude` is the only place
+        # that actually drops it.
+        object_store.repack(exclude=to_prune)
+        object_store.prune(grace_period=0)
 
     def _drop_from_index(self, repo: Repo, key: str) -> None:
         """Take the dashboard's two files out of the index and off the disk.

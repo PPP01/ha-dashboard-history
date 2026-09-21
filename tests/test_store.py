@@ -4,7 +4,9 @@ import threading
 from contextlib import contextmanager
 
 import pytest
+from dulwich import porcelain
 from dulwich.object_store import DiskObjectStore
+from dulwich.objects import Blob
 from dulwich.repo import Repo
 import dulwich.refs
 import store as store_module
@@ -3106,4 +3108,110 @@ def test_forgetting_does_not_write_packed_refs_once_per_version(
     # names: `Version.name` carries the dashboard's key.
     kept = {v.name for v in store.list_versions("home")}
     assert kept == {f"home/v1.0.{n}" for n in range(20)}
+
+
+def _stage_without_committing(store: HistoryStore, key: str, text: str) -> None:
+    """Model a `write_snapshot` that reached `porcelain.add` but never
+    committed - a transient `FileLocked` between the two, say. Leaves a
+    real blob the index names but no ref reaches, exactly as issue #25
+    reproduced it by hand against real dulwich.
+    """
+    target = store.path / f"{key}.yaml"
+    target.write_text(text, encoding="utf-8")
+    porcelain.add(str(store.path), [str(target)])
+
+
+def test_forget_does_not_prune_an_unrelated_staged_but_uncommitted_blob(store):
+    """Issue #25: `_finish_forget`'s GC must not destroy a staged save.
+
+    `_finish_forget` runs `garbage_collect(..., grace_period=0)`
+    unconditionally on every successful `forget`. dulwich's reachability
+    walk works from refs only, never the index - a dashboard whose
+    `write_snapshot` staged new content but never got to commit it has a
+    blob the index still names but no ref reaches. `forget`ting a wholly
+    unrelated dashboard must not sweep it away: `porcelain.commit`
+    builds its tree from the *whole* index, so the next ordinary commit
+    by any key absorbs that still-staged entry - and would silently
+    reference a pruned blob if this one destroyed it first.
+    """
+    store.write_snapshot("a", "a: 1\n", "first")
+    store.write_snapshot("c", "c: 1\n", "first")
+    _stage_without_committing(store, "b", "b: 1\n")
+
+    store.forget("a")
+
+    new_head = store.write_snapshot("c", "c: 2\n", "second")
+    assert new_head is not None
+    assert store.read_at("b", new_head) == "b: 1\n"
+
+
+def test_forget_does_not_prune_a_staged_blob_that_is_already_packed(store):
+    """Same as above, once the staged blob has already been packed.
+
+    `_finish_forget`'s GC repacks the whole object store, excluding
+    whatever it judged unreachable - loose or not. A fix that only
+    guards the loose-object deletion loop and not that `exclude` set
+    would still lose this one on the very next repack.
+    """
+    store.write_snapshot("a", "a: 1\n", "first")
+    store.write_snapshot("c", "c: 1\n", "first")
+    _stage_without_committing(store, "b", "b: 1\n")
+    store._repo().object_store.pack_loose_objects()
+
+    store.forget("a")
+
+    new_head = store.write_snapshot("c", "c: 2\n", "second")
+    assert new_head is not None
+    assert store.read_at("b", new_head) == "b: 1\n"
+
+
+def test_forget_still_prunes_its_own_content_despite_the_new_protection(store):
+    """The fix for issue #25 must not shield what `forget` itself just
+    removed. `_drop_from_index` already takes the forgotten key's own
+    two paths out of the index before the protecting GC step ever looks
+    at it, so its blob stays exactly as unprotected as it always was.
+    """
+    store.write_snapshot("keep", "k: 1\n", "keep", meta="title: K\n")
+    store.write_snapshot("gone", "g: 1\n", "gone", meta="title: G\n")
+
+    assert store.forget("gone") == 1
+
+    assert not (store.path / "gone.yaml").exists()
+    assert not (store.path / "meta" / "gone.yaml").exists()
+    assert store.list_dashboards() == ["keep"]
+    gone_blob = Blob.from_string(b"g: 1\n").id
+    assert gone_blob not in store._repo().object_store
+
+
+def test_repair_pending_forget_also_protects_a_staged_but_uncommitted_blob(
+    store, monkeypatch
+):
+    """The crash-recovery path must give the same protection as an
+    uninterrupted `forget` - it replays the very same `_finish_forget`
+    (decision 21), including the new, index-protecting GC step.
+    """
+    store.write_snapshot("a", "a: 1\n", "first")
+    store.write_snapshot("c", "c: 1\n", "first")
+    _stage_without_committing(store, "b", "b: 1\n")
+
+    real_rewrite_tags = HistoryStore._rewrite_tags
+    calls = []
+
+    def flaky_rewrite_tags(repo, changed):
+        calls.append(changed)
+        if len(calls) == 1:
+            raise RuntimeError("simulated crash before _rewrite_tags")
+        return real_rewrite_tags(repo, changed)
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(flaky_rewrite_tags))
+
+    with pytest.raises(RuntimeError):
+        store.forget("a")
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(real_rewrite_tags))
+    store.repair_pending_forget()
+
+    new_head = store.write_snapshot("c", "c: 2\n", "second")
+    assert new_head is not None
+    assert store.read_at("b", new_head) == "b: 1\n"
 
