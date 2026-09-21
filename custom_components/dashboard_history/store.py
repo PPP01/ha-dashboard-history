@@ -48,6 +48,29 @@ _IDENTITY = b"Dashboard History <dashboard-history@localhost>"
 # a reload throws away could carry forward. See `_clear_stale_locks`.
 _swept_paths: set[str] = set()
 
+# Locks shared by every `HistoryStore` for the same resolved path within
+# this process - not one lock per instance. A reload builds a fresh
+# instance with what would otherwise be its own, unrelated lock, and
+# nothing then stops it from running concurrently with whatever an
+# older instance is still doing to the same repository. `_swept_paths`
+# above solves a related-looking problem for a different operation by
+# never repeating it after the first attempt in a process - that works
+# there because repeating the lock sweep has no value once it has
+# happened once. A repair does not have that property: a checkpoint can
+# genuinely appear later in a long-running process, from a real, new
+# crash, and must stay safe to repair when it does. A lock shared
+# across instances, not a "done once" marker, is what that needs.
+_locks_by_path: dict[str, threading.Lock] = {}
+_locks_registry_guard = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _locks_registry_guard:
+        if key not in _locks_by_path:
+            _locks_by_path[key] = threading.Lock()
+        return _locks_by_path[key]
+
 
 @dataclass(frozen=True)
 class Change:
@@ -429,8 +452,10 @@ class HistoryStore:
         # Two dashboards saved in the same moment run in two executor
         # threads; measured, eight parallel commits let exactly one through
         # and the other seven raised FileLocked. Writes are serialised here
-        # rather than left to chance.
-        self._lock = threading.Lock()
+        # rather than left to chance - and, since decision 21, shared with
+        # every other `HistoryStore` for this same path in this process,
+        # not held by this instance alone: see `_lock_for`.
+        self._lock = _lock_for(self.path)
         # The last survey, keyed by the HEAD it was taken at. Names and
         # metadata change only when HEAD does, and `forget` rewrites HEAD,
         # so a stale entry cannot survive. Kept because the panel asks for

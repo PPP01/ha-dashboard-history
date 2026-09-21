@@ -70,6 +70,81 @@ def test_ensure_does_not_repeat_the_cleanup_within_one_process(tmp_path):
     assert lock.exists()
 
 
+def test_two_instances_of_the_same_path_share_one_lock(tmp_path):
+    """The foundation everything else in decision 21 stands on.
+
+    `HistoryStore.__init__` used to build its own `threading.Lock()`
+    per instance. A reload builds a fresh instance for the same path -
+    found in review of decision 21 to mean a repair on the new instance
+    could race a still-running `forget` on the old one, since neither
+    shared anything with the other. Two instances of the same path must
+    now get the literal same lock object; two instances of different
+    paths must not.
+    """
+    first = HistoryStore(tmp_path / "history")
+    second = HistoryStore(tmp_path / "history")
+    other = HistoryStore(tmp_path / "elsewhere")
+
+    assert first._lock is second._lock
+    assert first._lock is not other._lock
+
+
+def test_repair_waits_for_a_live_forget_on_another_instance(tmp_path):
+    """A reload's repair must never run concurrently with a live forget.
+
+    Proven with two real threads, not just the identity check above:
+    one holds the shared lock - standing in for an in-flight `forget`
+    on an old instance - the other calls `repair_pending_forget` on a
+    second instance of the same path, which must block until the first
+    releases it, not run alongside it.
+    """
+    import threading
+
+    first = HistoryStore(tmp_path / "history")
+    first.ensure()
+    second = HistoryStore(tmp_path / "history")
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_the_lock():
+        with first._lock:
+            entered.set()
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_the_lock)
+    holder.start()
+    assert entered.wait(timeout=5)
+
+    repaired = threading.Event()
+
+    def try_repair():
+        second.repair_pending_forget()
+        repaired.set()
+
+    repairer = threading.Thread(target=try_repair)
+    repairer.start()
+
+    # If `second._lock` were independent of `first._lock` - the bug
+    # this test exists to catch - `repair_pending_forget` would find
+    # nothing contended and return almost immediately, regardless of
+    # how the OS happens to schedule these two threads: relying on
+    # relative ordering of "the main thread's next two statements" and
+    # "a freshly started thread's first bytecode" is not deterministic
+    # enough to tell the two cases apart (confirmed empirically in
+    # review of this plan: that shape of assertion passed 100/100 runs
+    # even with two unrelated locks). Giving the repairer thread a
+    # generous, fixed window and asserting it did *not* finish in that
+    # window is what actually distinguishes "genuinely blocked" from
+    # "raced and happened to lose."
+    assert not repaired.wait(timeout=0.2)
+
+    release.set()
+    assert repaired.wait(timeout=5)
+    holder.join(timeout=5)
+    repairer.join(timeout=5)
+
+
 def test_first_snapshot_creates_a_revision(store):
     assert store.write_snapshot("home", "a: 1\n", "first") is not None
 
