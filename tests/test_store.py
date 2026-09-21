@@ -1136,6 +1136,163 @@ def test_repair_rejects_a_checkpoint_whose_tag_value_is_not_a_commit_or_tag(
     assert store.write_snapshot("home", "a: 2\n", "second") is not None
 
 
+def test_repair_reconciles_a_stale_index_after_an_unreadable_checkpoint(store, monkeypatch):
+    """The exact scenario issue #24 reported: a forgotten dashboard's own
+    self-healing mechanism bringing it back, when the checkpoint is too
+    damaged even to say which key it was about.
+
+    `forget("gone")` is interrupted right after `_point_head` - HEAD
+    already rewritten to the tree without "gone", `_drop_from_index`
+    never ran - and the checkpoint that would let a later repair
+    finish the job is then found corrupted, exactly as it would be
+    after the same power loss that interrupted the rewrite in the
+    first place (`_write_file` never calls `fsync`, so the checkpoint
+    written moments earlier is not guaranteed durable either).
+    Truncated to 10 bytes, mid-key: even `_best_effort_checkpoint_key`
+    cannot recover which dashboard this was about, forcing the
+    generic, whole-index fallback. Without it, the next unrelated
+    `write_snapshot` would build its commit from the stale index and
+    bring "gone" back into HEAD.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+
+    def boom(self, repo, targets):
+        raise RuntimeError("crash right after _point_head")
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_notes", boom)
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+    monkeypatch.undo()
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_bytes(checkpoint.read_bytes()[:10])  # truncated mid-key
+
+    store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert store.write_snapshot("home", "a: 2\n", "second, after repair") is not None
+    assert "gone" not in store.list_all_dashboards()
+
+
+def test_repair_reconciliation_leaves_a_staged_uncommitted_write_untouched(store, caplog):
+    """Reconciliation must only ever act on a path HEAD does not have at
+    all - never on one that merely differs in content.
+
+    `write_snapshot` calls `porcelain.add` before `porcelain.commit`;
+    if the commit step fails transiently, the index is left staged
+    with newer content than HEAD for a path HEAD still has, ready to
+    be picked up by the next save. That is indistinguishable, by path
+    alone, from an ordinary in-flight write - removing it here would
+    throw away a real, still-recoverable save.
+
+    The checkpoint used here is for an unrelated key and carries an
+    invalid `head`, so Task A's own validation rejects it and
+    `_finish_forget` never runs - this isolates reconciliation's own
+    precision from `_finish_forget`'s separate `garbage_collect` step
+    (issue #25, not this plan's concern).
+    """
+    import logging
+    from dulwich import porcelain
+    from dulwich.repo import Repo
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    (store.path / "home.yaml").write_text("a: 2 (staged, not committed)\n", encoding="utf-8")
+    porcelain.add(str(store.path), [str(store.path / "home.yaml")])
+    staged_sha_before = store._repo().open_index()[b"home.yaml"].sha
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "unrelated", "head": "not-a-sha", "notes": {}, "tags": {}}',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    after = Repo(str(store.path)).open_index()
+    staged_sha_after = after[b"home.yaml"].sha
+    assert staged_sha_after == staged_sha_before
+    assert staged_sha_after in Repo(str(store.path)).object_store
+
+
+def test_repair_reconciliation_spares_an_unrelated_new_dashboards_staged_save(
+    store, monkeypatch
+):
+    """A generic sweep is only a fallback when the checkpoint's own key is
+    unreadable - never the first choice when it is not.
+
+    A completely unrelated, brand-new dashboard's first save (added,
+    not yet committed) has its path in the index and nowhere in HEAD -
+    identical, by path alone, to an orphan left by `forget`. The
+    checkpoint's `key` survives here even though its `head` does not,
+    so reconciliation must stay scoped to that one key and never touch
+    the new dashboard's own entry. Issue #24, decision 21 correction 7
+    (found in review of this plan's first draft, which used a
+    generic, key-independent sweep unconditionally).
+    """
+    import json as json_module
+    from dulwich import porcelain
+    from dulwich.repo import Repo
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+
+    def boom(self, repo, targets):
+        raise RuntimeError("crash right after _point_head")
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_notes", boom)
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+    monkeypatch.undo()
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    payload = json_module.loads(checkpoint.read_text(encoding="utf-8"))
+    payload["head"] = "not-a-sha"  # key stays readable, semantics do not
+    checkpoint.write_text(json_module.dumps(payload), encoding="utf-8")
+
+    (store.path / "newdash.yaml").write_text("z: 1\n", encoding="utf-8")
+    porcelain.add(str(store.path), [str(store.path / "newdash.yaml")])
+    new_blob_sha = store._repo().open_index()[b"newdash.yaml"].sha
+
+    store.repair_pending_forget()
+
+    after = Repo(str(store.path)).open_index()
+    assert b"newdash.yaml" in after
+    assert new_blob_sha in Repo(str(store.path)).object_store
+
+
+def test_repair_reconciliation_surfaces_a_corrupted_tree_instead_of_deleting_everything(
+    store,
+):
+    """A missing HEAD commit or tree object is corruption, not "empty".
+
+    Treating every `KeyError` the same way used to mean a corrupted
+    repository looked exactly like a fresh one - every index entry
+    considered orphaned and removed. Only `repo.head()`'s own
+    `KeyError` (a genuinely unborn branch) means "nothing is live"; a
+    `KeyError` opening the commit or tree it names must propagate.
+    Issue #24, decision 21 correction 7.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("other", "x: 1\n", "other first")
+    repo = store._repo()
+    tree_sha = repo[repo.head()].tree.decode()
+    object_path = store.path / ".git" / "objects" / tree_sha[:2] / tree_sha[2:]
+    object_path.unlink()  # simulate a corrupted repository
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "nonexistent", "head": null, "notes": {}, "tags": {}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KeyError):
+        store.repair_pending_forget()
+
+    assert set(store._repo().open_index().paths()) == {b"home.yaml", b"other.yaml"}
+
+
 def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     doomed = store.write_snapshot("gone", "b: 1\n", "gone first")

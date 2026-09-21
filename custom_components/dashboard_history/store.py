@@ -799,6 +799,100 @@ class HistoryStore:
             if sha is not None and not self._is_valid_tag_target(repo, sha):
                 raise ValueError(f"tags value {sha!r} is not a valid commit or tag object")
 
+    def _best_effort_checkpoint_key(self) -> str | None:
+        """The checkpoint's `key` field, read as leniently as possible.
+
+        Used only to narrow `_reconcile_index_with_head`'s reach: if
+        the checkpoint survived far enough to name which dashboard it
+        was about - even if `head`, `notes` or `tags` did not -
+        reconciliation only ever touches that dashboard's own two
+        paths, with the same precision `_drop_from_index` already has
+        for the ordinary case. Returns `None` on any failure
+        whatsoever; the caller then falls back to the wider, generic
+        sweep, which is the only way to still close a checkpoint too
+        damaged to say even this much. See decision 21, correction 7.
+        """
+        try:
+            payload = json.loads(self._checkpoint_path().read_text(encoding="utf-8"))
+            key = payload["key"]
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            UnicodeDecodeError,
+            OSError,
+        ):
+            return None
+        return key if isinstance(key, str) else None
+
+    def _reconcile_index_with_head(self, repo: Repo, key: str | None) -> None:
+        """Drop any index entry whose path HEAD's tree no longer has.
+
+        `_drop_from_index` already does this for one known key, right
+        after `_finish_forget`'s other three steps succeed. If `forget`
+        is interrupted between `_point_head` and `_drop_from_index` -
+        HEAD already rewritten, the index not yet touched - and the
+        checkpoint that would have let a later `repair_pending_forget`
+        finish the job is itself discarded, nothing else remembers
+        which key was being forgotten, unless `key` could still be
+        recovered.
+
+        When `key` is available (`_best_effort_checkpoint_key`
+        recovered it), only that dashboard's own two paths are ever
+        considered - identical precision to `_drop_from_index`, zero
+        risk of touching an unrelated dashboard's own, still-legitimate
+        index entry (a brand-new dashboard's first save, staged but not
+        yet committed, has its path in the index and nowhere in HEAD
+        too - indistinguishable from an orphan by path alone). Only
+        when even `key` could not be recovered does this fall back to
+        every path in the index - the only way to still close a
+        checkpoint damaged enough to lose even that, at the cost of the
+        same narrow ambiguity. See decision 21, correction 7.
+
+        A path's *presence* in HEAD's tree is what decides its fate,
+        never whether its content still matches: an index entry can
+        legitimately differ from HEAD if a `porcelain.commit` step
+        failed transiently and is waiting for the next save to retry.
+
+        Only `repo.head()`'s own `KeyError` - no commit yet, a genuinely
+        empty repository - is treated as "nothing is live". A `KeyError`
+        while opening the commit, its tree, or the `meta` subtree HEAD
+        already names is a corrupted repository, not an empty one, and
+        is left to propagate rather than being read as license to
+        remove every index entry.
+        """
+        index = repo.open_index()
+        candidates = (
+            [f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()]
+            if key is not None
+            else list(index.paths())
+        )
+
+        try:
+            head = repo.head()
+        except KeyError:
+            live: set[bytes] = set()
+        else:
+            commit = repo[head]
+            tree = repo[commit.tree]
+            live = set()
+            for entry in tree.items():
+                if entry.path == b"meta":
+                    inner = repo[entry.sha]
+                    for item in inner.items():
+                        live.add(b"meta/" + item.path)
+                    continue
+                live.add(entry.path)
+
+        changed = False
+        for path in candidates:
+            if path in index and path not in live:
+                del index[path]
+                (self.path / path.decode()).unlink(missing_ok=True)
+                changed = True
+        if changed:
+            index.write()
+
     def _file_for(self, key: str, *folders: str) -> Path:
         """The file a key names in the store, or a refusal.
 
@@ -1448,6 +1542,13 @@ class HistoryStore:
         can apply a value `_rewrite_notes`, `_rewrite_tags` or
         `_drop_from_index` would only reject midway through a
         destructive rewrite.
+
+        Whenever a checkpoint file is found at all - whatever is then
+        decided about its contents - `_reconcile_index_with_head` runs
+        first, before anything could delete that file, so a discarded
+        checkpoint never leaves the index resurrecting a forgotten
+        dashboard into HEAD on the next, unrelated write (decision 21,
+        correction 7).
         """
         with self._lock:
             self._ensure()
@@ -1457,6 +1558,8 @@ class HistoryStore:
             repo = self._repo()
             if repo is None:
                 return
+            if self._checkpoint_path().exists():
+                self._reconcile_index_with_head(repo, self._best_effort_checkpoint_key())
             checkpoint = self._read_checkpoint()
             if checkpoint is None:
                 return
