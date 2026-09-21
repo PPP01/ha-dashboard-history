@@ -899,6 +899,93 @@ def test_repair_clears_a_stale_object_lock(store):
     assert not stale_lock.exists()
 
 
+def test_repair_recovers_from_truncated_checkpoint_file(store, caplog):
+    """A checkpoint truncated by a power loss must not disable writes permanently.
+
+    Issue #23: If power loss leaves a truncated, unparseable checkpoint,
+    `_read_checkpoint` used to crash with JSONDecodeError, which was
+    swallowed by `_async_open` while leaving the checkpoint on disk.
+    Because every write method checks `_refuse_if_forget_pending()`,
+    the integration was permanently unable to write across restarts.
+    Repair must log loudly with traceback, remove the corrupted
+    checkpoint, and allow writes to proceed.
+    """
+    import logging
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text('{"key": "gone", "head":', encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("unreadable forget checkpoint" in record.message for record in caplog.records)
+    assert any(record.exc_info is not None for record in caplog.records)
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
+def test_repair_recovers_from_empty_checkpoint_file(store, caplog):
+    """A zero-byte checkpoint file must be removed and logged."""
+    import logging
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("", encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("unreadable forget checkpoint" in record.message for record in caplog.records)
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
+def test_repair_recovers_from_malformed_checkpoint_shape(store, caplog):
+    """A checkpoint with valid JSON but wrong shape must be removed and logged."""
+    import logging
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("unreadable forget checkpoint" in record.message for record in caplog.records)
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
+def test_repair_leaves_checkpoint_intact_on_read_os_error(store, monkeypatch, caplog):
+    """A transient I/O error must not destroy a potentially valid plan.
+
+    `OSError` (e.g. PermissionError) proves only that the file could
+    not be read right now, never that the plan is corrupt. Deleting it
+    would lose a pending forget. The file is left in place, an exception
+    is logged, and subsequent writes remain guarded.
+    """
+    import logging
+    from pathlib import Path
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text('{"key": "gone"}', encoding="utf-8")
+
+    def broken_read(self, *args, **kwargs):
+        raise PermissionError("Permission denied: simulated I/O error")
+
+    monkeypatch.setattr(Path, "read_text", broken_read)
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert checkpoint.exists()
+    assert any("I/O error" in record.message for record in caplog.records)
+    with pytest.raises(ValueError, match="checkpoint"):
+        store.write_snapshot("home", "a: 2\n", "second")
+
+
 def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     doomed = store.write_snapshot("gone", "b: 1\n", "gone first")

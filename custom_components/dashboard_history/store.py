@@ -633,22 +633,91 @@ class HistoryStore:
     def _read_checkpoint(
         self,
     ) -> tuple[str, bytes | None, dict[bytes, bytes], dict[bytes, bytes | None]] | None:
-        """The inverse of `_write_checkpoint`, or `None` if there is none."""
+        """The inverse of `_write_checkpoint`, or `None` if there is none.
+
+        If the checkpoint file exists but cannot be parsed or lacks the
+        required shape, it is logged with a traceback and deleted: an
+        unreadable plan cannot be finished automatically, and leaving it
+        in place would permanently disable all writes across restarts
+        (issue #23).
+
+        A pure I/O error (`OSError`, e.g. permission denied) is kept
+        strictly apart from content corruption: it does not prove the
+        plan is broken, only that it cannot be read right now. In that
+        case the file is left untouched so the write guard remains in
+        place until the filesystem issue is resolved.
+        """
         path = self._checkpoint_path()
         if not path.exists():
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        head = payload["head"].encode() if payload["head"] is not None else None
-        notes = {
-            sha.encode(): text.encode("utf-8") for sha, text in payload["notes"].items()
-        }
-        tags = {
-            ref.encode("utf-8", "surrogateescape"): (
-                sha.encode() if sha is not None else None
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            _LOGGER.exception(
+                "Removed corrupt forget checkpoint with invalid encoding %s: %s. "
+                "An interrupted forget could not be finished automatically.",
+                path,
+                exc,
             )
-            for ref, sha in payload["tags"].items()
-        }
-        return payload["key"], head, notes, tags
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                _LOGGER.exception("Could not remove corrupt checkpoint %s", path)
+            return None
+        except OSError:
+            _LOGGER.exception(
+                "Could not read forget checkpoint %s due to an I/O error; "
+                "leaving file in place to avoid losing a pending plan",
+                path,
+            )
+            return None
+
+        try:
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError(f"expected dict, got {type(payload).__name__}")
+            key = payload["key"]
+            if not isinstance(key, str):
+                raise ValueError("key must be a string")
+            head_val = payload["head"]
+            if head_val is not None and not isinstance(head_val, str):
+                raise ValueError("head must be a string or None")
+            head = head_val.encode() if head_val is not None else None
+            notes_val = payload["notes"]
+            if not isinstance(notes_val, dict):
+                raise ValueError("notes must be a dict")
+            notes = {
+                sha.encode(): text.encode("utf-8")
+                for sha, text in notes_val.items()
+            }
+            tags_val = payload["tags"]
+            if not isinstance(tags_val, dict):
+                raise ValueError("tags must be a dict")
+            tags = {
+                ref.encode("utf-8", "surrogateescape"): (
+                    sha.encode() if sha is not None else None
+                )
+                for ref, sha in tags_val.items()
+            }
+            return key, head, notes, tags
+        except (
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            AttributeError,
+        ) as exc:
+            _LOGGER.exception(
+                "Removed unreadable forget checkpoint %s: %s. An "
+                "interrupted forget could not be finished automatically.",
+                path,
+                exc,
+            )
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                _LOGGER.exception("Could not remove unreadable checkpoint %s", path)
+            return None
 
     def _file_for(self, key: str, *folders: str) -> Path:
         """The file a key names in the store, or a refusal.
