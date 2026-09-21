@@ -41,6 +41,13 @@ _LOGGER = logging.getLogger(__name__)
 
 _IDENTITY = b"Dashboard History <dashboard-history@localhost>"
 
+# The name of the file `forget` leaves behind, inside `.git`, while one
+# of its ref-rewrite steps is still outstanding - see decision 21. Every
+# write method checks for it before doing anything; `forget` itself
+# checks it too, so a crashed attempt cannot be stomped on by a second
+# one before a restart gets to repair it.
+_FORGET_CHECKPOINT_NAME = "dashboard_history_forget.json"
+
 # Repository paths whose stale locks this process has already swept
 # once. Keyed by path rather than held on `HistoryStore` itself, because
 # what has to be remembered across a reload is that *this process* has
@@ -530,6 +537,31 @@ class HistoryStore:
                 lock,
             )
 
+    def _checkpoint_path(self) -> Path:
+        return self.path / ".git" / _FORGET_CHECKPOINT_NAME
+
+    def _refuse_if_forget_pending(self) -> None:
+        """Refuse to write while an earlier `forget` is still unfinished.
+
+        Checked on every call, not once per process the way
+        `_clear_stale_locks` is: the checkpoint can sit unrepaired for as
+        long as nobody restarts Home Assistant, and every write in that
+        window is a chance to advance HEAD, notes or tags past what the
+        checkpoint expects - which a later repair would then either
+        overwrite or leave stale, either way silently. Refusing costs
+        nothing to be wrong about: a paused recording is recoverable, a
+        repair that undid somebody else's save is not. See decision 21,
+        correction 1.
+        """
+        if self._checkpoint_path().exists():
+            raise ValueError(
+                "Dashboard History cannot write right now: an earlier "
+                "forget did not finish and left a checkpoint behind "
+                f"({self._checkpoint_path()}). Restart Home Assistant - "
+                "the interrupted rewrite finishes automatically before "
+                "recording resumes."
+            )
+
     def _file_for(self, key: str, *folders: str) -> Path:
         """The file a key names in the store, or a refusal.
 
@@ -576,6 +608,7 @@ class HistoryStore:
         """
         with self._lock:
             self._ensure()
+            self._refuse_if_forget_pending()
             target = self._file_for(key)
             meta_target = self._file_for(key, "meta")
 
@@ -642,6 +675,7 @@ class HistoryStore:
         """
         with self._lock:
             self._ensure()
+            self._refuse_if_forget_pending()
             if self.read_at(key, "HEAD") is None:
                 # Never recorded, or already marked deleted.
                 return None
@@ -663,6 +697,7 @@ class HistoryStore:
         """Mark a point in the history with a name, title and description."""
         with self._lock:
             self._ensure()
+            self._refuse_if_forget_pending()
             self._create_version(name, title, description, revision)
 
     def _create_version(
@@ -758,6 +793,7 @@ class HistoryStore:
             # repository that is not there is an answer and not a state
             # to be built: creating one to then report "no such version"
             # would leave a history behind that nobody asked for.
+            self._refuse_if_forget_pending()
             repo = self._repo()
             ref, old = self._tag_at_locked(repo, key, name)
             if not hasattr(old, "object"):
@@ -921,6 +957,7 @@ class HistoryStore:
         catches nothing at all.
         """
         with self._lock:
+            self._refuse_if_forget_pending()
             repo = self._repo()
             ref, target = self._tag_at_locked(repo, key, name)
             version = _version_from(name, target)
@@ -1002,6 +1039,7 @@ class HistoryStore:
         """
         with self._lock:
             self._ensure()
+            self._refuse_if_forget_pending()
             repo = self._repo()
             if repo is None:
                 return False
@@ -1078,6 +1116,7 @@ class HistoryStore:
             repo = self._repo()
             if repo is None:
                 return 0
+            self._refuse_if_forget_pending()
             if self._resolve(repo, "HEAD") is None:
                 return 0
             if key not in set(self.list_all_dashboards()):

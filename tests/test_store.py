@@ -990,6 +990,42 @@ def test_forgetting_reports_a_lock_hit_after_head_already_moved(store):
     assert "nothing was lost" not in message.lower()
 
 
+def test_writes_refuse_while_a_forget_checkpoint_is_pending(store):
+    """Every write path must see a pending checkpoint the same way.
+
+    Decision 21, correction 1: replaying a stale checkpoint after
+    something else wrote in the meantime could roll HEAD back over that
+    write, or drop a note it added. The guard has to run on every call,
+    not once per process, so nothing can slip in between a crash and the
+    next restart's repair. The checkpoint's *content* doesn't matter
+    here - only that the file exists - so it is faked by hand; Task 3
+    is what makes `forget` write a real one.
+    """
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "Home", "", first)
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="forget"):
+        store.write_snapshot("home", "a: 2\n", "second")
+    with pytest.raises(ValueError, match="forget"):
+        store.mark_deleted("home", "gone")
+    with pytest.raises(ValueError, match="forget"):
+        store.create_version("home/v1.0.1", "Home", "", first)
+    with pytest.raises(ValueError, match="forget"):
+        store.retitle_version("home", "home/v1.0.0", "New title", "")
+    with pytest.raises(ValueError, match="forget"):
+        store.remove_version("home", "home/v1.0.0")
+    with pytest.raises(ValueError, match="forget"):
+        store.set_description(first, "a note")
+    with pytest.raises(ValueError, match="forget"):
+        store.forget("home")
+
+    # Reads are unaffected - only writes are blocked.
+    assert store.list_changes("home") != []
+    assert store.read_at("home", "HEAD") == "a: 1\n"
+
+
 def _lightweight_tag(store, name: str, revision: str) -> None:
     """A tag made by hand: a ref straight to the commit, no tag object.
 
