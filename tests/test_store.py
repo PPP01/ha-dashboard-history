@@ -802,6 +802,102 @@ def test_forget_writes_a_checkpoint_before_the_first_ref_moves(store, monkeypatc
     assert head is not None
     assert "gone" not in store.list_all_dashboards()
 
+def test_repair_finishes_an_interrupted_forget(store, monkeypatch):
+    """The exact scenario issue #22 reported, fixed end to end.
+
+    Not a hand-built checkpoint: a real `forget("gone")` call is
+    interrupted between `_rewrite_notes` and `_rewrite_tags`, on a
+    dashboard whose forgetting *rewrites* another, still-living commit
+    - "home"'s second save still has "gone.yaml" sitting in its tree,
+    so removing "gone" gives that commit a new sha. Both a note and a
+    tag sit on exactly that rewritten commit, which a checkpoint built
+    from an unchanged sha could never prove correct.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    home_v2 = store.write_snapshot("home", "a: 2\n", "second")
+    store.set_description(home_v2, "a note on the commit that gets rewritten")
+    store.create_version("home/v1.0.0", "Home", "", home_v2)
+
+    real_rewrite_tags = HistoryStore._rewrite_tags
+    calls = []
+
+    def flaky_rewrite_tags(repo, changed):
+        calls.append(changed)
+        if len(calls) == 1:
+            raise RuntimeError("simulated crash before _rewrite_tags")
+        return real_rewrite_tags(repo, changed)
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(flaky_rewrite_tags))
+
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+
+    # The crash already happened: HEAD moved to the rewritten "home"
+    # commit and the note followed it, but the tag still names the
+    # stale, pre-rewrite one - exactly the half-repaired state issue
+    # #22 could not recover from.
+    assert "gone" not in store.list_all_dashboards()
+    rewritten_head = store.resolve("HEAD")
+    assert rewritten_head != home_v2
+    assert store.read_version("home", "home/v1.0.0").revision == home_v2
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert checkpoint.exists()
+
+    # `real_rewrite_tags`, captured from `HistoryStore._rewrite_tags`
+    # above, is the plain function a `@staticmethod` descriptor hands
+    # back - assigning it to the class directly, without re-wrapping,
+    # would make `self._rewrite_tags(...)` bind `self` as an implicit
+    # first argument again and raise `TypeError: takes 2 positional
+    # arguments but 3 were given`. Re-wrap it.
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(real_rewrite_tags))
+    store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert store.resolve("HEAD") == rewritten_head
+    assert store.read_version("home", "home/v1.0.0").revision == rewritten_head
+    assert store.descriptions() == {
+        rewritten_head: "a note on the commit that gets rewritten"
+    }
+    assert store.write_snapshot("home", "a: 3\n", "third") is not None
+
+
+def test_repair_does_nothing_when_no_checkpoint_exists(store):
+    """The ordinary case - nothing to repair - must not touch anything.
+
+    Not literally free: `_clear_stale_object_locks` still walks
+    `objects/` before this checks the checkpoint at all, on purpose -
+    it is meant to catch a stale object lock left by an unrelated
+    crash even when no forget was involved. What this test pins is
+    that the *outcome* is a no-op (nothing about "home" changes), not
+    that no work happened.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.repair_pending_forget()
+    assert store.read_at("home", "HEAD") == "a: 1\n"
+
+
+def test_repair_clears_a_stale_object_lock(store):
+    """A lock under objects/ left by a dead process must not survive repair.
+
+    Decision 21, correction 5: an earlier version of this fix cleared a
+    lock like this locally, right where a write met it, and a review
+    found that unsafe (a live writer's own rename could break) and
+    incomplete (more than one call site writes objects). Swept
+    comprehensively here instead, the same way `_clear_stale_locks`
+    already sweeps `refs/` and the top level, and safe for the same
+    reason: nothing else in this process can be writing while
+    `repair_pending_forget` holds the shared lock.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    stale_lock = store.path / ".git" / "objects" / "ab" / "cdef0123456789.lock"
+    stale_lock.parent.mkdir(parents=True)
+    stale_lock.touch()
+
+    store.repair_pending_forget()
+
+    assert not stale_lock.exists()
+
 
 def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
     store.write_snapshot("home", "a: 1\n", "home first")

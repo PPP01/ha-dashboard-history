@@ -538,6 +538,44 @@ class HistoryStore:
                 lock,
             )
 
+    @staticmethod
+    def _clear_stale_object_locks(git_dir: Path) -> None:
+        """Remove `.lock` files under `objects/` left by a dead process.
+
+        Kept apart from `_clear_stale_locks` (issue #19, `refs/` and the
+        top level) because it relies on a different safety argument.
+        `_clear_stale_locks` may run only once, at the very first
+        `ensure()` call in a process, before that process has written
+        anything - the one moment a lock's owner can be assumed dead
+        without more to go on. This sweep instead relies on the shared,
+        per-path lock `repair_pending_forget` holds while calling it
+        (decision 21, correction 4): while that lock is held, nothing
+        else in this process can be concurrently writing to this
+        repository, so any lock found here is provably not a live
+        writer's - a dead, earlier process, or an earlier attempt in
+        this same process that already released the lock without
+        cleaning up after itself. Safe to repeat on every call, unlike
+        `_clear_stale_locks`.
+
+        A first version of this fix cleared a lock like this locally,
+        at the one write it would block, and retried that write once -
+        a review found that unsafe without this argument (`FileLocked`
+        means the lock file exists, never that its owner is dead) and
+        incomplete (`_tree_without` writes two more objects a narrow,
+        per-call-site fix would have missed). See decision 21,
+        correction 5.
+        """
+        objects_dir = git_dir / "objects"
+        if not objects_dir.is_dir():
+            return
+        for lock in objects_dir.rglob("*.lock"):
+            lock.unlink(missing_ok=True)
+            _LOGGER.warning(
+                "Removed stale object lock left by an interrupted git "
+                "operation: %s",
+                lock,
+            )
+
     def _checkpoint_path(self) -> Path:
         return self.path / ".git" / _FORGET_CHECKPOINT_NAME
 
@@ -1222,6 +1260,41 @@ class HistoryStore:
                     "while other dashboards' tags may still be the old "
                     "ones."
                 ) from exc
+
+    def repair_pending_forget(self) -> None:
+        """Finish an interrupted `forget`, if one was left behind.
+
+        Meant to be called from Home Assistant's background task ahead
+        of the opening pass - never from the awaited `store.ensure` call
+        in `async_setup_entry`, since this can cost several seconds
+        (`garbage_collect` alone measured 4.5-6.6 s on the test bench,
+        and the object-lock sweep below costs time proportional to the
+        whole history's size) and nothing in that awaited path may cost
+        Home Assistant's start. See decision 21, corrections 3 and 5.
+
+        No "first attempt only" gate: `self._lock` is shared by every
+        `HistoryStore` for this path within this process (decision 21,
+        correction 4), so a second call - from a reload's fresh
+        instance, or from this same one - simply waits for an earlier
+        one to finish instead of racing it, and finds either a
+        genuinely new checkpoint to repair or nothing left to do. Safe
+        to call as many times as this runs, not just the first.
+        """
+        with self._lock:
+            self._ensure()
+            git_dir = self.path / ".git"
+            if git_dir.exists():
+                self._clear_stale_object_locks(git_dir)
+            checkpoint = self._read_checkpoint()
+            if checkpoint is None:
+                return
+            key, head, notes, tags = checkpoint
+            repo = self._repo()
+            if repo is None:
+                return
+            self._index = None
+            self._survey = None
+            self._finish_forget(repo, key, head, notes, tags, _Progress(None))
 
     def _forget(self, repo: Repo, key: str, say: _Progress) -> int:
         from dulwich.objects import Commit, Tag, Tree  # noqa: PLC0415
