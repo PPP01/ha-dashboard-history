@@ -63,8 +63,11 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
 
 - ~~**D1 — Ein unterbrochenes `forget` ist nicht wiederaufnehmbar.**~~
   **Entworfen am 2026-09-21, noch nicht umgesetzt** (Entscheidung 21,
-  GitHub-Issue #22; nach einem externen Review am selben Tag an vier
-  Stellen nachgeschärft, s. Spec). `HistoryStore._forget` schreibt HEAD,
+  GitHub-Issue #22; nach zwei externen Reviews am selben Tag an fünf
+  Stellen nachgeschärft, s. Spec — das zweite fand, dass `HistoryStore`
+  keine Sperre über mehrere Instanzen desselben Pfads teilt, was ein
+  Neuladen mitten in einem laufenden `forget` gefährlich machte).
+  `HistoryStore._forget` schreibt HEAD,
   Notizen und Tags nacheinander um, ohne vorbereiteten Ersatz-Ref; bricht
   es zwischen den Schritten ab, war ein zweiter Lauf nutzlos und
   Beschreibungen eines noch lebenden Dashboards konnten verloren gehen.
