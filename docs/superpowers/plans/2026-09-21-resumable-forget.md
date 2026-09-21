@@ -99,20 +99,33 @@ def test_repair_waits_for_a_live_forget_on_another_instance(tmp_path):
     holder.start()
     assert entered.wait(timeout=5)
 
-    order = []
+    repaired = threading.Event()
 
     def try_repair():
         second.repair_pending_forget()
-        order.append("repaired")
+        repaired.set()
 
     repairer = threading.Thread(target=try_repair)
     repairer.start()
-    order.append("about to release")
-    release.set()
-    repairer.join(timeout=5)
-    holder.join(timeout=5)
 
-    assert order == ["about to release", "repaired"]
+    # If `second._lock` were independent of `first._lock` - the bug
+    # this test exists to catch - `repair_pending_forget` would find
+    # nothing contended and return almost immediately, regardless of
+    # how the OS happens to schedule these two threads: relying on
+    # relative ordering of "the main thread's next two statements" and
+    # "a freshly started thread's first bytecode" is not deterministic
+    # enough to tell the two cases apart (confirmed empirically in
+    # review of this plan: that shape of assertion passed 100/100 runs
+    # even with two unrelated locks). Giving the repairer thread a
+    # generous, fixed window and asserting it did *not* finish in that
+    # window is what actually distinguishes "genuinely blocked" from
+    # "raced and happened to lose."
+    assert not repaired.wait(timeout=0.2)
+
+    release.set()
+    assert repaired.wait(timeout=5)
+    holder.join(timeout=5)
+    repairer.join(timeout=5)
 ```
 
 Note: `test_repair_waits_for_a_live_forget_on_another_instance` calls `repair_pending_forget`, which does not exist until Task 4. Write it now anyway - it belongs conceptually with this task's other test, and its own step below says exactly when it starts passing.
@@ -394,7 +407,7 @@ In `forget` (currently lines 1052-1059), where it matters most: before the `key 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/test_store.py -v`
-Expected: PASS, all of them — this task only adds a new refusal path; nothing that could already succeed should now fail (no test creates a file named `dashboard_history_forget.json` except the new one).
+Expected: PASS, all of them except `test_repair_waits_for_a_live_forget_on_another_instance` (from Task 1), which still fails on the same `AttributeError` until Task 4 introduces `repair_pending_forget` - this task only adds a new refusal path; nothing that could already succeed should now fail (no test creates a file named `dashboard_history_forget.json` except the new one).
 
 - [ ] **Step 5: Commit**
 
@@ -935,7 +948,13 @@ def test_repair_finishes_an_interrupted_forget(store, monkeypatch):
     checkpoint = store.path / ".git" / "dashboard_history_forget.json"
     assert checkpoint.exists()
 
-    monkeypatch.setattr(HistoryStore, "_rewrite_tags", real_rewrite_tags)
+    # `real_rewrite_tags`, captured from `HistoryStore._rewrite_tags`
+    # above, is the plain function a `@staticmethod` descriptor hands
+    # back - assigning it to the class directly, without re-wrapping,
+    # would make `self._rewrite_tags(...)` bind `self` as an implicit
+    # first argument again and raise `TypeError: takes 2 positional
+    # arguments but 3 were given`. Re-wrap it.
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(real_rewrite_tags))
     store.repair_pending_forget()
 
     assert not checkpoint.exists()
@@ -948,7 +967,15 @@ def test_repair_finishes_an_interrupted_forget(store, monkeypatch):
 
 
 def test_repair_does_nothing_when_no_checkpoint_exists(store):
-    """The ordinary case - nothing to repair - must be a cheap no-op."""
+    """The ordinary case - nothing to repair - must not touch anything.
+
+    Not literally free: `_clear_stale_object_locks` still walks
+    `objects/` before this checks the checkpoint at all, on purpose -
+    it is meant to catch a stale object lock left by an unrelated
+    crash even when no forget was involved. What this test pins is
+    that the *outcome* is a no-op (nothing about "home" changes), not
+    that no work happened.
+    """
     store.write_snapshot("home", "a: 1\n", "first")
     store.repair_pending_forget()
     assert store.read_at("home", "HEAD") == "a: 1\n"
