@@ -12,6 +12,7 @@ Home Assistant OS, Container, Core and Supervised installations.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -561,6 +562,55 @@ class HistoryStore:
                 "the interrupted rewrite finishes automatically before "
                 "recording resumes."
             )
+
+    def _write_checkpoint(
+        self,
+        key: str,
+        head: bytes | None,
+        notes: dict[bytes, bytes],
+        tags: dict[bytes, bytes | None],
+    ) -> None:
+        """Save what `forget` is about to finish, before any ref moves.
+
+        Four fields, not three: `key` has to be in here too, because
+        `_drop_from_index` needs it and nothing else remembers which
+        dashboard was being forgotten once a crash has happened. Written
+        through `_write_file`'s temp-then-`os.replace` so an interrupted
+        write of the checkpoint itself is never mistaken for a valid one
+        - see decision 21.
+        """
+        payload = {
+            "key": key,
+            "head": head.decode() if head is not None else None,
+            "notes": {sha.decode(): text.decode("utf-8") for sha, text in notes.items()},
+            "tags": {
+                ref.decode("utf-8", "surrogateescape"): (
+                    sha.decode() if sha is not None else None
+                )
+                for ref, sha in tags.items()
+            },
+        }
+        self._write_file(self._checkpoint_path(), json.dumps(payload))
+
+    def _read_checkpoint(
+        self,
+    ) -> tuple[str, bytes | None, dict[bytes, bytes], dict[bytes, bytes | None]] | None:
+        """The inverse of `_write_checkpoint`, or `None` if there is none."""
+        path = self._checkpoint_path()
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        head = payload["head"].encode() if payload["head"] is not None else None
+        notes = {
+            sha.encode(): text.encode("utf-8") for sha, text in payload["notes"].items()
+        }
+        tags = {
+            ref.encode("utf-8", "surrogateescape"): (
+                sha.encode() if sha is not None else None
+            )
+            for ref, sha in payload["tags"].items()
+        }
+        return payload["key"], head, notes, tags
 
     def _file_for(self, key: str, *folders: str) -> Path:
         """The file a key names in the store, or a refusal.
@@ -1221,9 +1271,53 @@ class HistoryStore:
             nearest[commit.id] = fresh.id
             kept[commit.id] = fresh.id
 
-        self._point_head(repo, nearest.get(order[-1].id) if order else None)
-        self._rewrite_notes(repo, notes, kept)
-        self._rewrite_tags(repo, versions, nearest, Tag, key, say)
+        head = nearest.get(order[-1].id) if order else None
+        note_targets = {
+            kept[old.encode()]: text.encode("utf-8")
+            for old, text in notes.items()
+            if kept.get(old.encode()) is not None
+        }
+        tag_targets = self._planned_tag_changes(repo, versions, nearest, Tag, key)
+
+        # Written before any ref moves - `_point_head` is the first of
+        # the three steps below. From here on, `.git/dashboard_history_
+        # forget.json` is the one true record of what this call is about
+        # to finish, for this call and for any later repair alike. See
+        # decision 21.
+        self._write_checkpoint(key, head, note_targets, tag_targets)
+        self._finish_forget(repo, key, head, note_targets, tag_targets, say)
+        return removed
+
+    def _finish_forget(
+        self,
+        repo: Repo,
+        key: str,
+        head: bytes | None,
+        notes: dict[bytes, bytes],
+        tags: dict[bytes, bytes | None],
+        say: _Progress,
+    ) -> None:
+        """Move every ref to its planned target, then clean up.
+
+        Shared by the call that just computed `head`/`notes`/`tags` and
+        by `repair_pending_forget`, which reads the same three values
+        back from the checkpoint after an interruption - see decision
+        21. Every step here is safe to redo: `_point_head` sets a ref
+        outright, `_rewrite_notes` rebuilds `refs/notes/commits` whole
+        from `notes` every time, `_rewrite_tags` merges `tags` into
+        whatever tags exist now, and `_drop_from_index` and
+        `garbage_collect` already tolerated being run more than once
+        before this existed. The checkpoint is deleted last, deliberately
+        - if anything below raises, it stays in place and the next
+        attempt starts this method over rather than guessing which
+        parts already happened. Callers cannot collide while doing so:
+        both the original call and any repair run under the one lock
+        `HistoryStore` now shares per repository path (decision 21,
+        correction 4).
+        """
+        self._point_head(repo, head)
+        self._rewrite_notes(repo, notes)
+        self._rewrite_tags(repo, tags)
         self._drop_from_index(repo, key)
 
         # Rewriting refs only makes the old objects unreachable; the blobs
@@ -1253,19 +1347,19 @@ class HistoryStore:
         # Only a missing directory is tolerated here - the ordinary case,
         # since a freshly created repository has no reflog yet. Anything
         # else (no permission, a read-only filesystem) is a real failure
-        # and stays visible instead of vanishing behind `ignore_errors`:
-        # `forget` already renamed refs, rewrote notes and pruned objects
-        # by this point, so raising here would report the whole operation
-        # as failed when it had, in fact, already succeeded - and a
-        # second attempt could not repair anything, since the dashboard
-        # is already gone from HEAD.
+        # and stays visible instead of vanishing behind `ignore_errors`.
+        # Decision 21 made this safe to leave as a logged-and-swallowed
+        # failure rather than something that must also be resumable: the
+        # checkpoint is still deleted below either way, since nothing in
+        # this project reads the reflog and there is therefore nothing
+        # left to repair.
         try:
             shutil.rmtree(self.path / ".git" / "logs")
         except FileNotFoundError:
             pass
         except OSError:
             _LOGGER.exception("Could not clear the reflog after forgetting %s", key)
-        return removed
+        self._checkpoint_path().unlink(missing_ok=True)
 
     def _drop_from_index(self, repo: Repo, key: str) -> None:
         """Take the dashboard's two files out of the index and off the disk.
@@ -1391,34 +1485,38 @@ class HistoryStore:
                           tag.object[1] if annotated else tag.id))
         return found
 
-    def _rewrite_notes(
-        self, repo: Repo, notes: dict[str, str], kept: dict[bytes, bytes]
-    ) -> None:
-        """Put the descriptions back on the commits that survived."""
+    def _rewrite_notes(self, repo: Repo, targets: dict[bytes, bytes]) -> None:
+        """Put the descriptions back on the commits that survived.
+
+        Takes the already-flattened `{new commit sha: note text}` this
+        dashboard's forgetting leaves behind, rather than the raw notes
+        and the old-to-new commit mapping separately - the flattening
+        used to happen inline here, but decision 21 needs the flattened
+        form on its own, to checkpoint it and to hand the exact same
+        mapping to a later repair. Deleting the ref first and rebuilding
+        it whole makes this safe to call twice: a repair that redoes this
+        after a partial first attempt ends at the same content either way.
+        """
         if b"refs/notes/commits" in repo.refs:
             del repo.refs[b"refs/notes/commits"]
-        for old, text in notes.items():
-            new = kept.get(old.encode())
-            if new is None:
-                continue  # its commit is gone; the description goes too
+        for new, text in targets.items():
             porcelain.notes_add(
                 str(self.path),
                 new,
-                text.encode("utf-8"),
+                text,
                 author=_IDENTITY,
                 committer=_IDENTITY,
             )
 
     @staticmethod
-    def _rewrite_tags(
+    def _planned_tag_changes(
         repo: Repo,
         versions: list,
         nearest: dict[bytes, bytes | None],
         tag_class,
         key: str,
-        say: _Progress,
-    ) -> None:
-        """Rebuild the named versions against the rewritten commits.
+    ) -> dict[bytes, bytes | None]:
+        """Decide the final `{ref: sha or None}` this dashboard's tags need.
 
         The dashboard's own versions go with it. Since decision 13 of the
         design record a version belongs to one dashboard and is named
@@ -1435,34 +1533,15 @@ class HistoryStore:
         - the ref *is* the tag - so it is re-pointed instead. Inventing a
         tag object for it would hand somebody back a different kind of tag
         than the one they made.
+
+        Stops short of writing the result anywhere: the new tag *objects*
+        this creates for annotated tags are written to the object store
+        immediately below, since they are content-addressed and harmless
+        to write early, but the returned mapping is exactly what decision
+        21 checkpoints and what `_rewrite_tags` later applies in one
+        `add_packed_refs` call - kept apart so a repair can replay just
+        that call without recreating a single object.
         """
-        # One write for all of them. `del repo.refs[...]` rewrites the
-        # whole `packed-refs` file and renames it into place, once per
-        # mark; the assignment after it writes a loose file and fsyncs
-        # that. Measured 2026-09-18 on the test bench with 782 packed
-        # marks: 11.1 ms and 5.5 ms each, 12.46 s together, against
-        # 0.02 s for the single call below.
-        #
-        # `add_packed_refs` takes the whole mapping at once, and a target
-        # of None removes that ref - exactly the two things this method
-        # does. It also unlinks any loose ref of the same name, so both
-        # shapes are covered without asking which one a mark has.
-        #
-        # Not a transaction over all the marks, and nothing here should
-        # be written as though it were: the loose files are unlinked as
-        # the mapping is walked, and only the packed file is replaced in
-        # one move at the end.
-        #
-        # No progress from here any more. This phase was 58 % of a forget
-        # and is now 0.3 s of 14.7 (measured 2026-09-18, 782 marks):
-        # announcing it would put a name on the screen that nobody can
-        # read before it is gone again.
-        #
-        # `say` is therefore unused in here, and stays in the signature
-        # on purpose - it is not a leftover to tidy away. Keeping it
-        # wired costs one parameter; removing it costs the caller, the
-        # signature and this decision again the day anything here is
-        # worth reporting.
         changed: dict[bytes, bytes | None] = {}
         for ref, old, target in versions:
             name = b"refs/tags/" + ref
@@ -1493,9 +1572,32 @@ class HistoryStore:
             fresh.tag_timezone = old.tag_timezone
             repo.object_store.add_object(fresh)
             changed[name] = fresh.id
-        # Empty is not a special case for `add_packed_refs`; it returns
-        # at once. Said here because a repository without a single mark
-        # is the ordinary case for a young installation.
+        return changed
+
+    @staticmethod
+    def _rewrite_tags(repo: Repo, changed: dict[bytes, bytes | None]) -> None:
+        """Apply a plan from `_planned_tag_changes` in one write.
+
+        One write for all of them. `del repo.refs[...]` rewrites the
+        whole `packed-refs` file and renames it into place, once per
+        mark; the assignment after it writes a loose file and fsyncs
+        that. Measured 2026-09-18 on the test bench with 782 packed
+        marks: 11.1 ms and 5.5 ms each, 12.46 s together, against
+        0.02 s for the single call below.
+
+        `add_packed_refs` takes the whole mapping at once, and a target
+        of `None` removes that ref - exactly the two things this method
+        does. It also unlinks any loose ref of the same name, so both
+        shapes are covered without asking which one a mark has. It also
+        merges: any tag *not* named in `changed` is left exactly as it
+        stood, which is what makes this safe for `repair_pending_forget`
+        to replay even after other tags were created since the plan was
+        made.
+
+        Empty is not a special case for `add_packed_refs`; it returns at
+        once. Said here because a repository without a single mark is
+        the ordinary case for a young installation.
+        """
         repo.refs.add_packed_refs(changed)
 
     # -- reading -------------------------------------------------------

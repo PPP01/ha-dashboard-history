@@ -759,6 +759,50 @@ def test_forgetting_removes_the_dashboard_from_the_history(store):
     assert store.list_changes("gone") == []
 
 
+def test_forget_leaves_no_checkpoint_behind(store):
+    """A normal, uninterrupted forget must clean up after itself.
+
+    Decision 21: the checkpoint is only meant to outlive `forget` when
+    something interrupted it. `_finish_forget` deletes it as its very
+    last step, so an ordinary run - the overwhelming majority of them -
+    must never leave it lying around.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.forget("gone")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert not checkpoint.exists()
+
+
+def test_forget_writes_a_checkpoint_before_the_first_ref_moves(store, monkeypatch):
+    """A real interruption must leave a real, usable checkpoint behind.
+
+    `test_forget_leaves_no_checkpoint_behind` alone cannot catch a
+    missing `_write_checkpoint` call: it only checks the file is gone
+    *after* a normal run, which holds whether or not one was ever
+    written in between. A review of this plan's first draft found that
+    exact gap. This interrupts a real `forget()` call instead of
+    building a checkpoint by hand, and reads back what it actually left
+    on disk.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+
+    def boom(self, repo, notes):
+        raise RuntimeError("simulated crash between _point_head and _rewrite_notes")
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_notes", boom)
+
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+
+    key, head, notes, tags = store._read_checkpoint()
+    assert key == "gone"
+    assert head is not None
+    assert "gone" not in store.list_all_dashboards()
+
+
 def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     doomed = store.write_snapshot("gone", "b: 1\n", "gone first")
