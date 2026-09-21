@@ -1,6 +1,6 @@
 # Aktueller Stand
 
-Stand: 2026-09-19. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
+Stand: 2026-09-21. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
 was noch offen ist, welche Module es gibt. Es ersetzt nicht die Spec — die
 bleibt bindend bei Widersprüchen — und nicht das Journal unter `plans/` und
 `reviews/`, das chronologisch und unverändert stehen bleibt. Bei jedem
@@ -62,11 +62,11 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
   Entscheidung aber ausdrücklich vertagt. GitHub-Issue #18.
 
 - ~~**D1 — Ein unterbrochenes `forget` ist nicht wiederaufnehmbar.**~~
-  **Entworfen am 2026-09-21, noch nicht umgesetzt** (Entscheidung 21,
-  GitHub-Issue #22; nach zwei externen Reviews am selben Tag an fünf
-  Stellen nachgeschärft, s. Spec — das zweite fand, dass `HistoryStore`
-  keine Sperre über mehrere Instanzen desselben Pfads teilt, was ein
-  Neuladen mitten in einem laufenden `forget` gefährlich machte).
+  **Behoben am 2026-09-21** (Entscheidung 21, GitHub-Issue #22; nach zwei
+  externen Reviews am selben Tag an fünf Stellen nachgeschärft, s. Spec —
+  das zweite fand, dass `HistoryStore` keine Sperre über mehrere Instanzen
+  desselben Pfads teilt, was ein Neuladen mitten in einem laufenden
+  `forget` gefährlich machte).
   `HistoryStore._forget` schreibt HEAD,
   Notizen und Tags nacheinander um, ohne vorbereiteten Ersatz-Ref; bricht
   es zwischen den Schritten ab, war ein zweiter Lauf nutzlos und
