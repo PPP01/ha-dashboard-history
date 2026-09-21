@@ -986,6 +986,156 @@ def test_repair_leaves_checkpoint_intact_on_read_os_error(store, monkeypatch, ca
         store.write_snapshot("home", "a: 2\n", "second")
 
 
+def test_repair_rejects_a_checkpoint_with_an_invalid_head(store, caplog):
+    """A well-typed but unreal `head` must never reach `_finish_forget`.
+
+    Korrektur 6 only checks that `head` is a string or `None` - never
+    that the string is a real sha. `_point_head` sets the branch ref
+    to whatever it is handed; a fabricated value would leave HEAD
+    pointing at nothing dulwich can resolve. Issue #24, decision 21
+    correction 7.
+    """
+    import logging
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "home", "head": "not-a-sha", "notes": {}, "tags": {}}',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("head" in record.message for record in caplog.records)
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
+def test_repair_rejects_a_checkpoint_with_an_invalid_note_sha_and_keeps_existing_notes(
+    store, caplog
+):
+    """An invalid note sha must not cost a real, unrelated note.
+
+    `_rewrite_notes` deletes `refs/notes/commits` whole before writing
+    entries back - without this check, an invalid sha in `notes` would
+    let that deletion happen and only then fail with `AssertionError`,
+    taking a genuine, unrelated note down with it. Issue #24, decision
+    21 correction 7.
+    """
+    import logging
+
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.set_description(first, "an important, pre-existing note")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "home", "head": "%s", '
+        '"notes": {"not-a-valid-sha": "hello"}, "tags": {}}' % second,
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("notes" in record.message for record in caplog.records)
+    assert store.descriptions() == {first: "an important, pre-existing note"}
+    assert store.write_snapshot("home", "a: 3\n", "third") is not None
+
+
+def test_repair_rejects_a_checkpoint_with_an_invalid_tag_ref_and_keeps_packed_refs_intact(
+    store, caplog
+):
+    """An invalid ref name must never reach `add_packed_refs`.
+
+    `_rewrite_tags` writes its whole mapping into `packed-refs` before
+    an illegal ref name's `PackedRefsException` stops it - reproduced
+    against real `dulwich`: the malformed name lands on disk and every
+    later `list_versions()` call fails, not just for the dashboard
+    being forgotten. Issue #24, decision 21 correction 7.
+    """
+    import logging
+
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "Home", "", revision)
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "home", "head": "%s", "notes": {}, '
+        '"tags": {"refs/tags/home/v1.0.0": "%s", '
+        '"refs/tags/../../etc/evil": "%s"}}' % (revision, revision, revision),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("tags" in record.message for record in caplog.records)
+    assert [v.name for v in store.list_versions()] == ["home/v1.0.0"]
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
+def test_repair_rejects_a_checkpoint_whose_key_escapes_the_store(store, caplog):
+    """A key with a path traversal must never reach `_drop_from_index`.
+
+    `_drop_from_index` builds `f"{key}.yaml"`/`f"meta/{key}.yaml"` and
+    unlinks them with no containment check of its own, unlike every
+    live write path, which all go through `_file_for`. Reproduced: an
+    unguarded `key` of `"../evil-marker"` resolves outside the store
+    entirely. Issue #24, decision 21 correction 7.
+    """
+    import logging
+
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    marker = store.path.parent / "evil-marker.yaml"
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "../evil-marker", "head": "%s", "notes": {}, "tags": {}}'
+        % revision,
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("key" in record.message for record in caplog.records)
+    assert not marker.exists()
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
+def test_repair_rejects_a_checkpoint_whose_tag_value_is_not_a_commit_or_tag(
+    store, caplog
+):
+    """A tag value must resolve to a commit or a tag object, nothing else.
+
+    A blob or tree sha passing a plain existence check would let
+    `_rewrite_tags` create a tag nothing meaningful can ever resolve -
+    reproduced by pointing a tag value at a real, existing tree sha.
+    Issue #24, decision 21 correction 7.
+    """
+    import logging
+
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    repo = store._repo()
+    tree_sha = repo[revision.encode()].tree.decode()
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        '{"key": "home", "head": "%s", "notes": {}, '
+        '"tags": {"refs/tags/home/v1.0.0": "%s"}}' % (revision, tree_sha),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert any("tags" in record.message for record in caplog.records)
+    assert store.list_versions() == []
+    assert store.write_snapshot("home", "a: 2\n", "second") is not None
+
+
 def test_a_forgotten_dashboard_cannot_be_read_at_any_revision(store):
     store.write_snapshot("home", "a: 1\n", "home first")
     doomed = store.write_snapshot("gone", "b: 1\n", "gone first")

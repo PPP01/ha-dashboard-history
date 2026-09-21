@@ -719,6 +719,86 @@ class HistoryStore:
                 _LOGGER.exception("Could not remove unreadable checkpoint %s", path)
             return None
 
+    @staticmethod
+    def _is_valid_commit(repo: Repo, sha: bytes) -> bool:
+        """Whether `sha` is a real, existing commit in this repository."""
+        from dulwich.objects import valid_hexsha  # noqa: PLC0415
+
+        if not valid_hexsha(sha):
+            return False
+        try:
+            return repo[sha].type_name == b"commit"
+        except KeyError:
+            return False
+
+    @staticmethod
+    def _is_valid_tag_target(repo: Repo, sha: bytes) -> bool:
+        """Whether `sha` is a commit or a tag object.
+
+        The only two things a tag in this repository ever points at: a
+        lightweight tag directly at a commit, an annotated one at its
+        own tag object. A blob or a tree sha existing is not enough -
+        see decision 21, correction 7.
+        """
+        from dulwich.objects import valid_hexsha  # noqa: PLC0415
+
+        if not valid_hexsha(sha):
+            return False
+        try:
+            return repo[sha].type_name in (b"commit", b"tag")
+        except KeyError:
+            return False
+
+    def _validate_checkpoint_semantics(
+        self,
+        repo: Repo,
+        key: str,
+        head: bytes | None,
+        notes: dict[bytes, bytes],
+        tags: dict[bytes, bytes | None],
+    ) -> None:
+        """Reject a checkpoint whose values look right but are not.
+
+        `_read_checkpoint` (Korrektur 6) only proves the payload has
+        the right shape - strings where strings belong, dicts where
+        dicts belong. It cannot prove a string is a real sha, a legal
+        ref name, or a key that stays inside the store, because it
+        never has `repo` or `_file_for` to check against. A value that
+        is well-typed but wrong reaches `_finish_forget` unless
+        something stops it here, and letting it through is dangerous,
+        not merely wrong: `_rewrite_notes` deletes `refs/notes/commits`
+        before writing entries back, so an invalid sha loses a real,
+        unrelated note before its own `AssertionError` is even raised;
+        `_rewrite_tags` writes partially into `packed-refs` before an
+        invalid ref name raises `PackedRefsException`, corrupting tag
+        lookups for the whole repository, not just the dashboard being
+        forgotten; `_drop_from_index` builds a path straight from
+        `key` with no containment check of its own, unlike every live
+        write path, which all go through `_file_for`. See decision 21,
+        correction 7.
+
+        Raises `ValueError` naming the first offending field on any
+        failure; the caller treats that exactly like a checkpoint that
+        failed to parse at all.
+        """
+        try:
+            self._file_for(key)
+            self._file_for(key, "meta")
+        except ValueError as exc:
+            raise ValueError(f"key {key!r} does not name a file in the store") from exc
+        if head is not None and not self._is_valid_commit(repo, head):
+            raise ValueError(f"head {head!r} is not a valid, existing commit")
+        for sha in notes:
+            if not self._is_valid_commit(repo, sha):
+                raise ValueError(f"notes key {sha!r} is not a valid, existing commit")
+        from dulwich.refs import check_ref_format  # noqa: PLC0415
+
+        for ref, sha in tags.items():
+            if not check_ref_format(ref) or not ref.startswith(b"refs/tags/"):
+                raise ValueError(f"tags key {ref!r} is not a legal tag ref name")
+            if sha is not None and not self._is_valid_tag_target(repo, sha):
+                raise ValueError(f"tags value {sha!r} is not a valid commit or tag object")
+
     def _file_for(self, key: str, *folders: str) -> Path:
         """The file a key names in the store, or a refusal.
 
@@ -1360,18 +1440,43 @@ class HistoryStore:
         one to finish instead of racing it, and finds either a
         genuinely new checkpoint to repair or nothing left to do. Safe
         to call as many times as this runs, not just the first.
+
+        A checkpoint that parses but carries an invalid sha, ref name
+        or key is rejected the same way a structurally broken one is
+        (decision 21, correction 7): `_validate_checkpoint_semantics`
+        runs before `_finish_forget` is ever reached, so nothing here
+        can apply a value `_rewrite_notes`, `_rewrite_tags` or
+        `_drop_from_index` would only reject midway through a
+        destructive rewrite.
         """
         with self._lock:
             self._ensure()
             git_dir = self.path / ".git"
             if git_dir.exists():
                 self._clear_stale_object_locks(git_dir)
+            repo = self._repo()
+            if repo is None:
+                return
             checkpoint = self._read_checkpoint()
             if checkpoint is None:
                 return
             key, head, notes, tags = checkpoint
-            repo = self._repo()
-            if repo is None:
+            try:
+                self._validate_checkpoint_semantics(repo, key, head, notes, tags)
+            except ValueError as exc:
+                _LOGGER.exception(
+                    "Removed a forget checkpoint with an invalid value: "
+                    "%s. An interrupted forget could not be finished "
+                    "automatically.",
+                    exc,
+                )
+                try:
+                    self._checkpoint_path().unlink(missing_ok=True)
+                except OSError:
+                    _LOGGER.exception(
+                        "Could not remove invalid checkpoint %s",
+                        self._checkpoint_path(),
+                    )
                 return
             self._index = None
             self._survey = None
