@@ -61,13 +61,21 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
   unter »Offene Punkte«; der Nutzer tendiert zum Abbrechen, hat die
   Entscheidung aber ausdrücklich vertagt. GitHub-Issue #18.
 
-- **D1 — Ein unterbrochenes `forget` ist nicht wiederaufnehmbar.**
-  `HistoryStore._forget` (`store.py:879`) schreibt HEAD, Notizen und Tags
-  nacheinander um, ohne vorbereiteten Ersatz-Ref; bricht es zwischen den
-  Schritten ab, ist ein zweiter Lauf nutzlos und Beschreibungen eines noch
-  lebenden Dashboards können verloren gehen. **Beim Nachlesen am
-  2026-09-12 bestätigt: Struktur noch wie im Befund beschrieben, weiterhin
-  offen.**
+- ~~**D1 — Ein unterbrochenes `forget` ist nicht wiederaufnehmbar.**~~
+  **Entworfen am 2026-09-21, noch nicht umgesetzt** (Entscheidung 21,
+  GitHub-Issue #22; nach einem externen Review am selben Tag an vier
+  Stellen nachgeschärft, s. Spec). `HistoryStore._forget` schreibt HEAD,
+  Notizen und Tags nacheinander um, ohne vorbereiteten Ersatz-Ref; bricht
+  es zwischen den Schritten ab, war ein zweiter Lauf nutzlos und
+  Beschreibungen eines noch lebenden Dashboards konnten verloren gehen.
+  Behoben durch einen Checkpoint der Zielwerte (neue Zweigspitze, fertige
+  Notizen- und Tag-Zuordnung, Schlüssel), geschrieben bevor irgendein Ref
+  sich bewegt; jeder Schreibpfad verweigert sich, solange er offen ist —
+  nicht nur einmal pro Prozess, sonst könnte ein Nachholen zwischen Absturz
+  und Neustart entstandene, fremde Historie zurückrollen. Die eigentliche
+  Reparatur läuft im bestehenden Hintergrund-Task vor dem Öffnungslauf,
+  nicht im awaited `store.ensure()`. Heilt sich beim nächsten
+  Home-Assistant-Start selbst, ohne einen zweiten `forget`-Aufruf.
 - **D3 — Löschen und schnelles Wiederanlegen desselben `url_path`
   verschmelzen zwei Dashboards.** Die zehnsekündige Entprellung verwirft
   den Zwischenzustand »gelöscht«. In dieser Runde nicht erneut am Code
