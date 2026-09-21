@@ -86,7 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # working tree exactly so that an interrupted run repairs itself.
     entry.async_create_background_task(
         hass,
-        _async_open(hass, entry, capture, milestones, coordinator),
+        _async_open(hass, entry, store, capture, milestones, coordinator),
         f"{DOMAIN} opening pass",
     )
 
@@ -97,6 +97,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def _async_open(
     hass: HomeAssistant,
     entry: ConfigEntry,
+    store: HistoryStore,
     capture: HistoryCapture,
     milestones: Milestones,
     coordinator: MeasurementCoordinator,
@@ -109,6 +110,24 @@ async def _async_open(
     entry unloaded mid-pass ends the task rather than being logged as a
     failure of it.
     """
+    # First, and off the awaited start for the same reason the opening
+    # pass below is: `garbage_collect` alone measured 4.5-6.6 s on the
+    # test bench, and the object-lock sweep folded into this call costs
+    # time proportional to the whole history's size - nothing may add
+    # that to `async_setup_entry`. Safe to run on every call to
+    # `_async_open`, including every reload, without a gate of its own:
+    # `repair_pending_forget` blocks on the same lock a live write would
+    # already be holding, rather than racing it (decision 21, correction
+    # 4). Ahead of the opening pass on purpose, though not for
+    # correctness - every write in store.py refuses on its own while a
+    # checkpoint is pending - only so a crashed forget does not turn the
+    # opening pass into a wall of refused writes in the log before it
+    # gets repaired.
+    try:
+        await hass.async_add_executor_job(store.repair_pending_forget)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Dashboard History could not repair an interrupted forget")
+
     try:
         await capture.async_opening_pass()
     except Exception:  # noqa: BLE001
