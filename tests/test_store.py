@@ -1086,6 +1086,10 @@ def test_forgetting_reports_a_held_lock_plainly(store):
     over. `ensure()` already clears a lock left by a *dead* process, so
     what reaches here is the one case it cannot: an earlier `forget` in
     this same, still-running process left one behind without crashing.
+    This lock sits at `_point_head`'s own ref, so a checkpoint already
+    exists by the time it is met - decision 21 promises a real repair
+    here, not just a cleared lock, and the message must still name the
+    lock and say to restart.
     """
     store.write_snapshot("gone", "a: 1\n", "first")
     lock = store.path / ".git" / "refs" / "heads" / "master.lock"
@@ -1110,9 +1114,11 @@ def test_forgetting_reports_a_lock_hit_after_head_already_moved(store):
     only there means the forgotten dashboard is already gone from HEAD
     and its notes have already moved - "the history is unaffected"
     would be the exact false reassurance the review of issue #19's
-    first fix found. A second `forget` cannot repair this by itself:
-    `key` is no longer in `list_all_dashboards()`, so it returns 0
-    without touching the tags `_rewrite_tags` never got to.
+    first fix found. Decision 21 made a *restart* the true remedy
+    (`repair_pending_forget` replays the checkpoint `_forget` wrote
+    before `_point_head` ever ran) - this test pins that the message
+    still says so, still names the dashboard, and still avoids the two
+    phrases that used to be the false reassurance.
     """
     revision = store.write_snapshot("vanished", "a: 1\n", "first")
     store.create_version("vanished/v1.0.0", "Vanished", "", revision)
@@ -1128,6 +1134,80 @@ def test_forgetting_reports_a_lock_hit_after_head_already_moved(store):
     assert "vanished" in message
     assert "unaffected" not in message.lower()
     assert "nothing was lost" not in message.lower()
+    assert "restart" in message.lower()
+
+
+def test_forgetting_reports_a_lock_hit_before_any_checkpoint_exists(store, monkeypatch):
+    """A lock met while preparing objects, before any checkpoint exists.
+
+    Nothing clears an object lock synchronously any more (decision 21,
+    correction 5 - only the background sweep in `repair_pending_forget`
+    does, once, off the awaited start). A lock met here means nothing
+    was written down to repair automatically: unlike the two lock tests
+    above, a restart can only promise to clear the lock, not to finish
+    the request - that has to be made again.
+    """
+    from dulwich.file import FileLocked
+    from dulwich.object_store import DiskObjectStore
+
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+
+    def always_locked(self, obj):
+        raise FileLocked("stale.lock", "stale.lock")
+
+    monkeypatch.setattr(DiskObjectStore, "add_object", always_locked)
+
+    with pytest.raises(ValueError, match="forget") as excinfo:
+        store.forget("gone")
+
+    message = str(excinfo.value)
+    assert "call forget again" in message.lower()
+    assert "gone" in store.list_all_dashboards()
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert not checkpoint.exists()
+
+
+def test_a_second_forget_refuses_while_the_first_is_still_pending(store):
+    """A crashed forget's checkpoint must not be stomped on by another.
+
+    Decision 21: two forgets racing to write the same checkpoint file
+    would let the second one's plan silently replace the first's,
+    losing whatever the first one was going to finish. Task 2's guard
+    - checked at the very top of `forget`, before anything else - is
+    what prevents this.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("other", "b: 1\n", "other first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="forget"):
+        store.forget("other")
+
+    assert checkpoint.read_text(encoding="utf-8") == "{}"
+
+
+def test_forget_on_the_checkpoints_own_key_still_refuses(store):
+    """Guards the exact issue #22 regression, not just an unrelated one.
+
+    The test above, forgetting a dashboard that is still plainly
+    present, cannot tell a correctly-placed guard from one placed
+    *after* the "nothing to forget" early returns: `other` being
+    present means both placements reach the guard anyway. A guard
+    placed after those returns would instead let `forget` on the
+    *checkpoint's own key* silently report 0 - because that key
+    already looks exactly like one that was never recorded, once a
+    checkpoint is pending past `_point_head`. A key that genuinely was
+    never written reproduces that same appearance without needing a
+    real crash to set it up.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="forget"):
+        store.forget("never-written")
 
 
 def test_writes_refuse_while_a_forget_checkpoint_is_pending(store):

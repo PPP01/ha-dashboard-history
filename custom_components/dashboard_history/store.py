@@ -1225,40 +1225,52 @@ class HistoryStore:
                 # any call can reach here - see issue #19. What can still
                 # arrive is the other case: an earlier `forget` in this
                 # same, still-running process left one behind without
-                # crashing. `str(exc)` on the bare exception is the two
-                # paths as a tuple, which was the whole of the report in
-                # issue #19 - naming what happened and how to clear it
-                # replaces it here rather than at every caller.
+                # crashing.
                 #
-                # Which sentence is true depends on *where* the lock was
-                # met. `_point_head` and `_rewrite_notes` write only
-                # loose refs, never `packed-refs.lock`; `_rewrite_tags`
-                # is the one call that does, and it runs after both have
-                # already succeeded. A lock met there means `key` is
-                # already gone from HEAD - claiming the history is
-                # unaffected there is the false reassurance the review
-                # of the first fix found, and a repeat `forget` cannot
-                # repair it: `list_all_dashboards` below no longer lists
-                # `key`, so a second call returns 0 without ever
-                # reaching the tags this one did not finish.
+                # Which message applies depends on *where* the lock was
+                # met, and on one more thing decision 21 added: whether a
+                # checkpoint already exists. `_point_head` and
+                # `_rewrite_notes` write only loose refs, never
+                # `packed-refs.lock`; `_rewrite_tags` is the one call
+                # that does, and it runs after both have already
+                # succeeded - a lock met there always finds a checkpoint
+                # already written (see `_forget`), so a restart finishes
+                # the job. A lock met while preparing rewritten objects,
+                # before the checkpoint exists, is different: nothing
+                # clears an object lock synchronously (decision 21,
+                # correction 5 - only `repair_pending_forget`'s sweep
+                # does, once, from the background), so reaching here
+                # means nothing was ever remembered, and a restart can
+                # only promise to clear the lock eventually, not to
+                # finish a request that never got far enough to be
+                # written down.
                 lockfile = os.fsdecode(exc.lockfilename)
                 if key in set(self.list_all_dashboards()):
+                    if self._checkpoint_path().exists():
+                        raise ValueError(
+                            "forget could not finish: a lock file from "
+                            f"an earlier attempt is still in place "
+                            f"({lockfile}). Nothing about {key} has "
+                            "changed yet. Restart Home Assistant - the "
+                            "interrupted rewrite finishes automatically "
+                            "before recording resumes; nothing further "
+                            "is required."
+                        ) from exc
                     raise ValueError(
                         "forget could not finish: a lock file from an "
                         f"earlier attempt is still in place ({lockfile}). "
-                        "Nothing was written yet, so the history is "
-                        "unaffected. Restart Home Assistant to clear the "
-                        "lock, then try again."
+                        f"Nothing about {key} has changed yet, and "
+                        "nothing was remembered to finish automatically. "
+                        "Restart Home Assistant to clear the lock, then "
+                        "call forget again."
                     ) from exc
                 raise ValueError(
                     "forget could not finish: a lock file from an earlier "
                     f"attempt is still in place ({lockfile}), after {key} "
-                    "was already removed from the history. Restarting "
-                    "Home Assistant clears the lock, but running forget "
-                    "again will not repair this by itself - it will find "
-                    f"{key} already gone and report nothing removed, "
-                    "while other dashboards' tags may still be the old "
-                    "ones."
+                    "was already removed from the history. Restart Home "
+                    "Assistant - the interrupted rewrite finishes "
+                    "automatically before recording resumes; nothing "
+                    "further is required."
                 ) from exc
 
     def repair_pending_forget(self) -> None:
