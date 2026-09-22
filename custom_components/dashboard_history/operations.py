@@ -13,10 +13,12 @@ from __future__ import annotations
 import asyncio
 import difflib
 import logging
+from collections.abc import Awaitable, Callable
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from dulwich.errors import MissingCommitError
 
 from .analyze import (
     explain_change,
@@ -36,7 +38,7 @@ from .snapshot import (
     async_known_keys,
     async_save_config,
 )
-from .store import HistoryStore, Version
+from .store import HistoryStore, Version, _FORGET_RACE_RETRIES
 from .yaml_io import dump, load_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -504,6 +506,56 @@ async def async_history(
     }
 
 
+async def _retrying_a_forget_race(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    attempt: Callable[[], Awaitable[tuple[list, dict]]],
+) -> tuple[list, dict]:
+    """The async twin of `HistoryStore._retrying_a_forget_race`.
+
+    Cannot reuse that one directly: each attempt here is a sequence of
+    awaited executor jobs, not one synchronous call, so the retry has
+    to live on this side of the sync/async boundary. Same budget, same
+    two signals, same reasoning - see decision 24.
+
+    A result is trusted - whether `attempt()` raised or returned
+    normally - only if, checked right after, HEAD reads the same as it
+    did when this attempt began *and* `store.forget_in_progress()` is
+    false. Checking only on failure would miss a `forget` that
+    completes entirely between the two separate executor jobs inside
+    `attempt()` - `list_versions` then `search_changes`, across a
+    guaranteed `await` point - neither individually raises, so nothing
+    would trigger a retry, yet the result mixes two generations. The
+    checkpoint check catches what HEAD alone cannot: a call starting
+    after HEAD already moved but before notes/tags catch up sees a
+    HEAD that never moves again during its own execution at all.
+    """
+
+    async def current_head() -> object:
+        try:
+            return await hass.async_add_executor_job(store.resolve, "HEAD")
+        except (KeyError, MissingCommitError):
+            return object()
+
+    head = await current_head()
+    for _ in range(_FORGET_RACE_RETRIES - 1):
+        try:
+            found = await attempt()
+        except (KeyError, MissingCommitError):
+            moved = await current_head()
+            unsettled = await hass.async_add_executor_job(store.forget_in_progress)
+            if moved == head and not unsettled:
+                raise
+            head = moved
+            continue
+        moved = await current_head()
+        unsettled = await hass.async_add_executor_job(store.forget_in_progress)
+        if moved == head and not unsettled:
+            return found
+        head = moved
+    return await attempt()
+
+
 async def async_search(
     hass: HomeAssistant,
     store: HistoryStore,
@@ -530,14 +582,30 @@ async def async_search(
     here and handed down, the second scan is gone; what is left is one
     executor hop after another instead of two at once, and the walk was
     always the expensive half of the pair.
+
+    Retried as one whole sequence - `list_versions`, `search_changes`,
+    and this function's own `marks` - if a concurrent `forget` races it
+    (decision 24). `store.search_changes` cannot safely retry on its
+    own here: it does not own the `versions` list this function hands
+    it, and this function's own `marks` is built from that same list
+    outside `search_changes`'s reach. A rebuild inside `search_changes`
+    alone would come back with new shas while `marks` still named the
+    old ones, and every version match would fail with nothing to say
+    why - so `search_changes` propagates instead, and this function
+    retries everything together, re-reading `versions` fresh on every
+    attempt.
     """
-    versions = await hass.async_add_executor_job(store.list_versions, key)
-    changes = await hass.async_add_executor_job(
-        store.search_changes, key, text, limit + 1, versions
-    )
+
+    async def attempt() -> tuple[list, dict]:
+        versions = await hass.async_add_executor_job(store.list_versions, key)
+        changes = await hass.async_add_executor_job(
+            store.search_changes, key, text, limit + 1, versions
+        )
+        return changes, _marks_by_revision(versions)
+
+    changes, marks = await _retrying_a_forget_race(hass, store, attempt)
     more = len(changes) > limit
     changes = changes[:limit]
-    marks = _marks_by_revision(versions)
     live = await async_get_config(hass, key)
     same: set[str] = set()
     if live is not None and changes:
