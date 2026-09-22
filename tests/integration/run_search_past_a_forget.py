@@ -346,6 +346,48 @@ async def _raises_when_even_the_last_attempt_stays_unstable() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+async def _survives_a_race_in_head_resolution_itself() -> None:
+    """`current_head()` dereferences `store.resolve("HEAD")`, which can
+    itself race the exact prune it exists to detect - see
+    `test_current_head_survives_a_key_error_from_resolving_head_itself`
+    in `tests/test_store.py` for the sync twin. `store.resolve("HEAD")`
+    always fails here; nothing else calls `resolve` in this path, so
+    every HEAD observation on both sides of every attempt answers a
+    fresh, never-equal sentinel instead of crashing - which means
+    nothing ever validates, and `async_search` raises the same way it
+    does when HEAD genuinely never settles.
+    """
+    root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-head-race-"))
+    try:
+        store = HistoryStore(root)
+        store.ensure()
+        store.write_snapshot(KEY, "a: 1\n", f"{KEY}: unique-needle-1")
+        hass = Hass()
+
+        def always_races(self, revision):
+            raise KeyError(b"simulated: HEAD itself pruned mid-resolve")
+
+        raised = None
+        with (
+            mock.patch.object(HistoryStore, "resolve", always_races),
+            mock.patch.object(
+                operations, "async_get_config", new=mock.AsyncMock(return_value=None)
+            ),
+        ):
+            try:
+                await operations.async_search(hass, store, KEY, "unique-needle")
+            except RuntimeError as exc:
+                raised = exc
+
+        check(
+            "async_search does not crash when HEAD itself cannot be read",
+            raised is not None and "kept racing" in str(raised),
+            str(raised),
+        )
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 async def main() -> int:
     await _retries_past_a_race()
     await _retries_past_a_race_with_missing_commit_error()
@@ -353,6 +395,7 @@ async def main() -> int:
     await _retries_when_checkpoint_present_even_if_head_is_stable()
     await _propagates_when_head_did_not_move()
     await _raises_when_even_the_last_attempt_stays_unstable()
+    await _survives_a_race_in_head_resolution_itself()
     print(f"\n{len(_passed)} of {len(_passed) + len(_failed)} checks passed")
     if _failed:
         print("Failed: " + ", ".join(_failed))

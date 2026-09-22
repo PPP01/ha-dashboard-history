@@ -1045,6 +1045,50 @@ def test_list_changes_raises_when_even_the_last_attempt_stays_unstable(
     assert len(calls) == 3
 
 
+def test_current_head_survives_a_key_error_from_resolving_head_itself(
+    store, monkeypatch
+):
+    """`_resolve` dereferences an object internally, unguarded - a
+    `forget` that prunes exactly what it is about to read can make
+    even the HEAD observation itself fail with the same exceptions
+    `_retrying_a_forget_race` exists to survive. A fresh sentinel
+    instead of raising, or answering `None`, keeps the retry loop's
+    own safety check from crashing, and keeps two failed observations
+    from comparing equal to each other. See decision 24."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    repo = store._repo()
+
+    def always_races(repo, revision):
+        raise KeyError(b"simulated: HEAD itself pruned mid-resolve")
+
+    monkeypatch.setattr(HistoryStore, "_resolve", staticmethod(always_races))
+
+    first = store._current_head(repo)
+    second = store._current_head(repo)
+
+    assert first != second
+
+
+def test_current_head_survives_a_missing_commit_error_from_resolving_head_itself(
+    store, monkeypatch
+):
+    """Companion to the `KeyError` case above - dulwich's walker raises
+    `MissingCommitError` instead, not a subclass of `KeyError`, for the
+    same underlying race. Decision 24 requires both be caught."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    repo = store._repo()
+
+    def always_races(repo, revision):
+        raise MissingCommitError(b"simulated: HEAD itself pruned mid-resolve")
+
+    monkeypatch.setattr(HistoryStore, "_resolve", staticmethod(always_races))
+
+    first = store._current_head(repo)
+    second = store._current_head(repo)
+
+    assert first != second
+
+
 def test_search_changes_retries_when_it_fetches_its_own_versions(store, monkeypatch):
     """search_changes owns `versions` when the caller does not supply
     it - it can safely rebuild everything, the same way list_changes
