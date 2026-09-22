@@ -1,6 +1,7 @@
 """Tests for the git-backed history store."""
 
 import json
+from pathlib import Path
 import threading
 from contextlib import contextmanager
 
@@ -12,7 +13,14 @@ from dulwich.repo import Repo
 import dulwich.refs
 from dulwich.errors import MissingCommitError
 import store as store_module
-from store import HistoryStore, RevisionIndex, StaleCursorError, Version, _as_text
+from store import (
+    GenerationReadError,
+    HistoryStore,
+    RevisionIndex,
+    StaleCursorError,
+    Version,
+    _as_text,
+)
 import versions
 from versions import candidates
 
@@ -1440,6 +1448,58 @@ def test_a_corrupt_generation_file_is_treated_as_zero(store):
     assert store.forget_generation() == 0
 
 
+def test_a_negative_generation_file_is_treated_as_zero(store):
+    """Negative numbers in the generation file are invalid format and must
+    be treated as 0 for read fallback, not accepted as a negative int."""
+    generation_path = store.path / ".git" / "dashboard_history_forget_generation"
+    generation_path.parent.mkdir(parents=True, exist_ok=True)
+    generation_path.write_text("-1", encoding="utf-8")
+
+    assert store.forget_generation() == 0
+
+
+def test_forget_refuses_when_generation_file_is_corrupt(store):
+    """`forget` must never overwrite an existing but unreadable or corrupt
+    generation counter with 1, as that would reset a higher generation and
+    break monotonicity for earlier cursors. It must refuse cleanly before
+    writing any checkpoint or moving any ref."""
+    store.write_snapshot("gone", "b: 1\n", "first")
+    generation_path = store.path / ".git" / "dashboard_history_forget_generation"
+    generation_path.parent.mkdir(parents=True, exist_ok=True)
+    generation_path.write_text("corrupted", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="generation"):
+        store.forget("gone")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert not checkpoint.exists()
+    assert generation_path.read_text(encoding="utf-8") == "corrupted"
+
+
+def test_forget_refuses_when_generation_file_unreadable(store, monkeypatch):
+    """An I/O error reading an existing generation file must prevent `forget`
+    from assuming 0 and resetting the counter."""
+    store.write_snapshot("gone", "b: 1\n", "first")
+    generation_path = store.path / ".git" / "dashboard_history_forget_generation"
+    generation_path.parent.mkdir(parents=True, exist_ok=True)
+    generation_path.write_text("3", encoding="utf-8")
+
+    real_read_text = Path.read_text
+
+    def broken_read(self, *args, **kwargs):
+        if self.name == "dashboard_history_forget_generation":
+            raise PermissionError("simulated permission error")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", broken_read)
+
+    with pytest.raises(ValueError, match="generation"):
+        store.forget("gone")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert not checkpoint.exists()
+
+
 def test_repair_pending_forget_bumps_the_generation_exactly_once(store, monkeypatch):
     """The crash-recovery path (decision 21) finishes a `forget` through
     the same `_finish_forget` the ordinary path does - and since that
@@ -1486,6 +1546,186 @@ def test_repair_pending_forget_bumps_the_generation_exactly_once(store, monkeypa
     # A second repair call must be a pure no-op - the checkpoint is
     # already gone - not a second bump either.
     store.repair_pending_forget()
+    assert store.forget_generation() == 1
+
+
+def test_repair_pending_forget_preserves_checkpoint_when_generation_unreadable(store, monkeypatch):
+    """When an interrupted forget is being repaired, a temporary I/O error
+    reading the generation counter must never discard the valid checkpoint.
+    The checkpoint must stay on disk, write refusal must remain in effect,
+    and once the generation counter becomes readable again, repair must
+    finish cleanly."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    home_v2 = store.write_snapshot("home", "a: 2\n", "second")
+    store.set_description(home_v2, "a note on the commit that gets rewritten")
+    store.create_version("home/v1.0.0", "Home", "", home_v2)
+
+    real_rewrite_tags = HistoryStore._rewrite_tags
+    calls = []
+
+    def flaky_rewrite_tags(repo, changed):
+        calls.append(changed)
+        if len(calls) == 1:
+            raise RuntimeError("simulated crash before _rewrite_tags")
+        return real_rewrite_tags(repo, changed)
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(flaky_rewrite_tags))
+
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert checkpoint.exists()
+    assert store.forget_in_progress()
+
+    real_read_generation = store._read_generation
+
+    def broken_read_generation():
+        raise GenerationReadError("simulated permission error")
+
+    monkeypatch.setattr(store, "_read_generation", broken_read_generation)
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(real_rewrite_tags))
+
+    store.repair_pending_forget()
+
+    assert checkpoint.exists(), "checkpoint must not be deleted on generation read error"
+    assert store.forget_in_progress()
+
+    with pytest.raises(ValueError, match="earlier forget"):
+        store.write_snapshot("home", "a: 3\n", "third")
+
+    monkeypatch.setattr(store, "_read_generation", real_read_generation)
+
+    store.repair_pending_forget()
+    assert not checkpoint.exists()
+    assert not store.forget_in_progress()
+    assert store.forget_generation() == 1
+    assert "gone" not in store.list_dashboards()
+
+
+def test_repair_legacy_checkpoint_preserves_checkpoint_when_generation_unreadable(store, monkeypatch):
+    """A legacy checkpoint without target_generation that encounters an I/O error
+    reading the generation counter must also be preserved, not unlinked."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    repo = store._repo()
+    head = repo.head()
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    payload = {
+        "key": "gone",
+        "head": head.decode(),
+        "notes": {},
+        "tags": {},
+    }
+    checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+    assert checkpoint.exists()
+
+    real_read_generation = store._read_generation
+
+    def broken_read_generation():
+        raise GenerationReadError("simulated permission error")
+
+    monkeypatch.setattr(store, "_read_generation", broken_read_generation)
+
+    store.repair_pending_forget()
+
+    assert checkpoint.exists(), "legacy checkpoint must not be deleted on generation read error"
+    assert store.forget_in_progress()
+
+
+def test_repair_pending_forget_preserves_checkpoint_when_generation_corrupted(store, monkeypatch):
+    """A corrupted or negative generation file must not cause repair to delete
+    an active checkpoint. The checkpoint is preserved until the generation
+    counter is restored or made readable, at which point repair finishes."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    home_v2 = store.write_snapshot("home", "a: 2\n", "second")
+    store.set_description(home_v2, "a note on the commit that gets rewritten")
+    store.create_version("home/v1.0.0", "Home", "", home_v2)
+
+    real_rewrite_tags = HistoryStore._rewrite_tags
+    calls = []
+
+    def flaky_rewrite_tags(repo, changed):
+        calls.append(changed)
+        if len(calls) == 1:
+            raise RuntimeError("simulated crash before _rewrite_tags")
+        return real_rewrite_tags(repo, changed)
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(flaky_rewrite_tags))
+
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    assert checkpoint.exists()
+    assert store.forget_in_progress()
+
+    # Now corrupt the generation file
+    generation_path = store.path / ".git" / "dashboard_history_forget_generation"
+    generation_path.write_text("corrupted", encoding="utf-8")
+
+    # Repair runs with corrupted generation file
+    store.repair_pending_forget()
+
+    # The checkpoint must still be preserved!
+    assert checkpoint.exists(), "checkpoint must not be deleted on corrupted generation"
+    assert store.forget_in_progress()
+
+    # Now test with negative number format
+    generation_path.write_text("-1", encoding="utf-8")
+    store.repair_pending_forget()
+    assert checkpoint.exists(), "checkpoint must not be deleted on negative generation"
+    assert store.forget_in_progress()
+
+    # Restore the generation counter to 1 (the target_generation)
+    generation_path.write_text("1", encoding="utf-8")
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(real_rewrite_tags))
+
+    # Now repair finishes cleanly
+    store.repair_pending_forget()
+    assert not checkpoint.exists()
+    assert not store.forget_in_progress()
+    assert store.forget_generation() == 1
+    assert "gone" not in store.list_dashboards()
+
+
+def test_repair_legacy_checkpoint_preserves_checkpoint_when_generation_corrupted(store):
+    """A legacy checkpoint without target_generation must also be preserved
+    when the generation counter is corrupted or negative."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    repo = store._repo()
+    head = repo.head()
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    payload = {
+        "key": "gone",
+        "head": head.decode(),
+        "notes": {},
+        "tags": {},
+    }
+    checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+    assert checkpoint.exists()
+
+    generation_path = store.path / ".git" / "dashboard_history_forget_generation"
+    generation_path.write_text("corrupted", encoding="utf-8")
+
+    store.repair_pending_forget()
+
+    assert checkpoint.exists(), "legacy checkpoint must not be deleted on corrupted generation"
+    assert store.forget_in_progress()
+
+    generation_path.write_text("-1", encoding="utf-8")
+    store.repair_pending_forget()
+    assert checkpoint.exists(), "legacy checkpoint must not be deleted on negative generation"
+    assert store.forget_in_progress()
+
+    # Restore valid generation
+    generation_path.write_text("0", encoding="utf-8")
+    store.repair_pending_forget()
+    assert not checkpoint.exists()
+    assert not store.forget_in_progress()
     assert store.forget_generation() == 1
 
 
@@ -1642,6 +1882,41 @@ def test_an_unresolvable_cursor_at_the_current_generation_still_yields_nothing(s
         )
         == []
     )
+
+
+def test_stale_cursor_retries_while_forget_checkpoint_is_pending(store, monkeypatch):
+    """When a cursor names a pruned commit and before_generation is older,
+    but a `forget` is still in progress (checkpoint pending), the read must
+    participate in the race retry rather than raising StaleCursorError immediately.
+    Once the checkpoint is cleared, StaleCursorError is raised."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "home 1")
+    older_revision = store.write_snapshot("home", "a: 2\n", "home 2")
+    store.write_snapshot("home", "a: 3\n", "home 3")
+    generation_at_read = store.forget_generation()
+
+    store.forget("gone")  # now generation is 1, older_revision is pruned
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    attempts = []
+    real_resolve = HistoryStore._resolve
+
+    def observing_resolve(repo, ref):
+        if ref != "HEAD":
+            attempts.append(len(attempts) + 1)
+            if len(attempts) == 2:
+                checkpoint.unlink(missing_ok=True)
+        return real_resolve(repo, ref)
+
+    monkeypatch.setattr(HistoryStore, "_resolve", staticmethod(observing_resolve))
+
+    with pytest.raises(StaleCursorError):
+        store.list_changes("home", before=older_revision, before_generation=generation_at_read)
+
+    assert len(attempts) >= 2
+    assert not store.forget_in_progress()
 
 
 def test_repair_clears_a_stale_object_lock(store):

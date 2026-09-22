@@ -478,6 +478,17 @@ class StaleCursorError(Exception):
     """
 
 
+class GenerationReadError(Exception):
+    """The forget generation counter cannot be safely read from disk.
+
+    Raised for both I/O errors and corrupted/invalid content formats.
+    Kept strictly apart from checkpoint corruption: an unreadable or corrupt
+    generation counter does not prove the pending forget plan is broken.
+    During repair, this preserves the checkpoint so an interrupted rewrite
+    is not lost, and can complete once the generation counter is restored.
+    """
+
+
 class HistoryStore:
     """Stores dashboard states and reads them back."""
 
@@ -609,6 +620,28 @@ class HistoryStore:
     def _forget_generation_path(self) -> Path:
         return self.path / ".git" / _FORGET_GENERATION_NAME
 
+    def _read_generation(self) -> int:
+        """Read and validate the raw generation counter from disk.
+
+        Raises `GenerationReadError` if the file cannot be read due to an I/O
+        error or if the file contains anything other than a non-negative
+        integer. Returns `0` if the file does not exist yet.
+        """
+        path = self._forget_generation_path()
+        try:
+            if not path.exists():
+                return 0
+            raw = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise GenerationReadError(
+                f"Could not read generation counter at {path}: {exc}"
+            ) from exc
+        if not raw.isdigit():
+            raise GenerationReadError(
+                f"Generation counter at {path} must be a non-negative integer, got {raw!r}"
+            )
+        return int(raw)
+
     def forget_generation(self) -> int:
         """How many times `forget` has ever completed here.
 
@@ -622,24 +655,21 @@ class HistoryStore:
         happened *since* this number was read", never anything about
         the number's absolute size.
 
-        Also `0` if the file exists but cannot be parsed as an int -
-        logged rather than raised. Never written this way by
-        `_finish_forget` itself, but trusting a garbage value could
-        move the counter backwards, which every comparison against it
-        assumes never happens; the next completed `forget` overwrites
-        it with a fresh, valid value regardless. See issue #26.
+        Also `0` if the file exists but cannot be read or parsed as a
+        non-negative int - logged rather than raised for read-only callers.
+        Never written this way by `_finish_forget` itself. `forget` refuses
+        to run while the counter cannot be safely read, preserving
+        monotonicity rather than risking overwriting a higher generation.
+        See issue #26.
         """
-        path = self._forget_generation_path()
-        if not path.exists():
-            return 0
         try:
-            return int(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
+            return self._read_generation()
+        except GenerationReadError as exc:
             _LOGGER.exception(
                 "Could not read the forget generation counter at %s: %s. "
-                "Treating it as 0 until the next completed forget "
-                "rewrites it.",
-                path,
+                "Treating it as 0 for this read. Any new forget will refuse "
+                "until the counter is readable and valid.",
+                self._forget_generation_path(),
                 exc,
             )
             return 0
@@ -779,15 +809,24 @@ class HistoryStore:
                 # itself refuses while one exists), so this is exactly
                 # what would have been stored had the feature existed
                 # at write time. Not a parse failure - see issue #26.
-                target_generation = self.forget_generation() + 1
+                target_generation = self._read_generation() + 1
             elif (
                 not isinstance(target_generation_val, int)
                 or isinstance(target_generation_val, bool)
+                or target_generation_val < 0
             ):
-                raise ValueError("target_generation must be an int")
+                raise ValueError("target_generation must be a non-negative int")
             else:
                 target_generation = target_generation_val
             return key, head, notes, tags, target_generation
+        except GenerationReadError as exc:
+            _LOGGER.exception(
+                "Could not read generation counter for legacy forget checkpoint %s: %s. "
+                "Leaving file in place to avoid losing a pending plan.",
+                path,
+                exc,
+            )
+            return None
         except (
             json.JSONDecodeError,
             KeyError,
@@ -909,7 +948,7 @@ class HistoryStore:
                 raise ValueError(f"tags key {ref!r} is not a legal tag ref name")
             if sha is not None and not self._is_valid_tag_target(repo, sha):
                 raise ValueError(f"tags value {sha!r} is not a valid commit or tag object")
-        current_generation = self.forget_generation()
+        current_generation = self._read_generation()
         if target_generation not in (current_generation, current_generation + 1):
             raise ValueError(
                 f"target_generation {target_generation!r} is neither the "
@@ -1693,6 +1732,15 @@ class HistoryStore:
                 self._validate_checkpoint_semantics(
                     repo, key, head, notes, tags, target_generation
                 )
+            except GenerationReadError as exc:
+                _LOGGER.exception(
+                    "Could not validate forget checkpoint %s because the "
+                    "generation counter cannot be safely read: %s. "
+                    "Leaving file in place to avoid losing a pending plan.",
+                    self._checkpoint_path(),
+                    exc,
+                )
+                return
             except ValueError as exc:
                 _LOGGER.exception(
                     "Removed a forget checkpoint with an invalid value: "
@@ -1775,7 +1823,14 @@ class HistoryStore:
         # forget.json` is the one true record of what this call is about
         # to finish, for this call and for any later repair alike. See
         # decision 21.
-        target_generation = self.forget_generation() + 1
+        try:
+            current_generation = self._read_generation()
+        except GenerationReadError as exc:
+            raise ValueError(
+                f"Cannot forget {key}: the forget generation counter at "
+                f"{self._forget_generation_path()} cannot be safely read: {exc}"
+            ) from exc
+        target_generation = current_generation + 1
         self._write_checkpoint(key, head, note_targets, tag_targets, target_generation)
         self._finish_forget(
             repo, key, head, note_targets, tag_targets, target_generation, say
@@ -2412,6 +2467,8 @@ class HistoryStore:
                     before_generation is not None
                     and before_generation < self.forget_generation()
                 ):
+                    if self.forget_in_progress():
+                        raise KeyError(before)
                     raise StaleCursorError(before)
                 return
             # `include` walks *from* that commit and hands the commit
@@ -2613,6 +2670,8 @@ class HistoryStore:
                 before_generation is not None
                 and before_generation < self.forget_generation()
             ):
+                if self.forget_in_progress():
+                    raise KeyError(before)
                 raise StaleCursorError(before)
             # An unknown `before` yields nothing, as the docstring of
             # `list_changes` promises - not a walk that finds plenty.
