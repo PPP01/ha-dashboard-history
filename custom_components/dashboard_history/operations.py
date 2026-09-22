@@ -301,6 +301,46 @@ async def _keep_the_live_state(
     )
 
 
+def _refuse_unrecorded_state(lost: str | None, override: bool) -> dict | None:
+    """The refusal Decision 23 asks for, or `None` to proceed with the write.
+
+    `lost` is `_keep_the_live_state`'s report: `None` means the state
+    just before this write is safely in the history, and nothing here
+    applies - every other write in this module keeps going exactly as
+    it always has. Anything else means it is not, and is about to be
+    overwritten for good. Decision 23 reverses the 2026-09-03 ruling
+    that let that write through anyway with only a note (GitHub issue
+    #18): the note used to reach the panel only after the write, when
+    the state it warned about no longer existed.
+
+    `override` is that ruling's escape hatch, kept for the reason it
+    was written for - a full disk refuses nothing either way, because
+    the snapshot could not have been written regardless, and refusing
+    there helps nobody at the moment a restore is wanted most. A caller
+    that has already seen this refusal and asks again with
+    `override=True` gets the write; `lost` is not read again once
+    `override` is true; it already did its job by being reported once.
+
+    The exact wording does not depend on `lost`'s own text on purpose:
+    `_keep_the_live_state` already answers with the same one sentence
+    for every failure it can have (a capture that raised, or a read
+    that came back different), so there is no second cause to describe
+    here that its own warning log line has not already named.
+    """
+    if lost is None or override:
+        return None
+    return {
+        "applied": False,
+        "error": (
+            "what was on the dashboard just before this could not be "
+            "recorded, so the write was refused - it would be lost for "
+            "good otherwise. Pass override_unrecorded_state to write "
+            "anyway despite that."
+        ),
+        "unrecorded_state": True,
+    }
+
+
 def _as_dict(explanation) -> dict:
     """An Explanation as plain data, for a service result or the panel."""
     return {
@@ -537,6 +577,7 @@ async def async_restore_deleted(
     revision: str,
     position: int,
     confirm: bool = False,
+    override_unrecorded_state: bool = False,
 ) -> dict:
     """Put one disappeared card or view back."""
     _, text, error = await _state_at(hass, store, key, revision)
@@ -552,6 +593,9 @@ async def async_restore_deleted(
     lost = await _keep_the_live_state(
         hass, store, key, plan["live_text"] if live is not None else None
     )
+    refusal = _refuse_unrecorded_state(lost, override_unrecorded_state)
+    if refusal is not None:
+        return refusal
     await async_save_config(hass, key, plan["restored"])
     result = {
         "applied": True,
@@ -606,6 +650,7 @@ async def async_restore_state(
     revision: str,
     confirm: bool = False,
     keep_as_version: dict | None = None,
+    override_unrecorded_state: bool = False,
 ) -> dict:
     """Set a dashboard back to an earlier state, creating it if it is gone.
 
@@ -662,6 +707,9 @@ async def async_restore_state(
         note = await _keep_the_live_state(
             hass, store, key, live_text if live is not None else None
         )
+        refusal = _refuse_unrecorded_state(note, override_unrecorded_state)
+        if refusal is not None:
+            return refusal
     kept = None
     if keep_as_version is not None:
         kept = await _async_keep_as_version(
@@ -697,6 +745,7 @@ async def async_undo_change(
     revision: str,
     confirm: bool = False,
     preview: bool = False,
+    override_unrecorded_state: bool = False,
 ) -> dict:
     """Take one change back and keep everything since - if that is exact.
 
@@ -814,6 +863,9 @@ async def async_undo_change(
     lost = await _keep_the_live_state(
         hass, store, key, live_text if live is not None else None
     )
+    refusal = _refuse_unrecorded_state(lost, override_unrecorded_state)
+    if refusal is not None:
+        return {**answer, **refusal}
     await async_save_config(hass, key, result)
     answer["applied"] = True
     if lost:
