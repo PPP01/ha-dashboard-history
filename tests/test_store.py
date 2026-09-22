@@ -1405,6 +1405,38 @@ def test_repair_does_nothing_when_no_checkpoint_exists(store):
     store.repair_pending_forget()
     assert store.read_at("home", "HEAD") == "a: 1\n"
 
+def test_forget_generation_starts_at_zero(store):
+    """No `forget` has ever run in a fresh repository."""
+    assert store.forget_generation() == 0
+
+
+def test_forget_increments_the_generation(store):
+    """Every completed `forget` moves the counter, regardless of which
+    key it targeted - see issue #26."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    assert store.forget_generation() == 0
+    store.forget("gone")
+    assert store.forget_generation() == 1
+    store.write_snapshot("gone2", "b: 2\n", "gone second")
+    store.forget("gone2")
+    assert store.forget_generation() == 2
+
+
+def test_a_corrupt_generation_file_is_treated_as_zero(store):
+    """A single small metadata file must not take every history read
+    down with it. Never written this way by this class - disk
+    corruption or manual tampering are not this class's to rule out -
+    but the safe fallback is the same either way: treat it as "no
+    forget has completed since this file was last trustworthy", which
+    the next completed `forget` overwrites with a fresh, valid value
+    regardless. See issue #26 and the review that found this missing."""
+    generation_path = store.path / ".git" / "dashboard_history_forget_generation"
+    generation_path.parent.mkdir(parents=True, exist_ok=True)
+    generation_path.write_text("not a number", encoding="utf-8")
+
+    assert store.forget_generation() == 0
+
 
 def test_repair_clears_a_stale_object_lock(store):
     """A lock under objects/ left by a dead process must not survive repair.

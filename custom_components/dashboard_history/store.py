@@ -49,6 +49,15 @@ _IDENTITY = b"Dashboard History <dashboard-history@localhost>"
 # one before a restart gets to repair it.
 _FORGET_CHECKPOINT_NAME = "dashboard_history_forget.json"
 
+# The name of the file that holds how many times `forget` has ever
+# completed against this repository, inside `.git` next to the
+# checkpoint. A plain integer as text, written by `_finish_forget` -
+# see its own docstring for why that write happens first, before
+# anything else in that method, rather than last. Used to tell a
+# `before` cursor that was real and has since been rewritten away
+# apart from one that was never valid at all - see issue #26.
+_FORGET_GENERATION_NAME = "dashboard_history_forget_generation"
+
 # Repository paths whose stale locks this process has already swept
 # once. Keyed by path rather than held on `HistoryStore` itself, because
 # what has to be remembered across a reload is that *this process* has
@@ -454,6 +463,21 @@ def _owns(ref: bytes, key: str) -> bool:
 _FORGET_RACE_RETRIES = 3
 
 
+class StaleCursorError(Exception):
+    """A `before` cursor cannot be trusted any more.
+
+    Raised only when the caller supplied `before_generation` and a
+    `forget` has moved `HistoryStore.forget_generation()` past it -
+    `_resolve` failing is then expected, not a sign the cursor was
+    ever invalid. Without `before_generation`, the same unresolvable
+    `before` still answers `[]`, exactly as before this existed: the
+    WebSocket `history` command accepts an arbitrary `before` string
+    from any admin caller, not only the panel's own echoed cursor, and
+    a caller that never adopted the new parameter must keep getting
+    the old, safe answer. See issue #26.
+    """
+
+
 class HistoryStore:
     """Stores dashboard states and reads them back."""
 
@@ -581,6 +605,44 @@ class HistoryStore:
 
     def _checkpoint_path(self) -> Path:
         return self.path / ".git" / _FORGET_CHECKPOINT_NAME
+
+    def _forget_generation_path(self) -> Path:
+        return self.path / ".git" / _FORGET_GENERATION_NAME
+
+    def forget_generation(self) -> int:
+        """How many times `forget` has ever completed here.
+
+        `0` for a repository no `forget` has touched yet - including
+        one that ran `forget` before this counter existed at all: no
+        cursor from that era ever carried a `before_generation` either
+        (an old response never had a `generation` field for a client
+        to remember), so starting the count at `0` on first use is
+        exactly as safe as if the counter had existed all along. Every
+        `before_generation` comparison only asks "has a forget
+        happened *since* this number was read", never anything about
+        the number's absolute size.
+
+        Also `0` if the file exists but cannot be parsed as an int -
+        logged rather than raised. Never written this way by
+        `_finish_forget` itself, but trusting a garbage value could
+        move the counter backwards, which every comparison against it
+        assumes never happens; the next completed `forget` overwrites
+        it with a fresh, valid value regardless. See issue #26.
+        """
+        path = self._forget_generation_path()
+        if not path.exists():
+            return 0
+        try:
+            return int(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _LOGGER.exception(
+                "Could not read the forget generation counter at %s: %s. "
+                "Treating it as 0 until the next completed forget "
+                "rewrites it.",
+                path,
+                exc,
+            )
+            return 0
 
     def _refuse_if_forget_pending(self) -> None:
         """Refuse to write while an earlier `forget` is still unfinished.
