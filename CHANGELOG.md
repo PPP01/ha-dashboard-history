@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.8.0
+
+What the history costs is visible now, in Home Assistant's own
+diagnostics. And three ways it could quietly lose or block work under
+pressure — a crash in the middle of forgetting a dashboard, a
+repository that is briefly unreadable or unwritable, a live state the
+recorder never heard about — no longer do. No change to the Home
+Assistant version floor — still **2024.11 or newer**.
+
+### Measuring — what the history costs
+
+- **Five new sensors**: Size, Recorded states, Dashboards, Versions,
+  and Last capture. Refreshed every 15 minutes and after every save.
+- **A downloadable diagnostics report**, through Home Assistant's own
+  "Download diagnostics" button — numbers only, nothing from any
+  dashboard's own content.
+- Measured against a 7518-commit, 68-dashboard history: a warm
+  measurement (nothing changed since the last one) costs 154.6 ms,
+  0.017% of one executor slot at the 15-minute interval. The one-time
+  cold measurement after Home Assistant starts costs about 7 seconds,
+  but nothing in the integration's own start waits for it.
+
+### A forget that survives being interrupted
+
+- Forgetting a deleted dashboard's history used to leave the
+  repository in an unrecoverable state if Home Assistant restarted,
+  crashed, or ran out of memory in the middle of it: the operation
+  could leave lock files behind that blocked every later attempt to
+  forget *anything*, permanently, with an error message that was a
+  bare pair of file paths and no sentence about what had gone wrong or
+  how to fix it.
+- Worse, an interruption at the wrong moment could permanently lose
+  the description written for a dashboard that is still in daily use —
+  in the one operation that is supposed to be safe from exactly that.
+- Both are fixed the same way: what forgetting intends to do is
+  checkpointed before anything is rewritten, every write to the
+  history refuses while that checkpoint stands, and Home Assistant
+  repairs it automatically the next time it starts. No second attempt
+  needed, and no lock file to find and delete by hand.
+
+### Forgetting no longer risks an unrelated dashboard
+
+- In one narrow, rare case — a save for one dashboard caught mid-write
+  at the exact moment a *different* dashboard's history was being
+  forgotten — the cleanup that follows a forget could delete the other
+  dashboard's not-yet-saved content, and the damage could then spread
+  silently into a third dashboard's history on its next ordinary save.
+  Forgetting now checks what is still being saved before it cleans up,
+  and leaves it alone.
+
+### A restore that cannot be recorded is refused, not risked
+
+- Every restore records the state it is about to replace first, so
+  going back is never a one-way door. If that recording could not be
+  made — a repository that is briefly unreadable or unwritable — the
+  restore used to go ahead anyway, and the note about it arrived only
+  *after* the write, when the state it warned about was already gone.
+- It is refused by default now, before anything is written. Where the
+  restore still has to happen regardless, a second, explicit
+  confirmation — **"Write anyway?"** — offers exactly that, right
+  there in the same dialog.
+
 ## v0.7.1
 
 Forgetting a deleted dashboard was slow and said nothing while it was.
