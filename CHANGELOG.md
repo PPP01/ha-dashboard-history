@@ -62,6 +62,17 @@ Assistant version floor — still **2024.11 or newer**.
   confirmation — **"Write anyway?"** — offers exactly that, right
   there in the same dialog.
 
+### A history read during a concurrent forget no longer crashes or shows stale data
+
+- Listing or searching one dashboard's history at the exact moment a
+  *different* dashboard's forgetting rewrote the repository underneath
+  it could fail outright with a bare, unexplained error — or, rarer
+  and worse, quietly succeed with a description or version tag that no
+  longer matched what had just been read. Both are retried
+  transparently against the freshly rewritten history now; only a
+  forget that keeps racing every single attempt still reports an
+  error.
+
 ## v0.7.1
 
 Forgetting a deleted dashboard was slow and said nothing while it was.
