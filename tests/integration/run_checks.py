@@ -45,6 +45,16 @@ EVENT_HISTORY_UPDATED = re.search(
     ).read_text(encoding="utf-8"),
     re.M,
 ).group(1)
+REPO_DIRNAME = re.search(
+    r'^REPO_DIRNAME = "([^"]+)"',
+    (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "custom_components"
+        / "dashboard_history"
+        / "const.py"
+    ).read_text(encoding="utf-8"),
+    re.M,
+).group(1)
 CONFIG = pathlib.Path(
     os.environ.get(
         "HA_TEST_CONFIG",
@@ -54,6 +64,25 @@ CONFIG = pathlib.Path(
     )
 )
 TOKEN_FILE = CONFIG.parent / "token.txt"
+
+
+def _lock_repository(locked: bool) -> None:
+    """Make new commits to the repository fail, without touching reads.
+
+    Creates or removes `.git/index.lock` - see the two rejected
+    alternatives recorded above this function for why neither `chmod`
+    nor renaming `.git` away works here. `os.O_EXCL` makes the create
+    fail loudly (`FileExistsError`) if a lock is already there rather
+    than silently overwriting one - which would either mean this
+    function was called out of order, or that a previous run's lock
+    survived (see the note on power loss at the call site below).
+    """
+    lock_path = CONFIG / REPO_DIRNAME / ".git" / "index.lock"
+    if locked:
+        os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    else:
+        lock_path.unlink()
+
 
 # Which dashboard the checks work against. A name out of one installation
 # does not belong in a public repository, and hard-coding one makes these
@@ -3709,6 +3738,177 @@ async def run_keep_as_version(access: str) -> None:
         )
 
 
+async def check_an_unrecorded_state_is_refused_and_can_be_overridden(access):
+    """Decision 23, against the real thing rather than a fake registry.
+
+    `run_unrecorded_state_refusal.py` proves the decision logic and
+    all three write operations in isolation; this proves the one thing
+    that cannot be faked - that a repository genuinely unable to
+    record a state produces exactly the gap `_keep_the_live_state` is
+    meant to catch - and that both answers, refused then overridden,
+    come back through the real WebSocket door, plus once through the
+    real service door.
+    """
+    stale_lock = CONFIG / REPO_DIRNAME / ".git" / "index.lock"
+    if stale_lock.exists():
+        # Bounds the one failure nothing here can prevent: a crash -
+        # a power loss being the sharpest case - between this file
+        # creating the lock and removing it again. Left in place, it
+        # would block every write to every dashboard, forever, not
+        # only this check's own next attempt.
+        print(
+            f"  note: removing a leftover {stale_lock} from an earlier, "
+            "interrupted run before continuing"
+        )
+        stale_lock.unlink()
+
+    key = "dh-unrecorded-gap"
+
+    async def ready(socket) -> None:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+    async def save(socket, config: dict) -> list:
+        await socket.call("lovelace/config/save", url_path=key, config=config)
+        return await _wait_until_recorded(socket, key)
+
+    recorded_state = {
+        "views": [{"title": "Home", "cards": [{"type": "markdown", "content": "# recorded"}]}]
+    }
+    never_recorded = {
+        "views": [{"title": "Home", "cards": [{"type": "markdown", "content": "# never recorded"}]}]
+    }
+
+    async with Socket(access) as socket:
+        await ready(socket)
+        changes = await save(socket, recorded_state)
+        revision = changes[0]["revision"]
+
+        _lock_repository(locked=True)
+        try:
+            # Bypasses nothing on the Home Assistant side - this is an
+            # ordinary save. What is missing is the repository's ability
+            # to hear it: `_keep_the_live_state`'s own attempt to record
+            # this state, made fresh on the very next call below, fails
+            # for as long as the lock stands.
+            await socket.call("lovelace/config/save", url_path=key, config=never_recorded)
+
+            refused = await socket.call(
+                "dashboard_history/restore_state",
+                dashboard=key,
+                revision=revision,
+                confirm=True,
+            )
+            check(
+                "a restore that cannot record the live state first is refused",
+                refused.get("applied") is False and refused.get("unrecorded_state") is True,
+                str(refused),
+            )
+            live = await socket.call("lovelace/config", url_path=key)
+            check(
+                "and the dashboard is untouched by the refusal",
+                live == never_recorded,
+                str(live),
+            )
+
+            # A refused write must not have side effects either - a
+            # version asked for in the same call must not appear, or
+            # the escape hatch would need one of its own.
+            refused_with_version = await socket.call(
+                "dashboard_history/restore_state",
+                dashboard=key,
+                revision=revision,
+                confirm=True,
+                keep_as_version={"title": "should never exist"},
+            )
+            versions_after_refusal = await socket.call(
+                "dashboard_history/versions", dashboard=key
+            )
+            check(
+                "a refused restore marks no version either",
+                refused_with_version.get("applied") is False
+                and not any(
+                    v.get("title") == "should never exist"
+                    for v in versions_after_refusal.get("versions", [])
+                ),
+                str(versions_after_refusal),
+            )
+
+            overridden = await socket.call(
+                "dashboard_history/restore_state",
+                dashboard=key,
+                revision=revision,
+                confirm=True,
+                override_unrecorded_state=True,
+            )
+            check(
+                "the same call with the escape hatch writes anyway",
+                overridden.get("applied") is True,
+                str(overridden),
+            )
+        finally:
+            _lock_repository(locked=False)
+
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "and the dashboard now holds the restored state",
+            live == recorded_state,
+            str(live),
+        )
+
+        # The everyday case has to survive all of this: a restore with
+        # nothing unrecorded in its way needs no override and is not
+        # asked to refuse anything. Targets the *earlier* recorded_state
+        # revision, not the state just saved - restoring to the state
+        # already live answers "already identical" before confirm is
+        # even reached (operations.py:628), which would prove nothing
+        # about this decision either way.
+        await save(socket, never_recorded)
+        ordinary = await socket.call(
+            "dashboard_history/restore_state",
+            dashboard=key,
+            revision=revision,
+            confirm=True,
+        )
+        check(
+            "an ordinary restore is unaffected and needs no override",
+            ordinary.get("applied") is True and "unrecorded_state" not in ordinary,
+            str(ordinary),
+        )
+
+        # Same field, the other door: services.py must accept it too,
+        # not only websocket_api.py - nothing above this line has
+        # called restore_state as a service at all. `headers` is not
+        # inherited from anywhere else in this function - built the
+        # same way `run_permissions` (line 3309) builds it, from the
+        # same `access` token this function already received.
+        headers = {"Authorization": f"Bearer {access}"}
+        _lock_repository(locked=True)
+        try:
+            await socket.call("lovelace/config/save", url_path=key, config=never_recorded)
+            answer = requests.post(
+                f"{BASE}/api/services/dashboard_history/restore_state?return_response",
+                headers=headers,
+                json={
+                    "dashboard": key,
+                    "revision": revision,
+                    "confirm": True,
+                    "override_unrecorded_state": True,
+                },
+                timeout=30,
+            )
+            body = answer.json().get("service_response", {})
+            check(
+                "the service door accepts override_unrecorded_state too",
+                answer.status_code == 200 and body.get("applied") is True,
+                f"HTTP {answer.status_code} {body}",
+            )
+        finally:
+            _lock_repository(locked=False)
+
+
 async def run_panel_fields(access: str) -> None:
     """The two things the panel must be told rather than work out.
 
@@ -4077,6 +4277,8 @@ if __name__ == "__main__":
     asyncio.run(run_daily_switch(access))
     print("\n  -- Den Stand sichern, bevor er ersetzt wird --")
     asyncio.run(run_keep_as_version(access))
+    print("\n  -- Ein nicht aufgezeichneter Stand wird verweigert --")
+    asyncio.run(check_an_unrecorded_state_is_refused_and_can_be_overridden(access))
     print("\n  -- Was die Seite nicht selbst ausrechnen darf --")
     asyncio.run(run_panel_fields(access))
     print("\n  -- Das Beobachten: Sensoren und Bericht --")
