@@ -20,6 +20,10 @@ the things you only wonder about once you are using it.
 
 - [Why can't I change a version number afterwards?](#why-cant-i-change-a-version-number-afterwards)
 
+**Restoring**
+
+- [What does "Write anyway?" mean when a restore is refused?](#what-does-write-anyway-mean-when-a-restore-is-refused)
+
 **Deleting dashboards**
 
 - [Why does forgetting a dashboard take so long?](#why-does-forgetting-a-dashboard-take-so-long)
@@ -222,6 +226,29 @@ because leaving a field blank is not a way of saying anything. If what
 you want is for the version to be gone, the bin says that plainly and
 asks you first; a form whose emptiness destroys something would be a
 trap.
+
+## Restoring
+
+### What does "Write anyway?" mean when a restore is refused?
+
+Every restore and undo records what is currently on the dashboard
+before it changes anything — that is the whole reason going back is
+itself always undoable. Normally that costs nothing to notice: the
+recorder already heard the save, and there is nothing left to do.
+
+The one time it does not is the one this question is for: the
+repository could not be read or written at that exact moment —
+briefly, a full disk being the case I actually built it for. Until
+v0.8.0 the restore went ahead anyway and only told you afterwards,
+once the state it could not record was already gone. It refuses
+instead now, before writing anything at all — and "Write anyway?" is
+the one door left that will still let it through, because refusing a
+restore at the one moment it is needed most would help nobody either.
+Saying yes costs exactly the one state that could not be recorded;
+nothing else changes.
+
+You will see this rarely, if ever. Three hours of ordinary use on my
+own installation never triggered it once.
 
 ## Deleting dashboards
 

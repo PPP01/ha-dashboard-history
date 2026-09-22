@@ -75,7 +75,7 @@ Not all refusals are technical gaps; many are safety guarantees built into the a
 1. **No action runs without preview and confirmation:** Any operation that alters dashboard YAML or history requires an explicit `confirm: true`.
 2. **Put back never overwrites:** It is strictly additive. It will never overwrite an existing card.
 3. **Undo is all-or-nothing:** If a change touched three cards and one cannot be resolved safely, the entire undo refuses. Partial undos are forbidden.
-4. **Current state is preserved before restoring:** Before executing any restore, the current live state is committed to Git. You can always undo an undo.
+4. **Current state is preserved before restoring:** Before executing any restore, the current live state is checked against the recorded history and committed if it is not there yet. If that cannot be confirmed — the repository is briefly unreadable or unwritable — the restore is refused by default rather than risking it; a second, explicit confirmation offers to write anyway. See the [FAQ](../FAQ.md#what-does-write-anyway-mean-when-a-restore-is-refused) for how often that actually happens.
 5. **Admin-only access:** Every service and WebSocket command requires Home Assistant administrator privileges. Non-admins cannot inspect history or trigger restores.
 6. **No guessing:** When content-based proofs fail, Dashboard History refuses honestly and directs you to whole-state restore or Compare Mode.
 
