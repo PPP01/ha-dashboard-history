@@ -7485,3 +7485,194 @@ def test_our_own_lock_ignores_the_last_report(borrowed_lock):
     # returns. Lifting it on the report would hand back an interface
     # that then hangs for the index rebuild - 25 s in the container.
     assert borrowed_lock["ownKept"] == {"locked": True, "loads": 0}
+
+
+_UNRECORDED_OVERRIDE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+el._select = async () => {};
+el._loadDashboardsQuietly = async () => {};
+el._reloadAfterWrite = async () => null;
+
+const dialog = () => el.shadowRoot.querySelector("dialog.confirm");
+const preview = { applied: false, preview: "-a\\n+b", explanation: { groups: [], note: "one card removed" } };
+const refusal = {
+  applied: false,
+  error: "what was on the dashboard just before this could not be recorded",
+  unrecorded_state: true,
+};
+
+// Scenario 1: refused, then told to write anyway.
+let calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+el._error = "";
+const first = el._restoreState("b", "Back to this version");
+await settle();
+calls[0].resolve(preview);
+await settle();
+dialog().close("apply");
+await settle();
+calls[1].resolve(refusal);
+await settle();
+const secondDialogBody = dialog().querySelector(".body").innerHTML;
+dialog().close("apply");
+await settle();
+const overrideCall = { type: calls[2]?.type, extra: { ...calls[2]?.extra } };
+calls[2].resolve({ applied: true });
+await first;
+
+const scenario1 = {
+  callCount: calls.length,
+  overrideCall,
+  secondDialogMentionsIt: secondDialogBody.includes(
+    "what was on the dashboard just before this could not be recorded",
+  ),
+  error: el._error || "",
+};
+
+// Scenario 2: refused, and the person backs out instead.
+calls = [];
+el._error = "";
+const second = el._restoreState("b", "Back to this version");
+await settle();
+calls[0].resolve(preview);
+await settle();
+dialog().close("apply");
+await settle();
+calls[1].resolve(refusal);
+await settle();
+dialog().close("cancel");
+await second;
+
+const scenario2 = { callCount: calls.length, error: el._error || "" };
+
+// Scenario 3: an ordinary refusal - no unrecorded_state marker at all
+// - must not offer this second question. Only the one specific
+// refusal does.
+calls = [];
+el._error = "";
+const third = el._restoreState("b", "Back to this version");
+await settle();
+calls[0].resolve(preview);
+await settle();
+dialog().close("apply");
+await settle();
+calls[1].resolve({ applied: false, error: "some other refusal" });
+await third;
+
+const scenario3 = { callCount: calls.length, error: el._error || "" };
+
+console.log(JSON.stringify({ scenario1, scenario2, scenario3 }));
+"""
+
+
+@pytest.fixture(scope="session")
+def unrecorded_override(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "unrecorded_override", _UNRECORDED_OVERRIDE)
+
+
+def test_the_override_dialog_is_offered_only_after_that_specific_refusal(
+    unrecorded_override,
+):
+    assert unrecorded_override["scenario1"]["secondDialogMentionsIt"]
+
+
+def test_choosing_to_write_anyway_resends_with_the_override_flag(unrecorded_override):
+    scenario1 = unrecorded_override["scenario1"]
+    # Preview, the refused confirm, and the retry - nothing more.
+    assert scenario1["callCount"] == 3
+    assert scenario1["overrideCall"]["type"] == "restore_state"
+    assert scenario1["overrideCall"]["extra"]["confirm"] is True
+    assert scenario1["overrideCall"]["extra"]["override_unrecorded_state"] is True
+    assert scenario1["error"] == ""
+
+
+def test_backing_out_of_the_second_dialog_sends_nothing_further(unrecorded_override):
+    scenario2 = unrecorded_override["scenario2"]
+    # Preview and the refused confirm only - no third call was made.
+    assert scenario2["callCount"] == 2
+    assert scenario2["error"] == (
+        "what was on the dashboard just before this could not be recorded"
+    )
+
+
+def test_an_ordinary_refusal_is_not_offered_the_override_dialog(unrecorded_override):
+    scenario3 = unrecorded_override["scenario3"]
+    assert scenario3["callCount"] == 2, "no retry - this refusal carries no unrecorded_state marker"
+    assert scenario3["error"] == "some other refusal"
+
+
+_OPEN_REPLACE_UNRECORDED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._changes = [
+  { revision: "a", previous: "b", same_as_now: false, timestamp: 20 },
+  { revision: "b", previous: "c", same_as_now: false, timestamp: 10 },
+];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+el._reloadAfterWrite = async () => null;
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const done = el._openReplace("a");
+await settle();
+calls[0].resolve({ preview: "-a\\n+b", explanation: { groups: [], note: "" } });
+calls[1].resolve({ preview: "-c\\n+d", explanation: { groups: [], note: "" } });
+await settle();
+
+const dialog = el.shadowRoot.querySelector("dialog.replace");
+dialog.close("apply");
+await settle();
+calls[2].resolve({
+  applied: false,
+  error: "what was on the dashboard just before this could not be recorded",
+  unrecorded_state: true,
+});
+await settle();
+const secondDialogBody = dialog.querySelector(".body").innerHTML;
+// The candidate picker `_paintReplace` filled in before the first
+// Apply must not still be standing beside this question.
+const leftoverChoice = dialog.querySelector("[data-replace-choice]").innerHTML;
+dialog.close("apply");
+await settle();
+const overrideCall = { type: calls[3]?.type, extra: { ...calls[3]?.extra } };
+calls[3].resolve({ applied: true });
+await done;
+
+console.log(JSON.stringify({
+  callCount: calls.length,
+  secondDialogMentionsIt: secondDialogBody.includes(
+    "what was on the dashboard just before this could not be recorded",
+  ),
+  leftoverChoice,
+  overrideCall,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def open_replace_unrecorded(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "open_replace_unrecorded", _OPEN_REPLACE_UNRECORDED
+    )
+
+
+def test_replace_also_offers_to_write_anyway_when_refused_for_it(
+    open_replace_unrecorded,
+):
+    assert open_replace_unrecorded["secondDialogMentionsIt"]
+    assert open_replace_unrecorded["leftoverChoice"] == ""
+    assert open_replace_unrecorded["callCount"] == 4
+    assert open_replace_unrecorded["overrideCall"]["extra"]["override_unrecorded_state"] is True

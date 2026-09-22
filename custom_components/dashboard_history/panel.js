@@ -2002,7 +2002,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // Armed before the write: the recorder is quick, and an announcement
     // that arrives first would find nobody waiting.
     const recorded = this._recorded();
-    const applied = await this._guard(async () => {
+    let applied = await this._guard(async () => {
       const result = await this._call(...request(true, keep, asked));
       // Still busy until the recorder has it. Reloading in between reads
       // a history whose newest entry is the state just replaced - so
@@ -2012,6 +2012,33 @@ class DashboardHistoryPanel extends HTMLElement {
       await recorded;
       return result;
     }, mine);
+    // Decision 23: this specific refusal, and only this one, gets a
+    // second question rather than a final answer - it is the one
+    // refusal with something a person can do about it on this same
+    // screen, right now, having just seen why.
+    //
+    // `dialog` above is no longer part of the document: `_guard` just
+    // rendered around that call - entry and `finally` both call
+    // `_render`, same as every other `_guard` - and `_render` replaces
+    // the whole shadow root, open `<dialog>` included (`_answerFrom`'s
+    // own note says so; this is the first place in `_confirm` that
+    // needs a dialog reference *after* a `_guard` call rather than
+    // only before one). A fresh lookup is required, and `mine()` is
+    // checked again for the same reason `_guard` already checks it -
+    // the person may have moved on to another dashboard while the
+    // write was in flight.
+    if (applied?.unrecorded_state && mine()) {
+      const retryDialog = this.shadowRoot.querySelector("dialog.confirm");
+      const proceed = await this._confirmOverride(retryDialog, applied.error);
+      if (proceed && mine()) {
+        const recordedAgain = this._recorded();
+        applied = await this._guard(async () => {
+          const result = await this._call(...request(true, keep, asked, true));
+          await recordedAgain;
+          return result;
+        }, mine);
+      }
+    }
     // `kept_as_version.error` repeats `note` word for word where the
     // live state could not be recorded - operations hands the one into
     // the other - so it is only worth saying where it says something
@@ -2069,6 +2096,44 @@ class DashboardHistoryPanel extends HTMLElement {
     // Apply to here runs with a live sidebar, and the write is pinned
     // to `asked` while the message was not.
     this._sayAbout(asked, [said, stale].filter(Boolean).join("; "));
+  }
+
+  /**
+   * Reuses whichever `<dialog>` is asking right now rather than
+   * opening a second one on top of it: it is already inert and
+   * already where the reader is looking. The caller looks that dialog
+   * up fresh immediately before calling this - see the note at the
+   * call site in `_confirm` for why the one it had a moment earlier is
+   * already gone from the document.
+   *
+   * Clears every optional block either caller's dialog can carry
+   * beside `.body` before asking this question: the keep-as-version
+   * fields `_armKeep` fills in for `_confirm`, and the candidate
+   * picker `_paintReplace` fills in for `_openReplace`. Both sit
+   * outside `.body`, so overwriting `.body`'s own markup does not
+   * reach them, and neither caller's normal repaint runs again before
+   * this dialog is shown - without this, whichever of the two was
+   * standing stays standing, contradicting a question that is
+   * supposed to be about nothing but the write itself.
+   */
+  async _confirmOverride(dialog, message) {
+    dialog.querySelector("h2").textContent = "Write anyway?";
+    dialog.querySelector(".body").innerHTML = `<p>${escape(message)}</p>`;
+    dialog.querySelector(".note").textContent = "";
+    this._sayFootnote(dialog, "", []);
+    const keepBlock = dialog.querySelector("[data-keep]");
+    if (keepBlock) keepBlock.hidden = true;
+    const replaceChoice = dialog.querySelector("[data-replace-choice]");
+    if (replaceChoice) replaceChoice.innerHTML = "";
+    const why = dialog.querySelector(".why");
+    if (why) why.textContent = "";
+    const applyButton = dialog.querySelector('.actions button[value="apply"]');
+    applyButton.hidden = false;
+    applyButton.textContent = "Write anyway";
+    dialog.querySelector('.actions button[value="cancel"]').textContent = "Cancel";
+    dialog.returnValue = "";
+    dialog.showModal();
+    return (await this._answerFrom(dialog)) === "apply";
   }
 
   /**
@@ -2195,7 +2260,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const target = candidates[selected];
     const keep = keepable ? this._keepChoice(keepBlock) : null;
     const recorded = this._recorded();
-    const applied = await this._guard(async () => {
+    let applied = await this._guard(async () => {
       const result = await this._call("restore_state", {
         dashboard: asked,
         revision: target.revision,
@@ -2205,6 +2270,28 @@ class DashboardHistoryPanel extends HTMLElement {
       await recorded;
       return result;
     }, mine);
+    // Same reasoning as `_confirm`'s retry: `dialog` above is gone
+    // from the document once `_guard` has rendered around this call,
+    // so the retry looks up `dialog.replace` fresh rather than reusing
+    // the reference this function already holds.
+    if (applied?.unrecorded_state && mine()) {
+      const retryDialog = this.shadowRoot.querySelector("dialog.replace");
+      const proceed = await this._confirmOverride(retryDialog, applied.error);
+      if (proceed && mine()) {
+        const recordedAgain = this._recorded();
+        applied = await this._guard(async () => {
+          const result = await this._call("restore_state", {
+            dashboard: asked,
+            revision: target.revision,
+            confirm: true,
+            override_unrecorded_state: true,
+            ...(keep ? { keep_as_version: keep } : {}),
+          });
+          await recordedAgain;
+          return result;
+        }, mine);
+      }
+    }
     const failedKeep = applied?.kept_as_version?.error;
     const keptFailed =
       failedKeep && failedKeep !== applied?.note
@@ -2864,9 +2951,12 @@ class DashboardHistoryPanel extends HTMLElement {
   _restoreItem(revision, item) {
     this._confirm(
       `Put back: ${item.label}`,
-      (confirm, keep, dashboard) => [
+      (confirm, keep, dashboard, override = false) => [
         "restore_deleted",
-        { dashboard, revision, position: item.position, confirm },
+        {
+          dashboard, revision, position: item.position, confirm,
+          override_unrecorded_state: override,
+        },
       ],
       false,
       { applyLabel: "Put back" },
@@ -2879,12 +2969,13 @@ class DashboardHistoryPanel extends HTMLElement {
     // cannot be tested at all.
     return this._confirm(
       title,
-      (confirm, keep, dashboard) => [
+      (confirm, keep, dashboard, override = false) => [
         "restore_state",
         {
           dashboard,
           revision,
           confirm,
+          override_unrecorded_state: override,
           // Left out entirely when nothing is to be marked. An empty
           // object would be a request for a version with no name, which
           // the server would then have to refuse.
@@ -2906,13 +2997,16 @@ class DashboardHistoryPanel extends HTMLElement {
       made ? ` and keeps the ${made} change${made === 1 ? "" : "s"} made since` : "";
     this._confirm(
       "Undo this change",
-      (confirm, keep, dashboard) => [
+      (confirm, keep, dashboard, override = false) => [
         "undo_change",
         // `preview` only on the call that shows one - the first, before
         // the write. The second call, with `confirm` true, already has
         // the diff this dialog is displaying; asking for it again would
         // pay for the same two dumps a second time for nothing shown.
-        { dashboard, revision, confirm, preview: !confirm },
+        {
+          dashboard, revision, confirm, preview: !confirm,
+          override_unrecorded_state: override,
+        },
       ],
       false,
       {
