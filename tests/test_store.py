@@ -928,32 +928,57 @@ def test_list_changes_retries_a_successful_read_if_head_moved_during_it(
     store, monkeypatch
 ):
     """A `build()` that raises nothing can still be stale: `_each_change`
-    reads `descriptions()` and the revision list as two separate steps,
-    and a `forget` that runs to completion entirely between them mixes
-    generations without either individual read ever failing. Trusted
+    reads `descriptions()` and the revision list as two separate steps.
+    A `forget` that runs to completion entirely between them leaves the
+    notes dict keyed by shas a moment old, while the walk right after
+    it returns shas from the new generation - `notes.get(revision, "")`
+    then silently misses, with no exception anywhere to say why (a
+    fake on `descriptions()` itself, not on `_each_change`, is what
+    actually produces that mix - patching `_each_change` to run
+    `forget()` before delegating to the real one only delays both
+    reads until after the rewrite, so they'd already agree). Trusted
     only if HEAD read the same right after `build()` returns as it did
     right before this attempt began - not just "no exception was
     raised". See decision 24.
+
+    `forget` needs today's descriptions itself, to carry them onto the
+    commits it rewrites - so patching `descriptions()` to race exactly
+    once, guarded by a flag rather than a call count, matters: without
+    the guard, `forget`'s own internal read would re-enter this fake
+    and either recurse into a second `forget` call or be miscounted as
+    a second `_each_change` attempt. Attempts are counted separately,
+    on `_each_change` itself, for exactly that reason.
     """
     store.write_snapshot("gone", "b: 1\n", "gone first")
     store.write_snapshot("home", "a: 1\n", "first")
-    store.write_snapshot("home", "a: 2\n", "second")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    store.set_description(second, "the current word on it")
 
+    real_descriptions = HistoryStore.descriptions
     real_each_change = HistoryStore._each_change
-    calls: list[int] = []
+    attempts: list[int] = []
+    raced = False
 
-    def flaky_each_change(self, repo, key, limit=50, before=None):
-        calls.append(1)
-        if len(calls) == 1:
-            store.forget("gone")  # completes fully, no exception here at all
+    def stale_then_fresh_descriptions(self):
+        nonlocal raced
+        notes = real_descriptions(self)
+        if not raced and len(attempts) == 1:
+            raced = True
+            store.forget("gone")  # completes fully - old notes, new shas
+        return notes
+
+    def counting_each_change(self, repo, key, limit=50, before=None):
+        attempts.append(1)
         yield from real_each_change(self, repo, key, limit, before)
 
-    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+    monkeypatch.setattr(HistoryStore, "descriptions", stale_then_fresh_descriptions)
+    monkeypatch.setattr(HistoryStore, "_each_change", counting_each_change)
 
     changes = store.list_changes("home")
 
     assert [c.message for c in changes] == ["second", "first"]
-    assert len(calls) == 2
+    assert changes[0].description == "the current word on it"
+    assert len(attempts) == 2
 
 
 def test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable(
