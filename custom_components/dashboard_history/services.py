@@ -80,6 +80,7 @@ async def async_register(hass: HomeAssistant) -> None:
             call.data["revision"],
             call.data["position"],
             bool(call.data.get("confirm")),
+            bool(call.data.get("override_unrecorded_state")),
         )
 
     async def restore_state(call: ServiceCall) -> dict:
@@ -90,6 +91,7 @@ async def async_register(hass: HomeAssistant) -> None:
             call.data["revision"],
             call.data.get("confirm", False),
             call.data.get("keep_as_version"),
+            bool(call.data.get("override_unrecorded_state")),
         )
 
     async def undo_change(call: ServiceCall) -> dict:
@@ -99,6 +101,7 @@ async def async_register(hass: HomeAssistant) -> None:
             call.data["dashboard"],
             call.data["revision"],
             bool(call.data.get("confirm")),
+            override_unrecorded_state=bool(call.data.get("override_unrecorded_state")),
         )
 
     async def describe(call: ServiceCall) -> dict:
@@ -178,15 +181,18 @@ async def async_register(hass: HomeAssistant) -> None:
             vol.Required("revision"): cv.string,
             vol.Required("position"): int,
             vol.Optional("confirm", default=False): bool,
+            vol.Optional("override_unrecorded_state", default=False): bool,
         })),
         ("restore_state", restore_state, DASHBOARD.extend({
             vol.Required("revision"): cv.string,
             vol.Optional("confirm", default=False): bool,
             vol.Optional("keep_as_version"): KEEP_AS_VERSION,
+            vol.Optional("override_unrecorded_state", default=False): bool,
         })),
         ("undo_change", undo_change, DASHBOARD.extend({
             vol.Required("revision"): cv.string,
             vol.Optional("confirm", default=False): bool,
+            vol.Optional("override_unrecorded_state", default=False): bool,
         })),
         ("describe", describe, vol.Schema({
             vol.Required("revision"): cv.string,

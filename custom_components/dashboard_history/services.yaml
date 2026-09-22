@@ -101,6 +101,17 @@ restore_deleted:
       default: false
       selector:
         boolean:
+    override_unrecorded_state:
+      description: >-
+        Write anyway even though the state on the dashboard right now
+        could not be safely recorded first. Without this, such a write
+        is refused - the recorded history would otherwise lose the one
+        state it could not confirm before overwriting it. Rare: it only
+        matters when the repository could not be read or written at the
+        exact moment this ran.
+      default: false
+      selector:
+        boolean:
 
 restore_state:
   name: Restore a whole state
@@ -122,6 +133,17 @@ restore_state:
         text:
     confirm:
       description: Without this, nothing is written.
+      default: false
+      selector:
+        boolean:
+    override_unrecorded_state:
+      description: >-
+        Write anyway even though the state on the dashboard right now
+        could not be safely recorded first. Without this, such a write
+        is refused - the recorded history would otherwise lose the one
+        state it could not confirm before overwriting it. Rare: it only
+        matters when the repository could not be read or written at the
+        exact moment this ran.
       default: false
       selector:
         boolean:
@@ -157,6 +179,17 @@ undo_change:
         text:
     confirm:
       description: Without this, nothing is written.
+      default: false
+      selector:
+        boolean:
+    override_unrecorded_state:
+      description: >-
+        Write anyway even though the state on the dashboard right now
+        could not be safely recorded first. Without this, such a write
+        is refused - the recorded history would otherwise lose the one
+        state it could not confirm before overwriting it. Rare: it only
+        matters when the repository could not be read or written at the
+        exact moment this ran.
       default: false
       selector:
         boolean:
