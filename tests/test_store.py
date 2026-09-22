@@ -1,5 +1,6 @@
 """Tests for the git-backed history store."""
 
+import json
 import threading
 from contextlib import contextmanager
 
@@ -11,7 +12,7 @@ from dulwich.repo import Repo
 import dulwich.refs
 from dulwich.errors import MissingCommitError
 import store as store_module
-from store import HistoryStore, RevisionIndex, Version, _as_text
+from store import HistoryStore, RevisionIndex, StaleCursorError, Version, _as_text
 import versions
 from versions import candidates
 
@@ -1326,9 +1327,10 @@ def test_forget_writes_a_checkpoint_before_the_first_ref_moves(store, monkeypatc
     with pytest.raises(RuntimeError):
         store.forget("gone")
 
-    key, head, notes, tags = store._read_checkpoint()
+    key, head, notes, tags, target_generation = store._read_checkpoint()
     assert key == "gone"
     assert head is not None
+    assert target_generation == 1
     assert "gone" not in store.list_all_dashboards()
 
 def test_repair_finishes_an_interrupted_forget(store, monkeypatch):
@@ -1436,6 +1438,141 @@ def test_a_corrupt_generation_file_is_treated_as_zero(store):
     generation_path.write_text("not a number", encoding="utf-8")
 
     assert store.forget_generation() == 0
+
+
+def test_repair_pending_forget_bumps_the_generation_exactly_once(store, monkeypatch):
+    """The crash-recovery path (decision 21) finishes a `forget` through
+    the same `_finish_forget` the ordinary path does - and since that
+    method now writes the generation as its very *first* step, the
+    counter is already at its new value the instant the crash happens,
+    before `_point_head` even runs. A naive `+1` on every call would
+    double-count this exact scenario: `repair_pending_forget` replays
+    `_finish_forget` whole, and a second `+1` for a `forget` that had
+    already, if incompletely, run once would be wrong. Reuses the
+    crash simulation `test_repair_finishes_an_interrupted_forget`
+    already established as realistic. See issue #26 and the review
+    that found the original, unconditional `+1` was not idempotent."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    home_v2 = store.write_snapshot("home", "a: 2\n", "second")
+    store.set_description(home_v2, "a note on the commit that gets rewritten")
+    store.create_version("home/v1.0.0", "Home", "", home_v2)
+
+    real_rewrite_tags = HistoryStore._rewrite_tags
+    calls = []
+
+    def flaky_rewrite_tags(repo, changed):
+        calls.append(changed)
+        if len(calls) == 1:
+            raise RuntimeError("simulated crash before _rewrite_tags")
+        return real_rewrite_tags(repo, changed)
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(flaky_rewrite_tags))
+
+    with pytest.raises(RuntimeError):
+        store.forget("gone")
+
+    # Already bumped: the write happens before _point_head, long before
+    # the crash point inside _rewrite_tags.
+    assert store.forget_generation() == 1
+
+    monkeypatch.setattr(HistoryStore, "_rewrite_tags", staticmethod(real_rewrite_tags))
+    store.repair_pending_forget()
+
+    # Not 2: the checkpoint's target_generation is the same value
+    # replayed, not a fresh +1.
+    assert store.forget_generation() == 1
+
+    # A second repair call must be a pure no-op - the checkpoint is
+    # already gone - not a second bump either.
+    store.repair_pending_forget()
+    assert store.forget_generation() == 1
+
+
+def test_the_generation_bump_happens_before_any_object_is_pruned(store, monkeypatch):
+    """The exact property an external review demonstrated was missing:
+    a reader that finds a cursor unresolvable must be able to trust
+    that the generation counter already reflects it. Proven directly,
+    at the exact point pruning begins, rather than by racing real
+    threads - the same kind of exact-point interruption
+    `test_forget_writes_a_checkpoint_before_the_first_ref_moves` uses
+    for a different guarantee. If this ever regresses - the bump
+    moved back to the end of `_finish_forget`, say - `observed` comes
+    back `[0]` instead of `[1]`, because pruning would then run before
+    the counter reflected this `forget` at all."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    real_gc = HistoryStore._garbage_collect_protecting_index
+    observed = []
+
+    def observing_gc(repo):
+        observed.append(store.forget_generation())
+        return real_gc(repo)
+
+    monkeypatch.setattr(
+        HistoryStore, "_garbage_collect_protecting_index", staticmethod(observing_gc)
+    )
+
+    store.forget("gone")
+
+    assert observed == [1]
+
+
+def test_a_checkpoint_with_the_wrong_target_generation_is_rejected(store):
+    """A genuine, untampered checkpoint's `target_generation` can only
+    ever be the current generation or one more than it - nothing else
+    can move the counter while a checkpoint is pending
+    (`_refuse_if_forget_pending`), so no third value is reachable
+    honestly. `99` against a store where nothing has ever been
+    forgotten (current generation `0`) is neither `0` nor `1`, and
+    must be rejected the same way an invalid sha or ref name already
+    is (decision 21, correction 7). Every other field below is
+    deliberately valid, so the only thing that can make this
+    checkpoint fail is `target_generation` itself."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    home_v2 = store.write_snapshot("home", "a: 2\n", "second")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "key": "home",
+                "head": home_v2,
+                "notes": {},
+                "tags": {},
+                "target_generation": 99,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert store.forget_generation() == 0
+    assert store.read_at("home", "HEAD") == "a: 2\n"
+
+
+def test_a_legacy_checkpoint_without_target_generation_still_repairs(store):
+    """A checkpoint written before this feature existed has no
+    `target_generation` key at all - not a parse failure, since
+    nothing else could have moved the counter while it sat pending
+    either, so computing it fresh at repair time (`current + 1`) is
+    exactly what would have been stored had the feature existed at
+    write time. See issue #26."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    home_v2 = store.write_snapshot("home", "a: 2\n", "second")
+
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+    checkpoint.write_text(
+        json.dumps({"key": "gone", "head": home_v2, "notes": {}, "tags": {}}),
+        encoding="utf-8",
+    )
+
+    store.repair_pending_forget()
+
+    assert not checkpoint.exists()
+    assert store.forget_generation() == 1
 
 
 def test_repair_clears_a_stale_object_lock(store):

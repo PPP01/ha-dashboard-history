@@ -672,15 +672,18 @@ class HistoryStore:
         head: bytes | None,
         notes: dict[bytes, bytes],
         tags: dict[bytes, bytes | None],
+        target_generation: int,
     ) -> None:
         """Save what `forget` is about to finish, before any ref moves.
 
-        Four fields, not three: `key` has to be in here too, because
-        `_drop_from_index` needs it and nothing else remembers which
-        dashboard was being forgotten once a crash has happened. Written
-        through `_write_file`'s temp-then-`os.replace` so an interrupted
-        write of the checkpoint itself is never mistaken for a valid one
-        - see decision 21.
+        Five fields, not four: `target_generation` joins `key` for the
+        same reason - `_finish_forget` needs a value nothing else
+        recomputes later, so a crash-then-repair replay writes the
+        exact same generation again instead of counting one completed
+        `forget` twice. Written through `_write_file`'s temp-then-
+        `os.replace` so an interrupted write of the checkpoint itself
+        is never mistaken for a valid one - see decision 21. See also
+        issue #26 for why `target_generation` exists at all.
         """
         payload = {
             "key": key,
@@ -692,12 +695,16 @@ class HistoryStore:
                 )
                 for ref, sha in tags.items()
             },
+            "target_generation": target_generation,
         }
         self._write_file(self._checkpoint_path(), json.dumps(payload))
 
     def _read_checkpoint(
         self,
-    ) -> tuple[str, bytes | None, dict[bytes, bytes], dict[bytes, bytes | None]] | None:
+    ) -> (
+        tuple[str, bytes | None, dict[bytes, bytes], dict[bytes, bytes | None], int]
+        | None
+    ):
         """The inverse of `_write_checkpoint`, or `None` if there is none.
 
         If the checkpoint file exists but cannot be parsed or lacks the
@@ -764,7 +771,23 @@ class HistoryStore:
                 )
                 for ref, sha in tags_val.items()
             }
-            return key, head, notes, tags
+            target_generation_val = payload.get("target_generation")
+            if target_generation_val is None:
+                # A checkpoint written before this field existed. Safe
+                # to compute fresh: nothing else can have moved the
+                # counter while this checkpoint sat pending (`forget`
+                # itself refuses while one exists), so this is exactly
+                # what would have been stored had the feature existed
+                # at write time. Not a parse failure - see issue #26.
+                target_generation = self.forget_generation() + 1
+            elif (
+                not isinstance(target_generation_val, int)
+                or isinstance(target_generation_val, bool)
+            ):
+                raise ValueError("target_generation must be an int")
+            else:
+                target_generation = target_generation_val
+            return key, head, notes, tags, target_generation
         except (
             json.JSONDecodeError,
             KeyError,
@@ -821,6 +844,7 @@ class HistoryStore:
         head: bytes | None,
         notes: dict[bytes, bytes],
         tags: dict[bytes, bytes | None],
+        target_generation: int,
     ) -> None:
         """Reject a checkpoint whose values look right but are not.
 
@@ -841,6 +865,27 @@ class HistoryStore:
         `key` with no containment check of its own, unlike every live
         write path, which all go through `_file_for`. See decision 21,
         correction 7.
+
+        `target_generation` must be either the current generation or
+        exactly one more than it - never anything else. Both are
+        legitimate: `_finish_forget` writes `target_generation` as its
+        very first step, before any ref moves, so a crash *after* that
+        write (the common case - everything else in `_finish_forget`
+        runs later) leaves the counter already equal to the target,
+        and a crash *before* it (only possible between `_write_
+        checkpoint` in `_forget` and the first line of `_finish_
+        forget` itself) leaves the counter one behind it. Nothing else
+        can move the counter while a checkpoint is pending - a second
+        `forget` refuses outright (`_refuse_if_forget_pending`) - so
+        no third value is reachable honestly. Anything else - lower,
+        or more than one higher - proves the checkpoint or the counter
+        file was corrupted or tampered with, and applying it would
+        move the counter backwards or skip a value, breaking the one
+        property every `before_generation` comparison relies on: it
+        only ever goes up by exactly one per completed `forget`. See
+        issue #26 and the review that found the original "always
+        exactly current + 1" version of this check would reject the
+        ordinary crash-after-the-bump case outright.
 
         Raises `ValueError` naming the first offending field on any
         failure; the caller treats that exactly like a checkpoint that
@@ -864,6 +909,13 @@ class HistoryStore:
                 raise ValueError(f"tags key {ref!r} is not a legal tag ref name")
             if sha is not None and not self._is_valid_tag_target(repo, sha):
                 raise ValueError(f"tags value {sha!r} is not a valid commit or tag object")
+        current_generation = self.forget_generation()
+        if target_generation not in (current_generation, current_generation + 1):
+            raise ValueError(
+                f"target_generation {target_generation!r} is neither the "
+                f"current generation ({current_generation!r}) nor one "
+                "more than it"
+            )
 
     def _best_effort_checkpoint_key(self) -> str | None:
         """The checkpoint's `key` field, read as leniently as possible.
@@ -1636,9 +1688,11 @@ class HistoryStore:
             checkpoint = self._read_checkpoint()
             if checkpoint is None:
                 return
-            key, head, notes, tags = checkpoint
+            key, head, notes, tags, target_generation = checkpoint
             try:
-                self._validate_checkpoint_semantics(repo, key, head, notes, tags)
+                self._validate_checkpoint_semantics(
+                    repo, key, head, notes, tags, target_generation
+                )
             except ValueError as exc:
                 _LOGGER.exception(
                     "Removed a forget checkpoint with an invalid value: "
@@ -1656,7 +1710,9 @@ class HistoryStore:
                 return
             self._index = None
             self._survey = None
-            self._finish_forget(repo, key, head, notes, tags, _Progress(None))
+            self._finish_forget(
+                repo, key, head, notes, tags, target_generation, _Progress(None)
+            )
 
     def _forget(self, repo: Repo, key: str, say: _Progress) -> int:
         from dulwich.objects import Commit, Tag, Tree  # noqa: PLC0415
@@ -1719,8 +1775,11 @@ class HistoryStore:
         # forget.json` is the one true record of what this call is about
         # to finish, for this call and for any later repair alike. See
         # decision 21.
-        self._write_checkpoint(key, head, note_targets, tag_targets)
-        self._finish_forget(repo, key, head, note_targets, tag_targets, say)
+        target_generation = self.forget_generation() + 1
+        self._write_checkpoint(key, head, note_targets, tag_targets, target_generation)
+        self._finish_forget(
+            repo, key, head, note_targets, tag_targets, target_generation, say
+        )
         return removed
 
     def _finish_forget(
@@ -1730,12 +1789,13 @@ class HistoryStore:
         head: bytes | None,
         notes: dict[bytes, bytes],
         tags: dict[bytes, bytes | None],
+        target_generation: int,
         say: _Progress,
     ) -> None:
         """Move every ref to its planned target, then clean up.
 
         Shared by the call that just computed `head`/`notes`/`tags` and
-        by `repair_pending_forget`, which reads the same three values
+        by `repair_pending_forget`, which reads the same five values
         back from the checkpoint after an interruption - see decision
         21. Every step here is safe to redo: `_point_head` sets a ref
         outright, `_rewrite_notes` rebuilds `refs/notes/commits` whole
@@ -1749,7 +1809,24 @@ class HistoryStore:
         both the original call and any repair run under the one lock
         `HistoryStore` now shares per repository path (decision 21,
         correction 4).
+
+        `target_generation` is written first of all, before anything
+        else - not recomputed here, but the exact value `_forget`/
+        `repair_pending_forget` already settled on before this call, so
+        a replay after a crash writes the same absolute value again
+        rather than a relative `+1` that would double-count a rerun.
+        Writing it here, first, rather than at the end where the
+        checkpoint deletion already is, closes a gap an external
+        review demonstrated: `_garbage_collect_protecting_index` below
+        is what actually makes an old `before` cursor unresolvable, and
+        a reader that finds one unresolvable must be able to trust
+        that the counter already reflects it - which only holds if the
+        write happens strictly before the prune, never after. Written
+        this early, that ordering holds regardless of anything the
+        surrounding `_retrying_a_forget_race` HEAD/checkpoint
+        comparison does or does not catch on its own. See issue #26.
         """
+        self._write_file(self._forget_generation_path(), str(target_generation))
         self._point_head(repo, head)
         self._rewrite_notes(repo, notes)
         self._rewrite_tags(repo, tags)
