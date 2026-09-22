@@ -2167,6 +2167,18 @@ class HistoryStore:
         notes or tags catch up sees a HEAD that never moves again
         during its own execution at all. See decision 24.
 
+        The last attempt is checked exactly the same way as every
+        other - a `build()` that raises there propagates like it
+        always did, but a `build()` that returns normally still has to
+        pass the same trust check before this hands it back. Skipping
+        that check on the last attempt would mean the one attempt with
+        no more retries left to fall back on is also the one attempt
+        whose result nothing here actually validated - silently
+        undoing everything the checks above exist for. A concurrent
+        `forget` that keeps racing every single attempt, including the
+        last, is rare enough to raise on rather than design a quiet
+        fallback for.
+
         Commit shas are content hashes over tree and parents, so HEAD
         can never cycle back to a value already seen; combined with
         the fixed budget below, this always terminates regardless of
@@ -2186,7 +2198,14 @@ class HistoryStore:
             if moved == head and not self.forget_in_progress():
                 return found
             head = moved
-        return build()
+        found = build()
+        moved = self._current_head(repo)
+        if moved == head and not self.forget_in_progress():
+            return found
+        raise RuntimeError(
+            "a concurrent forget kept racing this read past all "
+            f"{_FORGET_RACE_RETRIES} attempts"
+        )
 
     def _walked_changes(
         self,

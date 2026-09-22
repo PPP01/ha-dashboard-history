@@ -297,12 +297,62 @@ async def _propagates_when_head_did_not_move() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+async def _raises_when_even_the_last_attempt_stays_unstable() -> None:
+    """A `forget` that keeps racing every single attempt, including the
+    last, must not have its last, exception-free result handed back
+    unchecked - see `test_list_changes_raises_when_even_the_last_attempt_stays_unstable`
+    in `tests/test_store.py` (the correction to decision 24's original
+    budget paragraph) for the full reasoning. `list_versions` moves
+    HEAD on every call here, never raising, so all three attempts stay
+    unvalidated and `async_search` raises instead of returning a
+    result nothing here ever vouched for.
+    """
+    root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-unstable-"))
+    try:
+        store = HistoryStore(root)
+        store.ensure()
+        store.write_snapshot(KEY, "a: 1\n", f"{KEY}: unique-needle-1")
+        for i in range(5):
+            store.write_snapshot(f"gone{i}", "b: 1\n", "gone first")
+        hass = Hass()
+
+        real_list_versions = HistoryStore.list_versions
+        calls: list[int] = []
+
+        def flaky_list_versions(self, key=None):
+            calls.append(1)
+            store.forget(f"gone{len(calls) - 1}")  # moves HEAD every single time
+            return real_list_versions(self, key)
+
+        raised = None
+        with (
+            mock.patch.object(HistoryStore, "list_versions", flaky_list_versions),
+            mock.patch.object(
+                operations, "async_get_config", new=mock.AsyncMock(return_value=None)
+            ),
+        ):
+            try:
+                await operations.async_search(hass, store, KEY, "unique-needle")
+            except RuntimeError as exc:
+                raised = exc
+
+        check(
+            "async_search raises once even the last attempt stays unstable",
+            raised is not None and "kept racing" in str(raised),
+            str(raised),
+        )
+        check("all three attempts ran", len(calls) == 3, f"called {len(calls)} times")
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 async def main() -> int:
     await _retries_past_a_race()
     await _retries_past_a_race_with_missing_commit_error()
     await _retries_a_successful_but_stale_attempt()
     await _retries_when_checkpoint_present_even_if_head_is_stable()
     await _propagates_when_head_did_not_move()
+    await _raises_when_even_the_last_attempt_stays_unstable()
     print(f"\n{len(_passed)} of {len(_passed) + len(_failed)} checks passed")
     if _failed:
         print("Failed: " + ", ".join(_failed))

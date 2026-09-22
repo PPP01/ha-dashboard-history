@@ -993,6 +993,33 @@ def test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stabl
     assert len(calls) == 2
 
 
+def test_list_changes_raises_when_even_the_last_attempt_stays_unstable(
+    store, monkeypatch
+):
+    """A `build()` that never raises can still never settle: if HEAD
+    keeps moving on every attempt, including the last, nothing here
+    actually validated that last result either - returning it anyway
+    would silently undo every check above it. Raises instead of
+    handing back a result nothing has confirmed. See decision 24."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    for i in range(5):
+        store.write_snapshot(f"gone{i}", "b: 1\n", "gone first")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        store.forget(f"gone{len(calls) - 1}")  # moves HEAD every single time
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    with pytest.raises(RuntimeError, match="kept racing"):
+        store.list_changes("home")
+    assert len(calls) == 3
+
+
 def test_search_changes_retries_when_it_fetches_its_own_versions(store, monkeypatch):
     """search_changes owns `versions` when the caller does not supply
     it - it can safely rebuild everything, the same way list_changes
@@ -2102,6 +2129,14 @@ def test_writes_refuse_while_a_forget_checkpoint_is_pending(store):
     next restart's repair. The checkpoint's *content* doesn't matter
     here - only that the file exists - so it is faked by hand; Task 3
     is what makes `forget` write a real one.
+
+    A checkpoint that never resolves - exactly what this test fakes -
+    also means `list_changes` can never pass decision 24's trust check
+    either: every one of its three attempts still finds the file there.
+    Unlike a write's immediate refusal, a read only gives up once the
+    retry budget is spent, and with `RuntimeError` rather than
+    `ValueError` - it was never told to refuse outright, only found
+    nothing across the whole budget it could vouch for.
     """
     first = store.write_snapshot("home", "a: 1\n", "first")
     store.create_version("home/v1.0.0", "Home", "", first)
@@ -2123,8 +2158,15 @@ def test_writes_refuse_while_a_forget_checkpoint_is_pending(store):
     with pytest.raises(ValueError, match="forget"):
         store.forget("home")
 
-    # Reads are unaffected - only writes are blocked.
-    assert store.list_changes("home") != []
+    # A read that goes through decision 24's retry helper distrusts a
+    # checkpoint that never resolves the same way a write refuses it -
+    # just later, after the retry budget is spent, and with a
+    # `RuntimeError` rather than an immediate `ValueError`. A read
+    # outside that machinery - `read_at`, one known revision, no
+    # rebuild-and-compare - is genuinely unaffected, the same as
+    # decision 21 always promised.
+    with pytest.raises(RuntimeError, match="kept racing"):
+        store.list_changes("home")
     assert store.read_at("home", "HEAD") == "a: 1\n"
 
 

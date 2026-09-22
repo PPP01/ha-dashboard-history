@@ -529,6 +529,16 @@ async def _retrying_a_forget_race(
     checkpoint check catches what HEAD alone cannot: a call starting
     after HEAD already moved but before notes/tags catch up sees a
     HEAD that never moves again during its own execution at all.
+
+    The last attempt is checked exactly the same way as every other -
+    an `attempt()` that raises there propagates like it always did,
+    but one that returns normally still has to pass the same trust
+    check before this hands it back, matching
+    `HistoryStore._retrying_a_forget_race`. Skipping that check on the
+    last attempt would leave the one attempt with no more retries left
+    to fall back on unvalidated. A concurrent `forget` that keeps
+    racing every single attempt, including the last, is rare enough to
+    raise on rather than design a quiet fallback for.
     """
 
     async def current_head() -> object:
@@ -553,7 +563,15 @@ async def _retrying_a_forget_race(
         if moved == head and not unsettled:
             return found
         head = moved
-    return await attempt()
+    found = await attempt()
+    moved = await current_head()
+    unsettled = await hass.async_add_executor_job(store.forget_in_progress)
+    if moved == head and not unsettled:
+        return found
+    raise RuntimeError(
+        "a concurrent forget kept racing this search past all "
+        f"{_FORGET_RACE_RETRIES} attempts"
+    )
 
 
 async def async_search(
