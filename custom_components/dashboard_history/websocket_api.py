@@ -116,6 +116,7 @@ _COMMANDS = (
             **_REVISION,
             vol.Required("position"): int,
             vol.Optional("confirm", default=False): bool,
+            vol.Optional("override_unrecorded_state", default=False): bool,
         },
         operations.async_restore_deleted,
         lambda msg: {
@@ -123,6 +124,7 @@ _COMMANDS = (
             "revision": msg["revision"],
             "position": msg["position"],
             "confirm": msg["confirm"],
+            "override_unrecorded_state": msg["override_unrecorded_state"],
         },
     ),
     _command(
@@ -132,6 +134,7 @@ _COMMANDS = (
             **_REVISION,
             vol.Optional("confirm", default=False): bool,
             vol.Optional("keep_as_version"): KEEP_AS_VERSION,
+            vol.Optional("override_unrecorded_state", default=False): bool,
         },
         operations.async_restore_state,
         lambda msg: {
@@ -139,6 +142,7 @@ _COMMANDS = (
             "revision": msg["revision"],
             "confirm": msg["confirm"],
             "keep_as_version": msg.get("keep_as_version"),
+            "override_unrecorded_state": msg["override_unrecorded_state"],
         },
     ),
     _command(
@@ -154,6 +158,7 @@ _COMMANDS = (
             # `async_undo_change` for why that is worth a field of its
             # own rather than always being computed.
             vol.Optional("preview", default=False): bool,
+            vol.Optional("override_unrecorded_state", default=False): bool,
         },
         operations.async_undo_change,
         lambda msg: {
@@ -161,6 +166,7 @@ _COMMANDS = (
             "revision": msg["revision"],
             "confirm": msg["confirm"],
             "preview": msg["preview"],
+            "override_unrecorded_state": msg["override_unrecorded_state"],
         },
     ),
     _command(
