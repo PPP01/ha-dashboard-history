@@ -993,6 +993,107 @@ def test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stabl
     assert len(calls) == 2
 
 
+def test_search_changes_retries_when_it_fetches_its_own_versions(store, monkeypatch):
+    """search_changes owns `versions` when the caller does not supply
+    it - it can safely rebuild everything, the same way list_changes
+    does. See decision 24.
+
+    "gone" is written before "home", not after - see
+    `test_list_changes_retries_a_read_that_raced_forget`'s docstring
+    for why writing it last would let this pass without `home`'s own
+    shas ever actually changing.
+    """
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first unique-needle")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=None, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")
+            raise KeyError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    found = store.search_changes("home", "unique-needle")
+
+    assert [c.message for c in found] == ["first unique-needle"]
+    assert len(calls) == 2
+
+
+def test_search_changes_retries_with_missing_commit_error_too(store, monkeypatch):
+    """Companion to `test_search_changes_retries_when_it_fetches_its_own_versions`,
+    with `MissingCommitError` instead of `KeyError` - see
+    `test_list_changes_retries_a_read_that_raced_forget_with_missing_commit_error`
+    in Task 1 for why both need their own coverage."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first unique-needle")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=None, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")
+            raise MissingCommitError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    found = store.search_changes("home", "unique-needle")
+
+    assert [c.message for c in found] == ["first unique-needle"]
+    assert len(calls) == 2
+
+
+def test_search_changes_does_not_retry_when_the_caller_supplied_versions(
+    store, monkeypatch
+):
+    """search_changes does not own a caller-supplied `versions` list and
+    must not silently rebuild around it: a retry here would return
+    changes carrying new shas while the caller's own `versions` (and
+    anything the caller derives from it, such as
+    operations.async_search's `marks`) still names the old ones -
+    every version match in the result would fail with no signal that
+    anything went wrong. See decision 24 and issue #20's review."""
+    revision = store.write_snapshot("home", "a: 1\n", "first unique-needle")
+    store.create_version("home/v1.0.0", "Home", "", revision)
+    versions = store.list_versions("home")
+    calls: list[int] = []
+
+    def always_fails(self, repo, key, limit=None, before=None):
+        calls.append(1)
+        raise KeyError(b"simulated: pruned mid-read")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+    monkeypatch.setattr(HistoryStore, "_each_change", always_fails)
+
+    with pytest.raises(KeyError):
+        store.search_changes("home", "unique-needle", versions=versions)
+    assert len(calls) == 1
+
+
+def test_search_changes_is_unaffected_when_nothing_races_it(store):
+    """The ordinary path - both with and without a caller-supplied
+    `versions` - must produce exactly what it did before this
+    change."""
+    store.write_snapshot("home", "a: 1\n", "first unique-needle")
+
+    assert [c.message for c in store.search_changes("home", "unique-needle")] == [
+        "first unique-needle"
+    ]
+    versions = store.list_versions("home")
+    assert [
+        c.message for c in store.search_changes("home", "unique-needle", versions=versions)
+    ] == ["first unique-needle"]
+
+
 def test_forget_leaves_no_checkpoint_behind(store):
     """A normal, uninterrupted forget must clean up after itself.
 

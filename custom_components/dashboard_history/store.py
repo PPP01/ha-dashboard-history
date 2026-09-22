@@ -2463,6 +2463,17 @@ class HistoryStore:
         two scans of the same tags for one answer. Left out, the list is
         read here as before, which is what every test and every other
         caller relies on.
+
+        Retried whole, like `list_changes`, when this method fetched
+        `versions` itself - it owns every input and a rebuild is safe.
+        When `versions` came from the caller, retrying here would not
+        be: `operations.async_search` also derives its own `marks` from
+        that same list, outside this method's reach, and a rebuild here
+        would hand back new shas against `marks` still naming the old
+        ones - every version match failing with nothing to say why. The
+        error propagates unhandled in that case instead; the one caller
+        that supplies `versions` retries its own whole sequence around
+        this call. See decision 24.
         """
         needle = text.strip().casefold()
         if not needle:
@@ -2470,43 +2481,49 @@ class HistoryStore:
         repo = self._repo()
         if repo is None:
             return []
-        if versions is None:
-            versions = self.list_versions(key)
-        marks: dict[str, list[Version]] = {}
-        for version in versions:
-            marks.setdefault(version.revision, []).append(version)
-        found: list[Change] = []
-        # The walk is unbounded and is the expensive part: measured at
-        # roughly half a second per thousand commits. It runs in an
-        # executor, and only after a local search found nothing.
-        #
-        # `_each_change` rather than `list_changes(key, None)`, so the
-        # limit bounds the work and not only the answer. Built as a list
-        # first, the whole history of the dashboard was materialised
-        # before the first comparison was made - the `break` below then
-        # only stopped the reading of something already in memory.
-        for change in self._each_change(repo, key, None):
-            words = [change.message, change.description]
-            for version in marks.get(change.revision, []):
-                # The description as a reader sees it. Stored, it can
-                # carry the marker that says a version was made
-                # automatically, and that marker is words: searching
-                # `automatic`, `history` or `dashboard` would otherwise
-                # return every automatically versioned state, for a
-                # sentence nobody wrote and nobody is shown. Every other
-                # way out of here strips it; this was the one that did
-                # not.
-                said, _ = versioning.read_description(version.description)
-                words += [
-                    version.name.rsplit("/", 1)[-1],
-                    version.title,
-                    said,
-                ]
-            if needle in "\n".join(words).casefold():
-                found.append(change)
-                if len(found) >= limit:
-                    break
-        return found
+        given_versions = versions is not None
+
+        def build() -> list[Change]:
+            active_versions = versions if given_versions else self.list_versions(key)
+            marks: dict[str, list[Version]] = {}
+            for version in active_versions:
+                marks.setdefault(version.revision, []).append(version)
+            found: list[Change] = []
+            # The walk is unbounded and is the expensive part: measured at
+            # roughly half a second per thousand commits. It runs in an
+            # executor, and only after a local search found nothing.
+            #
+            # `_each_change` rather than `list_changes(key, None)`, so the
+            # limit bounds the work and not only the answer. Built as a list
+            # first, the whole history of the dashboard was materialised
+            # before the first comparison was made - the `break` below then
+            # only stopped the reading of something already in memory.
+            for change in self._each_change(repo, key, None):
+                words = [change.message, change.description]
+                for version in marks.get(change.revision, []):
+                    # The description as a reader sees it. Stored, it can
+                    # carry the marker that says a version was made
+                    # automatically, and that marker is words: searching
+                    # `automatic`, `history` or `dashboard` would otherwise
+                    # return every automatically versioned state, for a
+                    # sentence nobody wrote and nobody is shown. Every other
+                    # way out of here strips it; this was the one that did
+                    # not.
+                    said, _ = versioning.read_description(version.description)
+                    words += [
+                        version.name.rsplit("/", 1)[-1],
+                        version.title,
+                        said,
+                    ]
+                if needle in "\n".join(words).casefold():
+                    found.append(change)
+                    if len(found) >= limit:
+                        break
+            return found
+
+        if given_versions:
+            return build()
+        return self._retrying_a_forget_race(repo, build)
 
     def descriptions(self) -> dict[str, str]:
         """Every description, by revision.
