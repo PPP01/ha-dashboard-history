@@ -16,7 +16,7 @@ Home Assistant only offers undo *while* you are editing. Close the editor or nav
 - **Zero-configuration recording:** Every dashboard save is committed automatically in the background using an embedded, local Git engine ([Dulwich](https://www.dulwich.io/)).
 - **Surgical restores:** Undo an individual card edit or put back a deleted card from last month without rolling back changes you made to other cards in the meantime.
 - **Milestone versioning:** Bookmark important configurations with named versions before making major layout changes.
-- **Full safety net:** Automatic safety snapshots before any restore operation, ensuring you can always undo a rollback.
+- **Full safety net:** Before any restore, the current state is confirmed to be in the recorded history — caught up automatically if the recorder missed it — and a restore that cannot confirm this is refused by default, so a rollback can always itself be undone.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/05-history-overview-dark.png">

@@ -1,6 +1,6 @@
 # Aktueller Stand
 
-Stand: 2026-09-21. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
+Stand: 2026-09-22. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
 was noch offen ist, welche Module es gibt. Es ersetzt nicht die Spec — die
 bleibt bindend bei Widersprüchen — und nicht das Journal unter `plans/` und
 `reviews/`, das chronologisch und unverändert stehen bleibt. Bei jedem
@@ -54,12 +54,18 @@ Gemessen am 2026-09-19 im Container gegen die Prüfbank (7518 Commits, 68 Dashbo
 Aus der Spec, Abschnitt »Offene Punkte« (dort mit vollem Messbefund). Bei
 Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
 
-- **Umkehrbarkeit endet an einem nie aufgezeichneten Stand.** *(Gefunden am
+- ~~**Umkehrbarkeit endet an einem nie aufgezeichneten Stand.** *(Gefunden am
   2026-09-17.)* Misslingt das Nachtragen des lebenden Stands, wird trotzdem
   geschrieben, und ein Stand, den der Rekorder nie gehört hat, ist damit fort.
-  Betrifft Entscheidung 13, nicht Vorhaben K. Drei Wege stehen in der Spec
-  unter »Offene Punkte«; der Nutzer tendiert zum Abbrechen, hat die
-  Entscheidung aber ausdrücklich vertagt. GitHub-Issue #18.
+  Betrifft Entscheidung 13, nicht Vorhaben K.~~ **Behoben am 2026-09-22**
+  (Entscheidung 23, GitHub-Issue #18). Ein neuer Parameter
+  `override_unrecorded_state` (Vorgabe `false`) an den drei Aufrufern von
+  `_keep_the_live_state` kehrt die Festlegung vom 2026-09-03 um: Ohne ihn
+  wird nicht mehr geschrieben, wenn der lebende Stand nicht vorher gesichert
+  werden konnte — vorher wurde trotzdem geschrieben, mit einem Hinweis, der
+  das Panel erst nach dem Schreiben erreichte. Der alte Notausgang bleibt,
+  jetzt ausdrücklich statt stillschweigend: Wer ihn setzt, bekommt exakt das
+  frühere Verhalten für diesen einen Aufruf.
 
 - ~~**D1 — Ein unterbrochenes `forget` ist nicht wiederaufnehmbar.**~~
   **Behoben am 2026-09-21** (Entscheidung 21, GitHub-Issue #22; nach zwei
