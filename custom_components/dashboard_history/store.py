@@ -2164,7 +2164,11 @@ class HistoryStore:
         return Repo(str(self.path))
 
     def list_changes(
-        self, key: str, limit: int | None = 50, before: str | None = None
+        self,
+        key: str,
+        limit: int | None = 50,
+        before: str | None = None,
+        before_generation: int | None = None,
     ) -> list[Change]:
         """Every recorded state of one dashboard, newest first.
 
@@ -2178,7 +2182,14 @@ class HistoryStore:
         dashboard's commit, HEAD - starts the walk at the newest change
         older than it. An unknown `before` yields nothing: asking about a
         revision that is gone is not an error, and `matching_revisions`
-        takes the same line.
+        takes the same line - *unless* `before_generation` is given and
+        older than `forget_generation()` right now, in which case this
+        raises `StaleCursorError` instead: the cursor was real once, and a
+        `forget` has since rewritten past it. Leave `before_generation`
+        out (the default) to keep the old, safe answer: the WebSocket API
+        accepts an arbitrary `before` from any admin caller, not only a
+        cursor this method itself handed out, and an omitted generation
+        means "I cannot tell, answer as before." See issue #26.
 
         A list, and the signature says so: every caller here wants one,
         and a page of fifty is a list whatever it is built from. The
@@ -2189,13 +2200,28 @@ class HistoryStore:
         Rebuilt whole, up to `_FORGET_RACE_RETRIES` times, if a
         concurrent `forget` pruned a commit this walk already held a
         revision for - see `_retrying_a_forget_race` and decision 24.
+        `StaleCursorError` is a different exception entirely and is
+        never caught by that retry - it means a `forget` already
+        finished, not one racing this read.
         """
         repo = self._repo()
         if repo is None:
             return []
 
         def build() -> list[Change]:
-            found = self._each_change(repo, key, limit, before)
+            # `before_generation` is passed on only when it is actually
+            # set, not unconditionally as a fifth positional argument -
+            # several existing tests replace `_each_change` wholesale
+            # with a four-parameter stand-in to simulate a race
+            # (decision 24), and every one of them calls this with
+            # `before_generation=None`. Passing a value they were never
+            # written to accept would break all of them for a feature
+            # they do not exercise. See issue #26 and the review that
+            # caught this.
+            if before_generation is None:
+                found = self._each_change(repo, key, limit, before)
+            else:
+                found = self._each_change(repo, key, limit, before, before_generation)
             # Sliced after the walk, so the extra entry did its one job -
             # being the predecessor of the last one - and then goes.
             return list(found) if limit is None else list(islice(found, limit))
@@ -2203,7 +2229,12 @@ class HistoryStore:
         return self._retrying_a_forget_race(repo, build)
 
     def _each_change(
-        self, repo: Repo, key: str, limit: int | None = 50, before: str | None = None
+        self,
+        repo: Repo,
+        key: str,
+        limit: int | None = 50,
+        before: str | None = None,
+        before_generation: int | None = None,
     ) -> Iterator[Change]:
         """The same walk as `list_changes`, one `Change` at a time.
 
@@ -2234,7 +2265,7 @@ class HistoryStore:
         extra file handle for nothing.
         """
         notes = self.descriptions()
-        revisions = self._indexed_revisions(repo, key, before)
+        revisions = self._indexed_revisions(repo, key, before, before_generation)
         if revisions is not None:
             for position, revision in enumerate(revisions):
                 following = (
@@ -2244,7 +2275,9 @@ class HistoryStore:
                 )
                 yield _change(repo[revision.encode()], notes, following)
             return
-        yield from self._walked_changes(repo, key, notes, limit, before)
+        yield from self._walked_changes(
+            repo, key, notes, limit, before, before_generation
+        )
 
     def _current_head(self, repo: Repo) -> object:
         """HEAD right now, or a value that never equals a previous
@@ -2353,6 +2386,7 @@ class HistoryStore:
         notes: dict,
         limit: int | None,
         before: str | None,
+        before_generation: int | None = None,
     ) -> Iterator[Change]:
         """`_each_change` the long way, by walking the history itself.
 
@@ -2361,6 +2395,10 @@ class HistoryStore:
         commit that is not in the walk at all. A cursor from a history
         that has since been rewritten is such a commit - it still
         resolves, and the walk from it still has ancestors to hand back.
+
+        Raises `StaleCursorError` under the same condition
+        `_indexed_revisions` does, for the same reason - see its
+        docstring and issue #26.
         """
         # Both paths: a rename touches only the metadata, and a change
         # that is recorded but never shown is the worst of both.
@@ -2370,6 +2408,11 @@ class HistoryStore:
         if before is not None:
             resolved = self._resolve(repo, before)
             if resolved is None:
+                if (
+                    before_generation is not None
+                    and before_generation < self.forget_generation()
+                ):
+                    raise StaleCursorError(before)
                 return
             # `include` walks *from* that commit and hands the commit
             # itself back first - but only if it touches these paths. A
@@ -2540,7 +2583,11 @@ class HistoryStore:
         )
 
     def _indexed_revisions(
-        self, repo: Repo, key: str, before: str | None
+        self,
+        repo: Repo,
+        key: str,
+        before: str | None,
+        before_generation: int | None = None,
     ) -> list[str] | None:
         """One dashboard's revisions from the index, newest first.
 
@@ -2548,6 +2595,11 @@ class HistoryStore:
         a list is what to hand out, the empty list is "nothing to hand
         out", and None is "the index cannot answer this" - only then
         does the caller walk.
+
+        Raises `StaleCursorError` instead of the usual `[]` when
+        `before` does not resolve, `before_generation` was given, and
+        it is older than `forget_generation()` right now - see
+        `list_changes`'s docstring and issue #26.
         """
         index = self._revision_index(repo)
         if index is None:
@@ -2557,6 +2609,11 @@ class HistoryStore:
             return revisions
         resolved = self._resolve(repo, before)
         if resolved is None:
+            if (
+                before_generation is not None
+                and before_generation < self.forget_generation()
+            ):
+                raise StaleCursorError(before)
             # An unknown `before` yields nothing, as the docstring of
             # `list_changes` promises - not a walk that finds plenty.
             return []

@@ -1575,6 +1575,75 @@ def test_a_legacy_checkpoint_without_target_generation_still_repairs(store):
     assert store.forget_generation() == 1
 
 
+def test_stale_before_generation_raises(store):
+    """A `before` cursor issued before a `forget` rewrote past it, used
+    afterward with the generation it was issued at, must not be
+    mistaken for a cursor that was never valid. "gone" is written
+    before "home", not after - forgetting a dashboard only gives a
+    later commit a new sha if something about its own tree or its
+    ancestry changed (same reasoning as decision 24's own tests). See
+    issue #26."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "home change 1")
+    older_revision = store.write_snapshot("home", "a: 2\n", "home change 2")
+    store.write_snapshot("home", "a: 3\n", "home change 3")
+    generation_at_read_time = store.forget_generation()
+    store.forget("gone")
+
+    with pytest.raises(StaleCursorError):
+        store.list_changes(
+            "home", before=older_revision, before_generation=generation_at_read_time
+        )
+
+
+def test_stale_before_generation_raises_via_the_walked_fallback(store, monkeypatch):
+    """The same guard, in `_walked_changes` - reached whenever
+    `_revision_index` cannot answer (an empty repository, or here,
+    forced) rather than through the built index. Same technique
+    `test_survey_answers_empty_if_head_is_pruned_mid_read` and
+    `test_previous_change_answers_none_if_pruned_mid_walk` already use
+    to force a method past the index onto its walk branch, applied
+    here to `_indexed_revisions`/`_walked_changes` instead."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "home change 1")
+    older_revision = store.write_snapshot("home", "a: 2\n", "home change 2")
+    generation_at_read_time = store.forget_generation()
+    store.forget("gone")
+    monkeypatch.setattr(HistoryStore, "_revision_index", lambda self, repo: None)
+
+    with pytest.raises(StaleCursorError):
+        store.list_changes(
+            "home", before=older_revision, before_generation=generation_at_read_time
+        )
+
+
+def test_an_unresolvable_cursor_without_a_generation_still_yields_nothing(store):
+    """An external caller that never adopted `before_generation` - the
+    WebSocket API accepts an arbitrary `before` string from anyone
+    with admin rights, not only the panel's own echoed cursor - keeps
+    getting the old, safe answer even after a `forget` has run. See
+    issue #26."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.forget("gone")
+
+    assert store.list_changes("home", before="f" * 40) == []
+
+
+def test_an_unresolvable_cursor_at_the_current_generation_still_yields_nothing(store):
+    """A generation that is not older than the current one proves
+    nothing went stale - the cursor was simply never a real revision."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    current_generation = store.forget_generation()
+
+    assert (
+        store.list_changes(
+            "home", before="f" * 40, before_generation=current_generation
+        )
+        == []
+    )
+
+
 def test_repair_clears_a_stale_object_lock(store):
     """A lock under objects/ left by a dead process must not survive repair.
 
