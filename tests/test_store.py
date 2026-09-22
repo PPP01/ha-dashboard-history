@@ -9,6 +9,7 @@ from dulwich.object_store import DiskObjectStore
 from dulwich.objects import Blob
 from dulwich.repo import Repo
 import dulwich.refs
+from dulwich.errors import MissingCommitError
 import store as store_module
 from store import HistoryStore, Version, _as_text
 import versions
@@ -759,6 +760,237 @@ def test_forgetting_removes_the_dashboard_from_the_history(store):
     assert store.forget("gone") > 0
     assert "gone" not in store.list_all_dashboards()
     assert store.list_changes("gone") == []
+
+
+def test_list_changes_retries_a_read_that_raced_forget(store, monkeypatch):
+    """A read that hits the known KeyError/MissingCommitError race - a
+    concurrent `forget` pruning a commit this read already had a
+    revision list for - rebuilds against the moved HEAD instead of
+    raising. See decision 24.
+
+    `_each_change` is monkeypatched rather than dulwich itself: the
+    real race needs true thread concurrency to reproduce on demand
+    (the issue's own report: four instrumented runs did not recur).
+    This drives the same two facts a real race would - a `KeyError`
+    reaching `list_changes`, and HEAD having genuinely moved by the
+    time it does - deterministically, the same way
+    `test_forget_writes_a_checkpoint_before_the_first_ref_moves`
+    interrupts a real `forget` at an exact point instead of guessing
+    at timing.
+
+    "gone" is written *before* "home", not after: `forget` gives every
+    commit a fresh sha only if something about its own content or its
+    ancestry changed. Commit shas are content hashes - a commit written
+    after "gone" is forgotten has nothing to rewrite (nothing pointed
+    at it, its own tree never held "gone.yaml"), so writing "gone"
+    last would forget it "for free," without a single sha of "home"'s
+    ever changing - and the retry this test means to exercise would
+    pass even if `list_changes` never rebuilt anything at all.
+    """
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")  # moves HEAD for real, out from under this read
+            raise KeyError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
+
+
+def test_list_changes_does_not_retry_when_head_is_unchanged(store, monkeypatch):
+    """If HEAD never moved, the known race cannot explain the error -
+    something else is broken, and that must stay visible, not get
+    silently retried into looking fine. See decision 24."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    calls: list[int] = []
+
+    def always_fails(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        raise KeyError(b"simulated: unrelated corruption")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+    monkeypatch.setattr(HistoryStore, "_each_change", always_fails)
+
+    with pytest.raises(KeyError):
+        store.list_changes("home")
+    assert len(calls) == 1
+
+
+def test_list_changes_gives_up_after_the_retry_budget(store, monkeypatch):
+    """A read that keeps racing a `forget` on every single attempt still
+    terminates - the retry budget is a hard cap, not a promise that a
+    third attempt will succeed. See decision 24."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    for i in range(5):
+        store.write_snapshot(f"gone{i}", "b: 1\n", "gone first")
+    calls: list[int] = []
+
+    def always_races(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        store.forget(f"gone{len(calls) - 1}")  # moves HEAD every single time
+        raise KeyError(b"simulated: perpetual race")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+    monkeypatch.setattr(HistoryStore, "_each_change", always_races)
+
+    with pytest.raises(KeyError):
+        store.list_changes("home")
+    assert len(calls) == 3
+
+
+def test_list_changes_returns_empty_when_the_watched_dashboard_is_forgotten_mid_read(
+    store, monkeypatch
+):
+    """No special case: if the dashboard being read is itself forgotten
+    by the concurrent `forget` racing it, the rebuilt answer is the
+    same empty list an unknown key already produces today - confirmed
+    during design, not just asserted. See decision 24."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("home")
+            raise KeyError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    assert store.list_changes("home") == []
+    assert len(calls) == 2
+
+
+def test_list_changes_is_unaffected_when_nothing_races_it(store):
+    """The ordinary path - no exception, ever - must produce exactly
+    what it did before this change. A guard against the retry
+    machinery changing behavior for the overwhelming majority of
+    calls that never hit the race at all."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+
+
+def test_list_changes_retries_a_read_that_raced_forget_with_missing_commit_error(
+    store, monkeypatch
+):
+    """The same race can surface as `MissingCommitError` instead of
+    `KeyError` - dulwich's walker raises that one, not a subclass of
+    `KeyError`, when an object vanishes mid-walk. Decision 24 requires
+    both be caught; this is the companion to
+    `test_list_changes_retries_a_read_that_raced_forget` that would go
+    unnoticed if a future edit narrowed the caught exceptions to just
+    `KeyError`."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")
+            raise MissingCommitError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
+
+
+def test_list_changes_retries_a_successful_read_if_head_moved_during_it(
+    store, monkeypatch
+):
+    """A `build()` that raises nothing can still be stale: `_each_change`
+    reads `descriptions()` and the revision list as two separate steps,
+    and a `forget` that runs to completion entirely between them mixes
+    generations without either individual read ever failing. Trusted
+    only if HEAD read the same right after `build()` returns as it did
+    right before this attempt began - not just "no exception was
+    raised". See decision 24.
+    """
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")  # completes fully, no exception here at all
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
+
+
+def test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable(
+    store, monkeypatch
+):
+    """HEAD alone cannot catch every case: a read starting after
+    `_point_head` already ran, but before `_rewrite_notes`/
+    `_rewrite_tags` finish, sees a HEAD that never moves during its
+    own execution at all (issue #27). The checkpoint file (decision
+    21) is present for the whole span of `_finish_forget`, not just
+    the instant HEAD moves, and catches this case instead. No real
+    `forget` runs in this test at all - HEAD never moves - only the
+    checkpoint's mere presence must be enough to distrust the result.
+    See decision 24.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            checkpoint.write_text("{}", encoding="utf-8")
+            yield from real_each_change(self, repo, key, limit, before)
+            return
+        checkpoint.unlink()
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
 
 
 def test_forget_leaves_no_checkpoint_behind(store):

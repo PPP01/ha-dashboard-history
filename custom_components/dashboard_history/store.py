@@ -451,6 +451,9 @@ def _owns(ref: bytes, key: str) -> bool:
     return b"/" not in ref[len(namespace):]
 
 
+_FORGET_RACE_RETRIES = 3
+
+
 class HistoryStore:
     """Stores dashboard states and reads them back."""
 
@@ -2043,14 +2046,25 @@ class HistoryStore:
         walk underneath is `_each_change`, which hands them over one at
         a time; the slice is what turns the extra look-ahead entry back
         into the page that was asked for.
+
+        Rebuilt whole, up to `_FORGET_RACE_RETRIES` times, if a
+        concurrent `forget` pruned a commit this walk already held a
+        revision for - see `_retrying_a_forget_race` and decision 24.
         """
-        found = self._each_change(key, limit, before)
-        # Sliced after the walk, so the extra entry did its one job -
-        # being the predecessor of the last one - and then goes.
-        return list(found) if limit is None else list(islice(found, limit))
+        repo = self._repo()
+        if repo is None:
+            return []
+
+        def build() -> list[Change]:
+            found = self._each_change(repo, key, limit, before)
+            # Sliced after the walk, so the extra entry did its one job -
+            # being the predecessor of the last one - and then goes.
+            return list(found) if limit is None else list(islice(found, limit))
+
+        return self._retrying_a_forget_race(repo, build)
 
     def _each_change(
-        self, key: str, limit: int | None = 50, before: str | None = None
+        self, repo: Repo, key: str, limit: int | None = 50, before: str | None = None
     ) -> Iterator[Change]:
         """The same walk as `list_changes`, one `Change` at a time.
 
@@ -2074,10 +2088,12 @@ class HistoryStore:
         known, because the next one *is* its predecessor. The last entry
         of the walk has nobody behind it and answers None, which is what
         "the oldest recorded state" means.
+
+        Takes `repo` from its caller rather than opening its own: both
+        callers now need it themselves too, for `_retrying_a_forget_race`
+        (decision 24) - a second `Repo(...)` here would only cost an
+        extra file handle for nothing.
         """
-        repo = self._repo()
-        if repo is None:
-            return
         notes = self.descriptions()
         revisions = self._indexed_revisions(repo, key, before)
         if revisions is not None:
@@ -2090,6 +2106,87 @@ class HistoryStore:
                 yield _change(repo[revision.encode()], notes, following)
             return
         yield from self._walked_changes(repo, key, notes, limit, before)
+
+    def _current_head(self, repo: Repo) -> object:
+        """HEAD right now, or a value that never equals a previous
+        observation if reading it itself raced a `forget`.
+
+        `_resolve` dereferences an object internally (`obj = repo[sha]`
+        near its end), unguarded - a `forget` that prunes exactly what
+        it is about to read can make even this fail with the same two
+        exceptions `_retrying_a_forget_race` exists to survive.
+        Answering `None` for that would be wrong: two failed
+        observations would then compare equal to each other, and a
+        real, ongoing race would go undetected. A fresh `object()`
+        compares equal to nothing but itself. See decision 24.
+        """
+        try:
+            return self._resolve(repo, "HEAD")
+        except (KeyError, MissingCommitError):
+            return object()
+
+    def forget_in_progress(self) -> bool:
+        """Whether an earlier `forget` has not finished cleaning up yet.
+
+        The same checkpoint file write paths already refuse against
+        (`_refuse_if_forget_pending`, decision 21) - reads use it too
+        now, to know when a result might mix two generations of the
+        repository. Present for the *whole* span of `_finish_forget`,
+        from before HEAD moves to after garbage collection - catches
+        a read that starts after HEAD already settled but before
+        notes/tags catch up, which a HEAD comparison alone cannot see
+        (issue #27). Public: `operations.async_search`'s own retry
+        (decision 24) reads it too, from outside this module.
+        """
+        return self._checkpoint_path().exists()
+
+    def _retrying_a_forget_race(
+        self, repo: Repo, build: Callable[[], list[Change]]
+    ) -> list[Change]:
+        """Run `build`, rebuilding it whole if it raced a `forget`.
+
+        `build` must read everything it needs itself, fresh, every time
+        it runs - a retry here discards whatever a failed attempt had
+        already produced rather than resuming it. Necessary, not just
+        cautious: `forget` gives every surviving commit downstream of
+        the earliest touched point a new sha (`_forget`, `store.py`),
+        so a walk resumed at the point it broke would not even be a
+        valid continuation of the same answer, let alone a correct one.
+
+        A result is trusted - whether `build()` raised or returned
+        normally - only if, checked right after, HEAD reads the same
+        as it did when this attempt began *and* `forget_in_progress()`
+        is false. Checking only on failure would miss a `forget` that
+        completes entirely between two separate reads inside one
+        `build()` (`descriptions()` then the walk, in `_each_change`;
+        `list_versions()` then `search_changes()`, one layer up in
+        `operations.py`) - neither individually raises, so nothing
+        would ever trigger a retry, yet the result quietly mixes two
+        generations. The checkpoint check catches what HEAD alone
+        cannot: a read that starts after HEAD already moved but before
+        notes or tags catch up sees a HEAD that never moves again
+        during its own execution at all. See decision 24.
+
+        Commit shas are content hashes over tree and parents, so HEAD
+        can never cycle back to a value already seen; combined with
+        the fixed budget below, this always terminates regardless of
+        how unsettled the repository stays.
+        """
+        head = self._current_head(repo)
+        for _ in range(_FORGET_RACE_RETRIES - 1):
+            try:
+                found = build()
+            except (KeyError, MissingCommitError):
+                moved = self._current_head(repo)
+                if moved == head and not self.forget_in_progress():
+                    raise
+                head = moved
+                continue
+            moved = self._current_head(repo)
+            if moved == head and not self.forget_in_progress():
+                return found
+            head = moved
+        return build()
 
     def _walked_changes(
         self,
@@ -2370,6 +2467,9 @@ class HistoryStore:
         needle = text.strip().casefold()
         if not needle:
             return []
+        repo = self._repo()
+        if repo is None:
+            return []
         if versions is None:
             versions = self.list_versions(key)
         marks: dict[str, list[Version]] = {}
@@ -2385,7 +2485,7 @@ class HistoryStore:
         # first, the whole history of the dashboard was materialised
         # before the first comparison was made - the `break` below then
         # only stopped the reading of something already in memory.
-        for change in self._each_change(key, None):
+        for change in self._each_change(repo, key, None):
             words = [change.message, change.description]
             for version in marks.get(change.revision, []):
                 # The description as a reader sees it. Stored, it can
