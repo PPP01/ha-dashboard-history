@@ -69,10 +69,19 @@ def test_list_changes_retries_a_read_that_raced_forget(store, monkeypatch):
     `test_forget_writes_a_checkpoint_before_the_first_ref_moves`
     interrupts a real `forget` at an exact point instead of guessing
     at timing.
+
+    "gone" is written *before* "home", not after: `forget` gives every
+    commit a fresh sha only if something about its own content or its
+    ancestry changed. Commit shas are content hashes - a commit written
+    after "gone" is forgotten has nothing to rewrite (nothing pointed
+    at it, its own tree never held "gone.yaml"), so writing "gone"
+    last would forget it "for free," without a single sha of "home"'s
+    ever changing - and the retry this test means to exercise would
+    pass even if `list_changes` never rebuilt anything at all.
     """
+    store.write_snapshot("gone", "b: 1\n", "gone first")
     store.write_snapshot("home", "a: 1\n", "first")
     store.write_snapshot("home", "a: 2\n", "second")
-    store.write_snapshot("gone", "b: 1\n", "gone first")
 
     real_each_change = HistoryStore._each_change
     calls: list[int] = []
@@ -178,7 +187,7 @@ def test_list_changes_is_unaffected_when_nothing_races_it(store):
 
 Run: `python3 -m pytest tests/test_store.py -k "test_list_changes" -v`
 
-Expected: `test_list_changes_is_unaffected_when_nothing_races_it` PASSES already (nothing about the ordinary path is broken yet), alongside whatever pre-existing `test_list_changes_*` tests this file already had. The four new race-specific tests FAIL: each because `list_changes` does not currently retry at all (`_each_change`'s current signature is `(self, key, limit=50, before=None)` with no `repo` parameter, so the monkeypatched fakes' signatures will not even match what `list_changes` calls yet - expect a `TypeError` about unexpected arguments, not the intended `KeyError`/pass). This mismatch is expected and resolves once Step 3 changes `_each_change`'s signature.
+Expected: `test_list_changes_is_unaffected_when_nothing_races_it` PASSES already (nothing about the ordinary path is broken yet), alongside whatever pre-existing `test_list_changes_*` tests this file already had. The four new race-specific tests FAIL - but not for the reason they will once this task is done. `_each_change`'s current signature is still `(self, key, limit=50, before=None)`, with no `repo` parameter, while `list_changes`'s current body still calls it as `self._each_change(key, limit, before)` - three positional arguments the monkeypatched fakes below (written against the *new*, `repo`-first signature) bind to the wrong parameters entirely (their own `repo` parameter receives `key`'s string, and so on), rather than raising a clean, informative error. Do not spend time predicting the exact resulting exception; the point of this step is only that these four fail somehow, for a reason Step 3 makes moot by aligning `list_changes`'s call with the fakes' actual, intended signature.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -316,6 +325,20 @@ Modify `list_changes`:
         return self._retrying_a_forget_race(repo, build)
 ```
 
+`_each_change`'s new `repo` parameter has one other call site - `search_changes`, inside its own `for change in self._each_change(key, None):` line. `search_changes` gets its *full* treatment (the retry, the `versions`-ownership split) in Task 2 - but leaving its call unpatched until then would call `_each_change` with `key` where `repo` is now expected, breaking every existing `search_changes` test for the length of this one commit. Keep the suite green in the meantime with the smallest possible change - adapt the call, nothing else. Replace:
+
+```python
+        for change in self._each_change(key, None):
+```
+
+with:
+
+```python
+        for change in self._each_change(self._repo(), key, None):
+```
+
+(This exact line is replaced again, as part of a larger change, in Task 2 - expected, not a conflict.)
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/test_store.py -k "test_list_changes" -v`
@@ -326,7 +349,7 @@ Expected: all PASS - the five new tests from Step 1, plus every pre-existing `te
 
 Run: `python3 -m pytest tests/ -v`
 
-Expected: everything that passed before still passes. `_each_change`'s signature change has exactly one other call site (`search_changes`, in Task 2) - if the full suite is run before Task 2 lands, `search_changes`'s existing tests will fail with a `TypeError` about a missing `repo` argument. That is expected at this point and resolves in Task 2; do not attempt to fix `search_changes` here.
+Expected: everything that passed before still passes, `search_changes`'s existing tests included - the one-line adaptation above is exactly what keeps them green until Task 2 gives `search_changes` its own retry.
 
 - [ ] **Step 6: Commit**
 
@@ -365,15 +388,21 @@ EOF
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/test_store.py`, directly after the four tests from Task 1:
+Add to `tests/test_store.py`, directly after the five tests from Task 1:
 
 ```python
 def test_search_changes_retries_when_it_fetches_its_own_versions(store, monkeypatch):
     """search_changes owns `versions` when the caller does not supply
     it - it can safely rebuild everything, the same way list_changes
-    does. See decision 24."""
-    store.write_snapshot("home", "a: 1\n", "first unique-needle")
+    does. See decision 24.
+
+    "gone" is written before "home", not after - see
+    `test_list_changes_retries_a_read_that_raced_forget`'s docstring
+    for why writing it last would let this pass without `home`'s own
+    shas ever actually changing.
+    """
     store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first unique-needle")
 
     real_each_change = HistoryStore._each_change
     calls: list[int] = []
@@ -440,7 +469,7 @@ def test_search_changes_is_unaffected_when_nothing_races_it(store):
 
 Run: `python3 -m pytest tests/test_store.py -k "test_search_changes" -v`
 
-Expected: `test_search_changes_is_unaffected_when_nothing_races_it` FAILS with a `TypeError` (this test file is now inconsistent mid-plan: `_each_change` requires `repo` as of Task 1, and `search_changes` does not pass it yet). The other two FAIL for the same reason. All three resolve together in Step 3.
+Expected: two of the three PASS already, for reasons that stop being coincidental once Step 3 lands. `test_search_changes_is_unaffected_when_nothing_races_it` passes because Task 1's one-line transitional fix already made `search_changes` call `_each_change` correctly - nothing about the ordinary path needs Step 3 at all. `test_search_changes_does_not_retry_when_the_caller_supplied_versions` also passes already, but only by coincidence: `search_changes` has no retry logic of any kind yet, so "does not retry when given `versions`" trivially holds the same way "does not retry" would hold for *any* input right now. Only `test_search_changes_retries_when_it_fetches_its_own_versions` FAILS - it expects a matched, retried result, but with no retry yet, `flaky_each_change`'s first-call `KeyError` propagates straight out of `search_changes` unhandled instead. All three take on their intended meaning once Step 3 lands.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -934,7 +963,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `_FORGET_RACE_RETRIES` (import from `.store`), `HistoryStore.resolve(self, revision: str) -> str | None` (existing, public), `HistoryStore.list_versions`, `HistoryStore.search_changes` (Task 2's propagate-when-given-versions behavior).
-- Produces: `operations._retrying_a_forget_race(hass: HomeAssistant, store: HistoryStore, attempt: Callable[[], Awaitable[T]]) -> T` - new private async helper. `operations.async_search(...)` - same signature, new retry behavior.
+- Produces: `operations._retrying_a_forget_race(hass: HomeAssistant, store: HistoryStore, attempt: Callable[[], Awaitable[tuple[list, dict]]]) -> tuple[list, dict]` - new private async helper, typed concretely for its one caller rather than with a generic, matching this module's existing style. `operations.async_search(...)` - same signature, new retry behavior.
 
 **Why tier 3 (`docker exec`, no running instance), not tier 2 (`run_checks.py` against a live instance):** `async_search`'s retry wraps `store.list_versions`, `store.search_changes`, and `_marks_by_revision` - all pure `HistoryStore`/local functions, none of them reach into Home Assistant's live dashboard registry. The one piece of `async_search` that does (`async_get_config`, for the `same_as_live` comparison) sits *outside* the retry, unchanged, and is not what this plan is testing. Confirm this by reading `async_search`'s current body (`operations.py:507-547`) before starting - if a future edit moves `async_get_config` inside the retried sequence, this reasoning no longer holds and the test needs `run_checks.py` instead.
 
@@ -1010,14 +1039,22 @@ class Hass:
 
 
 async def _retries_past_a_race() -> None:
+    """"gone" is written before `KEY`, not after: commit shas are
+    content hashes, and forgetting a dashboard only gives a later
+    commit a new sha if something about its own tree or its ancestry
+    changed. Writing "gone" last would let it be forgotten "for free"
+    - nothing downstream of it to rewrite - and the version-tag check
+    below would then pass even if async_search never rebuilt `marks`
+    at all.
+    """
     root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-race-"))
     try:
         store = HistoryStore(root)
         store.ensure()
+        store.write_snapshot("gone", "b: 1\n", "gone first")
         store.write_snapshot(KEY, "a: 1\n", f"{KEY}: unique-needle-1")
         revision = store.write_snapshot(KEY, "a: 2\n", f"{KEY}: unique-needle-2")
         store.create_version(f"{KEY}/v1.0.0", "Home", "", revision)
-        store.write_snapshot("gone", "b: 1\n", "gone first")
         hass = Hass()
 
         real_search_changes = HistoryStore.search_changes
@@ -1109,11 +1146,17 @@ Run: `docker compose -f docker/compose.yaml up -d` (if not already running), the
 
 `docker exec -i dashboard-history-test python3 - < tests/integration/run_search_past_a_forget.py`
 
-Expected: the container reports an unhandled `KeyError` from inside `operations.async_search` (raised by `flaky_search_changes`'s first call, with nothing catching it) rather than the two `check(...)` lines passing - `async_search` has no retry yet, so `_retries_past_a_race`'s `mock.patch.object` block raises out of the `with` and the script crashes before printing a summary. Confirm the exact traceback names `search_changes`, not something unrelated (an unrelated failure here likely means the fixture setup itself is broken, not that the test correctly failed).
+Expected: the container reports an unhandled `KeyError` from inside `operations.async_search` (raised by `flaky_search_changes`'s first call, with nothing catching it) rather than `_retries_past_a_race`'s three `check(...)` lines passing - `async_search` has no retry yet, so its `mock.patch.object` block raises out of the `with` and the script crashes before ever reaching `_propagates_when_head_did_not_move` or printing a summary. Confirm the exact traceback names `search_changes`, not something unrelated (an unrelated failure here likely means the fixture setup itself is broken, not that the test correctly failed).
 
 - [ ] **Step 3: Write the minimal implementation**
 
-In `operations.py`, add a new third-party import directly after the existing `from homeassistant.util import dt as dt_util` line, matching `store.py`'s own placement of the same import:
+In `operations.py`, add a new stdlib import directly after the existing `import logging` line:
+
+```python
+from collections.abc import Awaitable, Callable
+```
+
+Add a new third-party import directly after the existing `from homeassistant.util import dt as dt_util` line, matching `store.py`'s own placement of the same import:
 
 ```python
 from dulwich.errors import MissingCommitError
@@ -1134,7 +1177,11 @@ from .store import HistoryStore, Version, _FORGET_RACE_RETRIES
 Add a new private helper directly above `async_search`:
 
 ```python
-async def _retrying_a_forget_race(hass, store, attempt):
+async def _retrying_a_forget_race(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    attempt: Callable[[], Awaitable[tuple[list, dict]]],
+) -> tuple[list, dict]:
     """The async twin of `HistoryStore._retrying_a_forget_race`.
 
     Cannot reuse that one directly: each attempt here is a sequence of
@@ -1221,7 +1268,7 @@ async def async_search(
 
 Run: `docker exec -i dashboard-history-test python3 - < tests/integration/run_search_past_a_forget.py`
 
-Expected: `2 of 2 checks passed` (each `_scenario` function contributes multiple `check(...)` calls that must all print `ok`, so watch the per-line output, not only the summary count - the summary counts scenario functions' checks together).
+Expected: `4 of 4 checks passed` (three `check(...)` calls in `_retries_past_a_race`, one in `_propagates_when_head_did_not_move` - watch the per-line output too, not only the summary count, since a summary of `4 of 4` says nothing about *which* four passed).
 
 - [ ] **Step 5: Run the plain pytest suite once more**
 
