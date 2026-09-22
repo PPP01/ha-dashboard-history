@@ -51,6 +51,21 @@ No other file needs to change.
   - `HistoryStore._each_change(self, repo: Repo, key: str, limit: int | None = 50, before: str | None = None) -> Iterator[Change]` - **signature change**: `repo` is now the first parameter after `self`, required, no longer resolved internally. Every other task and every existing caller must pass it explicitly from here on.
   - `HistoryStore.list_changes(self, key: str, limit: int | None = 50, before: str | None = None) -> list[Change]` - same signature, new retry behavior.
 
+First, add an import the tests below need. In `tests/test_store.py`, change:
+
+```python
+import dulwich.refs
+```
+
+to:
+
+```python
+import dulwich.refs
+from dulwich.errors import MissingCommitError
+```
+
+(Task 2 and Task 3 also need this; adding it here, where it is first used, means neither has to touch this line again.)
+
 - [ ] **Step 1: Write the failing tests**
 
 Add to `tests/test_store.py`, directly after `test_forgetting_removes_the_dashboard_from_the_history` (so it sits next to the other `forget`-based tests):
@@ -291,7 +306,7 @@ def test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stabl
 
 Run: `python3 -m pytest tests/test_store.py -k "test_list_changes" -v`
 
-Expected: `test_list_changes_is_unaffected_when_nothing_races_it` PASSES already (nothing about the ordinary path is broken yet), alongside whatever pre-existing `test_list_changes_*` tests this file already had. The seven new race-specific tests FAIL - but not for the reason they will once this task is done. `_each_change`'s current signature is still `(self, key, limit=50, before=None)`, with no `repo` parameter, while `list_changes`'s current body still calls it as `self._each_change(key, limit, before)` - three positional arguments the monkeypatched fakes below (written against the *new*, `repo`-first signature) bind to the wrong parameters entirely (their own `repo` parameter receives `key`'s string, and so on), rather than raising a clean, informative error. Do not spend time predicting the exact resulting exception; the point of this step is only that these seven fail somehow, for a reason Step 3 makes moot by aligning `list_changes`'s call with the fakes' actual, intended signature.
+Expected: 2 of the 8 PASS already, for two different reasons that both stop mattering once Step 3 lands. `test_list_changes_is_unaffected_when_nothing_races_it` passes because nothing about the ordinary path is broken yet. `test_list_changes_does_not_retry_when_head_is_unchanged` also passes already, but only by coincidence: `list_changes` has no retry of any kind yet, so its fake raises once, `list_changes` does not catch it, `pytest.raises(KeyError)` catches it at the test boundary, and `len(calls) == 1` holds trivially - the same shape "no retry happened" takes whether there is no retry mechanism at all or a correct one that examined HEAD and rightly declined. The other 6 FAIL - not for the reason they will once this task is done. `_each_change`'s current signature is still `(self, key, limit=50, before=None)`, with no `repo` parameter, while `list_changes`'s current body still calls it as `self._each_change(key, limit, before)` - the monkeypatched fakes below (written against the *new*, `repo`-first signature) either bind the wrong parameters entirely or, where a fake falls through to `real_each_change(self, repo, key, limit, before)` (5 arguments against the *old* `_each_change`'s 4), raise `TypeError` outright. Do not spend time predicting the exact resulting exception for any of the 6; the point of this step is only that they fail somehow, for a reason Step 3 makes moot by aligning `list_changes`'s call and `_each_change`'s signature with what the fakes already assume.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -852,20 +867,7 @@ No retry machinery here: each of these dereferences a `_resolve`-returned sha ex
 
 Every test below fakes `HistoryStore._resolve` (and, where relevant, `HistoryStore._revision_index`) to return a value deterministically instead of letting the method under test call the real one. This is deliberate, not a shortcut: `_resolve` itself reads the same object more than once internally (once resolving the candidate, once more following a possible tag chain), and `_revision_index` can call `_resolve` again on top of that - patching `Repo.__getitem__`/`Repo.get_walker` to fail by call count would require counting through all of that correctly, and silently starts testing the wrong line the moment any of those internals change shape. Faking the resolve step to a known-good value and then failing the *one* dereference each test is actually about is exact regardless of what `_resolve`/`_revision_index` do internally.
 
-First, add the missing import this task's tests need. In `tests/test_store.py`, change:
-
-```python
-import dulwich.refs
-```
-
-to:
-
-```python
-import dulwich.refs
-from dulwich.errors import MissingCommitError
-```
-
-and change:
+First, add the one remaining import this task's tests need - `MissingCommitError` was already added in Task 1 (its own `MissingCommitError`-based tests need it earlier), so only `RevisionIndex` is missing here. In `tests/test_store.py`, change:
 
 ```python
 from store import HistoryStore, Version, _as_text
