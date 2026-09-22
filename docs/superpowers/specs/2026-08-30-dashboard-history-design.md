@@ -644,6 +644,18 @@ Zurueckholen
 
     **Nicht angefasst:** `_keep_the_live_state` selbst, die den Fehlbetrag weiterhin genauso ermittelt wie zuvor — nur was die drei Aufrufer mit einem gemeldeten Fehlbetrag tun, ändert sich.
 
+24. **Ein Lesevorgang, der ein gleichzeitiges `forget` überholt, baut seine Antwort neu auf, statt mit einem `KeyError` abzubrechen.** *(Nachgetragen am 2026-09-22, löst GitHub-Issue [#20](https://github.com/PPP01/ha-dashboard-history/issues/20).)*
+
+    Kein Lesepfad hält `self._lock` — dieselbe, an Entscheidung 21 begründete Trennung: ein langsames Lesen soll nie auf ein bis zu fünfzehn Sekunden laufendes `forget` warten müssen. `_forget` (`store.py:1596`) gibt dabei aber jedem überlebenden Commit ab dem frühesten betroffenen Punkt eine **neue** Sha, nicht nur den Commits des vergessenen Dashboards — jeder `Commit()` wird frisch gebaut und neu geschrieben, mit den alten Objekten anschließend als unerreichbar, sofort geprunt (`grace_period=0`). Ein Lesevorgang, der seine Revisionsliste vor diesem Umbau gezogen hat, hält damit Shas in der Hand, die es im Augenblick des Zugriffs nicht mehr gibt — unabhängig davon, ob das gelesene Dashboard selbst betroffen ist.
+
+    Von allen Stellen, die eine so gewonnene Revision anschließend dereferenzieren, fangen die meisten das bereits ab: `_resolve` umschließt seinen eigenen `repo[sha]`-Zugriff mit `except (KeyError, ValueError): continue` und liefert `None`, worauf sich `read_at`, `previous_change`, `matching_revisions` und `same_state` allesamt verlassen — eine vereinzelte, im nächsten Aufruf schon wieder richtige Fehlantwort ist für sie folgenlos. **Nur `_each_change` reicht den `KeyError` unbehandelt durch** (Zeile 2090 im Indexpfad; derselbe Riss ist im Walk-Pfad, `_walked_changes`, ebenso möglich und bislang nur nicht beobachtet — `_extended_index` sichert ihren eigenen `get_walker`-Aufruf genau deshalb schon mit demselben Fang ab, Zeile 2247). `_each_change` hat genau zwei Aufrufer, `list_changes` und `search_changes`.
+
+    **Kein Wiederaufsetzen mitten im Generator.** `_each_change` ist ein Generator, `search_changes` bricht früh ab, sobald genug Treffer gefunden sind — ein bereits an den Aufrufer ausgelieferter `Change` lässt sich nicht zurücknehmen. Da nach einem `forget` selbst unbeteiligte Commits neue Shas tragen, wäre ein an der Bruchstelle fortgesetzter Walk ohnehin kein gültiger zweiter Teil derselben Antwort. Ein neuer, gemeinsam genutzter Helfer nimmt stattdessen eine Funktion entgegen, die die **vollständige** Antwort baut — die fertige Liste bei `list_changes`, den gefüllten Trefferpuffer bei `search_changes` — und wiederholt bei einem `KeyError` diesen kompletten Aufbau von vorn, verwirft dabei jedes schon gesammelte Zwischenergebnis.
+
+    **Wiederholt wird nur, wenn HEAD sich zwischen Versuch und Fehler tatsächlich bewegt hat.** Nur dann erklärt das bekannte Rennen den `KeyError`; bleibt HEAD unverändert, ist etwas anderes kaputt, und das soll wie bisher unbehandelt sichtbar werden, statt in eine Wiederholung zu laufen, die eine echte Beschädigung nur verschleiert. Das Budget ist mit drei Versuchen fest verdrahtet, kein neuer Parameter — das Rennen ist selten genug, dass mehr Overengineering wäre; nach dem dritten erfolglosen Versuch propagiert der letzte `KeyError` genau wie heute.
+
+    **Das gerade gelesene Dashboard selbst wurde mitten im Lesevorgang vergessen:** kein Sonderfall. Der Neuaufbau liest den Index gegen das neue HEAD, in dem der Schlüssel nicht mehr vorkommt, und liefert dieselbe leere Liste wie für einen nie existierenden Schlüssel heute schon.
+
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
