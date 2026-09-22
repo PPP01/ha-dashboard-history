@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A read that races a concurrent `forget` rebuilds its answer against the new state instead of crashing with an unhandled `KeyError`/`MissingCommitError`, and the handful of single-object reads with the same, narrower exposure fail the same way an unknown revision already does today.
+**Goal:** A read that races a concurrent `forget` rebuilds its answer against the new state instead of crashing with an unhandled `KeyError`/`MissingCommitError` - and never silently returns a result that mixes two different generations of the repository either, even when nothing raises at all. The handful of single-object reads with the same, narrower exposure fail the same way an unknown revision already does today.
 
-**Architecture:** `forget` gives every surviving commit from the earliest touched point a fresh sha and prunes the old ones immediately (`grace_period=0`). A read that pulled its revision list before that rewrite holds shas that stop existing mid-read. `_each_change` (two callers: `list_changes`, `search_changes`) is the one place this reaches a caller unhandled, and the only one that loops over many revisions - so it gets a shared retry primitive that discards a failed attempt entirely and rebuilds the whole answer fresh, rather than resuming mid-walk (already-yielded entries can't be taken back, and old shas wouldn't match the new generation anyway). Four other reads dereference a resolved revision exactly once, right after resolving it; they get a matching one-line guard instead, answering exactly as they already do for an unknown revision. `operations.async_search` owns a second copy of the same race, one layer up and across the sync/async boundary, because it holds onto `versions` across the store call.
+**Architecture:** `forget` gives every surviving commit from the earliest touched point a fresh sha and prunes the old ones immediately (`grace_period=0`). A read that pulled its revision list before that rewrite holds shas that stop existing mid-read. `_each_change` (two callers: `list_changes`, `search_changes`) is the one place this reaches a caller unhandled, and the only one that loops over many revisions - so it gets a shared retry primitive that discards a failed attempt entirely and rebuilds the whole answer fresh, rather than resuming mid-walk (already-yielded entries can't be taken back, and old shas wouldn't match the new generation anyway). That primitive trusts a result - success or failure - only if HEAD read the same both before and after the whole rebuild *and* no `forget` checkpoint is on disk at that point: a `forget` that completes entirely between two separate reads inside one build never raises anything, and a read starting after HEAD already settled but before notes/tags catch up sees a HEAD that never moves during its own execution at all, so HEAD alone cannot catch either case. Four other reads dereference a resolved revision exactly once, right after resolving it; they get a matching one-line guard instead, answering exactly as they already do for an unknown revision. `operations.async_search` owns a second copy of the same race, one layer up and across the sync/async boundary, because it holds onto `versions` across the store call - it gets the identical two-signal trust rule, on its own side of that boundary.
 
 **Tech Stack:** Python 3, `dulwich` 1.2.14 (pinned). `store.py` is one of the seven Home-Assistant-free modules, tested under plain `pytest`. `operations.py` imports `homeassistant` and is tested via `docker exec` against the project's test container (no running instance needed for this plan's change).
 
-**Spec:** `docs/superpowers/specs/2026-08-30-dashboard-history-design.md`, decision 24. Read that section before starting - it explains why the fix is a full rebuild rather than a resume, why the HEAD-moved check is the right signal, why `search_changes` splits into two cases, and which findings were deliberately left out (issue #26, a `before` pagination cursor not surviving *any* `forget`, race or not - out of scope here). Where this plan and decision 24 disagree, the spec is binding.
+**Spec:** `docs/superpowers/specs/2026-08-30-dashboard-history-design.md`, decision 24. Read that section before starting - it explains why the fix is a full rebuild rather than a resume, why a plain HEAD-moved check is not sufficient on its own, why the checkpoint file closes the remaining gap, why `search_changes` splits into two cases, and which findings were deliberately left out (issue #26, a `before` pagination cursor not surviving *any* `forget`, race or not - out of scope here). Where this plan and decision 24 disagree, the spec is binding.
 
 **Out of scope, tracked separately:** issue [#26](https://github.com/PPP01/ha-dashboard-history/issues/26) - a `before` cursor from an earlier page does not resolve any more once a `forget` has rewritten past it, whether or not a race was involved. `_indexed_revisions` already answers that with `[]`, indistinguishable from "no more history." This plan's retry does not change that answer and is not meant to - it is a different, product-level question (what should "load more" do) that needs its own design pass.
 
@@ -26,7 +26,7 @@
 
 | File | Role |
 |---|---|
-| `custom_components/dashboard_history/store.py` | New `_FORGET_RACE_RETRIES` constant and `HistoryStore._retrying_a_forget_race`; `_each_change`'s signature; `list_changes`, `search_changes`, `commit_times`, `list_dashboards`, `survey`, `previous_change` all get narrower or wider guards. |
+| `custom_components/dashboard_history/store.py` | New `_FORGET_RACE_RETRIES` constant, `HistoryStore._current_head`, `HistoryStore.forget_in_progress` (public), and `HistoryStore._retrying_a_forget_race`; `_each_change`'s signature; `list_changes`, `search_changes`, `commit_times`, `list_dashboards`, `survey`, `previous_change` all get narrower or wider guards. |
 | `custom_components/dashboard_history/operations.py` | `async_search` gains its own retry, wrapping `list_versions` + `search_changes` + `marks` together. |
 | `tests/test_store.py` | New tests for the retry primitive, both `_each_change` callers, and the four narrow guards. |
 | `tests/integration/run_search_past_a_forget.py` | New tier-3 script (no running instance) covering `operations.async_search`'s retry. |
@@ -42,10 +42,12 @@ No other file needs to change.
 - Test: `tests/test_store.py`
 
 **Interfaces:**
-- Consumes: `HistoryStore._repo`, `HistoryStore._resolve` (both existing).
+- Consumes: `HistoryStore._repo`, `HistoryStore._resolve`, `HistoryStore._checkpoint_path` (all existing).
 - Produces:
   - Module constant `_FORGET_RACE_RETRIES = 3` (top of `store.py`, near the other module-level constants - if there are none yet, place it directly above the `HistoryStore` class definition).
-  - `HistoryStore._retrying_a_forget_race(self, repo: Repo, build: Callable[[], list[Change]]) -> list[Change]` - new method.
+  - `HistoryStore._current_head(self, repo: Repo) -> object` - new method. Returns whatever `self._resolve(repo, "HEAD")` returns, or a fresh, never-equal-to-anything-else `object()` if that itself raised `KeyError`/`MissingCommitError`.
+  - `HistoryStore.forget_in_progress(self) -> bool` - new **public** method (needed outside `store.py` too, by Task 4). Whether `self._checkpoint_path().exists()`.
+  - `HistoryStore._retrying_a_forget_race(self, repo: Repo, build: Callable[[], list[Change]]) -> list[Change]` - new method. Trusts a result - success or failure - only if HEAD read the same both before and after `build()` ran *and* `forget_in_progress()` is false at that point; otherwise rebuilds, up to the fixed budget.
   - `HistoryStore._each_change(self, repo: Repo, key: str, limit: int | None = 50, before: str | None = None) -> Iterator[Change]` - **signature change**: `repo` is now the first parameter after `self`, required, no longer resolved internally. Every other task and every existing caller must pass it explicitly from here on.
   - `HistoryStore.list_changes(self, key: str, limit: int | None = 50, before: str | None = None) -> list[Change]` - same signature, new retry behavior.
 
@@ -181,13 +183,115 @@ def test_list_changes_is_unaffected_when_nothing_races_it(store):
     changes = store.list_changes("home")
 
     assert [c.message for c in changes] == ["second", "first"]
+
+
+def test_list_changes_retries_a_read_that_raced_forget_with_missing_commit_error(
+    store, monkeypatch
+):
+    """The same race can surface as `MissingCommitError` instead of
+    `KeyError` - dulwich's walker raises that one, not a subclass of
+    `KeyError`, when an object vanishes mid-walk. Decision 24 requires
+    both be caught; this is the companion to
+    `test_list_changes_retries_a_read_that_raced_forget` that would go
+    unnoticed if a future edit narrowed the caught exceptions to just
+    `KeyError`."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")
+            raise MissingCommitError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
+
+
+def test_list_changes_retries_a_successful_read_if_head_moved_during_it(
+    store, monkeypatch
+):
+    """A `build()` that raises nothing can still be stale: `_each_change`
+    reads `descriptions()` and the revision list as two separate steps,
+    and a `forget` that runs to completion entirely between them mixes
+    generations without either individual read ever failing. Trusted
+    only if HEAD read the same right after `build()` returns as it did
+    right before this attempt began - not just "no exception was
+    raised". See decision 24.
+    """
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")  # completes fully, no exception here at all
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
+
+
+def test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable(
+    store, monkeypatch
+):
+    """HEAD alone cannot catch every case: a read starting after
+    `_point_head` already ran, but before `_rewrite_notes`/
+    `_rewrite_tags` finish, sees a HEAD that never moves during its
+    own execution at all (issue #27). The checkpoint file (decision
+    21) is present for the whole span of `_finish_forget`, not just
+    the instant HEAD moves, and catches this case instead. No real
+    `forget` runs in this test at all - HEAD never moves - only the
+    checkpoint's mere presence must be enough to distrust the result.
+    See decision 24.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=50, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            checkpoint.write_text("{}", encoding="utf-8")
+            yield from real_each_change(self, repo, key, limit, before)
+            return
+        checkpoint.unlink()
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    changes = store.list_changes("home")
+
+    assert [c.message for c in changes] == ["second", "first"]
+    assert len(calls) == 2
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python3 -m pytest tests/test_store.py -k "test_list_changes" -v`
 
-Expected: `test_list_changes_is_unaffected_when_nothing_races_it` PASSES already (nothing about the ordinary path is broken yet), alongside whatever pre-existing `test_list_changes_*` tests this file already had. The four new race-specific tests FAIL - but not for the reason they will once this task is done. `_each_change`'s current signature is still `(self, key, limit=50, before=None)`, with no `repo` parameter, while `list_changes`'s current body still calls it as `self._each_change(key, limit, before)` - three positional arguments the monkeypatched fakes below (written against the *new*, `repo`-first signature) bind to the wrong parameters entirely (their own `repo` parameter receives `key`'s string, and so on), rather than raising a clean, informative error. Do not spend time predicting the exact resulting exception; the point of this step is only that these four fail somehow, for a reason Step 3 makes moot by aligning `list_changes`'s call with the fakes' actual, intended signature.
+Expected: `test_list_changes_is_unaffected_when_nothing_races_it` PASSES already (nothing about the ordinary path is broken yet), alongside whatever pre-existing `test_list_changes_*` tests this file already had. The seven new race-specific tests FAIL - but not for the reason they will once this task is done. `_each_change`'s current signature is still `(self, key, limit=50, before=None)`, with no `repo` parameter, while `list_changes`'s current body still calls it as `self._each_change(key, limit, before)` - three positional arguments the monkeypatched fakes below (written against the *new*, `repo`-first signature) bind to the wrong parameters entirely (their own `repo` parameter receives `key`'s string, and so on), rather than raising a clean, informative error. Do not spend time predicting the exact resulting exception; the point of this step is only that these seven fail somehow, for a reason Step 3 makes moot by aligning `list_changes`'s call with the fakes' actual, intended signature.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -197,9 +301,42 @@ In `store.py`, add the module constant near the top, directly above the `History
 _FORGET_RACE_RETRIES = 3
 ```
 
-Add the new method directly after `_each_change` (which Step 3 also modifies, below), before `_walked_changes`:
+Add three new methods directly after `_each_change` (which Step 3 also modifies, below), before `_walked_changes`:
 
 ```python
+    def _current_head(self, repo: Repo) -> object:
+        """HEAD right now, or a value that never equals a previous
+        observation if reading it itself raced a `forget`.
+
+        `_resolve` dereferences an object internally (`obj = repo[sha]`
+        near its end), unguarded - a `forget` that prunes exactly what
+        it is about to read can make even this fail with the same two
+        exceptions `_retrying_a_forget_race` exists to survive.
+        Answering `None` for that would be wrong: two failed
+        observations would then compare equal to each other, and a
+        real, ongoing race would go undetected. A fresh `object()`
+        compares equal to nothing but itself. See decision 24.
+        """
+        try:
+            return self._resolve(repo, "HEAD")
+        except (KeyError, MissingCommitError):
+            return object()
+
+    def forget_in_progress(self) -> bool:
+        """Whether an earlier `forget` has not finished cleaning up yet.
+
+        The same checkpoint file write paths already refuse against
+        (`_refuse_if_forget_pending`, decision 21) - reads use it too
+        now, to know when a result might mix two generations of the
+        repository. Present for the *whole* span of `_finish_forget`,
+        from before HEAD moves to after garbage collection - catches
+        a read that starts after HEAD already settled but before
+        notes/tags catch up, which a HEAD comparison alone cannot see
+        (issue #27). Public: `operations.async_search`'s own retry
+        (decision 24) reads it too, from outside this module.
+        """
+        return self._checkpoint_path().exists()
+
     def _retrying_a_forget_race(
         self, repo: Repo, build: Callable[[], list[Change]]
     ) -> list[Change]:
@@ -213,24 +350,39 @@ Add the new method directly after `_each_change` (which Step 3 also modifies, be
         so a walk resumed at the point it broke would not even be a
         valid continuation of the same answer, let alone a correct one.
 
-        Retried only when HEAD moved between the start of an attempt
-        and the failure - only then does the known race explain a
-        `KeyError`/`MissingCommitError`. HEAD unchanged means something
-        else is broken, and that has to stay visible instead of being
-        retried into silence. Commit shas are content hashes over tree
-        and parents, so HEAD can never cycle back to a value already
-        seen; combined with the fixed budget below, this always
-        terminates. See decision 24.
+        A result is trusted - whether `build()` raised or returned
+        normally - only if, checked right after, HEAD reads the same
+        as it did when this attempt began *and* `forget_in_progress()`
+        is false. Checking only on failure would miss a `forget` that
+        completes entirely between two separate reads inside one
+        `build()` (`descriptions()` then the walk, in `_each_change`;
+        `list_versions()` then `search_changes()`, one layer up in
+        `operations.py`) - neither individually raises, so nothing
+        would ever trigger a retry, yet the result quietly mixes two
+        generations. The checkpoint check catches what HEAD alone
+        cannot: a read that starts after HEAD already moved but before
+        notes or tags catch up sees a HEAD that never moves again
+        during its own execution at all. See decision 24.
+
+        Commit shas are content hashes over tree and parents, so HEAD
+        can never cycle back to a value already seen; combined with
+        the fixed budget below, this always terminates regardless of
+        how unsettled the repository stays.
         """
-        head = self._resolve(repo, "HEAD")
+        head = self._current_head(repo)
         for _ in range(_FORGET_RACE_RETRIES - 1):
             try:
-                return build()
+                found = build()
             except (KeyError, MissingCommitError):
-                moved = self._resolve(repo, "HEAD")
-                if moved == head:
+                moved = self._current_head(repo)
+                if moved == head and not self.forget_in_progress():
                     raise
                 head = moved
+                continue
+            moved = self._current_head(repo)
+            if moved == head and not self.forget_in_progress():
+                return found
+            head = moved
         return build()
 ```
 
@@ -325,7 +477,28 @@ Modify `list_changes`:
         return self._retrying_a_forget_race(repo, build)
 ```
 
-`_each_change`'s new `repo` parameter has one other call site - `search_changes`, inside its own `for change in self._each_change(key, None):` line. `search_changes` gets its *full* treatment (the retry, the `versions`-ownership split) in Task 2 - but leaving its call unpatched until then would call `_each_change` with `key` where `repo` is now expected, breaking every existing `search_changes` test for the length of this one commit. Keep the suite green in the meantime with the smallest possible change - adapt the call, nothing else. Replace:
+`_each_change`'s new `repo` parameter has one other call site - `search_changes`, inside its own `for change in self._each_change(key, None):` line. `search_changes` gets its *full* treatment (the retry, the `versions`-ownership split) in Task 2 - but leaving its call unpatched until then would call `_each_change` with `key` where `repo` is now expected, breaking every existing `search_changes` test for the length of this one commit. Keep the suite green in the meantime with the smallest possible change - adapt the call, nothing else. `search_changes` never opened `repo` itself before (it went through `_each_change`'s own, now-removed `self._repo()` call); it needs to now, guarded the same way every other method here already guards it - a bare `self._repo()` inline, with no `None` check, would turn a missing repository from today's quiet `[]` into a crash for the length of this one commit. Replace:
+
+```python
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        if versions is None:
+```
+
+with:
+
+```python
+        needle = text.strip().casefold()
+        if not needle:
+            return []
+        repo = self._repo()
+        if repo is None:
+            return []
+        if versions is None:
+```
+
+and replace:
 
 ```python
         for change in self._each_change(key, None):
@@ -334,22 +507,22 @@ Modify `list_changes`:
 with:
 
 ```python
-        for change in self._each_change(self._repo(), key, None):
+        for change in self._each_change(repo, key, None):
 ```
 
-(This exact line is replaced again, as part of a larger change, in Task 2 - expected, not a conflict.)
+(Both of these exact lines are replaced again, as part of a larger change, in Task 2 - expected, not a conflict.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/test_store.py -k "test_list_changes" -v`
 
-Expected: all PASS - the five new tests from Step 1, plus every pre-existing `test_list_changes_*` test.
+Expected: all PASS - the eight new tests from Step 1, plus every pre-existing `test_list_changes_*` test.
 
 - [ ] **Step 5: Run the full suite**
 
 Run: `python3 -m pytest tests/ -v`
 
-Expected: everything that passed before still passes, `search_changes`'s existing tests included - the one-line adaptation above is exactly what keeps them green until Task 2 gives `search_changes` its own retry.
+Expected: everything that passed before still passes, `search_changes`'s existing tests included - the transitional fix above is exactly what keeps them green until Task 2 gives `search_changes` its own retry.
 
 - [ ] **Step 6: Commit**
 
@@ -365,9 +538,18 @@ prunes the old ones immediately - a read caught mid-walk holds shas
 that stop existing before it finishes, and list_changes crashed with
 an unhandled KeyError (issue #20). Retried whole, never resumed:
 already-yielded entries can't be taken back, and old shas wouldn't
-match the new generation regardless. Gated on HEAD having actually
-moved, so an unrelated corruption still surfaces instead of being
-retried into silence.
+match the new generation regardless.
+
+A result is trusted only if HEAD read the same both before and after
+the whole rebuild, and no forget checkpoint is on disk at that point
+- not just "nothing raised". Neither individually catches a forget
+that completes entirely between two separate reads inside one build
+(descriptions() then the walk here; list_versions() then
+search_changes(), one layer up in Task 4), or a read that starts
+after HEAD already settled but before notes/tags catch up (issue
+#27) - together they do. The HEAD read itself is protected the same
+way, since _resolve dereferences an object internally and can race
+the exact prune it exists to detect.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 EOF
@@ -388,7 +570,7 @@ EOF
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `tests/test_store.py`, directly after the five tests from Task 1:
+Add to `tests/test_store.py`, directly after the eight tests from Task 1:
 
 ```python
 def test_search_changes_retries_when_it_fetches_its_own_versions(store, monkeypatch):
@@ -412,6 +594,33 @@ def test_search_changes_retries_when_it_fetches_its_own_versions(store, monkeypa
         if len(calls) == 1:
             store.forget("gone")
             raise KeyError(b"simulated: pruned mid-read")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+        yield from real_each_change(self, repo, key, limit, before)
+
+    monkeypatch.setattr(HistoryStore, "_each_change", flaky_each_change)
+
+    found = store.search_changes("home", "unique-needle")
+
+    assert [c.message for c in found] == ["first unique-needle"]
+    assert len(calls) == 2
+
+
+def test_search_changes_retries_with_missing_commit_error_too(store, monkeypatch):
+    """Companion to `test_search_changes_retries_when_it_fetches_its_own_versions`,
+    with `MissingCommitError` instead of `KeyError` - see
+    `test_list_changes_retries_a_read_that_raced_forget_with_missing_commit_error`
+    in Task 1 for why both need their own coverage."""
+    store.write_snapshot("gone", "b: 1\n", "gone first")
+    store.write_snapshot("home", "a: 1\n", "first unique-needle")
+
+    real_each_change = HistoryStore._each_change
+    calls: list[int] = []
+
+    def flaky_each_change(self, repo, key, limit=None, before=None):
+        calls.append(1)
+        if len(calls) == 1:
+            store.forget("gone")
+            raise MissingCommitError(b"simulated: pruned mid-read")
             yield  # pragma: no cover - unreachable, keeps this a generator
         yield from real_each_change(self, repo, key, limit, before)
 
@@ -469,7 +678,7 @@ def test_search_changes_is_unaffected_when_nothing_races_it(store):
 
 Run: `python3 -m pytest tests/test_store.py -k "test_search_changes" -v`
 
-Expected: two of the three PASS already, for reasons that stop being coincidental once Step 3 lands. `test_search_changes_is_unaffected_when_nothing_races_it` passes because Task 1's one-line transitional fix already made `search_changes` call `_each_change` correctly - nothing about the ordinary path needs Step 3 at all. `test_search_changes_does_not_retry_when_the_caller_supplied_versions` also passes already, but only by coincidence: `search_changes` has no retry logic of any kind yet, so "does not retry when given `versions`" trivially holds the same way "does not retry" would hold for *any* input right now. Only `test_search_changes_retries_when_it_fetches_its_own_versions` FAILS - it expects a matched, retried result, but with no retry yet, `flaky_each_change`'s first-call `KeyError` propagates straight out of `search_changes` unhandled instead. All three take on their intended meaning once Step 3 lands.
+Expected: two of the four PASS already, for reasons that stop being coincidental once Step 3 lands. `test_search_changes_is_unaffected_when_nothing_races_it` passes because Task 1's transitional fix already made `search_changes` call `_each_change` correctly - nothing about the ordinary path needs Step 3 at all. `test_search_changes_does_not_retry_when_the_caller_supplied_versions` also passes already, but only by coincidence: `search_changes` has no retry logic of any kind yet, so "does not retry when given `versions`" trivially holds the same way "does not retry" would hold for *any* input right now. `test_search_changes_retries_when_it_fetches_its_own_versions` and its `MissingCommitError` companion both FAIL - each expects a matched, retried result, but with no retry yet, `flaky_each_change`'s first-call exception propagates straight out of `search_changes` unhandled instead. All four take on their intended meaning once Step 3 lands.
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -962,8 +1171,8 @@ EOF
 - Test: `tests/integration/run_search_past_a_forget.py` (new)
 
 **Interfaces:**
-- Consumes: `_FORGET_RACE_RETRIES` (import from `.store`), `HistoryStore.resolve(self, revision: str) -> str | None` (existing, public), `HistoryStore.list_versions`, `HistoryStore.search_changes` (Task 2's propagate-when-given-versions behavior).
-- Produces: `operations._retrying_a_forget_race(hass: HomeAssistant, store: HistoryStore, attempt: Callable[[], Awaitable[tuple[list, dict]]]) -> tuple[list, dict]` - new private async helper, typed concretely for its one caller rather than with a generic, matching this module's existing style. `operations.async_search(...)` - same signature, new retry behavior.
+- Consumes: `_FORGET_RACE_RETRIES` (import from `.store`), `HistoryStore.resolve(self, revision: str) -> str | None`, `HistoryStore.forget_in_progress(self) -> bool` (both existing, public, the second new from Task 1), `HistoryStore.list_versions`, `HistoryStore.search_changes` (Task 2's propagate-when-given-versions behavior).
+- Produces: `operations._retrying_a_forget_race(hass: HomeAssistant, store: HistoryStore, attempt: Callable[[], Awaitable[tuple[list, dict]]]) -> tuple[list, dict]` - new private async helper, typed concretely for its one caller rather than with a generic, matching this module's existing style. Same two-signal trust rule as `HistoryStore._retrying_a_forget_race` (Task 1): a result is only trusted if HEAD read the same both before and after the whole `attempt()` ran *and* `forget_in_progress()` is false at that point. `operations.async_search(...)` - same signature, new retry behavior.
 
 **Why tier 3 (`docker exec`, no running instance), not tier 2 (`run_checks.py` against a live instance):** `async_search`'s retry wraps `store.list_versions`, `store.search_changes`, and `_marks_by_revision` - all pure `HistoryStore`/local functions, none of them reach into Home Assistant's live dashboard registry. The one piece of `async_search` that does (`async_get_config`, for the `same_as_live` comparison) sits *outside* the retry, unchanged, and is not what this plan is testing. Confirm this by reading `async_search`'s current body (`operations.py:507-547`) before starting - if a future edit moves `async_get_config` inside the retried sequence, this reasoning no longer holds and the test needs `run_checks.py` instead.
 
@@ -1099,6 +1308,150 @@ async def _retries_past_a_race() -> None:
         shutil.rmtree(root, ignore_errors=True)
 
 
+async def _retries_past_a_race_with_missing_commit_error() -> None:
+    """Companion to `_retries_past_a_race`, with `MissingCommitError`
+    instead of `KeyError` - dulwich's walker raises that one, not a
+    subclass of `KeyError`, when an object vanishes mid-walk. Decision
+    24 requires both be caught."""
+    root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-race-mce-"))
+    try:
+        store = HistoryStore(root)
+        store.ensure()
+        store.write_snapshot("gone", "b: 1\n", "gone first")
+        store.write_snapshot(KEY, "a: 1\n", f"{KEY}: unique-needle-1")
+        hass = Hass()
+
+        real_search_changes = HistoryStore.search_changes
+        calls: list[int] = []
+
+        def flaky_search_changes(self, key, text, limit=50, versions=None):
+            calls.append(1)
+            if len(calls) == 1:
+                store.forget("gone")
+                raise operations.MissingCommitError(b"simulated: pruned mid-read")
+            return real_search_changes(self, key, text, limit, versions)
+
+        with (
+            mock.patch.object(
+                HistoryStore, "search_changes", flaky_search_changes
+            ),
+            mock.patch.object(
+                operations, "async_get_config", new=mock.AsyncMock(return_value=None)
+            ),
+        ):
+            result = await operations.async_search(hass, store, KEY, "unique-needle")
+
+        check(
+            "async_search retried a MissingCommitError instead of raising",
+            len(calls) == 2,
+            f"called {len(calls)} times",
+        )
+        check("the match came back", len(result["changes"]) == 1, str(result))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+async def _retries_a_successful_but_stale_attempt() -> None:
+    """A forget that completes entirely between `list_versions` and
+    `search_changes` - the guaranteed `await` point between them in
+    `attempt()` - raises nothing anywhere. `list_versions`'s own call
+    succeeds (with the *old* generation's tags), `search_changes`
+    then succeeds too (with the *new* generation's shas, since its own
+    walk reads fresh). Trusted only if HEAD read the same right after
+    `attempt()` returns as it did when this attempt began - not just
+    "nothing raised". See decision 24.
+    """
+    root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-stale-"))
+    try:
+        store = HistoryStore(root)
+        store.ensure()
+        store.write_snapshot("gone", "b: 1\n", "gone first")
+        store.write_snapshot(KEY, "a: 1\n", f"{KEY}: unique-needle-1")
+        revision = store.write_snapshot(KEY, "a: 2\n", f"{KEY}: unique-needle-2")
+        store.create_version(f"{KEY}/v1.0.0", "Home", "", revision)
+        hass = Hass()
+
+        real_list_versions = HistoryStore.list_versions
+        calls: list[int] = []
+
+        def flaky_list_versions(self, key=None):
+            calls.append(1)
+            if len(calls) == 1:
+                old_versions = real_list_versions(self, key)
+                store.forget("gone")  # completes fully - no exception anywhere
+                return old_versions
+            return real_list_versions(self, key)
+
+        with (
+            mock.patch.object(HistoryStore, "list_versions", flaky_list_versions),
+            mock.patch.object(
+                operations, "async_get_config", new=mock.AsyncMock(return_value=None)
+            ),
+        ):
+            result = await operations.async_search(hass, store, KEY, "unique-needle")
+
+        check(
+            "async_search retried a successful-but-stale attempt",
+            len(calls) == 2,
+            f"called {len(calls)} times",
+        )
+        check(
+            "the version tag is still attached after the retry",
+            any(
+                any(v["name"] == f"{KEY}/v1.0.0" for v in c.get("versions", []))
+                for c in result["changes"]
+            ),
+            str(result),
+        )
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+async def _retries_when_checkpoint_present_even_if_head_is_stable() -> None:
+    """HEAD alone cannot catch every case - see
+    `test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable`
+    in `tests/test_store.py` (Task 1) for the full reasoning. No real
+    `forget` runs in this test at all - HEAD never moves - only the
+    checkpoint file's mere presence must be enough to distrust the
+    result. See decision 24 and issue #27.
+    """
+    root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-checkpoint-"))
+    try:
+        store = HistoryStore(root)
+        store.ensure()
+        store.write_snapshot(KEY, "a: 1\n", f"{KEY}: unique-needle-1")
+        checkpoint = store.path / ".git" / "dashboard_history_forget.json"
+        hass = Hass()
+
+        real_list_versions = HistoryStore.list_versions
+        calls: list[int] = []
+
+        def flaky_list_versions(self, key=None):
+            calls.append(1)
+            if len(calls) == 1:
+                checkpoint.write_text("{}", encoding="utf-8")
+                return real_list_versions(self, key)
+            checkpoint.unlink()
+            return real_list_versions(self, key)
+
+        with (
+            mock.patch.object(HistoryStore, "list_versions", flaky_list_versions),
+            mock.patch.object(
+                operations, "async_get_config", new=mock.AsyncMock(return_value=None)
+            ),
+        ):
+            result = await operations.async_search(hass, store, KEY, "unique-needle")
+
+        check(
+            "async_search retried because a checkpoint was present",
+            len(calls) == 2,
+            f"called {len(calls)} times",
+        )
+        check("the result still came back", len(result["changes"]) == 1, str(result))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 async def _propagates_when_head_did_not_move() -> None:
     root = Path(tempfile.mkdtemp(prefix="dashboard-history-search-nomove-"))
     try:
@@ -1129,6 +1482,9 @@ async def _propagates_when_head_did_not_move() -> None:
 
 async def main() -> int:
     await _retries_past_a_race()
+    await _retries_past_a_race_with_missing_commit_error()
+    await _retries_a_successful_but_stale_attempt()
+    await _retries_when_checkpoint_present_even_if_head_is_stable()
     await _propagates_when_head_did_not_move()
     print(f"\n{len(_passed)} of {len(_passed) + len(_failed)} checks passed")
     if _failed:
@@ -1146,7 +1502,7 @@ Run: `docker compose -f docker/compose.yaml up -d` (if not already running), the
 
 `docker exec -i dashboard-history-test python3 - < tests/integration/run_search_past_a_forget.py`
 
-Expected: the container reports an unhandled `KeyError` from inside `operations.async_search` (raised by `flaky_search_changes`'s first call, with nothing catching it) rather than `_retries_past_a_race`'s three `check(...)` lines passing - `async_search` has no retry yet, so its `mock.patch.object` block raises out of the `with` and the script crashes before ever reaching `_propagates_when_head_did_not_move` or printing a summary. Confirm the exact traceback names `search_changes`, not something unrelated (an unrelated failure here likely means the fixture setup itself is broken, not that the test correctly failed).
+Expected: the container reports an unhandled `KeyError` from inside `operations.async_search` (raised by `flaky_search_changes`'s first call, with nothing catching it) rather than `_retries_past_a_race`'s three `check(...)` lines passing - `async_search` has no retry yet, so its `mock.patch.object` block raises out of the `with` and the script crashes before ever reaching any of the other scenario functions or printing a summary. Confirm the exact traceback names `search_changes`, not something unrelated (an unrelated failure here likely means the fixture setup itself is broken, not that the test correctly failed).
 
 - [ ] **Step 3: Write the minimal implementation**
 
@@ -1187,18 +1543,43 @@ async def _retrying_a_forget_race(
     Cannot reuse that one directly: each attempt here is a sequence of
     awaited executor jobs, not one synchronous call, so the retry has
     to live on this side of the sync/async boundary. Same budget, same
-    signal (has HEAD moved since the attempt started), same reasoning
-    - see decision 24.
+    two signals, same reasoning - see decision 24.
+
+    A result is trusted - whether `attempt()` raised or returned
+    normally - only if, checked right after, HEAD reads the same as it
+    did when this attempt began *and* `store.forget_in_progress()` is
+    false. Checking only on failure would miss a `forget` that
+    completes entirely between the two separate executor jobs inside
+    `attempt()` - `list_versions` then `search_changes`, across a
+    guaranteed `await` point - neither individually raises, so nothing
+    would trigger a retry, yet the result mixes two generations. The
+    checkpoint check catches what HEAD alone cannot: a call starting
+    after HEAD already moved but before notes/tags catch up sees a
+    HEAD that never moves again during its own execution at all.
     """
-    head = await hass.async_add_executor_job(store.resolve, "HEAD")
+
+    async def current_head() -> object:
+        try:
+            return await hass.async_add_executor_job(store.resolve, "HEAD")
+        except (KeyError, MissingCommitError):
+            return object()
+
+    head = await current_head()
     for _ in range(_FORGET_RACE_RETRIES - 1):
         try:
-            return await attempt()
+            found = await attempt()
         except (KeyError, MissingCommitError):
-            moved = await hass.async_add_executor_job(store.resolve, "HEAD")
-            if moved == head:
+            moved = await current_head()
+            unsettled = await hass.async_add_executor_job(store.forget_in_progress)
+            if moved == head and not unsettled:
                 raise
             head = moved
+            continue
+        moved = await current_head()
+        unsettled = await hass.async_add_executor_job(store.forget_in_progress)
+        if moved == head and not unsettled:
+            return found
+        head = moved
     return await attempt()
 ```
 
@@ -1268,7 +1649,7 @@ async def async_search(
 
 Run: `docker exec -i dashboard-history-test python3 - < tests/integration/run_search_past_a_forget.py`
 
-Expected: `4 of 4 checks passed` (three `check(...)` calls in `_retries_past_a_race`, one in `_propagates_when_head_did_not_move` - watch the per-line output too, not only the summary count, since a summary of `4 of 4` says nothing about *which* four passed).
+Expected: `10 of 10 checks passed` (three `check(...)` calls in `_retries_past_a_race`, two in `_retries_past_a_race_with_missing_commit_error`, two in `_retries_a_successful_but_stale_attempt`, two in `_retries_when_checkpoint_present_even_if_head_is_stable`, one in `_propagates_when_head_did_not_move` - watch the per-line output too, not only the summary count, since a summary of `10 of 10` says nothing about *which* ten passed).
 
 - [ ] **Step 5: Run the plain pytest suite once more**
 
@@ -1288,8 +1669,17 @@ it a pre-fetched versions list (Task 2), because async_search's own
 marks - built from that same list, outside search_changes's reach -
 would still name the old shas after a rebuild. async_search retries
 its whole sequence instead: list_versions, search_changes, and marks
-together, re-reading versions fresh on every attempt, using the same
-budget and the same HEAD-moved signal as the synchronous side.
+together, re-reading versions fresh on every attempt.
+
+Trusted only if HEAD read the same both before and after the whole
+sequence, and no forget checkpoint is on disk - not just "nothing
+raised". A forget that completes entirely across the guaranteed
+await point between list_versions and search_changes never raises
+anything at all: the second call simply succeeds against the new
+HEAD while the first already holds the old generation. The
+checkpoint check catches what HEAD alone cannot: a call starting
+after HEAD already moved but before notes/tags catch up (issue #27)
+sees a HEAD that never moves again during its own execution.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 EOF
@@ -1302,6 +1692,7 @@ EOF
 
 Run through after all four tasks are drafted, before handing the plan off:
 
-- **Spec coverage:** decision 24's four paragraphs after the intro map onto this plan as: "kein Wiederaufsetzen mitten im Generator" + "wiederholt wird nur, wenn HEAD sich bewegt hat" -> Task 1; the `search_changes`/`operations.async_search` split paragraph -> Tasks 2 and 4; "vier weitere Stellen" -> Task 3; the forgotten-mid-read paragraph -> Task 1's `test_list_changes_returns_empty_when_the_watched_dashboard_is_forgotten_mid_read`, which forgets the dashboard actually being read (not an unrelated one) and confirms the rebuilt answer is `[]`; the issue #26 paragraph is explicitly out of scope, confirmed by the "Out of scope" section above.
-- **Type/signature consistency:** `_each_change`'s new `repo` parameter is used identically in Task 1 (`list_changes`) and Task 2 (`search_changes`) - both open `repo = self._repo()` themselves before calling it. `_FORGET_RACE_RETRIES` is defined once (Task 1) and consumed by both `HistoryStore._retrying_a_forget_race` (Task 1) and `operations._retrying_a_forget_race` (Task 4) via import - if Task 4 is implemented before Task 1's constant exists, the import fails immediately and loudly, which is the correct failure mode for an implementer executing tasks out of order without having finished a dependency.
+- **Spec coverage:** decision 24's paragraphs map onto this plan as: "kein Wiederaufsetzen mitten im Generator" -> Task 1's `_retrying_a_forget_race`; the two-signal trust rule ("Wiederholt wird, wenn HEAD sich... bewegt hat" + "Der HEAD-Vergleich allein schließt nicht jeden Fall") -> Task 1's `_current_head`/`forget_in_progress` and its success-path checks, mirrored in Task 4's async helper; the protected-HEAD-observation paragraph -> `_current_head`'s exception handling in both; the `search_changes`/`operations.async_search` ownership split -> Tasks 2 and 4; "vier weitere Stellen" -> Task 3; the forgotten-mid-read paragraph -> Task 1's `test_list_changes_returns_empty_when_the_watched_dashboard_is_forgotten_mid_read`; issue #27 is explicitly closed by this plan (Task 1's and Task 4's checkpoint-based tests), not deferred; the issue #26 paragraph remains explicitly out of scope, confirmed by the "Out of scope" section above.
+- **Type/signature consistency:** `_each_change`'s new `repo` parameter is used identically in Task 1 (`list_changes`) and Task 2 (`search_changes`) - both open `repo = self._repo()` themselves before calling it, guarding `None` the same way. `_FORGET_RACE_RETRIES` is defined once (Task 1) and consumed by both `HistoryStore._retrying_a_forget_race` (Task 1) and `operations._retrying_a_forget_race` (Task 4) via import - if Task 4 is implemented before Task 1's constant exists, the import fails immediately and loudly, which is the correct failure mode for an implementer executing tasks out of order without having finished a dependency. `forget_in_progress` is defined once (Task 1, public) and consumed by Task 4 across the module boundary, never by reaching for `_checkpoint_path` directly from `operations.py`.
 - **No placeholders:** every step above shows the full method body being added or replaced, not a paraphrase - confirmed by re-reading each step once more before saving this plan.
+- **This plan's own revision history:** two review rounds after the plan was first written found real gaps - a test-fixture ordering bug that made one assertion a false positive, a red-suite window between Task 1 and Task 2's commits, a wrong expected check count, missing type annotations, unprotected `_resolve("HEAD")` calls inside the retry helpers themselves, and - the largest - that gating retries on an exception alone misses a `forget` that completes silently between two separate reads. All are fixed inline above; nothing here is theoretical residue left for the implementer to rediscover.
