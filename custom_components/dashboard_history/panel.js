@@ -1361,6 +1361,8 @@ class DashboardHistoryPanel extends HTMLElement {
     this._compareSelection = [];
     this._compareMissing = [];
     this._cursor = null;
+    this._cursorGeneration = null;
+    this._historyRestarted = false;
     this._versions = [];
     this._matching = [];
     this._versionsLoaded = false;
@@ -1393,6 +1395,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const [history, versions] = result || [null, null];
     this._changes = history ? history.changes || [] : [];
     this._cursor = history ? history.next_cursor ?? null : null;
+    this._cursorGeneration = history ? history.generation ?? null : null;
     this._matching = history ? history.matching_versions || [] : [];
     this._serverToday = history ? history.today ?? null : null;
     this._versions = versions ? versions.versions || [] : [];
@@ -1401,13 +1404,19 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * Fetch the page below the one that is showing, and append it.
+   * Fetch the page below the one that is showing, and append it - or,
+   * if a `forget` has rewritten past the cursor since it was issued,
+   * replace the list with the newest page the server restarted from
+   * instead. See issue #26: silently appending an empty page would
+   * look exactly like "nothing older exists", when hundreds of older
+   * commits could still be sitting there under new shas.
    *
-   * Appended, never substituted: the button says "load older", and a
-   * list that got shorter after pressing it would be a lie told by a
-   * label. The claim ticket is the same one `_select` uses, so a page
-   * that arrives after somebody has picked another dashboard is dropped
-   * rather than stitched under a stranger's history.
+   * Appended, never substituted, on the ordinary path: the button says
+   * "load older", and a list that got shorter after pressing it would
+   * be a lie told by a label. The claim ticket is the same one
+   * `_select` uses, so a page that arrives after somebody has picked
+   * another dashboard is dropped rather than stitched under a
+   * stranger's history.
    */
   async _loadOlder() {
     if (!this._cursor || !this._selected) return;
@@ -1423,6 +1432,7 @@ class DashboardHistoryPanel extends HTMLElement {
     if (this._loadingOlder) return;
     const mine = this._claim("changes");
     const asked = this._cursor;
+    const askedGeneration = this._cursorGeneration;
     this._loadingOlder = true;
     try {
       const result = await this._guard(
@@ -1431,12 +1441,19 @@ class DashboardHistoryPanel extends HTMLElement {
             dashboard: this._selected,
             limit: PAGE,
             before: asked,
+            before_generation: askedGeneration,
           }),
         mine,
       );
       if (!mine() || !result) return;
-      this._changes = this._changes.concat(result.changes || []);
+      if (result.restarted) {
+        this._changes = result.changes || [];
+      } else {
+        this._changes = this._changes.concat(result.changes || []);
+      }
+      this._historyRestarted = Boolean(result.restarted);
       this._cursor = result.next_cursor ?? null;
+      this._cursorGeneration = result.generation ?? null;
       this._render();
     } finally {
       // In a `finally`, so a failure lets the button work again. A flag
@@ -3583,12 +3600,15 @@ class DashboardHistoryPanel extends HTMLElement {
               </details>`;
       });
     });
+    const restartedNotice = this._historyRestarted
+      ? `<p class="muted">History changed while loading — showing the newest entries again.</p>`
+      : "";
     const older = this._cursor
       ? `<div class="older">
            <button class="act ghost" data-older="1">Load older changes</button>
          </div>`
       : "";
-    return topBar + behind + parts.join("") + older;
+    return topBar + behind + parts.join("") + restartedNotice + older;
   }
 
   /**

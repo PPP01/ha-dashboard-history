@@ -226,6 +226,139 @@ def test_the_page_stays_busy_while_an_earlier_request_is_still_in_flight(outcome
     assert outcome["afterA"]["busy"] is False
 
 
+_HARNESS_STALE_CURSOR = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a", message: "1 card added", timestamp: 1 }];
+el._cursor = "a";
+el._cursorGeneration = 0;
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const older = el._loadOlder();
+await settle();
+calls[0].resolve({
+  changes: [{ revision: "z", message: "9 cards moved", timestamp: 9 }],
+  next_cursor: null,
+  generation: 1,
+  restarted: true,
+});
+await older;
+
+console.log(JSON.stringify({
+  sentBeforeGeneration: calls[0].extra.before_generation,
+  changes: el._changes.map((c) => c.revision),
+  cursor: el._cursor,
+  cursorGeneration: el._cursorGeneration,
+  restarted: el._historyRestarted,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def stale_cursor_outcome(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "stale-cursor", _HARNESS_STALE_CURSOR)
+
+
+def test_load_older_sends_the_remembered_generation(stale_cursor_outcome):
+    assert stale_cursor_outcome["sentBeforeGeneration"] == 0
+
+
+def test_a_restarted_answer_replaces_the_list_instead_of_appending(
+    stale_cursor_outcome,
+):
+    # Not ["a", "z"] - the stale "a" is gone, the server sent the newest
+    # page whole rather than a continuation of what was already shown.
+    assert stale_cursor_outcome["changes"] == ["z"]
+
+
+def test_a_restarted_answer_updates_the_cursor_and_is_remembered(
+    stale_cursor_outcome,
+):
+    assert stale_cursor_outcome["cursor"] is None
+    assert stale_cursor_outcome["cursorGeneration"] == 1
+    assert stale_cursor_outcome["restarted"] is True
+
+
+_HARNESS_ORDINARY_LOAD_OLDER = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a", message: "1 card added", timestamp: 1 }];
+el._cursor = "a";
+el._cursorGeneration = 0;
+el._historyRestarted = true; // left over from an earlier restart
+
+const calls = [];
+el._call = (type, extra) =>
+  new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+const older = el._loadOlder();
+await settle();
+calls[0].resolve({
+  changes: [{ revision: "b", message: "2 moved", timestamp: 2 }],
+  next_cursor: null,
+  generation: 0,
+  restarted: false,
+});
+await older;
+
+console.log(JSON.stringify({
+  changes: el._changes.map((c) => c.revision),
+  restarted: el._historyRestarted,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def ordinary_load_older_outcome(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "ordinary-load-older", _HARNESS_ORDINARY_LOAD_OLDER
+    )
+
+
+def test_an_ordinary_answer_still_appends_and_clears_a_stale_restart_notice(
+    ordinary_load_older_outcome,
+):
+    assert ordinary_load_older_outcome["changes"] == ["a", "b"]
+    assert ordinary_load_older_outcome["restarted"] is False
+
+
+_HARNESS_RESTART_NOTICE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._versions = [];
+el._verOpen = new Set();
+el._changes = [{ revision: "a", message: "1 card added", versions: [], timestamp: 1 }];
+el._cursor = "a";
+el._historyRestarted = false;
+const withoutNotice = el._renderMain();
+el._historyRestarted = true;
+const withNotice = el._renderMain();
+
+console.log(JSON.stringify({
+  withoutNotice: withoutNotice.includes("History changed while loading"),
+  withNotice: withNotice.includes("History changed while loading"),
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def restart_notice_outcome(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "restart-notice", _HARNESS_RESTART_NOTICE)
+
+
+def test_the_restart_notice_only_renders_while_it_applies(restart_notice_outcome):
+    assert restart_notice_outcome["withoutNotice"] is False
+    assert restart_notice_outcome["withNotice"] is True
+
+
 # -- errors and repeats belong to the request that made them ----------------
 #
 # Found by a second review on 2026-09-04. The stale check compared the
