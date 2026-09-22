@@ -67,12 +67,17 @@ _COMMANDS = (
             # from, and the answer would claim there is nothing older.
             vol.Optional("limit", default=50): vol.All(int, vol.Range(min=1)),
             vol.Optional("before"): vol.Any(None, str),
+            # See issue #26: without this, a cursor a forget has since
+            # rewritten past cannot be told apart from one that was
+            # never valid, and paging would silently look finished.
+            vol.Optional("before_generation"): vol.Any(None, int),
         },
         operations.async_history,
         lambda msg: {
             "key": msg["dashboard"],
             "limit": msg["limit"],
             "before": msg.get("before"),
+            "before_generation": msg.get("before_generation"),
         },
     ),
     _command(

@@ -38,7 +38,7 @@ from .snapshot import (
     async_known_keys,
     async_save_config,
 )
-from .store import HistoryStore, Version, _FORGET_RACE_RETRIES
+from .store import HistoryStore, StaleCursorError, Version, _FORGET_RACE_RETRIES
 from .yaml_io import dump, load_state
 
 _LOGGER = logging.getLogger(__name__)
@@ -419,12 +419,43 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
     return {"dashboards": dashboards}
 
 
+def _changes_and_generation(
+    store: HistoryStore,
+    key: str,
+    limit: int,
+    before: str | None,
+    before_generation: int | None,
+) -> tuple[list, int]:
+    """`list_changes` and `forget_generation`, read from one executor hop.
+
+    Deliberately not two independent jobs under the same
+    `asyncio.gather` `list_versions` already runs alongside this one:
+    two independent jobs can land on two different threads with no
+    ordering between them at all, and a `forget` completing entirely
+    in that gap could pair a still-valid cursor with a generation
+    number from a `forget` that had not touched it yet - only for that
+    same `forget` to be the one that later prunes it, leaving a
+    cursor whose remembered generation is already too high to ever
+    catch it as stale. Reading both here, sequentially, in one thread,
+    does not eliminate that window on its own - nothing this side of
+    `_retrying_a_forget_race` below does - but narrows it from
+    "however long the executor takes to schedule a second job" to two
+    adjacent Python statements, and that retry still catches a
+    `forget` spanning even this narrower gap, the same way it already
+    catches one spanning `async_search`'s own two calls. See issue
+    #26 and the review that found the wider version of this gap.
+    """
+    changes = store.list_changes(key, limit, before, before_generation)
+    return changes, store.forget_generation()
+
+
 async def async_history(
     hass: HomeAssistant,
     store: HistoryStore,
     key: str,
     limit: int = 50,
     before: str | None = None,
+    before_generation: int | None = None,
 ) -> dict:
     """The recorded states of one dashboard, newest first.
 
@@ -461,13 +492,43 @@ async def async_history(
     the restore dialog does not call it - it needs no numbering, only a
     title. And `history` is re-read whenever the dashboard changes or is
     switched, so the string cannot age past a panel nobody is touching.
+
+    Every answer also carries `generation` - read together with `changes`
+    in `_changes_and_generation`, not as an independent job, and the
+    whole combined read retried as one sequence (`_retrying_a_forget_
+    race`, decision 24) alongside `list_versions` - so a caller paging
+    further can hand `generation` back as `before_generation` on its
+    next request. If `before` names a commit a `forget` has since
+    rewritten past, and `before_generation` proves it (older than the
+    generation right now), this restarts from the newest page instead
+    of raising - `restarted` says so, so the caller can replace what it
+    is showing rather than append to it. See issue #26.
     """
-    # One more than asked for: its presence answers "is there anything
-    # older?", and it costs one commit rather than a second query.
-    changes, versions = await asyncio.gather(
-        hass.async_add_executor_job(store.list_changes, key, limit + 1, before),
-        hass.async_add_executor_job(store.list_versions, key),
-    )
+
+    async def attempt() -> tuple[list, dict]:
+        (changes, generation), versions = await asyncio.gather(
+            hass.async_add_executor_job(
+                _changes_and_generation,
+                store,
+                key,
+                limit + 1,
+                before,
+                before_generation,
+            ),
+            hass.async_add_executor_job(store.list_versions, key),
+        )
+        return changes, {"versions": versions, "generation": generation}
+
+    try:
+        # One more than asked for: its presence answers "is there anything
+        # older?", and it costs one commit rather than a second query.
+        changes, extra = await _retrying_a_forget_race(hass, store, attempt)
+    except StaleCursorError:
+        restarted = await async_history(hass, store, key, limit)
+        restarted["restarted"] = True
+        return restarted
+    versions = extra["versions"]
+    generation = extra["generation"]
     more = len(changes) > limit
     changes = changes[:limit]
     marks = _marks_by_revision(versions)
@@ -495,6 +556,11 @@ async def async_history(
         # None means there is nothing older - the panel then leaves the
         # button out rather than fetching an empty page.
         "next_cursor": rendered[-1]["revision"] if more and rendered else None,
+        "generation": generation,
+        # Only ever true on the branch above, which returns early - a
+        # plain field rather than an absent key, so a caller can check
+        # it without a second `"restarted" in result`.
+        "restarted": False,
         "matching_versions": matching_versions,
         # The installation's own today, not the browser's. Read at the
         # moment of answering and through the same function the
