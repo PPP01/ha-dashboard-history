@@ -11,7 +11,7 @@ from dulwich.repo import Repo
 import dulwich.refs
 from dulwich.errors import MissingCommitError
 import store as store_module
-from store import HistoryStore, Version, _as_text
+from store import HistoryStore, RevisionIndex, Version, _as_text
 import versions
 from versions import candidates
 
@@ -1092,6 +1092,104 @@ def test_search_changes_is_unaffected_when_nothing_races_it(store):
     assert [
         c.message for c in store.search_changes("home", "unique-needle", versions=versions)
     ] == ["first unique-needle"]
+
+
+def test_commit_times_skips_a_revision_pruned_between_resolve_and_read(
+    store, monkeypatch
+):
+    """A concurrent `forget`'s prune can land between `_resolve`
+    succeeding and the very next line reading `commit_time` - see
+    decision 24. Left out, exactly like a revision that never resolved
+    at all (the method's own docstring already promises that)."""
+    revision = store.write_snapshot("home", "a: 1\n", "first")
+    monkeypatch.setattr(
+        HistoryStore, "_resolve", staticmethod(lambda repo, rev: revision)
+    )
+    real_getitem = Repo.__getitem__
+
+    def broken_getitem(self, name):
+        if name == revision.encode():
+            raise KeyError(name)
+        return real_getitem(self, name)
+
+    monkeypatch.setattr(Repo, "__getitem__", broken_getitem)
+
+    assert store.commit_times([revision]) == {}
+
+
+def test_list_dashboards_answers_empty_if_head_is_pruned_mid_read(store, monkeypatch):
+    """Same race, HEAD's own tree instead of a revision's commit_time -
+    see decision 24. Answers the same as no HEAD at all."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    head = store.resolve("HEAD")
+    monkeypatch.setattr(
+        HistoryStore, "_resolve", staticmethod(lambda repo, rev: head)
+    )
+    real_getitem = Repo.__getitem__
+
+    def broken_getitem(self, name):
+        if name == head.encode():
+            raise KeyError(name)
+        return real_getitem(self, name)
+
+    monkeypatch.setattr(Repo, "__getitem__", broken_getitem)
+
+    assert store.list_dashboards() == []
+
+
+def test_survey_answers_empty_if_head_is_pruned_mid_read(store, monkeypatch):
+    """Same race as `list_dashboards`, in `survey`'s own HEAD-tree
+    access - the one before its already-guarded blob-reading loop.
+    `_revision_index` is faked to a minimal, valid, empty index so
+    this reaches the exact line under test without depending on what
+    dulwich's walker touches internally while building a real one. See
+    decision 24."""
+    store.write_snapshot("home", "a: 1\n", "first")
+    head = store.resolve("HEAD")
+    monkeypatch.setattr(
+        HistoryStore, "_resolve", staticmethod(lambda repo, rev: head)
+    )
+    fake_index = RevisionIndex(head, {}, {}, set(), {})
+    monkeypatch.setattr(HistoryStore, "_revision_index", lambda self, repo: fake_index)
+    real_getitem = Repo.__getitem__
+
+    def broken_getitem(self, name):
+        if name == head.encode():
+            raise KeyError(name)
+        return real_getitem(self, name)
+
+    monkeypatch.setattr(Repo, "__getitem__", broken_getitem)
+
+    survey = store.survey()
+    assert survey.names == []
+    assert survey.live == set()
+
+
+def test_previous_change_answers_none_if_pruned_mid_walk(store, monkeypatch):
+    """`previous_change`'s walk branch (an unindexed revision) consumes
+    a dulwich `Walker`, which can raise `MissingCommitError` - not a
+    `KeyError` - if an object it needs vanishes mid-walk. See decision
+    24. Answers `None`, exactly like a revision that is not a change of
+    this dashboard at all.
+
+    `_revision_index` is faked to `None` ("index not ready") so
+    `previous_change` falls through to its walk branch unconditionally,
+    instead of needing a real rewritten-history fixture to construct a
+    revision genuinely outside the index's reach.
+    """
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.write_snapshot("home", "a: 2\n", "second")
+    monkeypatch.setattr(
+        HistoryStore, "_resolve", staticmethod(lambda repo, rev: first)
+    )
+    monkeypatch.setattr(HistoryStore, "_revision_index", lambda self, repo: None)
+
+    def broken_get_walker(self, **kwargs):
+        raise MissingCommitError(first.encode())
+
+    monkeypatch.setattr(Repo, "get_walker", broken_get_walker)
+
+    assert store.previous_change("home", first) is None
 
 
 def test_forget_leaves_no_checkpoint_behind(store):

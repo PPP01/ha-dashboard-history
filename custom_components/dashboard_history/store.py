@@ -2579,12 +2579,18 @@ class HistoryStore:
             except ValueError:
                 return None
             return revisions[at + 1] if at + 1 < len(revisions) else None
-        walker = repo.get_walker(
-            include=[full.encode()],
-            paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
-            max_entries=2,
-        )
-        found = [_as_text(entry.commit.id) for entry in walker]
+        try:
+            walker = repo.get_walker(
+                include=[full.encode()],
+                paths=[f"{key}.yaml".encode(), f"meta/{key}.yaml".encode()],
+                max_entries=2,
+            )
+            found = [_as_text(entry.commit.id) for entry in walker]
+        except (KeyError, MissingCommitError):
+            # `full` resolved a moment ago, pruned by a concurrent
+            # `forget` since - see decision 24. Same answer as a
+            # revision the walk never reaches.
+            return None
         if len(found) == 2 and found[0] == full:
             return found[1]
         return None
@@ -2817,9 +2823,14 @@ class HistoryStore:
             resolved = self._resolve(repo, revision)
             if resolved is None:
                 continue
-            # `_resolve` promises a commit at the end of the search, so
-            # this reaches for `commit_time` without a second guard.
-            found[revision] = repo[resolved.encode()].commit_time
+            try:
+                found[revision] = repo[resolved.encode()].commit_time
+            except KeyError:
+                # Resolved a moment ago, pruned by a concurrent `forget`
+                # since - see decision 24. Left out, same as a revision
+                # that never resolved: the docstring above already
+                # promises that.
+                continue
         return found
 
     def commit_order(self, revisions: Iterable[str]) -> dict[str, int]:
@@ -2863,7 +2874,13 @@ class HistoryStore:
         head = self._resolve(repo, "HEAD")
         if head is None:
             return []
-        tree = repo[repo[head.encode()].tree]
+        try:
+            tree = repo[repo[head.encode()].tree]
+        except KeyError:
+            # HEAD resolved a moment ago, pruned by a concurrent
+            # `forget` since - see decision 24. Same answer as having
+            # no HEAD at all.
+            return []
         return sorted(
             entry.path.decode()[: -len(".yaml")]
             for entry in tree.items()
@@ -2916,7 +2933,13 @@ class HistoryStore:
         if index is None:
             return Survey([], set(), {})
         names, removed_meta = index.names, index.removed_meta
-        tree = repo[repo[head.encode()].tree]
+        try:
+            tree = repo[repo[head.encode()].tree]
+        except KeyError:
+            # HEAD resolved a moment ago, pruned by a concurrent
+            # `forget` since - see decision 24. Same answer as the
+            # index-not-ready case just above.
+            return Survey([], set(), {})
         live = {
             entry.path.decode()[: -len(".yaml")]
             for entry in tree.items()
