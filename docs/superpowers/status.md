@@ -101,6 +101,7 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
   verschmelzen zwei Dashboards.** Die zehnsekündige Entprellung verwirft
   den Zwischenzustand »gelöscht«. In dieser Runde nicht erneut am Code
   geprüft — Stand laut Spec weiterhin offen.
+- ~~**Ein `before`-Paginierungs-Cursor überlebt kein `forget`, das über ihn hinaus umschreibt.** *(Gefunden bei der Umsetzung von Entscheidung 24, GitHub-Issue [#26](https://github.com/PPP01/ha-dashboard-history/issues/26), dort bewusst zurückgestellt.)* `_indexed_revisions` antwortete für einen inzwischen geprunten Cursor genauso wie für einen nie gültigen: mit `[]`, ununterscheidbar von »keine ältere Historie mehr vorhanden«, obwohl darunter weiterhin Hunderte Commits unter neuen Shas stehen konnten.~~ **Behoben am 2026-09-22** (Entscheidung 25). Eine persistierte, monoton steigende `forget_generation()` und ein optionaler Parameter `before_generation` unterscheiden jetzt die beiden Fälle; `operations.async_history` startet die Seite bei einem veralteten Cursor neu und meldet `restarted: true`, statt still zu verkürzen.
 - **D6 — Die 1000-Commit-Grenze lässt alte gelöschte Dashboards
   verschwinden.** *(In der Spec noch als offen markiert — beim Nachlesen
   am 2026-09-12 stellt sich heraus: **im Code bereits behoben.**
