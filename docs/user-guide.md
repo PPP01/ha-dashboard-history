@@ -14,6 +14,7 @@ The dashboard list reflects your personal sidebar, in your sidebar's order:
 - An arrangement you dragged into place is personal to your user profile; Dashboard History honors that exact order.
 - Dashboards that are hidden from the sidebar (either globally or for your user) are folded away at the bottom under **Not in the sidebar (N)**.
 - If you rearrange your sidebar in another tab, click the **reload icon** in the top right to refresh the list.
+- The default, untouched **Overview** dashboard does not appear at all — it has no stored configuration to read until you edit it once yourself. See [Limitations & Boundaries](limitations.md#dashboards-that-never-appear).
 
 ### Current state indicators
 

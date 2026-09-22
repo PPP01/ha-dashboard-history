@@ -86,6 +86,7 @@ The panel is designed for fast, daily troubleshooting as well as deep forensic i
 - **No author tracking.** Home Assistant does not expose *who* made a dashboard save to integrations.
 - **Lovelace badges:** A badge lives outside a view's card list, so a change to it shows up in the diff but cannot be described — or undone — in card terms. A whole-dashboard restore always recovers it.
 - **Pure YAML dashboards** (`configuration.yaml` mode) generate no save events and are already under the user's own Git control, so they are outside this integration's scope.
+- **The default "Overview" dashboard, before you've edited it.** Home Assistant assembles it on the fly and stores no configuration for it until you save a change yourself — only then does Dashboard History start tracking it, same as any dashboard you create.
 - **Live in-memory cache:** Edits made directly to `.storage/lovelace.*` while Home Assistant is running are not picked up until the next restart — Home Assistant itself doesn't see them either.
 - **No guessing:** Where the exact card a change produced can no longer be found unambiguously (edited again since, or duplicated), Undo refuses and explains why, rather than risking a wrong restore.
 

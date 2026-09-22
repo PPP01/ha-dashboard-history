@@ -8,6 +8,16 @@ This document lists the exact, measured boundaries of **Dashboard History**, whe
 
 ---
 
+## Dashboards That Never Appear
+
+Home Assistant's own default dashboard — the one titled **Overview**, present on every installation before you create any dashboard of your own — is a storage-mode dashboard like any other, but it starts out **with no configuration ever written for it**. Until it is saved for the first time, Home Assistant assembles it on the fly from your areas and entities instead of reading a stored file, and asking it for its configuration raises `ConfigNotFound` — Home Assistant's own way of saying there is nothing saved to return, not an error.
+
+Dashboard History reads dashboards straight from Home Assistant's in-memory Lovelace objects, and it treats `ConfigNotFound` as *this dashboard was never saved*, skipping it rather than recording it as empty. The practical effect: an untouched default dashboard does not show up in Dashboard History's own dashboard list either — not hidden, not a bug, simply never handed a configuration to read.
+
+The same is technically true of any dashboard you create yourself before its very first save — but in practice you save a custom dashboard within moments of creating it, while the default **Overview** is the one dashboard many installations never edit at all, so it is the case this actually shows up in. The moment you edit it once, in Home Assistant's own dashboard editor, Home Assistant writes its first configuration, and from then on it is tracked exactly like any dashboard you created — with full history starting from that first save. Nothing from before that edit can be recovered, because nothing before it was ever written down.
+
+---
+
 ## Measured Behaviour Across Edge Cases
 
 Every row below was empirically verified against the live codebase.
