@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.1
+
+### "Load older changes" no longer goes silent after a forget
+
+- Paging back through a dashboard's history with "Load older changes"
+  used to be able to show an empty page — indistinguishable from "there
+  is nothing further back" — when a `forget` elsewhere had rewritten
+  the history underneath the page you already had. Hundreds of older
+  changes could still exist, just under new revisions, with no way to
+  tell the two cases apart.
+- The panel now notices and restarts the list from the newest entries
+  instead, with a short notice: "History changed while loading —
+  showing the newest entries again."
+
 ## v0.8.0
 
 What the history costs is visible now, in Home Assistant's own

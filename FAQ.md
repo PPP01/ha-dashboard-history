@@ -31,6 +31,7 @@ the things you only wonder about once you are using it.
 - [Why is the whole panel locked while one dashboard is forgotten?](#why-is-the-whole-panel-locked-while-one-dashboard-is-forgotten)
 - [How much disk space does forgetting a dashboard free?](#how-much-disk-space-does-forgetting-a-dashboard-free)
 - [How do I get back a dashboard I forgot for good?](#how-do-i-get-back-a-dashboard-i-forgot-for-good)
+- [Why did the history list say "showing the newest entries again" while I was browsing?](#why-did-the-history-list-say-showing-the-newest-entries-again-while-i-was-browsing)
 
 ## Backups and git
 
@@ -384,3 +385,19 @@ the one there is no button for.
 If what you actually want is for a deleted dashboard to stop cluttering
 the list, that is what the list's **Deleted** fold is for. It keeps the
 history and keeps it out of your way.
+
+### Why did the history list say "showing the newest entries again" while I was browsing?
+
+Because a `forget` — of any dashboard, not necessarily the one you were
+browsing — rewrote the shared history underneath the page you already
+had. "Load older changes" always asks for whatever comes before the
+oldest entry you can already see; once a `forget` has rewritten past
+that point, the old identifier it was asking for no longer resolves to
+anything.
+
+Until v0.8.1 that looked exactly like reaching the true end of the
+history: an empty page, no error, nothing to click any more — even
+with hundreds of older changes still there, just under new revisions.
+The panel now tells the two apart and restarts the list from the top
+instead of pretending there is nothing left. Nothing is lost; scroll
+down again and it is all still there, just fetched afresh.
