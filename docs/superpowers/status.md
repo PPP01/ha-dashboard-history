@@ -1,6 +1,6 @@
 # Aktueller Stand
 
-Stand: 2026-09-22. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
+Stand: 2026-09-23. Dieses Dokument ist der Einstiegspunkt: was gebaut ist,
 was noch offen ist, welche Module es gibt. Es ersetzt nicht die Spec — die
 bleibt bindend bei Widersprüchen — und nicht das Journal unter `plans/` und
 `reviews/`, das chronologisch und unverändert stehen bleibt. Bei jedem
@@ -19,7 +19,7 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | C | Aufräumen — verlustfreies Verdichten, danach ggf. eine Aufbewahrungsregel | **Wartet auf Messwerte von Testern** (Vorhaben B ist bereit) | noch kein Plan |
 | D | Sechs Befunde am älteren Kern (unabhängiges Review 2026-09-02) | Teilweise — Details unten | Spec, Abschnitt »Offene Punkte« |
 | E | Die gezielte Rücknahme — `undo_change` für einzelne Änderungen | Erledigt (v0.3.0) | `plans/2026-09-03-gezielte-ruecknahme.md` |
-| F | Die Identitätskette (3 Pakete: Verweigern statt falsch schreiben / Identität / Section als Stück) | Paket 1 erledigt (2026-09-04); Pakete 2–3 vermutlich mit den Section-Arbeiten miterledigt — im Zweifel `reviews/2026-09-04-pfadlose-views-und-sections.md` und `plans/2026-09-09-sections-zurueckholen.md` direkt prüfen | s. o. |
+| F | Die Identitätskette (3 Pakete: Verweigern statt falsch schreiben / Identität / Section als Stück) | Paket 1 erledigt (2026-09-04); Paket 3 erledigt (2026-09-09, ohne Identität, über unveränderte Nachbar-Sections); **Paket 2, die Identität selbst (Entscheidung 16), nie gebaut** – am 2026-09-23 im Code nachgeprüft | `reviews/2026-09-04-pfadlose-views-und-sections.md`, `plans/2026-09-09-sections-zurueckholen.md` |
 | G | Versionen, die halten — Übereinstimmung/Blättern jenseits der letzten 50 Änderungen | Erledigt (v0.3.0) | `plans/2026-09-04-versionen-die-halten.md` |
 | H | Die zwei Modi — Tagesversionen, Moduswechsel, Oberfläche für beide Modi | Erledigt (v0.3.0) | `plans/2026-09-04-versionen-von-selbst.md`, `plans/2026-09-04-die-zwei-modi.md` |
 | I | Versionen aufheben | Erledigt (v0.3.0) | `plans/2026-09-08-versionen-aufheben.md` |
@@ -102,6 +102,7 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
   den Zwischenzustand »gelöscht«. In dieser Runde nicht erneut am Code
   geprüft — Stand laut Spec weiterhin offen.
 - ~~**Ein `before`-Paginierungs-Cursor überlebt kein `forget`, das über ihn hinaus umschreibt.** *(Gefunden bei der Umsetzung von Entscheidung 24, GitHub-Issue [#26](https://github.com/PPP01/ha-dashboard-history/issues/26), dort bewusst zurückgestellt.)* `_indexed_revisions` antwortete für einen inzwischen geprunten Cursor genauso wie für einen nie gültigen: mit `[]`, ununterscheidbar von »keine ältere Historie mehr vorhanden«, obwohl darunter weiterhin Hunderte Commits unter neuen Shas stehen konnten.~~ **Behoben am 2026-09-22** (Entscheidung 25). Eine persistierte, monoton steigende `forget_generation()` und ein optionaler Parameter `before_generation` unterscheiden jetzt die beiden Fälle; `operations.async_history` startet die Seite bei einem veralteten Cursor neu und meldet `restarted: true`, statt still zu verkürzen.
+- **Ein Undo eines Section-Tauschs schreibt still einen falschen Stand.** *(Gefunden am 2026-09-23, GitHub-Issue [#31](https://github.com/PPP01/ha-dashboard-history/issues/31).)* Sections werden nicht als Einheit abgeglichen, nur ihre Karten. Beim Tausch zweier Sections wandern die Karten zurück, die Einstellungen der Sections (z. B. `column_span`) bleiben an ihrer Position – der Undo gilt als exakt, das Ergebnis entspricht keinem früheren Stand. `_sections_lie` prüft nur das Feld `title`, das HA für Sections nicht setzt. Derselbe Fehler lässt die Anzeige von »6 moved« Karten sprechen, wo eine Section verschoben wurde. Verwandt: Entscheidung 26 (#30).
 - **D6 — Die 1000-Commit-Grenze lässt alte gelöschte Dashboards
   verschwinden.** *(In der Spec noch als offen markiert — beim Nachlesen
   am 2026-09-12 stellt sich heraus: **im Code bereits behoben.**
