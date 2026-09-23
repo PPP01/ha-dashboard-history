@@ -32,20 +32,50 @@ flowchart TD
 
 ## 2. Views, Sections, and Containers
 
-The comparison engine traverses two kinds of containers:
+Home Assistant nests a view's content in one of two shapes, and the shape decides how many identity-less layers sit between a view and its cards.
+
+**`masonry` views** — the classic layout, and `sidebar`/`panel` behave the same way for this purpose — hold their cards directly, in a flat `cards:` list. One container between the view and a card: the view itself.
+
+**`sections` views** — Home Assistant's default layout for dashboards created since 2024.6 — hold a list of `sections:`, and each section holds its own `cards:` list. Two containers between the view and a card: the view, then the section.
+
+```mermaid
+flowchart LR
+    subgraph M["masonry / sidebar / panel"]
+        V1["view"] --> C1["cards: [ … ]"]
+    end
+    subgraph S["sections"]
+        V2["view"] --> SEC["sections: [ … ]"]
+        SEC --> C2["cards: [ … ]"]
+    end
+```
+
+A card has no identifier either way (§1) — that half of the problem is identical in both shapes. What differs is everything *above* the card:
 
 | Container | Identified by | Stable across edits? |
 | :--- | :--- | :--- |
 | **View** | URL path | **Yes** (when a path is defined) |
-| **Section** | Positional index, verified against title | **No** (titles are optional; sections lack IDs) |
+| **Section** | Positional index, verified against a `title` field | **No** — Home Assistant's editor does not set one; measured on the installation this was built against, **0 of 80 sections carried a title** |
+
+A view usually has an escape hatch a section never gets: a `path`, stable across reorderings, deletions elsewhere, anything. A section has nothing equivalent — Home Assistant assigns it neither a path nor an ID, ever. It is addressed purely by where it sits in the list, which is exactly the kind of address that stops meaning the same thing the moment a neighbouring section is added, removed, or reordered.
+
+### Why this is currently a problem
+
+The card-matching algorithm in §1 operates on cards, full stop — it never treats a section as a comparable unit of its own. Concretely: matching flattens every card of a view into one pool, sections included, and pairs cards by content **regardless of which section they sit in**. This has two consequences, both observed on real dashboards:
+
+- **A section that moves as a whole, unchanged block is reported as N individual card moves**, one line per card, rather than as the one event it actually is — the matcher has no concept of "this whole section relocated," only of "these cards each ended up somewhere else."
+- **The one safety check that exists for this — comparing the ordered list of section titles between the states being compared (`_sections_lie` in `analyze.py`) — is blind to the common case**, because it only reads the section's own `title` field, and Home Assistant's editor never sets one (0 of 80, above). Two sections that carry no title are indistinguishable to this check even when they carry different settings (`column_span` and the like), so a change that swapped two such sections can pass the check and offer an exact-looking *Undo* — one that writes cards back to the right place while leaving section-level settings behind at the old position. See [Limitations & Boundaries](limitations.md#sections-in-detail) for the measured cases, including the ones this leaves unresolved.
+
+Decision 26 in the design journal (`docs/superpowers/specs/`) proposes taking the same way out Home Assistant's own editor already uses for the related problem of *where a card belongs*: when a card's position inside a sections view cannot be proven, park it in the view's own `cards:` list — the same "Imported cards" area Home Assistant shows when a masonry view is converted to sections and leaves cards there until someone drags them into a section. **Decided, not yet built** — tracked as [GitHub issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30).
 
 ### Views without URL paths
 
-Home Assistant allows views without URL paths (keyed by index). When positions shift, keys change. The integration guards against these shifts and refuses operations that cannot be verified.
+Home Assistant allows views without URL paths, keyed by index instead. This is the same shape of problem as a section's missing identity, one level up — with two differences: it is optional (most views have a path; no section ever does) rather than universal, and the identity chain proposed to close it (Decision 16 in the design journal) was decided in 2026 but, as of this writing, was never built — the guard described above is what actually runs.
+
+When positions shift — even because an unrelated, earlier view was deleted or a new one inserted before it — the same index keys a different view than before. The integration guards against these shifts and refuses operations it cannot verify, rather than writing to a view that never asked for it. See [Limitations & Boundaries](limitations.md#4-views-without-a-url-path) for the measured cases, including one the guard does not currently catch: appending a new pathless view at the end still blocks every older undo on the views before it, even though nothing before an append could have shifted ([issue #33](https://github.com/PPP01/ha-dashboard-history/issues/33)).
 
 ### Badges
 
-Badges sit outside card lists and views. Because they are not cards, changes to badges are recorded in the commit diff, but cannot be described in card terms by `explain_change`. They are recovered through whole-state restoration.
+Badges sit outside card lists and views. Because they are not cards, changes to badges are recorded in the commit diff, but cannot be described in card terms by `explain_change`. They are recovered through whole-state restoration. The same is true of any other named, non-card setting on a view or dashboard — a view's `title`/`icon`/`theme`, or a dashboard's `strategy:` block — for the same reason: none of it is a card, and the comparison engine currently only ever looks at cards ([issue #28](https://github.com/PPP01/ha-dashboard-history/issues/28), [issue #29](https://github.com/PPP01/ha-dashboard-history/issues/29)).
 
 ---
 

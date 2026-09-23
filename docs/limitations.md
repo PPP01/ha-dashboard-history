@@ -31,7 +31,8 @@ Every row below was empirically verified against the live codebase.
 | **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
 | **Section added** | Cards shown as added | **Refuses** | — | **Works** |
 | **Titled sections reordered** | Correct | **Refuses** | **Refuses** | **Works** |
-| **Untitled sections reordered** | Correct | Writes positionally | **Writes into wrong section** | **Works** |
+| **Untitled sections swapped**, sections unchanged otherwise | `N moved` (cards, not the section) | **Writes a state that never existed** — cards return, section settings like `column_span` do not | Refuses (nothing missing) | **Works** |
+| **Untitled sections reordered**, and a card also edited in the same save | Correct | Writes positionally (see below) | **Writes into wrong section** | **Works** |
 | **View without URL path** shifts position | May name an untouched view | **Refuses** | **Refuses** | **Works** |
 | …and was edited in the same save | Same | **Refuses** | Adds older copy as duplicate | **Works** |
 | …and another view occupies its index | Same | **Refuses** | Writes into other view | **Works** |
@@ -206,21 +207,30 @@ it costs is precision, not content: the whole-state restore recovers
 every one of these in full, and a deleted section can also come back on
 its own as long as the sections beside it are untouched.
 
-**Writes something nobody asked for — one case:**
+**Writes something nobody asked for — five cases, not four.** A fifth
+was found on 2026-09-23, and it is the sharpest one: unlike the other
+four, it needs no edit alongside the trigger, only a plain reorder.
 
-Reorder **untitled** sections and change a card in the same save. The
-guard compares the number of sections and their titles; with two
-untitled sections swapped, the count is unchanged and both titles are
-still empty, so the check passes while telling the guard nothing. *Put
-back* then files the card into whichever section now occupies that
-index — verified: the card lands beside the wrong neighbour, silently.
-The undo is not blocked either.
+**The new one first, because it needs the least to happen.** Swap two
+**untitled** sections and change nothing else — no card touched. The
+guard `_sections_lie` compares the number of sections and their
+`title` fields; two untitled sections swapping places changes neither,
+so the check passes while telling it nothing (`analyze.py`, confirmed
+2026-09-23: `git log -S _sections_lie` shows it unchanged since
+introduction on 2026-09-04). *Undo this change* is then offered as
+**exact** and writes the cards back correctly — but a section's own
+settings (`column_span`, and anything else that is not a card) sit at
+the section's *position*, not with its cards, and those stay where
+they are. The result is a dashboard that resembles the state before
+the swap but is not it, presented as an exact undo.
+[GitHub issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31).
 
-This is not the only situation where the tool can write a state nobody
-asked for — there are four in total, worth knowing which:
+The original case, reordering untitled sections **together with** a
+card edit, works the same way one level down — *Put back* files the
+edited-away card into whichever section now occupies the old index:
 
-- **This one**, untitled sections reordered. Needs nothing unusual: the
-  editor produces untitled sections by default.
+- **Untitled sections reordered, plus a card edit.** Needs nothing
+  unusual: the editor produces untitled sections by default.
 - **A URL path freed and handed to a new view.** Also an ordinary thing
   to do — delete a view, make another with the same path. The old
   cards are then written into the new view, because a path is unique
@@ -256,6 +266,17 @@ project's own rules) or writing back after the event (changes other
 people's dashboards, doubles the history, and loses the race against an
 open editor).
 
+A separate, narrower idea addresses a different cost of the same
+missing identity: the *refusals* in the table above, not the one case
+above that silently does not refuse. Where a card's exact position in
+a sections view cannot be proven, Home Assistant's own editor already
+parks it rather than guessing — the "Imported cards" area it shows
+after converting a masonry view to sections. Decision 26 in the design
+journal proposes the same fallback here: park such a card in the
+view's own `cards:` list instead of refusing outright.
+**Decided, not yet built** —
+[GitHub issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30).
+
 ### Views without a URL path
 
 A view without a URL path is keyed by its position. When the position
@@ -283,6 +304,9 @@ That is the same proof the undo works from, one object smaller.
 The undo's refusal is deliberately stricter than strictly necessary —
 an *added* pathless view blocks it even though its neighbours are still
 unambiguous. Refusing too often is the correct error to make here.
+Whether it needs to be *this* strict — an append at the very end
+cannot have shifted anything before it — is open:
+[GitHub issue #33](https://github.com/PPP01/ha-dashboard-history/issues/33).
 
 *Put back* keeps one gap that the undo does not, and it follows from
 working without the old state: a pathless view that was **both shifted
