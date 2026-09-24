@@ -31,7 +31,8 @@ Every row below was empirically verified against the live codebase.
 | **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
 | **Section added** | Cards shown as added | **Refuses** | — | **Works** |
 | **Titled sections reordered** | Correct | **Refuses** | **Refuses** | **Works** |
-| **Untitled sections swapped**, sections unchanged otherwise | `N moved` (cards, not the section) | **Writes a state that never existed** — cards return, section settings like `column_span` do not | Refuses (nothing missing) | **Works** |
+| **Untitled sections swapped**, their settings differ (e.g. `column_span`) | `N moved` (cards, not the section) | **Refuses** (settings mismatch caught) | Refuses (nothing missing) | **Works** |
+| **Untitled sections swapped**, settings otherwise identical | `N moved` (cards, not the section) | **Exact** — nothing distinguishable is left behind either way | Refuses (nothing missing) | **Works** |
 | **Untitled sections reordered**, and a card also edited in the same save | Correct | Writes positionally (see below) | **Writes into wrong section** | **Works** |
 | **View without URL path** shifts position | May name an untouched view | **Refuses** | **Refuses** | **Works** |
 | …and was edited in the same save | Same | **Refuses** | Adds older copy as duplicate | **Works** |
@@ -65,7 +66,7 @@ Home Assistant assigns sections **no unique identifier and no URL path**. A sect
 
 - **Cards inside sections:** Fully supported. Moving, editing, and deleting cards within sections works exactly like regular views.
 - **Deleting a whole section:** Dashboard History restores the section as a complete unit into the gap it left (provided neighboring sections were not modified).
-- **Reordering untitled sections:** The only case where silent misplacement can occur. If two untitled sections swap positions, their index changes but their empty titles match, so positional restoration files cards into the section now sitting at that index.
+- **Reordering untitled sections:** Until 2026-09-24 the one case where silent misplacement could occur — if two untitled sections swapped positions, their index changed but their empty titles matched, so an exact-looking *Undo* wrote cards back correctly while leaving section-level settings (`column_span` and the like) behind at the old position ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). The guard now compares each section's own settings, not just `title`, so a swap where those settings differ is refused instead of misapplied. What is left: two sections that agree on **every** setting and differ only in the cards they hold are still indistinguishable to the guard — harmlessly, since a swap between such sections leaves the same settings behind either way. Reordering untitled sections **together with a card edit** is a separate, still-open case — see the appendix below.
 
 > [!TIP]
 > **Give your sections titles!**
@@ -207,23 +208,36 @@ it costs is precision, not content: the whole-state restore recovers
 every one of these in full, and a deleted section can also come back on
 its own as long as the sections beside it are untouched.
 
-**Writes something nobody asked for — five cases, not four.** A fifth
-was found on 2026-09-23, and it is the sharpest one: unlike the other
-four, it needs no edit alongside the trigger, only a plain reorder.
+**Writes something nobody asked for — four cases, plus one that was closed.**
+A fifth was found on 2026-09-23, the sharpest of the five: unlike the
+other four, it needed no edit alongside the trigger, only a plain
+reorder. It was fixed the next day.
 
-**The new one first, because it needs the least to happen.** Swap two
-**untitled** sections and change nothing else — no card touched. The
-guard `_sections_lie` compares the number of sections and their
-`title` fields; two untitled sections swapping places changes neither,
-so the check passes while telling it nothing (`analyze.py`, confirmed
-2026-09-23: `git log -S _sections_lie` shows it unchanged since
-introduction on 2026-09-04). *Undo this change* is then offered as
-**exact** and writes the cards back correctly — but a section's own
-settings (`column_span`, and anything else that is not a card) sit at
-the section's *position*, not with its cards, and those stay where
-they are. The result is a dashboard that resembles the state before
-the swap but is not it, presented as an exact undo.
-[GitHub issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31).
+**The one that was closed, because it needed the least to happen.**
+Swap two **untitled** sections and change nothing else — no card
+touched. Until 2026-09-24, the guard `_sections_lie` compared only the
+number of sections and their `title` fields; two untitled sections
+swapping places changed neither, so the check passed while telling it
+nothing. *Undo this change* was then offered as **exact** and wrote the
+cards back correctly — but a section's own settings (`column_span`, and
+anything else that is not a card) sit at the section's *position*, not
+with its cards, and those stayed where they were. The result was a
+dashboard that resembled the state before the swap but was not it,
+presented as an exact undo.
+[GitHub issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)
+— the guard now compares every field of a section but its `cards`, so a
+swap where the settings differ is refused instead of written silently.
+
+**What is still open from the same finding.** Two sections that agree
+on **every** setting and differ only in the cards they hold remain
+indistinguishable to the guard — harmlessly, since a swap between such
+sections leaves the same settings behind at each position either way,
+so nothing distinguishable is lost. What the fix does **not** touch is
+the *wording*: a whole-section swap still reads in the history as `N
+moved` cards, one line per card, rather than as the one event it
+actually is — the matcher has no concept of "this whole section
+relocated." Closing that needs sections matched as units, the same
+identity chain described below, not a guard.
 
 The original case, reordering untitled sections **together with** a
 card edit, works the same way one level down — *Put back* files the

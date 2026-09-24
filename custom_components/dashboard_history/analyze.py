@@ -578,9 +578,21 @@ def _paths_collide(config: dict) -> bool:
 
 
 def _section_marks(view: dict) -> list:
-    """The titles of a view's sections, in order - all the identity there is."""
+    """Each section's own settings, in order - all the identity there is.
+
+    Everything but `cards`: a section swap that leaves `cards` as the
+    only difference is exactly what the rest of this module already
+    matches card by card. `title` alone missed a swap of two sections
+    that share it (commonly both unset - Home Assistant names a section
+    with a heading card, not `title`) but differ in a setting such as
+    `column_span`. GitHub #31: the swap read as an exact card move, and
+    the settings stayed pinned to their index, writing a state that
+    never existed.
+    """
     return [
-        section.get("title") if isinstance(section, dict) else None
+        {key: value for key, value in section.items() if key != "cards"}
+        if isinstance(section, dict)
+        else None
         for section in view.get("sections") or []
     ]
 
@@ -593,9 +605,10 @@ def _sections_lie(one: dict, other: dict) -> bool:
     change to the run of sections - one added, one removed, one renamed,
     two swapped - makes every index below it point somewhere new.
 
-    Sections without titles in a reordered view slip through this. The
-    identity chain of package 2 is what closes that; a title is what
-    there is to work with today.
+    Two sections that agree on every setting and differ only in their
+    cards still slip through, indistinguishable from one another by
+    anything but content. The identity chain of package 2 is what closes
+    that; a section's own settings are what there is to work with today.
     """
     here, there = dict(_views_by_key(one)), dict(_views_by_key(other))
     return any(

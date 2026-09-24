@@ -1043,6 +1043,31 @@ def test_undo_still_works_when_the_sections_stayed_put():
     ]
 
 
+def test_undo_refuses_when_two_untitled_sections_swap_settings():
+    """A section swap without titles must not slip past `_sections_lie`.
+
+    Home Assistant names a section with a heading card, not `title` -
+    untitled sections are the common case, and the docstring on
+    `_sections_lie` already names this gap. Swapping two whole sections
+    (settings included) leaves the ordered title list unchanged
+    (`[None, None]` both times), so the old check saw nothing wrong and
+    let the undo through. It would have moved the cards back but left
+    `column_span` pinned to its index - section 0 ends up with card A's
+    old neighbour's setting, a state that never existed. GitHub #31.
+    """
+    old = {"views": [{"path": "home", "type": "sections", "sections": [
+        {"column_span": 2, "cards": [A]},
+        {"column_span": 1, "cards": [B]},
+    ]}]}
+    new = {"views": [{"path": "home", "type": "sections", "sections": [
+        {"column_span": 1, "cards": [B]},
+        {"column_span": 2, "cards": [A]},
+    ]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is not None
+    assert "section" in plan.blocked
+
+
 def test_undo_refuses_when_two_views_share_one_path():
     """Home Assistant's backend permits it; then a path names two views.
 
