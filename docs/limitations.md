@@ -201,8 +201,9 @@ was, cards inside them are recognised and recoverable like any others.
 | Added a section | The row of sections shifted, so every positional address is suspect. The rule is stricter than it needs to be here — appending one at the end is unambiguous — and it still refuses. |
 | Reordered sections **that have titles** | The titles no longer line up with the positions, which is precisely the signal the guard looks for. It stops. |
 | Renamed a section | A section's own properties are not cards. The change reads as `no card changes`, and the undo says *"this change did not alter any cards."* |
+| Converted a view's layout (masonry to sections, typically) | Home Assistant adds an empty grid section on conversion, which used to be blamed on "the sections" — `_SECTION_REFUSAL` fired because the section list changed, not because it actually shifted. Fixed 2026-09-24: the conversion is now detected directly and named as the reason. [GitHub issue #32](https://github.com/PPP01/ha-dashboard-history/issues/32). The history entry itself named nothing at all before this — `type` is not a card, so a save that only converts a view had no entry to show. It now reads "the view … was converted from masonry to sections." |
 
-A refusal is the correct outcome for all four — Home Assistant's own
+A refusal is the correct outcome for all five — Home Assistant's own
 data does not contain the answer, and the design forbids guessing. What
 it costs is precision, not content: the whole-state restore recovers
 every one of these in full, and a deleted section can also come back on

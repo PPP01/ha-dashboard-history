@@ -450,6 +450,33 @@ def test_an_unnameable_change_never_claims_that_nothing_changed():
     assert "see the details" in result.note
 
 
+def test_a_view_converted_to_sections_is_explained_as_its_own_event():
+    """The conversion itself is the event - not the section list it produces.
+
+    Converting a view leaves its existing cards exactly where match_cards
+    still finds them, so nothing about the cards looks unusual - but the
+    layout itself changed, and `type` is not a card. Unnamed, this used
+    to fall into the same bucket as the rename above: no groups at all.
+    GitHub #32.
+    """
+    old = {"views": [{"path": "home", "title": "Home", "cards": [A]}]}
+    new = {
+        "views": [
+            {
+                "path": "home",
+                "title": "Home",
+                "type": "sections",
+                "cards": [A],
+                "sections": [{"type": "grid", "cards": []}],
+            }
+        ]
+    }
+    result = analyze.explain_change(old, new)
+    assert [entry.text for group in result.groups for entry in group.entries] == [
+        'the view "Home" was converted from masonry to sections'
+    ]
+
+
 def test_two_views_are_two_groups():
     old = {
         "views": [
@@ -1066,6 +1093,62 @@ def test_undo_refuses_when_two_untitled_sections_swap_settings():
     plan = analyze.plan_undo(old, new, new)
     assert plan.blocked is not None
     assert "section" in plan.blocked
+
+
+def test_undo_of_a_view_conversion_names_the_conversion_not_sections():
+    """A converted view is refused for the right reason, not a coincidence.
+
+    Here the conversion happens to coincide with a card moving into the
+    new section, so `match_cards` already sees something to report.
+    Converting a view to sections also adds an empty grid section -
+    exactly what `_sections_lie` reacts to, since the section list went
+    from empty to one entry. It fired, but named "the sections", which
+    was never the actual cause: the view itself was converted. GitHub #32.
+    """
+    old = {"views": [{"path": "home", "cards": [A]}]}
+    new = {
+        "views": [
+            {
+                "path": "home",
+                "type": "sections",
+                "sections": [{"type": "grid", "cards": [A]}],
+            }
+        ]
+    }
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is not None
+    assert "section" not in plan.blocked
+    assert "layout" in plan.blocked
+
+
+def test_undo_of_a_pure_view_conversion_is_refused_by_layout_not_by_cards():
+    """The actual, common shape: conversion alone, no card touched.
+
+    Confirmed 2026-09-23 against a running Home Assistant test container
+    (design journal, Entscheidung 26): converting masonry to sections
+    does not redistribute cards. It adds one empty grid section and
+    leaves every existing card exactly where it was, in the view's own
+    `cards:` list. `match_cards` therefore sees nothing - no card
+    removed, added, edited or moved - and the early "did not alter any
+    cards" gate in `plan_undo` used to fire before `_view_type_changed`
+    was ever reached, hiding the real, nameable reason behind a message
+    that denies anything happened at all. GitHub #32.
+    """
+    old = {"views": [{"path": "home", "cards": [A]}]}
+    new = {
+        "views": [
+            {
+                "path": "home",
+                "type": "sections",
+                "cards": [A],
+                "sections": [{"type": "grid", "cards": []}],
+            }
+        ]
+    }
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is not None
+    assert plan.blocked != "this change did not alter any cards"
+    assert "layout" in plan.blocked
 
 
 def test_undo_refuses_when_two_views_share_one_path():

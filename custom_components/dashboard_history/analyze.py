@@ -631,6 +631,30 @@ def _section_anchor(view: dict, location: tuple) -> tuple | None:
     return (len(sections), title)
 
 
+def _view_type(view: dict) -> str:
+    """A view's own layout, defaulting the way Home Assistant does.
+
+    An absent `type` is not "no layout" - it is Home Assistant's own
+    default, the classic `masonry` view (see How It Works, §2).
+    """
+    return view.get("type") or "masonry"
+
+
+def _view_type_changed(one: dict, other: dict) -> bool:
+    """Whether a view kept its identity but changed layout.
+
+    Converting a view - masonry to sections, most commonly - adds an
+    empty grid section, which is exactly what `_sections_lie` reacts to:
+    the section list went from empty to one entry. Checked first, so the
+    refusal names the conversion instead of blaming "the sections" for a
+    side effect of it. GitHub #32.
+    """
+    here, there = dict(_views_by_key(one)), dict(_views_by_key(other))
+    return any(
+        _view_type(here[key]) != _view_type(there[key]) for key in set(here) & set(there)
+    )
+
+
 _POSITION_REFUSAL = (
     "a view without a URL path sits somewhere else now, so an exact undo "
     "cannot tell which view is which"
@@ -640,6 +664,12 @@ _SECTION_REFUSAL = (
     "the sections of this dashboard are arranged differently now, and a "
     "section has no path to recognise it by, so an exact undo cannot tell "
     "them apart"
+)
+
+_VIEW_TYPE_REFUSAL = (
+    "a view's own layout was converted since, and undoing a conversion "
+    "spans more than this one change - a version or a whole-state restore "
+    "covers it"
 )
 
 _DUPLICATE_PATH_REFUSAL = (
@@ -811,12 +841,22 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     new_views = dict(_views_by_key(after))
     now_views = dict(_views_by_key(current))
     view_work = set(old_views) ^ set(new_views)
+    # A conversion (masonry to sections, typically) is a real alteration
+    # even though it touches no card: Home Assistant leaves every
+    # existing card exactly where it was, in the view's own `cards:`
+    # list, and only adds an empty grid section. Left out of this check,
+    # a save that did nothing but convert the view had nothing here to
+    # register, and fell through to "did not alter any cards" - true of
+    # the cards, false of the view.
+    pairs = ((before, after), (before, current), (after, current))
+    type_changed = any(_view_type_changed(one, other) for one, other in pairs)
     if not (
         matching.removed
         or matching.added
         or matching.edited
         or matching.moved
         or view_work
+        or type_changed
     ):
         return UndoPlan(blocked="this change did not alter any cards")
 
@@ -828,9 +868,13 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # Every state this plan reads from or writes to has to agree on what
     # a position means: `before` and `after` decide what the change was,
     # `current` is where the steps land.
-    pairs = ((before, after), (before, current), (after, current))
     if any(_positions_lie(one, other) for one, other in pairs):
         return UndoPlan(blocked=_POSITION_REFUSAL)
+    # Checked before `_sections_lie`: a conversion changes the section
+    # list too, and would otherwise be blamed on "the sections" instead
+    # of on itself.
+    if type_changed:
+        return UndoPlan(blocked=_VIEW_TYPE_REFUSAL)
     if any(_sections_lie(one, other) for one, other in pairs):
         return UndoPlan(blocked=_SECTION_REFUSAL)
 
@@ -1007,6 +1051,7 @@ _PAST = {
     ("card", "moved_to"): "{label} was moved to {where}",
     ("view", "removed"): 'the whole view "{label}" was deleted',
     ("view", "added"): 'the whole view "{label}" was added',
+    ("view", "type_changed"): 'the view "{label}" was converted from {old_type} to {new_type}',
 }
 
 _FUTURE = {
@@ -1017,6 +1062,7 @@ _FUTURE = {
     ("card", "moved_to"): "{label} moves back to {where}",
     ("view", "removed"): 'the whole view "{label}" will be deleted',
     ("view", "added"): 'the whole view "{label}" comes back',
+    ("view", "type_changed"): 'the view "{label}" changes layout from {old_type} to {new_type}',
 }
 
 # A dashboard restored from nothing would otherwise list every card it
@@ -1139,7 +1185,24 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
             groups.append(ViewChanges(name, [_entry(words, "removed", "view", name)]))
             removed_anything = True
             continue
-        entries = by_view.get(key, [])
+        entries = list(by_view.get(key, []))
+        new_view = new_views[key]
+        old_type, new_type = _view_type(old_view), _view_type(new_view)
+        if old_type != new_type:
+            # Ahead of any card entries: the conversion is the actual
+            # event, and `type` is not a card - without this, a save that
+            # only converts a view has nothing to hang an entry on at all.
+            entries.insert(
+                0,
+                Entry(
+                    kind="type_changed",
+                    what="view",
+                    label=name,
+                    text=words[("view", "type_changed")].format(
+                        label=name, old_type=old_type, new_type=new_type
+                    ),
+                ),
+            )
         if entries:
             groups.append(_capped(name, entries))
             removed_anything = removed_anything or any(
