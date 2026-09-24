@@ -1240,7 +1240,7 @@ Expected: alle Checks grün, darunter die vier aus `run_parking` und der geände
 - [ ] **Step 7: Commit (nach Go des Nutzers)**
 
 ```bash
-git add custom_components/dashboard_history/operations.py custom_components/dashboard_history/websocket_api.py tests/integration/run_checks.py
+git add custom_components/dashboard_history/operations.py custom_components/dashboard_history/websocket_api.py custom_components/dashboard_history/services.py custom_components/dashboard_history/services.yaml tests/integration/run_checks.py
 git commit -m "Report parked cards and refuse a stale confirmation" -m "undo_change and restore_deleted name the cards that only go to Imported
 cards, so the panel can mark its button. A confirmation whose fresh plan
 parks differently from what the dialog showed writes nothing: a button
@@ -1528,7 +1528,7 @@ Danach: `grep -n "_sections_lie\|cross-checked against its title" docs/*.md` –
 
 - [ ] **Step 5: Journal**
 
-`docs/superpowers/status.md`: einen Eintrag nach dem Muster der Einträge zu #31–#33 ergänzen: `- **Umgesetzt am <Datum>** (GitHub-Issue [#30](…), Vorhaben L): …` – was geparkt wird, was weiter verweigert (von der Änderung umgebaute Sections, pfadlose Ansichten), der strengere Put-back-Anker, und die Restlücke aus #31 (Sections mit gleichen Einstellungen).
+`docs/superpowers/status.md`: einen Eintrag nach dem Muster der Einträge zu #31–#33 ergänzen: `- **Umgesetzt am <Datum>** (GitHub-Issue [#30](…), Vorhaben L): …` – was geparkt wird, was weiter verweigert (von der Änderung umgebaute Sections; bei »Put back« außerdem pfadlose Ansichten – der Undo parkt dort), der Put-back-Anker samt Einsetzen neben dem Nachbarn, und die Restlücke aus #31 (Sections mit gleichen Einstellungen).
 
 Haupt-Spec, Kopf von Entscheidung 26: `**Entschieden, noch nicht gebaut.**` ersetzen durch `**Gebaut am <Datum> als Vorhaben L**`.
 
