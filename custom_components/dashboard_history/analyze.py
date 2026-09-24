@@ -513,12 +513,19 @@ def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
     return result
 
 
-def _by_position(config: dict) -> dict:
-    """Only the views keyed by where they sit, by that key."""
+def _by_position(config: dict, before: int | None = None) -> dict:
+    """Only the views keyed by where they sit, by that key.
+
+    `before`, when given, drops every position at or past it - the
+    positions neither state can vouch for (see `_positions_lie`).
+    """
     return {
         key: view
         for key, view in _views_by_key(config)
-        if isinstance(key, tuple) and key and key[0] == "#"
+        if isinstance(key, tuple)
+        and key
+        and key[0] == "#"
+        and (before is None or key[1] < before)
     }
 
 
@@ -536,12 +543,24 @@ def _positions_lie(one: dict, other: dict) -> bool:
     at each of them. "The same view" is content or, for a view somebody
     edited, a title that is there and unchanged.
 
-    Deliberately strict. A pathless view *added* since is refused too,
-    though its neighbours may still line up - the identity chain of
-    package 2 is what lifts that, and until it exists a refusal is the
-    answer decision 4 asks for.
+    Positions are only ever compared up to the shorter state's own
+    length (GitHub #33): a view appended at the end raises that length
+    on one side alone and cannot have moved anything sitting before it,
+    so it is dropped before the comparison rather than read as every
+    earlier position having shifted. Deliberately strict on everything
+    up to there, though: a pathless view added or removed *within* that
+    common length still taints every position at or after it - the
+    identity chain of package 2 is what would tell the difference, and
+    until it exists a refusal is the answer decision 4 asks for.
+
+    One view in both states is the other position that cannot have
+    shifted: there is no neighbour to have moved in front of it, so it
+    needs neither path nor title to be recognised (GitHub #33).
     """
-    here, there = _by_position(one), _by_position(other)
+    if len(one.get("views") or []) == len(other.get("views") or []) == 1:
+        return False
+    length = min(len(one.get("views") or []), len(other.get("views") or []))
+    here, there = _by_position(one, length), _by_position(other, length)
     if set(here) != set(there):
         return True
     for key, view in here.items():

@@ -316,12 +316,20 @@ It looks for it, byte for byte, in the dashboard it is about to write:
 
 That is the same proof the undo works from, one object smaller.
 
-The undo's refusal is deliberately stricter than strictly necessary —
-an *added* pathless view blocks it even though its neighbours are still
-unambiguous. Refusing too often is the correct error to make here.
-Whether it needs to be *this* strict — an append at the very end
-cannot have shifted anything before it — is open:
-[GitHub issue #33](https://github.com/PPP01/ha-dashboard-history/issues/33).
+Until 2026-09-24 the undo's refusal was stricter than strictly
+necessary — an *added* pathless view blocked it even where its
+neighbours stayed unambiguous, appended at the very end or not, because
+the check compared the whole set of positions between the two states
+rather than where they stopped agreeing.
+[GitHub issue #33](https://github.com/PPP01/ha-dashboard-history/issues/33)
+narrowed that: positions are now only compared up to the length of the
+shorter state, so a view appended after that point cannot taint
+anything before it. A dashboard with exactly one view in both states is
+never refused on position grounds at all: there is nothing it could be
+mistaken for, path or title or not. An insertion or a deletion *within* that shared
+length still refuses, deliberately — both change the view count the
+same way an append does, and only whether the position's content still
+matches at that length tells them apart.
 
 *Put back* keeps one gap that the undo does not, and it follows from
 working without the old state: a pathless view that was **both shifted

@@ -1037,6 +1037,79 @@ def test_undo_still_works_on_a_pathless_view_that_stayed_put():
     ]
 
 
+def test_undo_still_works_when_a_pathless_view_is_appended_after():
+    """Appending a view at the end cannot have shifted anything before it.
+
+    GitHub #33: Home stayed exactly where it was; a pathless view
+    appended afterwards used to make the guard refuse anyway, because it
+    only ever compared the whole set of positions, never where they
+    first stopped lining up.
+    """
+    home_before = {"title": "Home", "cards": [A]}
+    home_after = {"title": "Home", "cards": [A, B]}
+    fresh = {"title": "Neu", "cards": [C]}
+    plan = analyze.plan_undo(
+        {"views": [home_before]},
+        {"views": [home_after]},
+        {"views": [home_after, fresh]},
+    )
+    assert plan.blocked is None
+    assert [(s.action, s.kind, s.payload) for s in plan.steps] == [
+        ("remove", "card", None)
+    ]
+
+
+def test_undo_works_on_the_only_view_even_without_path_or_title():
+    """A single view has nothing to be confused with.
+
+    GitHub #33, same idea as the append above: a position that cannot
+    have shifted keeps its meaning. With one view in both states there is
+    no neighbour that could have moved in front of it - yet an untitled
+    one used to be refused for any card change, because its content
+    changed and there was no title to recognise it by.
+    """
+    plan = analyze.plan_undo(
+        {"views": [{"cards": [A]}]},
+        {"views": [{"cards": [A, B]}]},
+        {"views": [{"cards": [A, B]}]},
+    )
+    assert plan.blocked is None
+    assert [(s.action, s.kind) for s in plan.steps] == [("remove", "card")]
+
+
+def test_undo_refuses_when_the_only_view_gained_a_neighbour_in_front():
+    """One view on one side only is not the single-view case."""
+    plan = analyze.plan_undo(
+        {"views": [{"cards": [A]}]},
+        {"views": [{"cards": [A, B]}]},
+        {"views": [{"cards": [C]}, {"cards": [A, B]}]},
+    )
+    assert plan.blocked is not None
+    assert "URL path" in plan.blocked
+
+
+def test_undo_refuses_when_a_pathless_view_was_inserted_before_another():
+    """An insertion in the middle must not be read as a mere append.
+
+    GitHub #33's own caution: dropping "Neu" between Home and Office
+    raises the view count by one, exactly like appending it after Office
+    would - only comparing lengths cannot tell them apart. Office itself
+    shifted from position 1 to 2, so the change made to it is still not
+    undoable.
+    """
+    home = {"title": "Home", "cards": [A]}
+    office = {"title": "Office", "cards": [B]}
+    office_after = {"title": "Office", "cards": [B, C]}
+    fresh = {"title": "Neu", "cards": []}
+    plan = analyze.plan_undo(
+        {"views": [home, office]},
+        {"views": [home, office_after]},
+        {"views": [home, fresh, office_after]},
+    )
+    assert plan.blocked is not None
+    assert "URL path" in plan.blocked
+
+
 def test_undo_refuses_when_a_section_was_inserted_before_another():
     """Sections are addressed by index too, and never carry a path.
 
