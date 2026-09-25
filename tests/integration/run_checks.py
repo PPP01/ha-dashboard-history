@@ -2650,6 +2650,67 @@ async def run_settings(access: str) -> None:
         if mine is not None:
             await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
 
+async def run_badges(access: str) -> None:
+    """A badge added beside a copy on another view, undone (GitHub #29)."""
+    key = "dh-badges"
+    sun = {"type": "entity", "entity": "sun.sun"}
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+        async def save(config: dict) -> list:
+            # `_wait_for_new_state`, not `_wait_until_recorded`: see
+            # `save` in `run_settings` (Vorhaben M) and in `run_undo`.
+            rows = (
+                await socket.call("dashboard_history/history", dashboard=key, limit=1)
+            )["changes"]
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            return await _wait_for_new_state(
+                socket, key, rows[0]["revision"] if rows else "", RECORDING_WAIT
+            )
+
+        other = {"path": "other", "title": "Other", "badges": [sun], "cards": []}
+        await save({"views": [{"path": "home", "title": "Home", "badges": [], "cards": []}, other]})
+        added = await save({"views": [{"path": "home", "title": "Home", "badges": [sun], "cards": []}, other]})
+        entry = added[0]
+        check(
+            "a badge-only save is counted",
+            entry["message"].endswith("1 badge changed"),
+            entry["message"],
+        )
+        asked = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=entry["revision"]
+        )
+        check(
+            "and undoable although the same badge stands on another view",
+            asked.get("available") is True,
+            asked.get("reason", ""),
+        )
+        await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=entry["revision"],
+            confirm=True,
+            expected_parked=[],
+        )
+        await asyncio.sleep(2)
+        live = await socket.call("lovelace/config", url_path=key)
+        badges = [view.get("badges") for view in live["views"]]
+        check(
+            "and only the added one goes",
+            badges == [[], [sun]],
+            f"{badges}",
+        )
+
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        mine = next((e for e in listed if e.get("url_path") == key), None)
+        if mine is not None:
+            await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
+
+
 
 async def run_missing_grouped_by_view(access: str) -> None:
     """`deleted_since` names each item's view by its title, not its path.
@@ -4502,6 +4563,8 @@ if __name__ == "__main__":
     asyncio.run(run_parking(access))
     print("\n  -- Benannte Einstellungen zuruecknehmen --")
     asyncio.run(run_settings(access))
+    print("\n  -- Badges einer Ansicht zuruecknehmen --")
+    asyncio.run(run_badges(access))
     print("\n  -- Gruppiert nach Views, nicht nach Pfaden --")
     asyncio.run(run_missing_grouped_by_view(access))
     print("\n  -- Versionen, die von selbst entstehen --")

@@ -26,7 +26,7 @@ Every row below was empirically verified against the live codebase.
 | :--- | :--- | :--- | :--- | :--- |
 | **Card with nothing to recognise it by**, edited | `1 removed, 1 added` | **Exact** | Offered (would duplicate) | **Works** |
 | **Card moved and edited** in one save | `1 removed, 1 added` | **Exact** | Offered (would duplicate) | **Works** |
-| **Badge** added, edited, or deleted | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
+| **Badge** added, edited, moved or deleted | Named, e.g. *the badge entity: sun.sun was added* | **Exact** while the badge is unchanged since | Not offered | **Works** |
 | **View or dashboard setting** changed (`icon`, `strategy:` key, …) | Named, e.g. *the setting "icon" was changed* | **Exact** while the value is unchanged since | Not offered | **Works** |
 | **Section renamed** | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
 | **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
@@ -55,12 +55,13 @@ If you edit one of these (e.g. changing an `iframe` URL), the algorithm cannot p
 - **Undo this change:** Works **exactly**, because it looks for the specific post-change YAML representation.
 - **Put back:** Because *Put back* is purely additive, restoring what it thinks was deleted would add the old version alongside the new version. The preview clarifies this before you accept.
 
-### 2. Badges are outside the card comparison
+### 2. Badges are matched in a world of their own
 
-Home Assistant stores badges outside the view's card list. As a result:
-- Changes to badges appear in the **diff**, but the change summary reads `no card changes`.
-- *Undo this change* refuses with *"this change did not alter any cards"*.
-- Badges are restored using **Replace the whole dashboard**.
+Home Assistant stores badges beside the view's card list, and like cards they carry no identifier. Since 2026-09-25 they are matched the way cards are, but never paired with a card — an `entity` badge and an `entity` card can be byte-identical ([issue #29](https://github.com/PPP01/ha-dashboard-history/issues/29)). As a result:
+- A badge change is named in the explanation (*the badge entity: sun.sun was added*) and counted in the history line (`1 badge changed`).
+- *Undo this change* takes it back while the badge is unchanged since. The same badge commonly stands on several views, so it is looked for on the whole dashboard and then in the view the change left it in; where neither settles it, the undo refuses.
+- A deleted badge counts as already back only if its own view has more of it today than the change left — a copy on another view is not it.
+- *Put back* does not offer badges.
 
 ### 3. Sections in detail
 
@@ -147,19 +148,12 @@ something worse — the same entity on two views is ordinary, so a real
 deletion could be mistaken for a move and never be offered back at all.
 A missed offer is worse than one you can decline.
 
-### Badges are outside the comparison
+### Badges
 
-A view's badges are neither cards nor in a card list, so a change to
-them produces:
-
-> This change cannot be described in terms of cards — see the details
-> below.
-
-The diff underneath is complete and correct; only the words are
-missing. *Undo this change* refuses with *"this change did not alter
-any cards"*, and no *Put back* is offered, because nothing it can name
-went missing. A badge is recovered by setting the dashboard back to a
-state that had it.
+Since 2026-09-25, a view's badges are matched like cards, in a world of
+their own — see section 2 above. What remains is *Put back*: it never
+offers a badge. A deleted badge comes back through *Undo this change*,
+or by setting the dashboard back to a state that had it.
 
 ### Sections in detail
 
