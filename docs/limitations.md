@@ -27,6 +27,7 @@ Every row below was empirically verified against the live codebase.
 | **Card with nothing to recognise it by**, edited | `1 removed, 1 added` | **Exact** | Offered (would duplicate) | **Works** |
 | **Card moved and edited** in one save | `1 removed, 1 added` | **Exact** | Offered (would duplicate) | **Works** |
 | **Badge** added, edited, or deleted | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
+| **View or dashboard setting** changed (`icon`, `strategy:` key, …) | Named, e.g. *the setting "icon" was changed* | **Exact** while the value is unchanged since | Not offered | **Works** |
 | **Section renamed** | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
 | **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
 | **Section added** | Cards shown as added | **Refuses** if this change added it; later additions park cards (see below) | — | **Works** |

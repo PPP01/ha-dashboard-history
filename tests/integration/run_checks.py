@@ -1731,14 +1731,10 @@ async def run_undo(access: str) -> None:
     fresh = {"type": "markdown", "content": "Brand new"}
     tail = {"type": "markdown", "content": "Saved after that"}
 
-    # The title is a parameter because one check needs a change the undo
-    # cannot fully reach: it works on cards and views, never on a view's
-    # own labels, and that is exactly when `equals_state_before` has to
-    # say no.
-    def state(cards, title="A"):
-        return {"views": [{"path": "a", "title": title, "cards": list(cards)}]}
+    def state(cards):
+        return {"views": [{"path": "a", "title": "A", "cards": list(cards)}]}
 
-    async def save(socket, cards, title="A"):
+    async def save(socket, cards):
         # The revision before the save, and then a wait for a *new* one
         # that holds what is live - `_wait_for_new_state`, not
         # `_wait_until_recorded`. On its own the second is true for a
@@ -1752,7 +1748,7 @@ async def run_undo(access: str) -> None:
         before = await socket.call("dashboard_history/history", dashboard=key, limit=1)
         rows = before["changes"]
         await socket.call(
-            "lovelace/config/save", url_path=key, config=state(cards, title)
+            "lovelace/config/save", url_path=key, config=state(cards)
         )
         await _wait_for_new_state(
             socket, key, rows[0]["revision"] if rows else "", RECORDING_WAIT
@@ -1865,13 +1861,18 @@ async def run_undo(access: str) -> None:
         )
 
         await save(socket, [keep, first, later])
-        await save(socket, [keep, later], title="Renamed")
+        await save(socket, [keep, later])
         mixed = await newest(socket)
+        # A later save the undo leaves standing: the one way to "no" that
+        # no future undo can reach. A renamed view title served here
+        # until named settings became undoable (GitHub #28).
+        await save(socket, [keep, later, fresh])
+        the_add = await newest(socket)
         answer = await socket.call(
             "dashboard_history/undo_change", dashboard=key, revision=mixed
         )
         check(
-            "a change with a part the undo cannot reach says so",
+            "a change with a later save after it says so",
             answer.get("available") is True
             and answer.get("equals_state_before") is False,
             f"available={answer.get('available')} "
@@ -1883,9 +1884,7 @@ async def run_undo(access: str) -> None:
         # this tool removes a card, so it is checked against the exact
         # card list rather than against a count: what has to hold is that
         # the added card goes and the one saved after it stays.
-        await save(socket, [keep, later, fresh], title="Renamed")
-        the_add = await newest(socket)
-        await save(socket, [keep, later, fresh, tail], title="Renamed")
+        await save(socket, [keep, later, fresh, tail])
         answer = await socket.call(
             "dashboard_history/undo_change", dashboard=key, revision=the_add
         )
@@ -2538,6 +2537,114 @@ async def run_parking(access: str) -> None:
         )
 
         # Named, never by prefix: this instance holds other dh-* boards.
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        mine = next((e for e in listed if e.get("url_path") == key), None)
+        if mine is not None:
+            await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
+
+
+async def run_settings(access: str) -> None:
+    """Named settings, explained, counted and taken back (GitHub #28)."""
+    key = "dh-settings"
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+        async def save(config: dict) -> dict:
+            # The newest entry *after* this save - `_wait_for_new_state`,
+            # not `_wait_until_recorded`, for the reason in `run_undo`'s
+            # `save`: the latter is satisfied by the entry before, and
+            # every check below hangs on the entry it returns. Every state
+            # saved here differs from the one before it, so a commit is
+            # always coming.
+            rows = (
+                await socket.call("dashboard_history/history", dashboard=key, limit=1)
+            )["changes"]
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            changes = await _wait_for_new_state(
+                socket, key, rows[0]["revision"] if rows else "", RECORDING_WAIT
+            )
+            return changes[0]
+
+        async def undo(revision: str) -> tuple[dict, dict]:
+            asked = await socket.call(
+                "dashboard_history/undo_change", dashboard=key, revision=revision
+            )
+            if asked.get("available") is True:
+                await socket.call(
+                    "dashboard_history/undo_change",
+                    dashboard=key,
+                    revision=revision,
+                    confirm=True,
+                    expected_parked=[],
+                )
+                await asyncio.sleep(2)
+            return asked, await socket.call("lovelace/config", url_path=key)
+
+        # A view's icon: counted, explained by name, taken back.
+        view = {"path": "home", "title": "Home", "icon": "mdi:home", "cards": []}
+        await save({"views": [view]})
+        entry = await save({"views": [{**view, "icon": "mdi:sofa"}]})
+        check(
+            "a setting-only save is counted",
+            entry["message"].endswith("1 setting changed"),
+            entry["message"],
+        )
+        told = await socket.call(
+            "dashboard_history/explain", dashboard=key, revision=entry["revision"]
+        )
+        texts = [e["text"] for g in told["groups"] for e in g["entries"]]
+        check(
+            "and explained by name",
+            texts == ['the setting "icon" was changed from "mdi:home" to "mdi:sofa"'],
+            f"{texts}",
+        )
+        asked, live = await undo(entry["revision"])
+        check("and undoable", asked.get("available") is True, asked.get("reason", ""))
+        check(
+            "and the icon goes back",
+            live["views"][0].get("icon") == "mdi:home",
+            f"{live['views'][0]!r}",
+        )
+
+        # The case issue #28 is about: a key in a strategy dashboard's
+        # `strategy:` block. Only the running instance shows that a state
+        # without `views:` is saved and handed back as such - the undo
+        # must not slip in the empty list `apply_undo` keeps for itself.
+        strategy = {"type": "original-states"}
+        await save({"strategy": strategy})
+        entry = await save({"strategy": {**strategy, "show_clock_card": False}})
+        asked, live = await undo(entry["revision"])
+        check(
+            "a strategy key is taken back",
+            asked.get("available") is True
+            and "views" not in live
+            and live.get("strategy") == strategy,
+            f"{asked.get('reason', '')} {live!r}",
+        )
+
+        # 1 against true, which Python's == calls equal: the history line
+        # must count it, and the undo must write rather than answer
+        # "already taken back". The half of this in operations.py has no
+        # pytest to reach it.
+        await save({"views": [{**view, "max_columns": 1}]})
+        entry = await save({"views": [{**view, "max_columns": True}]})
+        check(
+            "1 becoming true is counted as a setting",
+            entry["message"].endswith("1 setting changed"),
+            entry["message"],
+        )
+        asked, live = await undo(entry["revision"])
+        standing = live["views"][0].get("max_columns")
+        check(
+            "and taken back to 1, not reported as already back",
+            asked.get("available") is True and standing == 1 and standing is not True,
+            f"{asked.get('reason', '')} max_columns={standing!r}",
+        )
+
         listed = (await socket.call("lovelace/dashboards/list")) or []
         mine = next((e for e in listed if e.get("url_path") == key), None)
         if mine is not None:
@@ -4393,6 +4500,8 @@ if __name__ == "__main__":
     asyncio.run(run_sections(access))
     print("\n  -- Geparkt, wenn der Abschnitt sich nicht mehr beweisen laesst --")
     asyncio.run(run_parking(access))
+    print("\n  -- Benannte Einstellungen zuruecknehmen --")
+    asyncio.run(run_settings(access))
     print("\n  -- Gruppiert nach Views, nicht nach Pfaden --")
     asyncio.run(run_missing_grouped_by_view(access))
     print("\n  -- Versionen, die von selbst entstehen --")

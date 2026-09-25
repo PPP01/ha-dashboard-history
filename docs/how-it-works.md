@@ -77,7 +77,7 @@ Until 2026-09-24 the undo's guard was stricter than it needed to be here: it com
 
 ### Badges
 
-Badges sit outside card lists and views. Because they are not cards, changes to badges are recorded in the commit diff, but cannot be described in card terms by `explain_change`. They are recovered through whole-state restoration. The same is true of any other named, non-card setting on a view or dashboard — a view's `title`/`icon`/`theme`, or a dashboard's `strategy:` block — for the same reason: none of it is a card, and the comparison engine currently only ever looks at cards ([issue #28](https://github.com/PPP01/ha-dashboard-history/issues/28), [issue #29](https://github.com/PPP01/ha-dashboard-history/issues/29)).
+Badges sit outside card lists and views. Because they are not cards, changes to badges are recorded in the commit diff, but cannot be described in card terms by `explain_change`. They are recovered through whole-state restoration. Until badges get the same treatment ([issue #29](https://github.com/PPP01/ha-dashboard-history/issues/29)), that is how it stays for them. Named settings are different, and handled since 2026-09-25 ([issue #28](https://github.com/PPP01/ha-dashboard-history/issues/28)): a view's `title`/`icon`/`theme`/`visible`, or a key in a dashboard's `strategy:` block, is identified by its name in every state. The history explains and counts such a change, and *Undo this change* takes it back after one check — is the value the change left still there? Section settings (`column_span` and the like) are not included: a section has no name to address it by.
 
 ---
 
