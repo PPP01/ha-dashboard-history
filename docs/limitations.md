@@ -29,11 +29,12 @@ Every row below was empirically verified against the live codebase.
 | **Badge** added, edited, or deleted | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
 | **Section renamed** | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
 | **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
-| **Section added** | Cards shown as added | **Refuses** | — | **Works** |
+| **Section added** | Cards shown as added | **Refuses** if this change added it; later additions park cards (see below) | — | **Works** |
+| **Sections rearranged after the change**, card edited or deleted by it | Correct | **Parks** the card in "Imported cards" — button shows *Undo this change\** | Parks in "Imported cards" | **Works** |
 | **Titled sections reordered** | Correct | **Refuses** | **Refuses** | **Works** |
 | **Untitled sections swapped**, their settings differ (e.g. `column_span`) | `N moved` (cards, not the section) | **Refuses** (settings mismatch caught) | Refuses (nothing missing) | **Works** |
 | **Untitled sections swapped**, settings otherwise identical | `N moved` (cards, not the section) | **Exact** — nothing distinguishable is left behind either way | Refuses (nothing missing) | **Works** |
-| **Untitled sections reordered**, and a card also edited in the same save | Correct | Writes positionally (see below) | **Writes into wrong section** | **Works** |
+| **Untitled sections reordered**, and a card also edited in the same save | Correct | Writes positionally (see below) | **Parks in "Imported cards"** | **Works** |
 | **View without URL path** shifts position | May name an untouched view | **Refuses** | **Refuses** | **Works** |
 | …and was edited in the same save | Same | **Refuses** | Adds older copy as duplicate | **Works** |
 | …and another view occupies its index | Same | **Refuses** | Writes into other view | **Works** |
@@ -169,9 +170,12 @@ barely handled at all.**
 A section as Home Assistant's editor writes it has no path and no
 identifier — there is no equivalent of a view's URL path one level
 down. All the integration has to work with is the section's index in
-the row, cross-checked against its title. A title is optional, and in
-practice absent: all 80 sections on the installation this was developed
-against carry none.
+the row, cross-checked against its own settings - and, for *Put back*,
+against the cards that stood beside the one being restored. A title
+would help, but is optional and in practice absent: 0 of 101 sections
+on the installation this was developed against carry one. Where the
+check fails, the card is parked in "Imported cards" rather than
+guessed into a section.
 
 **Works, and works exactly:**
 
@@ -288,9 +292,11 @@ a sections view cannot be proven, Home Assistant's own editor already
 parks it rather than guessing — the "Imported cards" area it shows
 after converting a masonry view to sections. Decision 26 in the design
 journal proposes the same fallback here: park such a card in the
-view's own `cards:` list instead of refusing outright.
-**Decided, not yet built** —
+view's own `cards:` list instead of refusing outright. **Built on
+2026-09-25** —
 [GitHub issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30).
+The undo's button then reads *Undo this change\**, and the dialog
+lists every card that only becomes available.
 
 ### Views without a URL path
 

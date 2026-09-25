@@ -122,10 +122,9 @@ Replaces the current dashboard entirely with an earlier state:
 
 ## If Your Dashboard Uses Sections
 
-Cards inside a section are handled exactly like cards in a view — deleted, edited, or dragged into another section, all recognised and recoverable with the same tools. The section itself is the weaker spot: Home Assistant's editor gives a section no identifier at all, so Dashboard History only knows one by its position in the row, cross-checked against its title.
+Cards inside a section are handled exactly like cards in a view — deleted, edited, or dragged into another section, all recognised and recoverable with the same tools. The section itself is the weaker spot: Home Assistant's editor gives a section no identifier at all, so Dashboard History only knows one by its position in the row, cross-checked against its settings and neighbouring cards.
 
-> [!TIP]
-> **Give your sections titles.** A title is the only thing Dashboard History can use to recognise a section by. Without one, reordering two untitled sections in the same save as a card edit can — in this one specific case — file the restored card into the wrong section, silently. With a title, the same situation becomes an honest refusal instead of a silent mistake. See [Limitations & Boundaries](limitations.md) for the full, measured breakdown.
+> **When a section cannot be recognised.** Home Assistant gives a section no identifier, so Dashboard History recognises one by its position, its settings and the cards around the one being restored. When that no longer fits — the sections were rearranged since — the card is not guessed into a section: it goes into the view's "Imported cards" area, visible in Home Assistant's edit mode, and the button says so with an asterisk. You drag it into place yourself. See [Limitations & Boundaries](limitations.md).
 
 Setting the whole dashboard back to an earlier state always works for sections, exactly as for everything else — nothing is ever unrecoverable; what the narrow tools lose is precision, not content.
 
