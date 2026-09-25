@@ -279,10 +279,11 @@ def parks(config: dict, item: RemovedItem) -> bool:
     return not _anchor_holds(view, item) or _cards_at(view, item.location) is None
 
 
-def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
-    """The `cards:` list `item` is parked into, created when the view has
-    none - shared by `park` and the parked branch of `apply_undo`, which
-    put the same item at the end of the same "Imported cards" list.
+def _require_view(views: list, item: RemovedItem | UndoStep) -> dict:
+    """The view `item` belongs to, or a refusal naming it by its label.
+
+    Shared by every function below that starts from a card, badge or
+    parked item and needs its view first.
     """
     view = _find_view(views, item)
     if view is None:
@@ -290,6 +291,15 @@ def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
             f"the view {item.label} belonged to no longer exists "
             f"(path={item.view_path!r}, index={item.view_index})"
         )
+    return view
+
+
+def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
+    """The `cards:` list `item` is parked into, created when the view has
+    none - shared by `park` and the parked branch of `apply_undo`, which
+    put the same item at the end of the same "Imported cards" list.
+    """
+    view = _require_view(views, item)
     cards = view.get("cards")
     if cards is None:
         cards = []
@@ -311,12 +321,7 @@ def park(config: dict, item: RemovedItem) -> dict:
 
 def _cards_for(views: list, step: UndoStep) -> list:
     """The card list a step points at, or a refusal."""
-    view = _find_view(views, step)
-    if view is None:
-        raise LookupError(
-            f"the view {step.label} belonged to no longer exists "
-            f"(path={step.view_path!r}, index={step.view_index})"
-        )
+    view = _require_view(views, step)
     cards = _cards_at(view, step.location)
     if cards is None:
         raise LookupError(
@@ -325,14 +330,10 @@ def _cards_for(views: list, step: UndoStep) -> list:
         )
     return cards
 
+
 def _badges_for(views: list, step: UndoStep) -> list:
     """The badge list a step points at, created when the view has none."""
-    view = _find_view(views, step)
-    if view is None:
-        raise LookupError(
-            f"the view {step.label} belonged to no longer exists "
-            f"(path={step.view_path!r}, index={step.view_index})"
-        )
+    view = _require_view(views, step)
     badges = view.get("badges")
     if not isinstance(badges, list):
         badges = []

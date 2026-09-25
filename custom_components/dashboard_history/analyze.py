@@ -307,8 +307,8 @@ class UndoStep:
     than written over in place.
     """
 
-    action: str  # "remove" | "insert"
-    kind: str  # "card" | "view"
+    action: str  # "remove" | "insert" | "set" | "unset"
+    kind: str  # "card" | "badge" | "view" | "dashboard_setting" | "view_setting"
     view_path: str | None
     view_index: int
     location: tuple
@@ -397,6 +397,20 @@ def fingerprint(card: Any) -> str:
         return json.dumps(card, sort_keys=True, default=str)
     except (TypeError, ValueError):  # pragma: no cover - guarded, not expected
         return repr(card)
+
+
+def same_config(one: dict, other: dict) -> bool:
+    """`==`, but not blind to 1 against True (GitHub #28).
+
+    Since named settings are undoable, `max_columns: 1` and
+    `max_columns: true` are two states an undo moves between; Python's
+    `==` calls them equal. `fingerprint` only runs when `==` already
+    said yes, so the common case costs what it did. Not `_same`: that
+    one is for a single setting's value and knows `_ABSENT`; this is for
+    two whole dashboard configurations, the shape `change_message` and
+    `operations.async_undo_change` both compare.
+    """
+    return one == other and fingerprint(one) == fingerprint(other)
 
 
 def _place(slot: Slot) -> tuple:
@@ -1013,6 +1027,19 @@ def _present(config: dict, containers=card_containers) -> list[Slot]:
     return _slots(config, {key for key, _ in _views_by_key(config)}, containers)
 
 
+def _group_by_mark(slots: list[Slot]) -> dict[str, list[Slot]]:
+    """Slots keyed by their fingerprint, in the order found."""
+    groups: dict[str, list[Slot]] = {}
+    for slot in slots:
+        groups.setdefault(fingerprint(slot.card), []).append(slot)
+    return groups
+
+
+def _in_view(slots: list[Slot], view_key: Any) -> list[Slot]:
+    """Only the slots that belong to one view."""
+    return [slot for slot in slots if slot.view_key == view_key]
+
+
 def _step(
     slot: Slot,
     action: str,
@@ -1147,9 +1174,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
             )
         )
 
-    by_mark: dict[str, list[Slot]] = {}
-    for slot in _present(current):
-        by_mark.setdefault(fingerprint(slot.card), []).append(slot)
+    by_mark = _group_by_mark(_present(current))
 
     def sole(card: Any, label: str) -> tuple[Slot | None, str | None]:
         found = by_mark.get(fingerprint(card), [])
@@ -1244,20 +1269,16 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # second only asks it where the badge was left. And both compare
     # today with what the change left: one standing today, out of several
     # the change left, may be the one that was there before it.
-    badge_now: dict[str, list[Slot]] = {}
-    for slot in _present(current, badge_containers):
-        badge_now.setdefault(fingerprint(slot.card), []).append(slot)
-    badge_then: dict[str, list[Slot]] = {}
-    for slot in _present(after, badge_containers):
-        badge_then.setdefault(fingerprint(slot.card), []).append(slot)
+    badge_now = _group_by_mark(_present(current, badge_containers))
+    badge_then = _group_by_mark(_present(after, badge_containers))
 
     def sole_badge(badge: Any, view_key: Any, label: str) -> tuple[Slot | None, str | None]:
         mark = fingerprint(badge)
         found, left = badge_now.get(mark, []), badge_then.get(mark, [])
         if len(found) == 1 and len(left) == 1:
             return found[0], None
-        mine = [slot for slot in found if slot.view_key == view_key]
-        mine_then = [slot for slot in left if slot.view_key == view_key]
+        mine = _in_view(found, view_key)
+        mine_then = _in_view(left, view_key)
         if len(mine) == 1 and len(mine_then) == 1:
             return mine[0], None
         if len(mine) < len(mine_then):
@@ -1275,17 +1296,21 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # Counted, not looked up, and only in the badge's own view: a copy on
     # another view - there all along or added since - is not this badge
     # coming back. `came_back` is how many more stand there now than the
-    # change left; `deleted` how many alike it took from that view.
+    # change left; `deleted` how many alike it took from that view. Each
+    # removed slot's mark is kept beside it - `deleted` and the loop
+    # below both need it, and fingerprinting is not free to redo.
+    removed_marks = [
+        (old_slot, fingerprint(old_slot.card)) for old_slot in badge_matching.removed
+    ]
     deleted: dict[tuple[str, Any], int] = {}
-    for old_slot in badge_matching.removed:
-        place = (fingerprint(old_slot.card), old_slot.view_key)
+    for old_slot, mark in removed_marks:
+        place = (mark, old_slot.view_key)
         deleted[place] = deleted.get(place, 0) + 1
 
     def came_back(mark: str, view_key: Any) -> int:
-        def mine(slots: list[Slot]) -> int:
-            return sum(1 for slot in slots if slot.view_key == view_key)
-
-        return mine(badge_now.get(mark, [])) - mine(badge_then.get(mark, []))
+        return len(_in_view(badge_now.get(mark, []), view_key)) - len(
+            _in_view(badge_then.get(mark, []), view_key)
+        )
 
     def badge_label(badge: Any) -> str:
         return f"the badge {_describe(badge, fallback='badge')}"
@@ -1305,9 +1330,8 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
 
-    for old_slot in badge_matching.removed:
+    for old_slot, mark in removed_marks:
         label = badge_label(old_slot.card)
-        mark = fingerprint(old_slot.card)
         back = came_back(mark, old_slot.view_key)
         if back >= deleted[(mark, old_slot.view_key)]:
             continue
@@ -1533,7 +1557,12 @@ def _setting_entry(words: dict, change: SettingChange) -> Entry:
     else:
         old, new = _value_text(change.old), _value_text(change.new)
         kind = "edited"
-        if new is not None and (old is not None or words is _FUTURE):
+        # Whether `old` has to be there too depends on the wording this
+        # tense uses, not on which table this happens to be - the same
+        # reason `_explain` takes `reassure` instead of asking `words is
+        # _FUTURE`. The future tense's own template never mentions
+        # {old}, so a missing one there is nothing to fall back from.
+        if new is not None and (old is not None or "{old}" not in words[("setting", "edited")]):
             key, values = "edited", {"old": old, "new": new}
         else:
             key, values = "edited_bare", {}
@@ -1781,7 +1810,7 @@ def change_message(
         return f"{name}: first recorded state"
     # `==` alone says 1 is True; the commit this message goes with does
     # not, and neither does the explanation shown under it.
-    if old == new and fingerprint(old) == fingerprint(new):
+    if same_config(old, new):
         # Not the cards, then. Something *about* the dashboard changed -
         # its title, its icon - or nothing did and only metadata was
         # recorded for the first time. Either way: no outside change.

@@ -24,9 +24,9 @@ from .analyze import (
     explain_change,
     explain_effect,
     find_removed,
-    fingerprint,
     message_adds,
     plan_undo,
+    same_config,
 )
 from . import versions as versioning
 from .const import DOMAIN, EVENT_FORGET_PROGRESS
@@ -913,15 +913,12 @@ async def async_restore_state(
     return result
 
 
-def _same_state(one: dict, other: dict) -> bool:
-    """`==`, but not blind to 1 against True (GitHub #28).
-
-    Since named settings are undoable, `max_columns: 1` and
-    `max_columns: true` are two states an undo moves between; Python's
-    `==` calls them equal. `fingerprint` only runs when `==` already
-    said yes, so the common case costs what it did.
+def _undo_state_checks(result: dict, current: dict, before_state: dict) -> tuple[bool, bool]:
+    """Whether the undo is already sitting at `current`, and separately,
+    whether it lands on `before_state` - the two `same_config` questions
+    `async_undo_change` asks, run together in the one executor job.
     """
-    return one == other and fingerprint(one) == fingerprint(other)
+    return same_config(result, current), same_config(result, before_state)
 
 
 async def async_undo_change(
@@ -1007,7 +1004,14 @@ async def async_undo_change(
     except LookupError as err:
         return {"available": False, "reason": str(err)}
 
-    if await hass.async_add_executor_job(_same_state, result, current):
+    # One executor hop for both `same_config` checks: `equals` is wanted
+    # whenever `already_done` says no, which is the ordinary case, so
+    # computing them apart would cost a second thread-pool round trip on
+    # the row every expansion pays for.
+    already_done, equals = await hass.async_add_executor_job(
+        _undo_state_checks, result, current, before_state
+    )
+    if already_done:
         # What an empty diff used to stand for - `if not diff` - without
         # dumping either side to find out. Not a general equivalence:
         # Python dict equality does not see key order, `dump()` does,
@@ -1030,7 +1034,6 @@ async def async_undo_change(
     if confirm and expected_parked is not None and parked != list(expected_parked):
         return {"available": False, "reason": _UNEXPECTED_PARKING}
 
-    equals = await hass.async_add_executor_job(_same_state, result, before_state)
     answer = {
         "available": True,
         "applied": False,
