@@ -267,16 +267,19 @@ old position. What is left in its place is narrower, and in all four
 cases below a narrow tool writes into a place that is not the card's
 own:
 
-- **Sections alike in every setting, reordered after the change.**
-  Neither the guard nor the anchor can tell such sections apart. *Undo
-  this change* puts an edited or deleted card back at its old index —
-  where it was on screen, but inside whichever section stands there
-  now, and without an asterisk. *Put back* does the same only where no
-  card beside the restored one is left to tell the sections apart,
-  typically when the section now at that index is empty. Needs
-  sections that differ in nothing but their cards — a plain
-  `type: grid`, the editor's default — and a reorder since. This is
-  the residual from #31, not a new gap.
+- **A section alike in every setting stands at the old index since,
+  whether by a reorder or because the original was deleted and an
+  identical one created in its place.** Neither the guard nor the
+  anchor can tell such sections apart — a swap is not required, a
+  single deletion and a single, coincidentally identical section are
+  enough. *Undo this change* puts an edited or deleted card back at
+  its old index — where it was on screen, but inside whichever section
+  stands there now, and without an asterisk. *Put back* does the same
+  only where no card beside the restored one is left to tell the
+  sections apart, typically when the section now at that index is
+  empty. Needs sections that differ in nothing but their cards — a
+  plain `type: grid`, the editor's default. This is the residual from
+  #31, not a new gap.
 - **A URL path freed and handed to a new view.** Also an ordinary thing
   to do — delete a view, make another with the same path. The old
   cards are then written into the new view, because a path is unique
