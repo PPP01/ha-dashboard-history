@@ -18,7 +18,22 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
+
+
+class _SectionAnchor(NamedTuple):
+    """What the section a removed card sat in was, when it sat in one.
+
+    A plain `tuple` underneath - `restore._anchored_index` unpacks it
+    positionally and cannot import this type - but named here so the four
+    positions are not four unlabelled counts to keep straight in the two
+    places that build or read one.
+    """
+
+    sections: int  # how many sections the view had
+    settings: dict | None  # the section's own settings, everything but `cards`
+    survivors: tuple  # the cards that should still stand beside this one
+    before: int  # how many of them stood ahead of this card
 
 
 @dataclass(frozen=True)
@@ -37,7 +52,7 @@ class RemovedItem:
     # that should still stand beside it. A section carries no path and no
     # id, so this is the only proof there is that index i still means it
     # - and when it fails, the card is parked instead (decision 26).
-    anchor: tuple | None = None
+    anchor: _SectionAnchor | None = None
     # The other sections of that view, in order, as they stood when this
     # section was removed - only on `kind="section"`. It is the proof that
     # the gap this goes back into is the only one it could go into: if
@@ -660,8 +675,12 @@ def _section_marks(view: dict) -> list:
     ]
 
 
-def _section_drift(before: dict, after: dict, current: dict) -> tuple[set, set]:
+def _section_drift(old_views: dict, new_views: dict, now_views: dict) -> tuple[set, set]:
     """Which views' sections cannot be trusted, and in which of two ways.
+
+    Takes the same `{key: view}` dicts `plan_undo` already built with
+    `_views_by_key`, rather than the three raw configurations - one less
+    walk of `views` per state, on a path run for every undo.
 
     `rebuilt`: the change itself altered the run of sections - added,
     removed, swapped or re-set one. Undoing that means rebuilding the
@@ -677,19 +696,18 @@ def _section_drift(before: dict, after: dict, current: dict) -> tuple[set, set]:
     about an index in another. Two sections that agree on every setting
     and differ only in their cards still slip through, as before (#31).
     """
-    old, new, now = (dict(_views_by_key(state)) for state in (before, after, current))
     rebuilt: set = set()
     shifted: set = set()
-    for key in set(old) & set(new):
-        marks = _section_marks(new[key])
-        if _section_marks(old[key]) != marks:
+    for key in set(old_views) & set(new_views):
+        marks = _section_marks(new_views[key])
+        if _section_marks(old_views[key]) != marks:
             rebuilt.add(key)
-        elif key in now and _section_marks(now[key]) != marks:
+        elif key in now_views and _section_marks(now_views[key]) != marks:
             shifted.add(key)
     return rebuilt, shifted
 
 
-def _section_anchor(view: dict, location: tuple, index: int, left: set) -> tuple | None:
+def _section_anchor(view: dict, location: tuple, index: int, left: set) -> _SectionAnchor | None:
     """How to recognise the section a card sat in, or None outside one.
 
     What the section was, not what it was called: how many sections the
@@ -715,14 +733,14 @@ def _section_anchor(view: dict, location: tuple, index: int, left: set) -> tuple
     if isinstance(at, int) and 0 <= at < len(sections):
         section = sections[at]
         if isinstance(section, dict):
-            settings = {key: value for key, value in section.items() if key != "cards"}
+            settings = _section_marks(view)[at]
             for position, card in enumerate(section.get("cards") or []):
                 if (location, position) in left:
                     continue
                 survivors.append(card)
                 if position < index:
                     before += 1
-    return (len(sections), settings, tuple(survivors), before)
+    return _SectionAnchor(len(sections), settings, tuple(survivors), before)
 
 
 def _view_type(view: dict) -> str:
@@ -996,19 +1014,31 @@ def _present(config: dict, containers=card_containers) -> list[Slot]:
 
 
 def _step(
-    slot: Slot, action: str, expect: Any, payload: Any, label: str, kind: str = "card"
+    slot: Slot,
+    action: str,
+    expect: Any,
+    payload: Any,
+    label: str,
+    kind: str = "card",
+    location: tuple | None = None,
+    parked: bool = False,
 ) -> UndoStep:
-    """A card or badge step at the place `slot` names."""
+    """A card or badge step at the place `slot` names.
+
+    `location` overrides `slot`'s own for a parked insertion (decision
+    26), which goes to the view's `cards:` instead of where it sat.
+    """
     return UndoStep(
         action=action,
         kind=kind,
         view_path=slot.view.get("path"),
         view_index=slot.view_index,
-        location=slot.location,
+        location=slot.location if location is None else location,
         index=slot.index,
         expect=expect,
         payload=payload,
         label=label,
+        parked=parked,
     )
 
 
@@ -1073,7 +1103,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # of on itself.
     if type_changed:
         return UndoPlan(blocked=_VIEW_TYPE_REFUSAL)
-    rebuilt, shifted = _section_drift(before, after, current)
+    rebuilt, shifted = _section_drift(old_views, new_views, now_views)
     if rebuilt:
         return UndoPlan(blocked=_SECTIONS_REBUILT_REFUSAL)
 
@@ -1137,7 +1167,11 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 
     steps: list[UndoStep] = []
     steps.extend(setting_steps)
-    parked: list[tuple[int, tuple, int, UndoStep]] = []
+    # The step's own `view_index` and `index` already carry `old_slot`'s -
+    # only its original `location` does not, overwritten below to
+    # `("cards",)` for `apply_undo` to find and to show, so that is the
+    # one piece this still has to keep beside the step for sorting.
+    parked: list[tuple[tuple, UndoStep]] = []
 
     def put_back(old_slot: Slot, label: str) -> None:
         """Insert where the card came from, or park it in "Imported cards"."""
@@ -1149,21 +1183,16 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         # an ordinary insert into it rests on.
         parked.append(
             (
-                old_slot.view_index,
                 old_slot.location,
-                old_slot.index,
-                UndoStep(
-                    action="insert",
-                    kind="card",
-                    view_path=old_slot.view.get("path"),
-                    view_index=old_slot.view_index,
-                    location=("cards",),
-                    index=old_slot.index,
-                    expect=None,
-                    payload=old_slot.card,
+                _step(
+                    old_slot,
+                    "insert",
+                    None,
+                    old_slot.card,
                     # The card that is parked, not the one taken out: the
                     # dialog lists what somebody has to go and place.
-                    label=_describe(old_slot.card),
+                    _describe(old_slot.card),
+                    location=("cards",),
                     parked=True,
                 ),
             )
@@ -1201,7 +1230,11 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 
     # In the order of the places they came from - view, section, card -
     # whichever of the three tables in decision 15 produced them.
-    steps.extend(item[3] for item in sorted(parked, key=lambda item: item[:3]))
+    def parked_order(item: tuple[tuple, UndoStep]) -> tuple:
+        location, step = item
+        return (step.view_index, location, step.index)
+
+    steps.extend(step for _location, step in sorted(parked, key=parked_order))
 
     # Badges (GitHub #29): the same table as cards, counted in their own
     # world. The same badge on several views is ordinary - 6 of 23 on the

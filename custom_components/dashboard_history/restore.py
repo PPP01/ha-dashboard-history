@@ -237,7 +237,11 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
             f"(path={item.view_path!r}, index={item.view_index})"
         )
 
-    if not _anchor_holds(view, item):
+    # Resolved once: `_anchored_index` re-walks the section's survivors,
+    # and the answer is both the proof that the section still holds and
+    # the index the card goes back to, needed again below.
+    anchored = None if item.anchor is None else _anchored_index(view, item)
+    if item.anchor is not None and anchored is None:
         raise LookupError(
             "the section this card sat in is not the one standing at that "
             "place now, so putting it back would file it in a stranger"
@@ -252,7 +256,7 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
 
     # A card that sat in a section goes back beside the neighbour it had;
     # the old index is only right while nothing was added in front.
-    index = item.index if item.anchor is None else _anchored_index(view, item)
+    index = item.index if anchored is None else anchored
     cards.insert(min(index, len(cards)), copy.deepcopy(item.payload))
     return result
 
@@ -275,13 +279,15 @@ def parks(config: dict, item: RemovedItem) -> bool:
     return not _anchor_holds(view, item) or _cards_at(view, item.location) is None
 
 
-def park(config: dict, item: RemovedItem) -> dict:
-    """Return a new configuration with `item` at the end of "Imported cards"."""
-    result = copy.deepcopy(config)
-    view = _find_view(result.get("views") or [], item)
+def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
+    """The `cards:` list `item` is parked into, created when the view has
+    none - shared by `park` and the parked branch of `apply_undo`, which
+    put the same item at the end of the same "Imported cards" list.
+    """
+    view = _find_view(views, item)
     if view is None:
         raise LookupError(
-            f"the view this card belonged to no longer exists "
+            f"the view {item.label} belonged to no longer exists "
             f"(path={item.view_path!r}, index={item.view_index})"
         )
     cards = view.get("cards")
@@ -290,10 +296,16 @@ def park(config: dict, item: RemovedItem) -> dict:
         view["cards"] = cards
     elif not isinstance(cards, list):
         raise LookupError(
-            "the view this card belonged to holds something other than a "
-            "card list under cards:, so nothing is parked there"
+            f"the view {item.label} belonged to holds something other "
+            f"than a card list under cards:, so nothing is parked there"
         )
-    cards.append(copy.deepcopy(item.payload))
+    return cards
+
+
+def park(config: dict, item: RemovedItem) -> dict:
+    """Return a new configuration with `item` at the end of "Imported cards"."""
+    result = copy.deepcopy(config)
+    _park_for(result.get("views") or [], item).append(copy.deepcopy(item.payload))
     return result
 
 
@@ -466,26 +478,7 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
     # Assistant shows "Imported cards", after anything that has a real
     # index in the same list, so no append shifts an ordinary insert.
     for step in (s for s in inserts if s.parked):
-        view = _find_view(views, step)
-        if view is None:
-            raise LookupError(
-                f"the view {step.label} belonged to no longer exists "
-                f"(path={step.view_path!r}, index={step.view_index})"
-            )
-        cards = view.get("cards")
-        if cards is None:
-            # A sections view usually has no `cards:` at all, and YAML's
-            # `cards: null` arrives as None - neither is a refusal.
-            cards = []
-            view["cards"] = cards
-        elif not isinstance(cards, list):
-            # Something that is not a card list: replacing it would throw
-            # away whatever it is, which is not this undo's to decide.
-            raise LookupError(
-                f"the view {step.label} belonged to holds something other "
-                f"than a card list under cards:, so nothing is parked there"
-            )
-        cards.append(copy.deepcopy(step.payload))
+        _park_for(views, step).append(copy.deepcopy(step.payload))
     # An empty list also goes when this undo brought the whole strategy
     # block back: that is the undo of Home Assistant's "take control",
     # which swapped the strategy for views, and the state before it had
