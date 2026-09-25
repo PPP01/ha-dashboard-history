@@ -403,3 +403,68 @@ def test_an_already_undone_change_dumps_identically_too():
     result = restore.apply_undo(current, plan)
     assert result == current
     assert yaml_io.dump(result) == yaml_io.dump(current)
+
+
+# -- parking (decision 26, GitHub #30) ---------------------------------
+
+BETT = {"type": "tile", "entity": "light.x", "name": "Bett"}
+BETTLAMPE = {"type": "tile", "entity": "light.x", "name": "Bettlampe"}
+
+
+def _parked(payload, path="home"):
+    return analyze.UndoStep(
+        action="insert", kind="card", view_path=path, view_index=0,
+        location=("cards",), index=0, expect=None, payload=payload,
+        label=analyze._describe(payload), parked=True,
+    )
+
+
+def test_a_parked_card_creates_the_imported_cards_list():
+    before = _sections({"cards": [BETT]})
+    after = _sections({"cards": [BETTLAMPE]})
+    current = _sections({"column_span": 2, "cards": []}, {"cards": [BETTLAMPE]})
+    plan = analyze.plan_undo(before, after, current)
+    result = restore.apply_undo(current, plan)
+    view = result["views"][0]
+    assert view["cards"] == [BETT]
+    assert view["sections"][1]["cards"] == []
+    assert "cards" not in current["views"][0]
+
+
+def test_a_parked_card_replaces_a_null_cards_value():
+    current = _sections({"cards": []})
+    current["views"][0]["cards"] = None
+    result = restore.apply_undo(current, analyze.UndoPlan(blocked=None, steps=(_parked(A),)))
+    assert result["views"][0]["cards"] == [A]
+
+
+def test_parked_cards_come_after_an_ordinary_insert_into_the_same_list():
+    current = _sections({"cards": []})
+    current["views"][0]["cards"] = [C]
+    ordinary = analyze.UndoStep(
+        action="insert", kind="card", view_path="home", view_index=0,
+        location=("cards",), index=0, expect=None, payload=A, label="tile: light.a",
+    )
+    plan = analyze.UndoPlan(blocked=None, steps=(_parked(B), ordinary))
+    result = restore.apply_undo(current, plan)
+    assert result["views"][0]["cards"] == [A, C, B]
+
+
+def test_parked_cards_keep_the_order_the_plan_gives():
+    current = _sections({"cards": []})
+    plan = analyze.UndoPlan(blocked=None, steps=(_parked(A), _parked(B)))
+    assert restore.apply_undo(current, plan)["views"][0]["cards"] == [A, B]
+
+
+def test_a_parked_card_does_not_replace_something_that_is_no_list():
+    current = _sections({"cards": []})
+    current["views"][0]["cards"] = {"oops": 1}
+    plan = analyze.UndoPlan(blocked=None, steps=(_parked(A),))
+    with pytest.raises(LookupError, match="something other than a card list"):
+        restore.apply_undo(current, plan)
+
+
+def test_a_parked_card_refuses_when_its_view_is_gone():
+    plan = analyze.UndoPlan(blocked=None, steps=(_parked(A, path="elsewhere"),))
+    with pytest.raises(LookupError, match="no longer exists"):
+        restore.apply_undo(_sections({"cards": []}), plan)

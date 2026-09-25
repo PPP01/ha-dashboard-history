@@ -309,10 +309,8 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
             )
         del views[views.index(view)]
 
-    for step in sorted(
-        (step for step in plan.steps if step.action == "insert"),
-        key=lambda s: s.index,
-    ):
+    inserts = [step for step in plan.steps if step.action == "insert"]
+    for step in sorted((s for s in inserts if not s.parked), key=lambda s: s.index):
         if step.kind == "view":
             views.insert(min(step.index, len(views)), copy.deepcopy(step.payload))
             continue
@@ -323,4 +321,28 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
         # their neighbourhood is; `equals_state_before` in the caller is
         # what tells the truth about the whole state.
         cards.insert(min(step.index, len(cards)), copy.deepcopy(step.payload))
+    # Parked last and appended, never indexed: they go where Home
+    # Assistant shows "Imported cards", after anything that has a real
+    # index in the same list, so no append shifts an ordinary insert.
+    for step in (s for s in inserts if s.parked):
+        view = _find_view(views, step)
+        if view is None:
+            raise LookupError(
+                f"the view {step.label} belonged to no longer exists "
+                f"(path={step.view_path!r}, index={step.view_index})"
+            )
+        cards = view.get("cards")
+        if cards is None:
+            # A sections view usually has no `cards:` at all, and YAML's
+            # `cards: null` arrives as None - neither is a refusal.
+            cards = []
+            view["cards"] = cards
+        elif not isinstance(cards, list):
+            # Something that is not a card list: replacing it would throw
+            # away whatever it is, which is not this undo's to decide.
+            raise LookupError(
+                f"the view {step.label} belonged to holds something other "
+                f"than a card list under cards:, so nothing is parked there"
+            )
+        cards.append(copy.deepcopy(step.payload))
     return result
