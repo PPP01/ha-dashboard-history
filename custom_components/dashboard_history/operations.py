@@ -47,9 +47,9 @@ _LOGGER = logging.getLogger(__name__)
 # between preview and confirmation, or a service call did not allow it.
 # A button without an asterisk must not park a card (decision 26).
 _UNEXPECTED_PARKING = (
-    "this would place cards in \"Imported cards\" that were not expected - "
-    "either the dashboard changed since the preview, or parking was not "
-    "allowed for this call - so nothing was written"
+    "what this would place in \"Imported cards\" no longer matches what "
+    "was shown - either the dashboard changed since the preview, or "
+    "parking was not allowed for this call - so nothing was written"
 )
 
 
@@ -934,14 +934,14 @@ async def async_undo_change(
     `preview` decides whether the diff and the plain-language
     explanation are computed at all. The row that asks this on every
     expansion - `_expand` in the panel, not a click on "Undo this
-    change" - only ever reads `available`, `reason` and
-    `equals_state_before`, and leaves `preview` at its default of
-    `False`. Building the other two means two YAML dumps of a state
-    that can run into the thousands of cards, and issue #5 measured
-    that at 613 ms against 118 ms without them on a dashboard the size
-    of "Standard" - cost every row expansion paid for a dialog that may
-    never open. Only the confirmation dialog sets `preview: True`, on
-    the one call it makes before the write.
+    change" - only ever reads `available`, `reason`,
+    `equals_state_before` and `parked`, and leaves `preview` at its
+    default of `False`. Building the other two means two YAML dumps of a
+    state that can run into the thousands of cards, and issue #5
+    measured that at 613 ms against 118 ms without them on a dashboard
+    the size of "Standard" - cost every row expansion paid for a dialog
+    that may never open. Only the confirmation dialog sets
+    `preview: True`, on the one call it makes before the write.
 
     `confirm` needs the live state dumped regardless of `preview`:
     `_keep_the_live_state` below wants that text to snapshot what is
