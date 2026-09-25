@@ -1728,3 +1728,147 @@ def test_a_badge_without_a_type_is_described_as_a_badge():
     """Review focus 5: the old form `{entity: …}`, three of them on the bank."""
     assert analyze._describe({"entity": "sun.sun"}, fallback="badge") == "badge: sun.sun"
     assert analyze._describe({"entity": "sun.sun"}) == "card: sun.sun"
+
+
+def test_an_added_badge_is_undone():
+    old = {"views": [{"path": "home", "badges": []}]}
+    new = {"views": [{"path": "home", "badges": [SUN]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is None
+    assert [(s.action, s.kind, s.location, s.index) for s in plan.steps] == [
+        ("remove", "badge", ("badges",), 0)
+    ]
+
+
+def test_a_badge_copied_on_other_views_is_found_in_its_own():
+    """Review focus 1: stage 2 of the uniqueness question."""
+    b = {"path": "b", "badges": [SUN]}
+    c = {"path": "c", "badges": [SUN]}
+    old = {"views": [{"path": "a", "badges": []}, b, c]}
+    new = {"views": [{"path": "a", "badges": [SUN]}, b, c]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is None
+    assert [(s.action, s.view_path) for s in plan.steps] == [("remove", "a")]
+
+
+def test_a_badge_moved_elsewhere_since_is_found_there():
+    old = {"views": [{"path": "a", "badges": []}, {"path": "b", "badges": []}]}
+    new = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": []}]}
+    current = {"views": [{"path": "a", "badges": []}, {"path": "b", "badges": [SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert [(s.action, s.view_path) for s in plan.steps] == [("remove", "b")]
+
+
+def test_two_identical_badges_in_one_view_refuse():
+    old = {"views": [{"path": "a", "badges": []}]}
+    new = {"views": [{"path": "a", "badges": [SUN]}]}
+    current = {"views": [{"path": "a", "badges": [SUN, SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked == (
+        "2 badges now look exactly like the badge entity: sun.sun, "
+        "so an exact undo cannot tell them apart"
+    )
+
+
+def test_an_edited_badge_changed_again_refuses():
+    shown = {**SUN, "show_name": False}
+    old = {"views": [{"path": "a", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": [shown]}]}
+    current = {"views": [{"path": "a", "badges": [{**SUN, "show_name": True}]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert "changed again after this" in plan.blocked
+
+
+def test_a_deleted_badge_with_an_untouched_copy_elsewhere_is_put_back():
+    """Review focus 2: the copy on "b" never left, so it is not this one back."""
+    old = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": []}, {"path": "b", "badges": [SUN]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert [(s.action, s.kind, s.view_path) for s in plan.steps] == [
+        ("insert", "badge", "a")
+    ]
+
+
+def test_a_deleted_badge_added_back_since_is_left_alone():
+    old = {"views": [{"path": "a", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": []}]}
+    current = {"views": [{"path": "a", "badges": [SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked is None
+    assert plan.steps == ()
+
+
+def test_a_badge_only_change_passes_the_early_gate():
+    old = {"views": [{"path": "a", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": [MOON]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked != "this change did not alter any cards"
+
+
+def test_the_sole_surviving_badge_of_several_is_not_proof():
+    """Review focus 6: the change left two, one went since - the one on
+    "a" stood there before and is not the change's to take away."""
+    old = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": []}]}
+    new = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": [SUN]}]}
+    current = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": []}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked == (
+        "the badge entity: sun.sun was changed again after this, so there "
+        "is no exact version left to put back"
+    )
+
+
+def test_one_of_two_badges_gone_from_a_view_refuses():
+    """Review focus 6, within one view: which of the two the change added is lost."""
+    old = {"views": [{"path": "a", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": [SUN, SUN]}]}
+    current = {"views": [{"path": "a", "badges": [SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert "changed again after this" in plan.blocked
+
+
+def test_a_badge_copy_added_elsewhere_since_is_not_the_deleted_one_back():
+    """Review focus 7: back is counted only in the view it was deleted from."""
+    old = {"views": [{"path": "a", "badges": [SUN]}, {"path": "c", "badges": []}]}
+    new = {"views": [{"path": "a", "badges": []}, {"path": "c", "badges": []}]}
+    current = {"views": [{"path": "a", "badges": []}, {"path": "c", "badges": [SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert [(s.action, s.view_path) for s in plan.steps] == [("insert", "a")]
+
+
+def test_one_badge_back_of_two_deleted_refuses():
+    """Review focus 7: one back does not settle both, and which place it
+    took is not in the states - [MOON, SUN] now could be either SUN."""
+    old = {"views": [{"path": "a", "badges": [SUN, MOON, SUN]}]}
+    new = {"views": [{"path": "a", "badges": [MOON]}]}
+    current = {"views": [{"path": "a", "badges": [MOON, SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked == (
+        "only some of the copies of the badge entity: sun.sun this change "
+        "deleted are back, so an exact undo cannot tell which are missing"
+    )
+
+
+def test_two_badges_deleted_and_both_back_is_nothing_to_do():
+    old = {"views": [{"path": "a", "badges": [SUN, SUN]}]}
+    new = {"views": [{"path": "a", "badges": []}]}
+    current = {"views": [{"path": "a", "badges": [SUN, SUN]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked is None and plan.steps == ()
+
+
+def test_a_badge_back_in_one_view_does_not_count_for_another():
+    """Review focus 7: deleted from "a" and "b", added back only on "a"."""
+    old = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": []}, {"path": "b", "badges": []}]}
+    current = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": []}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert [(s.action, s.view_path) for s in plan.steps] == [("insert", "b")]
+
+
+def test_a_badge_of_a_pathless_view_that_moved_refuses():
+    old = {"views": [{"badges": []}, {"path": "z", "cards": []}]}
+    new = {"views": [{"badges": [SUN]}, {"path": "z", "cards": []}]}
+    current = {"views": [{"path": "new"}, {"badges": [SUN]}, {"path": "z", "cards": []}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked == analyze._POSITION_REFUSAL

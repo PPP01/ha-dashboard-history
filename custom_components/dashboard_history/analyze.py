@@ -994,11 +994,13 @@ def _present(config: dict, containers=card_containers) -> list[Slot]:
     return _slots(config, {key for key, _ in _views_by_key(config)}, containers)
 
 
-def _step(slot: Slot, action: str, expect: Any, payload: Any, label: str) -> UndoStep:
-    """A card step at the place `slot` names."""
+def _step(
+    slot: Slot, action: str, expect: Any, payload: Any, label: str, kind: str = "card"
+) -> UndoStep:
+    """A card or badge step at the place `slot` names."""
     return UndoStep(
         action=action,
-        kind="card",
+        kind=kind,
         view_path=slot.view.get("path"),
         view_index=slot.view_index,
         location=slot.location,
@@ -1025,6 +1027,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     almost every real history.
     """
     matching = match_cards(before, after)
+    badge_matching = match_badges(before, after)
     old_views = dict(_views_by_key(before))
     new_views = dict(_views_by_key(after))
     now_views = dict(_views_by_key(current))
@@ -1044,6 +1047,10 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         or matching.added
         or matching.edited
         or matching.moved
+        or badge_matching.removed
+        or badge_matching.added
+        or badge_matching.edited
+        or badge_matching.moved
         or view_work
         or type_changed
         or settings
@@ -1194,6 +1201,92 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # In the order of the places they came from - view, section, card -
     # whichever of the three tables in decision 15 produced them.
     steps.extend(item[3] for item in sorted(parked, key=lambda item: item[:3]))
+
+    # Badges (GitHub #29): the same table as cards, counted in their own
+    # world. The same badge on several views is ordinary - 6 of 23 on the
+    # installation this was built against - so "exactly once" is asked in
+    # two stages: on the whole dashboard, and failing that, in the view
+    # the change left it in. Both answer decision 15's question; the
+    # second only asks it where the badge was left. And both compare
+    # today with what the change left: one standing today, out of several
+    # the change left, may be the one that was there before it.
+    badge_now: dict[str, list[Slot]] = {}
+    for slot in _present(current, badge_containers):
+        badge_now.setdefault(fingerprint(slot.card), []).append(slot)
+    badge_then: dict[str, list[Slot]] = {}
+    for slot in _present(after, badge_containers):
+        badge_then.setdefault(fingerprint(slot.card), []).append(slot)
+
+    def sole_badge(badge: Any, view_key: Any, label: str) -> tuple[Slot | None, str | None]:
+        mark = fingerprint(badge)
+        found, left = badge_now.get(mark, []), badge_then.get(mark, [])
+        if len(found) == 1 and len(left) == 1:
+            return found[0], None
+        mine = [slot for slot in found if slot.view_key == view_key]
+        mine_then = [slot for slot in left if slot.view_key == view_key]
+        if len(mine) == 1 and len(mine_then) == 1:
+            return mine[0], None
+        if len(mine) < len(mine_then):
+            return None, (
+                f"{label} was changed again after this, so there is no "
+                f"exact version left to put back"
+            )
+        # Here `mine` holds at least two: the view has as many as the
+        # change left, or more, and not exactly one of each.
+        return None, (
+            f"{len(mine)} badges now look exactly like {label}, "
+            f"so an exact undo cannot tell them apart"
+        )
+
+    # Counted, not looked up, and only in the badge's own view: a copy on
+    # another view - there all along or added since - is not this badge
+    # coming back. `came_back` is how many more stand there now than the
+    # change left; `deleted` how many alike it took from that view.
+    deleted: dict[tuple[str, Any], int] = {}
+    for old_slot in badge_matching.removed:
+        place = (fingerprint(old_slot.card), old_slot.view_key)
+        deleted[place] = deleted.get(place, 0) + 1
+
+    def came_back(mark: str, view_key: Any) -> int:
+        def mine(slots: list[Slot]) -> int:
+            return sum(1 for slot in slots if slot.view_key == view_key)
+
+        return mine(badge_now.get(mark, [])) - mine(badge_then.get(mark, []))
+
+    def badge_label(badge: Any) -> str:
+        return f"the badge {_describe(badge, fallback='badge')}"
+
+    for old_slot, new_slot in (*badge_matching.edited, *badge_matching.moved):
+        label = badge_label(new_slot.card)
+        here, why = sole_badge(new_slot.card, new_slot.view_key, label)
+        if here is None:
+            return UndoPlan(blocked=why)
+        steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
+        steps.append(_step(old_slot, "insert", None, old_slot.card, label, kind="badge"))
+
+    for new_slot in badge_matching.added:
+        label = badge_label(new_slot.card)
+        here, why = sole_badge(new_slot.card, new_slot.view_key, label)
+        if here is None:
+            return UndoPlan(blocked=why)
+        steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
+
+    for old_slot in badge_matching.removed:
+        label = badge_label(old_slot.card)
+        mark = fingerprint(old_slot.card)
+        back = came_back(mark, old_slot.view_key)
+        if back >= deleted[(mark, old_slot.view_key)]:
+            continue
+        if back > 0:
+            # Some of several alike are back: which places they took is
+            # not in the states, and picking one would be a guess.
+            return UndoPlan(
+                blocked=(
+                    f"only some of the copies of {label} this change deleted "
+                    f"are back, so an exact undo cannot tell which are missing"
+                )
+            )
+        steps.append(_step(old_slot, "insert", None, old_slot.card, label, kind="badge"))
 
     # Whole views, which `match_cards` leaves out on purpose: a view that
     # only one state has is one line in the history, not one per card on
