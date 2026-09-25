@@ -30,7 +30,7 @@ Every row below was empirically verified against the live codebase.
 | **Section renamed** | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
 | **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
 | **Section added** | Cards shown as added | **Refuses** if this change added it; later additions park cards (see below) | — | **Works** |
-| **Sections rearranged after the change**, card edited or deleted by it | Correct | **Parks** the card in "Imported cards" — button shows *Undo this change\** | Parks in "Imported cards" | **Works** |
+| **Sections rearranged after the change**, card edited or deleted by it | Correct | **Parks** the card in "Imported cards" — button shows *Undo this change\** — except sections alike in every setting, which still write silently to the old index (see below) | Parks in "Imported cards", same exception | **Works** |
 | **Titled sections reordered** | Correct | **Refuses** | **Refuses** | **Works** |
 | **Untitled sections swapped**, their settings differ (e.g. `column_span`) | `N moved` (cards, not the section) | **Refuses** (settings mismatch caught) | Refuses (nothing missing) | **Works** |
 | **Untitled sections swapped**, settings otherwise identical | `N moved` (cards, not the section) | **Exact** — nothing distinguishable is left behind either way | Refuses (nothing missing) | **Works** |
@@ -215,8 +215,11 @@ its own as long as the sections beside it are untouched. Where the
 sections were only added or reordered *after* the change, the two rows
 on adding and reordering do not apply: a card that has to go back into
 a section there is parked in "Imported cards" instead of refused (the
-top table's *Sections rearranged after the change* row). A whole
-section is never parked — it has no parking place of its own.
+top table's *Sections rearranged after the change* row) — except when
+the sections involved agree on every setting, the residual gap
+discussed below, which still writes to the old index silently instead
+of parking. A whole section is never parked — it has no parking place
+of its own.
 
 **Writes something nobody asked for — four cases, plus one that was closed.**
 A fifth was found on 2026-09-23, the sharpest of the five: unlike the
