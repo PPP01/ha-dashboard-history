@@ -1570,3 +1570,79 @@ def test_many_changed_templates_are_capped_like_cards():
     [group] = analyze.explain_change(old, new).groups
     assert len(group.entries) == analyze._ENTRY_LIMIT
     assert group.more == 20 - analyze._ENTRY_LIMIT
+
+
+def _steps(plan):
+    return [(s.kind, s.action, s.location, s.payload, s.expect_absent) for s in plan.steps]
+
+
+def test_a_setting_only_change_is_undoable():
+    before = {"strategy": {"type": "original-states"}}
+    after = {"strategy": {"type": "original-states", "show_clock_card": False}}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert _steps(plan) == [
+        ("dashboard_setting", "unset", ("strategy", "show_clock_card"), None, False)
+    ]
+
+
+def test_a_setting_changed_again_refuses():
+    before = {"views": [{"path": "home", "icon": "a"}]}
+    after = {"views": [{"path": "home", "icon": "b"}]}
+    current = {"views": [{"path": "home", "icon": "c"}]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked == 'the setting "icon" was changed again after this'
+
+
+def test_a_setting_already_back_is_skipped_and_its_neighbour_is_not():
+    # Two settings, only one of them back. A plan that ignored settings
+    # altogether would pass a single-setting version of this test too.
+    before = {"views": [{"path": "home", "icon": "a", "theme": "x"}]}
+    after = {"views": [{"path": "home", "icon": "b", "theme": "y"}]}
+    current = {"views": [{"path": "home", "icon": "a", "theme": "y"}]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert _steps(plan) == [("view_setting", "set", ("theme",), "x", False)]
+
+
+def test_another_key_of_the_same_block_changed_since_stays_exact():
+    """Review focus 1."""
+    before = {"strategy": {"type": "x"}}
+    after = {"strategy": {"type": "x", "a": 1}}
+    current = {"strategy": {"type": "x", "a": 1, "b": 2}}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert _steps(plan) == [("dashboard_setting", "unset", ("strategy", "a"), None, False)]
+
+
+def test_a_block_removed_since_refuses_rather_than_half_rebuilt():
+    """Review focus 2."""
+    before = {"strategy": {"type": "x", "a": 1}}
+    after = {"strategy": {"type": "x"}}
+    current = {}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked == 'the setting "strategy.a" no longer has the "strategy" block it belonged to'
+
+
+def test_setting_back_a_removed_setting_writes_its_old_value():
+    before = {"views": [{"path": "home", "theme": None}]}
+    after = {"views": [{"path": "home"}]}
+    plan = analyze.plan_undo(before, after, after)
+    assert _steps(plan) == [("view_setting", "set", ("theme",), None, True)]
+
+
+def test_a_setting_of_a_view_gone_since_refuses():
+    before = {"views": [{"path": "home", "icon": "a"}]}
+    after = {"views": [{"path": "home", "icon": "b"}]}
+    plan = analyze.plan_undo(before, after, {"views": []})
+    assert plan.blocked is not None
+    assert "no longer on the dashboard" in plan.blocked
+
+
+def test_a_refused_card_refuses_the_setting_with_it():
+    before = {"views": [{"path": "home", "icon": "a", "cards": []}]}
+    after = {"views": [{"path": "home", "icon": "b", "cards": [A]}]}
+    current = {"views": [{"path": "home", "icon": "b", "cards": [A, A]}]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()

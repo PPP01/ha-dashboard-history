@@ -292,6 +292,9 @@ class UndoStep:
     # "Imported cards" - instead of to an index. `location` is then
     # ("cards",), and `index` only keeps the order of the old place.
     parked: bool = False
+    # For a setting step: that nothing is expected at this address today.
+    # Its own field because None is a value (`theme: null`), not absence.
+    expect_absent: bool = False
 
 
 @dataclass(frozen=True)
@@ -793,6 +796,21 @@ def setting_changes(old: dict, new: dict) -> list[SettingChange]:
     return out
 
 
+def _setting_at(container: dict, path: tuple) -> tuple[Any, str | None]:
+    """The value at `path`, or `_ABSENT`; and the block that vanished, if one did.
+
+    Every ancestor of a leaf was a dict in both states of the change -
+    `_setting_leaves` only descends through dicts on both sides. So one
+    that is missing or no dict today was removed since, and writing the
+    leaf would rebuild half a block nobody asked for.
+    """
+    for depth, key in enumerate(path[:-1]):
+        container = container.get(key, _ABSENT) if isinstance(container, dict) else _ABSENT
+        if not isinstance(container, dict):
+            return _ABSENT, ".".join(str(k) for k in path[: depth + 1])
+    return container.get(path[-1], _ABSENT), None
+
+
 _POSITION_REFUSAL = (
     "a view without a URL path sits somewhere else now, so an exact undo "
     "cannot tell which view is which"
@@ -996,6 +1014,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # the cards, false of the view.
     pairs = ((before, after), (before, current), (after, current))
     type_changed = any(_view_type_changed(one, other) for one, other in pairs)
+    settings = setting_changes(before, after)
     if not (
         matching.removed
         or matching.added
@@ -1003,6 +1022,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         or matching.moved
         or view_work
         or type_changed
+        or settings
     ):
         return UndoPlan(blocked="this change did not alter any cards")
 
@@ -1025,6 +1045,46 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     if rebuilt:
         return UndoPlan(blocked=_SECTIONS_REBUILT_REFUSAL)
 
+    setting_steps: list[UndoStep] = []
+    for change in settings:
+        label = ".".join(str(key) for key in change.path)
+        if change.view_key is None:
+            container = current
+        else:
+            container = now_views.get(change.view_key)
+            if container is None:
+                name = _view_name(old_views[change.view_key], change.view_key)
+                return UndoPlan(
+                    blocked=f'the view "{name}" is no longer on the dashboard, '
+                    f'so its setting "{label}" cannot be taken back'
+                )
+        standing, vanished = _setting_at(container, change.path)
+        if vanished is not None:
+            return UndoPlan(
+                blocked=f'the setting "{label}" no longer has the "{vanished}" '
+                f"block it belonged to"
+            )
+        if _same(standing, change.old):
+            # Already back, the way a deleted card that returned is.
+            continue
+        if not _same(standing, change.new):
+            return UndoPlan(blocked=f'the setting "{label}" was changed again after this')
+        key = change.view_key
+        setting_steps.append(
+            UndoStep(
+                action="unset" if change.old is _ABSENT else "set",
+                kind="dashboard_setting" if key is None else "view_setting",
+                view_path=None if key is None else container.get("path"),
+                view_index=key[1] if isinstance(key, tuple) else -1,
+                location=change.path,
+                index=0,
+                expect=None if change.new is _ABSENT else change.new,
+                payload=None if change.old is _ABSENT else change.old,
+                label=f'setting "{label}"',
+                expect_absent=change.new is _ABSENT,
+            )
+        )
+
     by_mark: dict[str, list[Slot]] = {}
     for slot in _present(current):
         by_mark.setdefault(fingerprint(slot.card), []).append(slot)
@@ -1044,6 +1104,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         )
 
     steps: list[UndoStep] = []
+    steps.extend(setting_steps)
     parked: list[tuple[int, tuple, int, UndoStep]] = []
 
     def put_back(old_slot: Slot, label: str) -> None:
