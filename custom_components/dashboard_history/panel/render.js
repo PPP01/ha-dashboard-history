@@ -44,7 +44,7 @@ export const renderPlain = (explanation, heading) => {
     .map(
       (group) => `
       <div class="view">
-        <strong>In the view ${escape(group.view)}</strong>
+        <strong>${group.scope === "dashboard" ? "On the dashboard itself" : `In the view ${escape(group.view)}`}</strong>
         <ul>
           ${group.entries
             .map(

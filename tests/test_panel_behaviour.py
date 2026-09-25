@@ -7923,3 +7923,30 @@ def test_a_parking_put_back_says_so_and_sends_it_back(parked_put_back):
     # needs the same guard as the undo - and the same sentence.
     assert "Imported cards" in parked_put_back["bodyHtml"]
     assert parked_put_back["confirmExtra"]["expected_parked"] == ["tile: light.c"]
+
+
+_PLAIN_DASHBOARD_GROUP = """
+const render = await import(new URL("./panel/render.js", %(url)s).href);
+const html = render.renderPlain({
+  groups: [
+    { scope: "dashboard", view: "dashboard", more: 0,
+      entries: [{ kind: "added", text: "the setting \\"strategy.show_clock_card\\" was set to false" }] },
+    { scope: "view", view: "Home", more: 0,
+      entries: [{ kind: "added", text: "tile: light.b was added" }] },
+  ],
+  note: "",
+}, "What changed");
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def plain_dashboard_group(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "plain_dashboard_group", _PLAIN_DASHBOARD_GROUP)
+
+
+def test_a_dashboard_group_is_not_headed_as_a_view(plain_dashboard_group):
+    html = plain_dashboard_group["html"]
+    assert "On the dashboard itself" in html
+    assert "In the view dashboard" not in html
+    assert "In the view Home" in html

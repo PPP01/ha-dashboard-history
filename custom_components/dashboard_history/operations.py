@@ -371,6 +371,7 @@ def _as_dict(explanation) -> dict:
                     for entry in group.entries
                 ],
                 "more": group.more,
+                "scope": group.scope,
             }
             for group in explanation.groups
         ],

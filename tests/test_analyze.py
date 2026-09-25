@@ -439,12 +439,15 @@ def test_a_long_list_is_capped_and_says_how_much_it_hides():
 
 
 def test_an_unnameable_change_never_claims_that_nothing_changed():
-    # A renamed view: the cards match exactly, so there is nothing to
-    # name. The summary sits directly above a diff that plainly shows the
-    # difference - claiming "nothing changed" there would be refuted at a
-    # glance, which is worse than having no summary at all.
-    old = {"views": [{"path": "home", "title": "Home", "cards": [A]}]}
-    new = {"views": [{"path": "home", "title": "Warm", "cards": [A]}]}
+    # A section setting: the cards match exactly, and a section has no
+    # name to address a setting by (GitHub #28 leaves sections out on
+    # purpose). The summary sits directly above a diff that plainly shows
+    # the difference - claiming "nothing changed" there would be refuted
+    # at a glance, which is worse than having no summary at all.
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"type": "grid", "cards": [A]}]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"type": "grid", "column_span": 2, "cards": [A]}]}]}
     result = analyze.explain_change(old, new)
     assert result.groups == []
     assert "see the details" in result.note
@@ -1508,3 +1511,62 @@ def test_views_only_one_state_has_carry_no_settings():
     old = {"views": [{"path": "a", "icon": "x"}]}
     new = {"views": [{"path": "b", "icon": "y"}]}
     assert _changes(old, new) == []
+
+
+def _texts(explanation):
+    return [(g.scope, g.view, [e.text for e in g.entries]) for g in explanation.groups]
+
+
+def test_a_strategy_setting_is_explained_on_the_dashboard_itself():
+    old = {"strategy": {"type": "original-states"}}
+    new = {"strategy": {"type": "original-states", "show_clock_card": False}}
+    assert _texts(analyze.explain_change(old, new)) == [
+        ("dashboard", "dashboard",
+         ['the setting "strategy.show_clock_card" was set to false'])
+    ]
+
+
+def test_view_settings_come_before_cards_and_after_a_conversion():
+    old = {"views": [{"path": "home", "icon": "mdi:home", "cards": [A]}]}
+    new = {"views": [{"path": "home", "type": "sections", "icon": "mdi:sofa",
+                      "cards": [A, B], "sections": [{"type": "grid", "cards": []}]}]}
+    [(scope, view, texts)] = _texts(analyze.explain_change(old, new))
+    assert scope == "view"
+    assert texts == [
+        'the view "home" was converted from masonry to sections',
+        'the setting "icon" was changed from "mdi:home" to "mdi:sofa"',
+        "tile: light.b was added",
+    ]
+
+
+def test_a_removed_setting_and_a_block_value_are_worded_without_a_value():
+    old = {"views": [{"path": "home", "theme": "dark", "visible": [{"user": "a"}]}]}
+    new = {"views": [{"path": "home", "visible": []}]}
+    [(_, _, texts)] = _texts(analyze.explain_change(old, new))
+    assert texts == [
+        'the setting "theme" was removed',
+        'the setting "visible" was changed',
+    ]
+
+
+def test_the_future_tense_says_where_a_setting_goes():
+    current = {"views": [{"path": "home", "max_columns": 4}]}
+    target = {"views": [{"path": "home", "max_columns": 3}]}
+    [(_, _, texts)] = _texts(analyze.explain_effect(current, target))
+    assert texts == ['the setting "max_columns" goes back to 3']
+
+
+def test_a_removed_setting_counts_as_something_removed():
+    """The reassurance "Nothing on this dashboard is deleted" must not follow."""
+    current = {"views": [{"path": "home", "theme": "dark"}]}
+    target = {"views": [{"path": "home"}]}
+    assert analyze.explain_effect(current, target).note == ""
+
+
+def test_many_changed_templates_are_capped_like_cards():
+    """Review focus 5."""
+    old = {"button_card_templates": {f"t{i}": {"color": "red"} for i in range(20)}}
+    new = {"button_card_templates": {f"t{i}": {"color": "blue"} for i in range(20)}}
+    [group] = analyze.explain_change(old, new).groups
+    assert len(group.entries) == analyze._ENTRY_LIMIT
+    assert group.more == 20 - analyze._ENTRY_LIMIT

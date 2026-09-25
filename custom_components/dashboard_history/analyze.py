@@ -83,11 +83,17 @@ class Entry:
 
 @dataclass(frozen=True)
 class ViewChanges:
-    """What changed in one view. `more` is what the cap left out."""
+    """What changed in one view, or on the dashboard itself.
+
+    `more` is what the cap left out. `scope` is "dashboard" for the one
+    group about the dashboard's own settings (GitHub #28), which has no
+    view to be headed by.
+    """
 
     view: str
     entries: list[Entry]
     more: int = 0
+    scope: str = "view" 
 
 
 @dataclass(frozen=True)
@@ -1218,6 +1224,11 @@ def summarize(old: dict, new: dict) -> Summary:
 # Card labels already carry their type ("tile: light.b"), so they need no
 # quotes. A view label is a bare name and does.
 _PAST = {
+    ("setting", "added"): 'the setting "{label}" was set to {new}',
+    ("setting", "added_bare"): 'the setting "{label}" was set',
+    ("setting", "removed"): 'the setting "{label}" was removed',
+    ("setting", "edited"): 'the setting "{label}" was changed from {old} to {new}',
+    ("setting", "edited_bare"): 'the setting "{label}" was changed',
     ("card", "removed"): "{label} was deleted",
     ("card", "added"): "{label} was added",
     ("card", "edited"): "{label} was changed",
@@ -1229,6 +1240,11 @@ _PAST = {
 }
 
 _FUTURE = {
+    ("setting", "added"): 'the setting "{label}" comes back as {new}',
+    ("setting", "added_bare"): 'the setting "{label}" comes back',
+    ("setting", "removed"): 'the setting "{label}" will be removed',
+    ("setting", "edited"): 'the setting "{label}" goes back to {new}',
+    ("setting", "edited_bare"): 'the setting "{label}" goes back to how it was',
     ("card", "removed"): "{label} will be deleted",
     ("card", "added"): "{label} comes back",
     ("card", "edited"): "{label} goes back to how it was",
@@ -1263,18 +1279,59 @@ def _entry(words: dict, kind: str, what: str, label: str) -> Entry:
     )
 
 
-def _capped(name: str, entries: list[Entry]) -> ViewChanges:
+def _value_text(value: Any) -> str | None:
+    """A setting's value as a sentence can carry it, or None if it cannot.
+
+    Short things only. A list or a block is left to the diff below the
+    sentence, which shows it exactly (decision 11).
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return f'"{_shorten(value)}"'
+    return None
+
+
+def _setting_entry(words: dict, change: SettingChange) -> Entry:
+    label = ".".join(str(key) for key in change.path)
+    if change.new is _ABSENT:
+        kind, key, values = "removed", "removed", {}
+    elif change.old is _ABSENT:
+        new = _value_text(change.new)
+        kind = "added"
+        key, values = ("added", {"new": new}) if new is not None else ("added_bare", {})
+    else:
+        old, new = _value_text(change.old), _value_text(change.new)
+        kind = "edited"
+        if new is not None and (old is not None or words is _FUTURE):
+            key, values = "edited", {"old": old, "new": new}
+        else:
+            key, values = "edited_bare", {}
+    return Entry(
+        kind=kind,
+        what="setting",
+        label=label,
+        text=words[("setting", key)].format(label=label, **values),
+    )
+
+
+def _capped(name: str, entries: list[Entry], scope: str = "view") -> ViewChanges:
     """Keep the list readable, and say how much it hides.
 
     Silently truncating would be the one thing this project must not do:
     a summary that omits without saying so is worse than a long one.
     """
     if len(entries) <= _ENTRY_LIMIT:
-        return ViewChanges(view=name, entries=entries)
+        return ViewChanges(view=name, entries=entries, scope=scope)
     return ViewChanges(
         view=name,
         entries=entries[:_ENTRY_LIMIT],
         more=len(entries) - _ENTRY_LIMIT,
+        scope=scope,
     )
 
 
@@ -1323,6 +1380,9 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
     leaving them to guess.
     """
     matching = match_cards(old, new)
+    settings_by_view: dict[Any, list[Entry]] = {}
+    for change in setting_changes(old, new):
+        settings_by_view.setdefault(change.view_key, []).append(_setting_entry(words, change))
     by_view: dict[Any, list[Entry]] = {}
 
     def add(key: Any, entry: Entry) -> None:
@@ -1356,6 +1416,13 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
     groups: list[ViewChanges] = []
     removed_anything = False
 
+    own = settings_by_view.get(None, [])
+    if own:
+        # The dashboard's own settings have no view to sit under, and a
+        # heading "In the view dashboard" would invent one.
+        groups.append(_capped("dashboard", own, scope="dashboard"))
+        removed_anything = any(entry.kind == "removed" for entry in own)
+
     for key, old_view in _views_by_key(old):
         name = _view_name(old_view, key)
         if key not in new_views:
@@ -1363,7 +1430,7 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
             groups.append(ViewChanges(name, [_entry(words, "removed", "view", name)]))
             removed_anything = True
             continue
-        entries = list(by_view.get(key, []))
+        entries = [*settings_by_view.get(key, []), *by_view.get(key, [])]
         new_view = new_views[key]
         old_type, new_type = _view_type(old_view), _view_type(new_view)
         if old_type != new_type:
