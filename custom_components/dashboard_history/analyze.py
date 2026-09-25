@@ -118,6 +118,18 @@ def card_containers(view: dict) -> Iterator[tuple[tuple, list]]:
             yield ("sections", index, "cards"), section["cards"]
 
 
+def badge_containers(view: dict) -> Iterator[tuple[tuple, list]]:
+    """Yield a view's own badge list, with the path that locates it.
+
+    Only the list beside `cards:` (GitHub #29). A badge inside a card -
+    a heading card's own `badges:` - is part of that card's body and
+    travels with it, so it is never looked at here.
+    """
+    if isinstance(view.get("badges"), list):
+        yield ("badges",), view["badges"]
+
+
+
 _LABEL_LIMIT = 48
 
 
@@ -202,7 +214,7 @@ def _weak_key(card: Any, depth: int = 0):
     return None
 
 
-def _describe(card: Any, depth: int = 0) -> str:
+def _describe(card: Any, depth: int = 0, fallback: str = "card") -> str:
     """A short human-readable label for a card.
 
     The field order differs from _weak_key on purpose: identity wants the
@@ -210,7 +222,7 @@ def _describe(card: Any, depth: int = 0) -> str:
     """
     if not isinstance(card, dict):
         return str(card)
-    kind = str(card.get("type", "card"))
+    kind = str(card.get("type", fallback))
     for field in ("title", "name", "heading", "entity"):
         if card.get(field):
             return f"{kind}: {_shorten(str(card[field]))}"
@@ -316,13 +328,13 @@ class UndoPlan:
         return tuple(step.label for step in self.steps if step.parked)
 
 
-def _slots(config: dict, keys: set) -> list[Slot]:
-    """Every card of the named views, in the order they are written."""
+def _slots(config: dict, keys: set, containers=card_containers) -> list[Slot]:
+    """Every item of the named views, in the order they are written."""
     found: list[Slot] = []
     for view_index, (key, view) in enumerate(_views_by_key(config)):
         if key not in keys:
             continue
-        for location, cards in card_containers(view):
+        for location, cards in containers(view):
             for index, card in enumerate(cards):
                 found.append(Slot(key, view_index, view, location, index, card))
     return found
@@ -376,8 +388,13 @@ def _place(slot: Slot) -> tuple:
     return (slot.view_key, slot.location)
 
 
-def match_cards(old: dict, new: dict) -> Matching:
+def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
     """Pair the cards of two states of one dashboard.
+
+    `containers` says which lists are paired: cards by default, a view's
+    badges for `match_badges`. Never both at once - a badge and a card
+    can be byte-identical (`type: entity` is both), and one run over
+    both would read a deleted card as "moved into the badges".
 
     Four passes, and their order carries the whole correctness.
 
@@ -413,8 +430,8 @@ def match_cards(old: dict, new: dict) -> Matching:
     old_keys = {key for key, _ in _views_by_key(old)}
     new_keys = {key for key, _ in _views_by_key(new)}
     common = old_keys & new_keys
-    old_open = _slots(old, common)
-    new_open = _slots(new, common)
+    old_open = _slots(old, common, containers)
+    new_open = _slots(new, common, containers)
 
     taken_old: set[int] = set()
     taken_new: set[int] = set()
@@ -479,6 +496,12 @@ def match_cards(old: dict, new: dict) -> Matching:
         moved=[(old_open[i], new_open[j]) for i, j in displaced]
         + _reordered(old_open, new_open, in_place, edited),
     )
+
+
+def match_badges(old: dict, new: dict) -> Matching:
+    """Pair the badges of two states - the same four passes, in their own world."""
+    return match_cards(old, new, containers=badge_containers)
+
 
 
 def _reordered(
@@ -966,9 +989,9 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     return items
 
 
-def _present(config: dict) -> list[Slot]:
-    """Every card of a state, with the place it sits in."""
-    return _slots(config, {key for key, _ in _views_by_key(config)})
+def _present(config: dict, containers=card_containers) -> list[Slot]:
+    """Every item of a state, with the place it sits in."""
+    return _slots(config, {key for key, _ in _views_by_key(config)}, containers)
 
 
 def _step(slot: Slot, action: str, expect: Any, payload: Any, label: str) -> UndoStep:

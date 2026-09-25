@@ -1670,3 +1670,61 @@ def test_one_becoming_true_is_a_change_not_metadata():
     old = {"views": [{"path": "home", "max_columns": 1}]}
     new = {"views": [{"path": "home", "max_columns": True}]}
     assert analyze.change_message("dash", old, new, "save") == "dash: 1 setting changed"
+
+
+# -- badges (GitHub #29) ----------------------------------------------------
+
+SUN = {"type": "entity", "entity": "sun.sun"}
+MOON = {"type": "entity", "entity": "sensor.moon"}
+
+
+def _badge_matching(old, new):
+    m = analyze.match_badges(old, new)
+    return (
+        [s.card for s in m.removed],
+        [s.card for s in m.added],
+        [(o.card, n.card) for o, n in m.edited],
+        [(o.view_key, n.view_key) for o, n in m.moved],
+    )
+
+
+def test_an_added_badge_is_found():
+    old = {"views": [{"path": "home", "badges": []}]}
+    new = {"views": [{"path": "home", "badges": [SUN]}]}
+    assert _badge_matching(old, new) == ([], [SUN], [], [])
+
+
+def test_an_edited_badge_is_an_edit():
+    shown = {**SUN, "show_name": False}
+    old = {"views": [{"path": "home", "badges": [SUN]}]}
+    new = {"views": [{"path": "home", "badges": [shown]}]}
+    assert _badge_matching(old, new) == ([], [], [(SUN, shown)], [])
+
+
+def test_a_badge_moved_to_another_view_is_a_move():
+    old = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": []}]}
+    new = {"views": [{"path": "a", "badges": []}, {"path": "b", "badges": [SUN]}]}
+    assert _badge_matching(old, new) == ([], [], [], [("a", "b")])
+
+
+def test_a_badge_and_an_identical_card_never_meet():
+    """Review focus 3: `type: entity` is a card and a badge."""
+    old = {"views": [{"path": "home", "cards": [SUN], "badges": []}]}
+    new = {"views": [{"path": "home", "cards": [], "badges": [SUN]}]}
+    cards = analyze.match_cards(old, new)
+    badges = analyze.match_badges(old, new)
+    assert [s.card for s in cards.removed] == [SUN] and not cards.moved
+    assert [s.card for s in badges.added] == [SUN] and not badges.moved
+
+
+def test_badges_are_invisible_to_match_cards():
+    old = {"views": [{"path": "home", "cards": [A], "badges": []}]}
+    new = {"views": [{"path": "home", "cards": [A], "badges": [SUN]}]}
+    m = analyze.match_cards(old, new)
+    assert not (m.removed or m.added or m.edited or m.moved)
+
+
+def test_a_badge_without_a_type_is_described_as_a_badge():
+    """Review focus 5: the old form `{entity: …}`, three of them on the bank."""
+    assert analyze._describe({"entity": "sun.sun"}, fallback="badge") == "badge: sun.sun"
+    assert analyze._describe({"entity": "sun.sun"}) == "card: sun.sun"
