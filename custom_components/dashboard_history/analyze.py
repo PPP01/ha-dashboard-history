@@ -69,6 +69,7 @@ class Summary:
     moved: int = 0
     views_added: int = 0
     views_removed: int = 0
+    settings: int = 0
 
 
 @dataclass(frozen=True)
@@ -1279,6 +1280,7 @@ def summarize(old: dict, new: dict) -> Summary:
         moved=len(matching.moved),
         views_added=len(new_keys - old_keys),
         views_removed=len(old_keys - new_keys),
+        settings=len(setting_changes(old, new)),
     )
 
 
@@ -1586,7 +1588,9 @@ def change_message(
     """
     if old is None:
         return f"{name}: first recorded state"
-    if old == new:
+    # `==` alone says 1 is True; the commit this message goes with does
+    # not, and neither does the explanation shown under it.
+    if old == new and fingerprint(old) == fingerprint(new):
         # Not the cards, then. Something *about* the dashboard changed -
         # its title, its icon - or nothing did and only metadata was
         # recorded for the first time. Either way: no outside change.
@@ -1604,6 +1608,9 @@ def change_message(
         f"{counts.added} added" if counts.added else "",
         f"{counts.edited} edited" if counts.edited else "",
         f"{counts.moved} moved" if counts.moved else "",
+        f"{counts.settings} setting{'s' if counts.settings != 1 else ''} changed"
+        if counts.settings
+        else "",
     ]
     return f"{name}: " + (", ".join(part for part in parts if part) or "no card changes")
 
@@ -1613,7 +1620,9 @@ def change_message(
 # writes just above and `_views` beside it; the two live next to each
 # other on purpose, because a word added there and not here would read
 # as "this is not a generated message at all".
-_COUNT = re.compile(r"^\d+ (?:views? (?:added|removed)|added|removed|edited|moved)$")
+_COUNT = re.compile(
+    r"^\d+ (?:views? (?:added|removed)|added|removed|edited|moved|settings? changed)$"
+)
 
 
 def _counts(message: str) -> list[str] | None:

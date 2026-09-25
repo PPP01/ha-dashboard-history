@@ -24,6 +24,7 @@ from .analyze import (
     explain_change,
     explain_effect,
     find_removed,
+    fingerprint,
     message_adds,
     plan_undo,
 )
@@ -912,6 +913,17 @@ async def async_restore_state(
     return result
 
 
+def _same_state(one: dict, other: dict) -> bool:
+    """`==`, but not blind to 1 against True (GitHub #28).
+
+    Since named settings are undoable, `max_columns: 1` and
+    `max_columns: true` are two states an undo moves between; Python's
+    `==` calls them equal. `fingerprint` only runs when `==` already
+    said yes, so the common case costs what it did.
+    """
+    return one == other and fingerprint(one) == fingerprint(other)
+
+
 async def async_undo_change(
     hass: HomeAssistant,
     store: HistoryStore,
@@ -995,7 +1007,7 @@ async def async_undo_change(
     except LookupError as err:
         return {"available": False, "reason": str(err)}
 
-    if result == current:
+    if await hass.async_add_executor_job(_same_state, result, current):
         # What an empty diff used to stand for - `if not diff` - without
         # dumping either side to find out. Not a general equivalence:
         # Python dict equality does not see key order, `dump()` does,
@@ -1006,8 +1018,10 @@ async def async_undo_change(
         # either applies no step at all, in which case `result` is a
         # plain `copy.deepcopy(current)` and the two dump identically
         # by construction, or every step moves a whole card or view
-        # verbatim - never merges or rebuilds one - so nothing gets a
-        # key order `current` did not already give it. See
+        # verbatim, or writes one setting's value back, which may give
+        # back a key `current` lacked but never reorders what `current`
+        # has - never merges or rebuilds one - so nothing gets a key
+        # order `current` did not already give it. See
         # test_restore.py for the case checked directly against
         # `apply_undo`.
         return {"available": False, "reason": "this change is already taken back"}
@@ -1016,6 +1030,7 @@ async def async_undo_change(
     if confirm and expected_parked is not None and parked != list(expected_parked):
         return {"available": False, "reason": _UNEXPECTED_PARKING}
 
+    equals = await hass.async_add_executor_job(_same_state, result, before_state)
     answer = {
         "available": True,
         "applied": False,
@@ -1023,7 +1038,7 @@ async def async_undo_change(
         # change" button where it would write exactly the same thing.
         # Worked out here because it is a comparison, and a comparison in
         # the panel is logic in the panel.
-        "equals_state_before": result == before_state,
+        "equals_state_before": equals,
         "parked": parked,
     }
 

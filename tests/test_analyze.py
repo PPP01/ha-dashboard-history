@@ -1646,3 +1646,27 @@ def test_a_refused_card_refuses_the_setting_with_it():
     plan = analyze.plan_undo(before, after, current)
     assert plan.blocked is not None
     assert plan.steps == ()
+
+
+def test_a_setting_only_save_is_counted_in_the_history_line():
+    old = {"strategy": {"type": "x"}}
+    new = {"strategy": {"type": "x", "show_clock_card": False}}
+    assert analyze.change_message("dash", old, new, "save") == "dash: 1 setting changed"
+
+
+def test_settings_are_counted_after_cards():
+    old = {"views": [{"path": "home", "icon": "a", "theme": "x", "cards": []}]}
+    new = {"views": [{"path": "home", "icon": "b", "cards": [A]}]}
+    assert analyze.change_message("dash", old, new, "save") == "dash: 1 added, 2 settings changed"
+
+
+def test_a_settings_part_parses_and_is_no_addition():
+    assert not analyze.message_adds("dash: 2 settings changed")
+    assert analyze.message_adds("dash: 1 added, 1 setting changed")
+
+
+def test_one_becoming_true_is_a_change_not_metadata():
+    """Review focus 3: `old == new` says yes, the commit says no."""
+    old = {"views": [{"path": "home", "max_columns": 1}]}
+    new = {"views": [{"path": "home", "max_columns": True}]}
+    assert analyze.change_message("dash", old, new, "save") == "dash: 1 setting changed"
