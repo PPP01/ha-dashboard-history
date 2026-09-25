@@ -688,3 +688,42 @@ def test_one_is_not_what_an_undo_planned_as_true():
     plan = analyze.plan_undo(before, after, after)
     with pytest.raises(LookupError, match="max_columns"):
         restore.apply_undo({"views": [{"path": "home", "max_columns": 1}]}, plan)
+
+
+# -- badges (GitHub #29) -------------------------------------------------
+
+SUN = {"type": "entity", "entity": "sun.sun"}
+MOON = {"type": "entity", "entity": "sensor.moon"}
+
+
+def test_a_deleted_badge_comes_back_beside_an_untouched_copy():
+    old = {"views": [{"path": "a", "badges": [SUN]}, {"path": "b", "badges": [SUN]}]}
+    new = {"views": [{"path": "a", "badges": []}, {"path": "b", "badges": [SUN]}]}
+    assert restore.apply_undo(new, analyze.plan_undo(old, new, new)) == old
+
+
+def test_a_badge_goes_into_a_view_that_has_no_badges_list():
+    """Review focus 4."""
+    old = {"views": [{"path": "a", "badges": [SUN]}]}
+    new = {"views": [{"path": "a"}]}
+    assert restore.apply_undo(new, analyze.plan_undo(old, new, new)) == old
+
+
+def test_an_edited_badge_goes_back_to_its_place():
+    shown = {**SUN, "show_name": False}
+    old = {"views": [{"path": "a", "badges": [SUN, MOON]}]}
+    new = {"views": [{"path": "a", "badges": [shown, MOON]}]}
+    assert restore.apply_undo(new, analyze.plan_undo(old, new, new)) == old
+
+
+def test_a_badge_and_a_card_undone_together():
+    old = {"views": [{"path": "a", "cards": [A], "badges": []}]}
+    new = {"views": [{"path": "a", "cards": [], "badges": [SUN]}]}
+    assert restore.apply_undo(new, analyze.plan_undo(old, new, new)) == old
+
+
+def test_a_badge_written_as_a_bare_string_is_undone():
+    """The old form `- sun.sun`: no weak key, so read as delete + add - still exact."""
+    old = {"views": [{"path": "a", "badges": ["sun.sun"]}]}
+    new = {"views": [{"path": "a", "badges": ["sensor.moon"]}]}
+    assert restore.apply_undo(new, analyze.plan_undo(old, new, new)) == old

@@ -313,6 +313,21 @@ def _cards_for(views: list, step: UndoStep) -> list:
         )
     return cards
 
+def _badges_for(views: list, step: UndoStep) -> list:
+    """The badge list a step points at, created when the view has none."""
+    view = _find_view(views, step)
+    if view is None:
+        raise LookupError(
+            f"the view {step.label} belonged to no longer exists "
+            f"(path={step.view_path!r}, index={step.view_index})"
+        )
+    badges = view.get("badges")
+    if not isinstance(badges, list):
+        badges = []
+        view["badges"] = badges
+    return badges
+
+
 
 def _standing_there(items: list, step: UndoStep) -> None:
     """Refuse unless the expected thing is still at that index."""
@@ -416,7 +431,7 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
     # back to the index, and removing a view first would move it.
     removals = [step for step in plan.steps if step.action == "remove"]
     for step in sorted(
-        (step for step in removals if step.kind == "card"), key=lambda s: -s.index
+        (step for step in removals if step.kind in ("card", "badge")), key=lambda s: -s.index
     ):
         cards = _cards_for(views, step)
         _standing_there(cards, step)
@@ -440,7 +455,7 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
         if step.kind == "view":
             views.insert(min(step.index, len(views)), copy.deepcopy(step.payload))
             continue
-        cards = _cards_for(views, step)
+        cards = _badges_for(views, step) if step.kind == "badge" else _cards_for(views, step)
         # If the list has shrunk since, append rather than fail - the same
         # trade `reinsert` makes, and for the same reason. What this undo
         # proves is that the change's own cards are untouched, never that
