@@ -11,7 +11,8 @@ old state to render a preview against.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # Only needed for the annotations, and `from __future__ import
@@ -321,6 +322,53 @@ def _standing_there(items: list, step: UndoStep) -> None:
         )
 
 
+_SETTING_KINDS = ("dashboard_setting", "view_setting")
+
+
+def _same_value(one: Any, other: Any) -> bool:
+    """Equal as settings. Not `==`: that says 1 is True and 0 is False.
+
+    The same comparison as `analyze.fingerprint`, written out here for
+    the reason at the top of this file.
+    """
+    return json.dumps(one, sort_keys=True, default=str) == json.dumps(
+        other, sort_keys=True, default=str
+    )
+
+
+def _apply_setting(config: dict, views: list, step: UndoStep) -> None:
+    """Write one named setting back, if it still holds what was planned.
+
+    The lines that walk a path live here rather than being imported from
+    `analyze`, for the reason at the top of this file.
+    """
+    if step.kind == "dashboard_setting":
+        container = config
+    else:
+        container = _find_view(views, step)
+        if container is None:
+            raise LookupError(
+                f"the view {step.label} belonged to no longer exists "
+                f"(path={step.view_path!r}, index={step.view_index})"
+            )
+    *parents, leaf = step.location
+    for key in parents:
+        container = container.get(key) if isinstance(container, dict) else None
+        if not isinstance(container, dict):
+            raise LookupError(f"{step.label} no longer has the block it belonged to")
+    present = leaf in container
+    if step.expect_absent:
+        holds = not present
+    else:
+        holds = present and _same_value(container[leaf], step.expect)
+    if not holds:
+        raise LookupError(f"{step.label} is no longer what the undo was planned against")
+    if step.action == "unset":
+        del container[leaf]
+    else:
+        container[leaf] = copy.deepcopy(step.payload)
+
+
 def apply_undo(config: dict, plan: UndoPlan) -> dict:
     """Return a new configuration with an undo plan applied.
 
@@ -346,6 +394,10 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
     if plan.blocked is not None:
         raise LookupError(plan.blocked)
     result = copy.deepcopy(config)
+    # Remembered so the bookkeeping list below never ends up in a
+    # configuration that had no `views:` - a strategy dashboard has none,
+    # and an undo of one of its settings must not add an empty list.
+    had_views = "views" in result
     views = result.setdefault("views", [])
 
     if _paths_share(result):
@@ -353,6 +405,12 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
             "two views of this dashboard share one URL path, so a path "
             "does not identify a view here and no step is applied"
         )
+
+    # Settings first: they shift no index, and a pathless view is found
+    # by its position, which removing a whole view would move.
+    for step in plan.steps:
+        if step.kind in _SETTING_KINDS:
+            _apply_setting(result, views, step)
 
     # Cards before views: a card step finds its view by path, but falls
     # back to the index, and removing a view first would move it.
@@ -413,4 +471,18 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
                 f"than a card list under cards:, so nothing is parked there"
             )
         cards.append(copy.deepcopy(step.payload))
+    # An empty list also goes when this undo brought the whole strategy
+    # block back: that is the undo of Home Assistant's "take control",
+    # which swapped the strategy for views, and the state before it had
+    # no `views:`. Only then - a `views: []` that already stood beside a
+    # strategy is left alone, or an undo with nothing to do would still
+    # find something to write.
+    restores_strategy = any(
+        step.kind == "dashboard_setting"
+        and step.action == "set"
+        and tuple(step.location) == ("strategy",)
+        for step in plan.steps
+    )
+    if not views and (not had_views or restores_strategy):
+        del result["views"]
     return result

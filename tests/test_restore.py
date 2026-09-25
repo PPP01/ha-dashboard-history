@@ -590,3 +590,101 @@ def test_two_cards_of_one_section_go_back_one_after_the_other():
     second = next(i for i in analyze.find_removed(old, now) if i.payload == C)
     assert restore.parks(now, second) is False
     assert restore.reinsert(now, second)["views"][0]["sections"][0]["cards"] == [A, B, C]
+
+
+# -- named settings (GitHub #28) ---------------------------------------
+
+
+def test_a_strategy_key_is_taken_back():
+    before = {"strategy": {"type": "x"}}
+    after = {"strategy": {"type": "x", "show_clock_card": False}}
+    plan = analyze.plan_undo(before, after, after)
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_a_view_setting_goes_back_and_the_input_stays():
+    before = {"views": [{"path": "home", "icon": "a"}]}
+    after = {"views": [{"path": "home", "icon": "b"}]}
+    plan = analyze.plan_undo(before, after, after)
+    assert restore.apply_undo(after, plan) == before
+    assert after == {"views": [{"path": "home", "icon": "b"}]}
+
+
+def test_a_removed_null_setting_comes_back_as_null():
+    before = {"views": [{"path": "home", "theme": None}]}
+    after = {"views": [{"path": "home"}]}
+    plan = analyze.plan_undo(before, after, after)
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_a_setting_changed_between_plan_and_write_refuses():
+    before = {"views": [{"path": "home", "icon": "a"}]}
+    after = {"views": [{"path": "home", "icon": "b"}]}
+    plan = analyze.plan_undo(before, after, after)
+    with pytest.raises(LookupError, match="icon"):
+        restore.apply_undo({"views": [{"path": "home", "icon": "c"}]}, plan)
+
+
+def test_a_setting_of_a_pathless_view_survives_a_neighbour_being_removed():
+    """Review focus 4: settings going first breaks nothing.
+
+    It does not prove the order necessary - a view *before* a pathless
+    one can never be removed in the same undo, because that would change
+    the pathless view's key and `_positions_lie` refuses first.
+    """
+    before = {"views": [{"title": "Home", "icon": "a"}]}
+    after = {"views": [{"title": "Home", "icon": "b"}, {"path": "neu", "cards": []}]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_an_undo_adds_no_views_key_to_a_strategy_dashboard():
+    """A strategy dashboard has no `views:`; the undo must not invent one.
+
+    `apply_undo` used `result.setdefault("views", [])` for its own
+    bookkeeping, which wrote `views: []` into every configuration that
+    had none - harmless while only card changes were undoable, since a
+    dashboard without views has no cards. With settings it is the one
+    kind of dashboard issue #28 is about.
+    """
+    before = {"strategy": {"type": "x"}}
+    after = {"strategy": {"type": "x", "show_clock_card": False}}
+    result = restore.apply_undo(after, analyze.plan_undo(before, after, after))
+    assert "views" not in result
+
+
+def test_undoing_a_takeover_gives_the_strategy_dashboard_back_whole():
+    """Home Assistant's "take control" replaces `strategy` with `views`.
+
+    Undone, the strategy comes back and the views go - and the list they
+    leave empty goes too, or the result carries a `views: []` the state
+    before never had.
+    """
+    before = {"strategy": {"type": "original-states"}}
+    after = {"views": [{"path": "home", "cards": [A]}]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_an_empty_views_list_beside_a_strategy_stays_when_the_strategy_did_not_come_back():
+    """Only the undo of a takeover drops `views: []`, not every undo near one.
+
+    Home Assistant does not write this pair itself, but the API accepts
+    it. Dropping the list anyway would make an undo with nothing left to
+    do still differ from today's state, and offer to write that.
+    """
+    before = {"strategy": {"type": "x"}, "views": []}
+    after = {"strategy": {"type": "x", "show_clock_card": False}, "views": []}
+    assert restore.apply_undo(after, analyze.plan_undo(before, after, after)) == before
+    assert restore.apply_undo(before, analyze.plan_undo(before, after, before)) == before
+
+
+def test_one_is_not_what_an_undo_planned_as_true():
+    """Review focus 3, at the last moment: 1 == True in Python."""
+    before = {"views": [{"path": "home", "max_columns": 3}]}
+    after = {"views": [{"path": "home", "max_columns": True}]}
+    plan = analyze.plan_undo(before, after, after)
+    with pytest.raises(LookupError, match="max_columns"):
+        restore.apply_undo({"views": [{"path": "home", "max_columns": 1}]}, plan)
