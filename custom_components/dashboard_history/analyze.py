@@ -715,6 +715,78 @@ def _view_type_changed(one: dict, other: dict) -> bool:
     )
 
 
+# "Not there", as opposed to None - which YAML writes as `null` and which
+# is a value like any other (`theme: null`).
+_ABSENT = object()
+
+# Everything on a view that is not a named setting: the card world, the
+# badges (a list without names, vorhaben N), the view's own key, and its
+# layout (a conversion, #32 - refused, never written back as a setting).
+_NOT_VIEW_SETTINGS = frozenset({"cards", "sections", "badges", "path", "type"})
+
+
+@dataclass(frozen=True)
+class SettingChange:
+    """One named setting that differs between two states (GitHub #28).
+
+    Named, not positional: `strategy.show_clock_card` means the same thing
+    in every state, so it needs no matching - its path is its identity.
+    `view_key` is None for the dashboard itself.
+    """
+
+    view_key: Any
+    path: tuple
+    old: Any
+    new: Any
+
+
+def _same(one: Any, other: Any) -> bool:
+    """Equal as settings. Not `==`: that says 1 is True and 0 is False."""
+    if one is _ABSENT or other is _ABSENT:
+        return one is other
+    return fingerprint(one) == fingerprint(other)
+
+
+def _setting_leaves(view_key: Any, old: Any, new: Any, path: tuple, out: list) -> None:
+    """Descend where both sides are dicts; everywhere else is a leaf."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        for key in sorted(set(old) | set(new), key=str):
+            _setting_leaves(
+                view_key, old.get(key, _ABSENT), new.get(key, _ABSENT), path + (key,), out
+            )
+        return
+    if not _same(old, new):
+        out.append(SettingChange(view_key, path, old, new))
+
+
+def setting_changes(old: dict, new: dict) -> list[SettingChange]:
+    """Every named setting that differs, dashboard first, then per view.
+
+    Only views both states have under the same key: a view that only one
+    of them has is one line of its own, and its settings go with it.
+    """
+    out: list[SettingChange] = []
+    _setting_leaves(
+        None,
+        {key: value for key, value in old.items() if key != "views"},
+        {key: value for key, value in new.items() if key != "views"},
+        (),
+        out,
+    )
+    new_views = dict(_views_by_key(new))
+    for key, old_view in _views_by_key(old):
+        if key not in new_views:
+            continue
+        _setting_leaves(
+            key,
+            {k: v for k, v in old_view.items() if k not in _NOT_VIEW_SETTINGS},
+            {k: v for k, v in new_views[key].items() if k not in _NOT_VIEW_SETTINGS},
+            (),
+            out,
+        )
+    return out
+
+
 _POSITION_REFUSAL = (
     "a view without a URL path sits somewhere else now, so an exact undo "
     "cannot tell which view is which"

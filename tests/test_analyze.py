@@ -1444,3 +1444,67 @@ def test_an_empty_section_that_was_deleted_is_not_offered_back():
     new = _with_sections({"title": None, "cards": [card]})
 
     assert analyze.find_removed(old, new) == []
+
+
+# -- named settings (GitHub #28) ------------------------------------------
+
+
+def _changes(old, new):
+    return [
+        (c.view_key, c.path,
+         "ABSENT" if c.old is analyze._ABSENT else c.old,
+         "ABSENT" if c.new is analyze._ABSENT else c.new)
+        for c in analyze.setting_changes(old, new)
+    ]
+
+
+def test_a_key_added_under_strategy_is_one_leaf():
+    old = {"strategy": {"type": "original-states"}}
+    new = {"strategy": {"type": "original-states", "show_clock_card": False}}
+    assert _changes(old, new) == [(None, ("strategy", "show_clock_card"), "ABSENT", False)]
+
+
+def test_a_whole_block_that_appears_is_the_leaf():
+    assert _changes({}, {"strategy": {"type": "x"}}) == [
+        (None, ("strategy",), "ABSENT", {"type": "x"})
+    ]
+
+
+def test_a_view_setting_is_keyed_by_its_view():
+    old = {"views": [{"path": "home", "icon": "mdi:home", "cards": [A]}]}
+    new = {"views": [{"path": "home", "icon": "mdi:sofa", "cards": [A, B]}]}
+    assert _changes(old, new) == [("home", ("icon",), "mdi:home", "mdi:sofa")]
+
+
+def test_cards_sections_badges_path_type_and_views_are_not_settings():
+    old = {"views": [{"path": "home", "type": "masonry", "cards": [], "badges": []}]}
+    new = {"views": [{"path": "home", "type": "sections", "sections": [],
+                      "cards": [A], "badges": [{"entity": "sun.sun"}]}]}
+    assert _changes(old, new) == []
+
+
+def test_a_list_valued_setting_is_compared_whole():
+    old = {"views": [{"path": "home", "visible": [{"user": "a"}]}]}
+    new = {"views": [{"path": "home", "visible": [{"user": "a"}, {"user": "b"}]}]}
+    assert _changes(old, new) == [
+        ("home", ("visible",), [{"user": "a"}], [{"user": "a"}, {"user": "b"}])
+    ]
+
+
+def test_null_is_not_absent():
+    old = {"views": [{"path": "home"}]}
+    new = {"views": [{"path": "home", "theme": None}]}
+    assert _changes(old, new) == [("home", ("theme",), "ABSENT", None)]
+
+
+def test_one_and_true_are_different_settings():
+    """Review focus 3: Python says 1 == True; a setting does not."""
+    old = {"views": [{"path": "home", "max_columns": 1}]}
+    new = {"views": [{"path": "home", "max_columns": True}]}
+    assert _changes(old, new) == [("home", ("max_columns",), 1, True)]
+
+
+def test_views_only_one_state_has_carry_no_settings():
+    old = {"views": [{"path": "a", "icon": "x"}]}
+    new = {"views": [{"path": "b", "icon": "y"}]}
+    assert _changes(old, new) == []
