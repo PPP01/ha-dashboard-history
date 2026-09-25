@@ -26,6 +26,7 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | J | Der Vergleichsmodus — ersetzt das zeilenweise Put-back aus Entscheidung 15 durch den Vergleich zweier frei gewählter Stände | Erledigt | `plans/2026-09-12-vergleichsmodus.md` |
 | K | Schmal bedienbar — HA-Hamburger, mitwandernde Seitenspalte, Master/Detail unterhalb eines schmalen Bandes | Erledigt | `plans/2026-09-17-schmal-bedienbar.md` |
 | L | Parken statt verweigern — Karten, deren Section sich seit der Änderung verschoben hat, landen in HAs »Imported cards« (Entscheidung 26, Issue #30) | **Spec vom Nutzer bestätigt am 2026-09-24, Plan bereit** | `specs/2026-09-24-importierte-karten-design.md`, `plans/2026-09-24-importierte-karten.md` |
+| M | Benannte Einstellungen des Dashboards und der Ansichten gezielt zurücknehmen (Issue #28) | **Spec vom Nutzer bestätigt am 2026-09-24, Plan bereit**; setzt L voraus | `specs/2026-09-24-einstellungen-zuruecknehmen-design.md`, `plans/2026-09-24-einstellungen-zuruecknehmen.md` |
 
 ## Laufzeit `forget` (Versionsmarken in einem Zug)
 
