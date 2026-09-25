@@ -719,6 +719,16 @@ def test_a_card_moved_into_a_named_section_says_its_name():
     assert said == ['tile: light.b was moved to the section "Heizung"']
 
 
+def test_a_card_moved_out_of_a_section_names_imported_cards():
+    """Where Home Assistant shows it, in its own words (decision 26)."""
+    old = {"views": [{"path": "home", "type": "sections", "cards": [],
+                      "sections": [{"cards": [A, B]}]}]}
+    new = {"views": [{"path": "home", "type": "sections", "cards": [A],
+                      "sections": [{"cards": [B]}]}]}
+    texts = [e.text for g in analyze.explain_change(old, new).groups for e in g.entries]
+    assert texts == ['tile: light.a was moved to the "Imported cards" area']
+
+
 # ---------------------------------------------------------- planning an undo
 def test_an_edited_card_can_be_taken_back():
     old = {"type": "tile", "entity": "light.a", "name": "Bett"}

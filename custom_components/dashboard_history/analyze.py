@@ -1186,6 +1186,10 @@ def _section_name(slot: Slot) -> str:
     beats inventing one.
     """
     if slot.location[:1] != ("sections",):
+        if slot.location == ("cards",) and _view_type(slot.view) == "sections":
+            # The view's own list, in a sections view, is what Home
+            # Assistant shows as "Imported cards" (decision 26).
+            return 'the "Imported cards" area'
         return "another place in this view"
     sections = slot.view.get("sections") or []
     index = slot.location[1]
