@@ -1246,12 +1246,47 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label))
 
-    for old_slot in matching.removed:
-        # Already back by some other route. Inserting would make a second
-        # copy, and this part of the change is undone either way.
-        if by_mark.get(fingerprint(old_slot.card)):
+    # Counted, not looked up, and only in the card's own view (GitHub
+    # #35): an untouched copy on another view - there all along or added
+    # since - is not this one coming back. A dashboard-wide look would
+    # reopen the same door the bug used: a copy someone else placed
+    # elsewhere after the change would count as this card's return.
+    # Mirrors the badge rule below (Vorhaben N) - `deleted` is how many
+    # alike the change took from that view, `card_came_back` how many
+    # more stand there now than the change left.
+    card_then = _group_by_mark(_present(after))
+    removed_card_marks = [
+        (old_slot, fingerprint(old_slot.card)) for old_slot in matching.removed
+    ]
+    deleted_cards: dict[tuple[str, Any], int] = {}
+    for old_slot, mark in removed_card_marks:
+        place = (mark, old_slot.view_key)
+        deleted_cards[place] = deleted_cards.get(place, 0) + 1
+
+    def card_came_back(mark: str, view_key: Any) -> int:
+        return len(_in_view(by_mark.get(mark, []), view_key)) - len(
+            _in_view(card_then.get(mark, []), view_key)
+        )
+
+    for old_slot, mark in removed_card_marks:
+        label = _describe(old_slot.card)
+        back = card_came_back(mark, old_slot.view_key)
+        if back >= deleted_cards[(mark, old_slot.view_key)]:
+            # Already back by some other route. Inserting would make a
+            # second copy, and this part of the change is undone either
+            # way.
             continue
-        put_back(old_slot, _describe(old_slot.card))
+        if back > 0:
+            # Some of several alike are back: which places they took is
+            # not in the states, and picking one would be a guess.
+            return UndoPlan(
+                blocked=(
+                    f"only some of the copies of {label} this change "
+                    f"deleted are back, so an exact undo cannot tell "
+                    f"which are missing"
+                )
+            )
+        put_back(old_slot, label)
 
     # In the order of the places they came from - view, section, card -
     # whichever of the three tables in decision 15 produced them.

@@ -780,6 +780,50 @@ def test_a_deleted_card_already_back_needs_no_step():
     assert plan.steps == ()
 
 
+def test_a_deleted_card_with_an_untouched_copy_elsewhere_is_put_back():
+    """GitHub #35: the copy on "b" never left, so it is not this one back."""
+    old = {"views": [{"path": "a", "cards": [A]}, {"path": "b", "cards": [A]}]}
+    new = {"views": [{"path": "a", "cards": []}, {"path": "b", "cards": [A]}]}
+    plan = analyze.plan_undo(old, new, new)
+    assert [(s.action, s.view_path) for s in plan.steps] == [("insert", "a")]
+
+
+def test_a_card_copy_added_elsewhere_since_is_not_the_deleted_one_back():
+    old = {"views": [{"path": "a", "cards": [A]}, {"path": "c", "cards": []}]}
+    new = {"views": [{"path": "a", "cards": []}, {"path": "c", "cards": []}]}
+    current = {"views": [{"path": "a", "cards": []}, {"path": "c", "cards": [A]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert [(s.action, s.view_path) for s in plan.steps] == [("insert", "a")]
+
+
+def test_one_card_back_of_two_deleted_refuses():
+    old = {"views": [{"path": "a", "cards": [A, B, A]}]}
+    new = {"views": [{"path": "a", "cards": [B]}]}
+    current = {"views": [{"path": "a", "cards": [B, A]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked == (
+        "only some of the copies of tile: light.a this change deleted are "
+        "back, so an exact undo cannot tell which are missing"
+    )
+
+
+def test_two_cards_deleted_and_both_back_is_nothing_to_do():
+    old = {"views": [{"path": "a", "cards": [A, A]}]}
+    new = {"views": [{"path": "a", "cards": []}]}
+    current = {"views": [{"path": "a", "cards": [A, A]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked is None and plan.steps == ()
+
+
+def test_a_card_back_in_one_view_does_not_count_for_another():
+    """Deleted from "a" and "b", added back only on "a"."""
+    old = {"views": [{"path": "a", "cards": [A]}, {"path": "b", "cards": [A]}]}
+    new = {"views": [{"path": "a", "cards": []}, {"path": "b", "cards": []}]}
+    current = {"views": [{"path": "a", "cards": [A]}, {"path": "b", "cards": []}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert [(s.action, s.view_path) for s in plan.steps] == [("insert", "b")]
+
+
 def test_an_added_card_is_planned_away():
     a = {"type": "tile", "entity": "light.a"}
     b = {"type": "tile", "entity": "light.b"}
