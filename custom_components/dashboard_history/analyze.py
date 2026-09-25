@@ -32,11 +32,11 @@ class RemovedItem:
     index: int  # position in the card list, or of the view itself
     payload: dict
     label: str
-    # What the section this card sat in looked like, when it sat in one:
-    # how many sections the view had, and that section's title. A section
-    # carries no path and no id, so its index is its only address - and
-    # an address is exactly what stops being true when the neighbours
-    # change. `restore` refuses rather than file the card in a stranger.
+    # What the section this card sat in was, when it sat in one: how many
+    # sections the view had, that section's own settings, and the cards
+    # that should still stand beside it. A section carries no path and no
+    # id, so this is the only proof there is that index i still means it
+    # - and when it fails, the card is parked instead (decision 26).
     anchor: tuple | None = None
     # The other sections of that view, in order, as they stood when this
     # section was removed - only on `kind="section"`. It is the proof that
@@ -655,18 +655,40 @@ def _section_drift(before: dict, after: dict, current: dict) -> tuple[set, set]:
     return rebuilt, shifted
 
 
-def _section_anchor(view: dict, location: tuple) -> tuple | None:
-    """How to recognise the section a card sat in, or None outside one."""
+def _section_anchor(view: dict, location: tuple, index: int, left: set) -> tuple | None:
+    """How to recognise the section a card sat in, or None outside one.
+
+    What the section was, not what it was called: how many sections the
+    view had, the section's own settings (everything but `cards`, like
+    `_section_marks`), and the cards that should still stand in it - the
+    old ones minus those in `left`, which disappeared or moved elsewhere
+    and so owe the section nothing. Titles alone were a check against
+    nothing - 0 of 101 sections carry one - and let a swapped section
+    take a stranger's card (GitHub #30). Failing this parks the card now
+    rather than refusing it, so being strict costs a hint, not a refusal.
+
+    `before` counts the survivors that stood ahead of the card, so it can
+    go back right after the last of them rather than to an old index that
+    cards added since may have moved.
+    """
     if len(location) < 2 or location[0] != "sections":
         return None
     sections = view.get("sections") or []
-    index = location[1]
-    title = None
-    if isinstance(index, int) and 0 <= index < len(sections):
-        section = sections[index]
+    at = location[1]
+    settings: dict | None = None
+    survivors: list = []
+    before = 0
+    if isinstance(at, int) and 0 <= at < len(sections):
+        section = sections[at]
         if isinstance(section, dict):
-            title = section.get("title")
-    return (len(sections), title)
+            settings = {key: value for key, value in section.items() if key != "cards"}
+            for position, card in enumerate(section.get("cards") or []):
+                if (location, position) in left:
+                    continue
+                survivors.append(card)
+                if position < index:
+                    before += 1
+    return (len(sections), settings, tuple(survivors), before)
 
 
 def _view_type(view: dict) -> str:
@@ -772,9 +794,16 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     putting it back would leave the dashboard holding it twice.
     """
     new_views = dict(_views_by_key(new))
+    matching = match_cards(old, new)
     gone_by_view: dict[int, list[Slot]] = {}
-    for slot in match_cards(old, new).removed:
+    for slot in matching.removed:
         gone_by_view.setdefault(slot.view_index, []).append(slot)
+    # Cards that left their place for another list: no survivor a
+    # section has to keep for its anchor to hold (spec L, 4a).
+    away_by_view: dict[int, set] = {}
+    for was, now in matching.moved:
+        if _place(was) != _place(now):
+            away_by_view.setdefault(was.view_index, set()).add((was.location, was.index))
 
     items: list[RemovedItem] = []
     for view_index, (key, old_view) in enumerate(_views_by_key(old)):
@@ -797,6 +826,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
             )
             continue
         gone = gone_by_view.get(view_index, [])
+        left = {(slot.location, slot.index) for slot in gone} | away_by_view.get(view_index, set())
         # A section that went whole is one item, not one per card on it.
         # Its cards each refuse on their own - the section they name is
         # not the one standing at that index now - so offering them was
@@ -830,7 +860,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 index=slot.index,
                 payload=slot.card,
                 label=_describe(slot.card),
-                anchor=_section_anchor(old_view, slot.location),
+                anchor=_section_anchor(old_view, slot.location, slot.index, left),
                 view_title=name,
             )
             for slot in gone

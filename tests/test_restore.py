@@ -468,3 +468,125 @@ def test_a_parked_card_refuses_when_its_view_is_gone():
     plan = analyze.UndoPlan(blocked=None, steps=(_parked(A, path="elsewhere"),))
     with pytest.raises(LookupError, match="no longer exists"):
         restore.apply_undo(_sections({"cards": []}), plan)
+
+
+D = {"type": "tile", "entity": "light.d"}
+E = {"type": "tile", "entity": "light.e"}
+
+
+def test_the_anchor_catches_two_untitled_sections_that_swapped():
+    """Anchored by count and title, this card went into the wrong section."""
+    old = _sections({"column_span": 2, "cards": [A, B]}, {"column_span": 1, "cards": [C]})
+    new = _sections({"column_span": 2, "cards": [A]}, {"column_span": 1, "cards": [C]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    today = _sections({"column_span": 1, "cards": [C]}, {"column_span": 2, "cards": [A]})
+    with pytest.raises(LookupError, match="section"):
+        restore.reinsert(today, item)
+    assert restore.parks(today, item) is True
+
+
+def test_the_anchor_notices_an_edited_neighbour():
+    """Decision 2 of spec L: an edited neighbour still parks."""
+    old = _sections({"cards": [A, B]})
+    new = _sections({"cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    edited_a = {**A, "name": "Anders"}
+    assert restore.parks(_sections({"cards": [edited_a]}), item) is True
+
+
+def test_an_untouched_section_does_not_park():
+    old = _sections({"cards": [A, B]})
+    new = _sections({"cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    assert restore.parks(new, item) is False
+    assert restore.reinsert(new, item)["views"][0]["sections"][0]["cards"] == [A, B]
+
+
+def test_a_card_added_beside_it_since_does_not_park():
+    """The survivors only have to be there, in order - more is allowed."""
+    old = _sections({"cards": [A, B]})
+    new = _sections({"cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    today = _sections({"cards": [A, D]})
+    assert restore.parks(today, item) is False
+    assert restore.reinsert(today, item)["views"][0]["sections"][0]["cards"] == [A, B, D]
+
+
+def test_a_card_moved_away_in_the_same_save_does_not_park():
+    """C left for the other section; it is no survivor that has to stay."""
+    old = _sections({"cards": [A, B, C]}, {"cards": []})
+    new = _sections({"cards": [A]}, {"cards": [C]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    assert restore.parks(new, item) is False
+
+
+def test_a_swap_of_sections_with_equal_settings_is_caught_by_their_cards():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    new = _sections({"cards": [A]}, {"cards": [C]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    assert restore.parks(today, item) is True
+
+
+def test_a_card_goes_back_beside_its_neighbour_not_to_its_old_index():
+    """Cards inserted before the neighbour since must not push it away.
+
+    The old index would put B between D and E, in the right section but
+    away from A - found in the second review. The anchor remembers that
+    B stood after one survivor, and B goes back right after A."""
+    old = _sections({"cards": [A, B]})
+    new = _sections({"cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    today = _sections({"cards": [D, E, A]})
+    assert restore.parks(today, item) is False
+    assert restore.reinsert(today, item)["views"][0]["sections"][0]["cards"] == [D, E, A, B]
+
+
+def test_a_card_that_was_alone_needs_its_section_empty():
+    """Nothing beside it to recognise the section by - so it must be as
+    empty as the card left it, or any section with the same settings
+    (most carry only `type: grid`) would pass for it."""
+    old = _sections({"cards": [B]}, {"cards": [C]})
+    new = _sections({"cards": []}, {"cards": [C]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    assert restore.parks(new, item) is False
+    assert restore.parks(_sections({"cards": [C]}, {"cards": []}), item) is True
+
+
+def test_park_appends_to_imported_cards_and_leaves_the_input_alone():
+    old = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B, C]})
+    new = _sections({"title": "Oben", "cards": [A]}, {"title": "Unten", "cards": [B]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == C)
+    today = _sections({"title": "Unten", "cards": [B]})
+    assert restore.parks(today, item) is True
+    result = restore.park(today, item)
+    assert result["views"][0]["cards"] == [C]
+    assert result["views"][0]["sections"] == [{"title": "Unten", "cards": [B]}]
+    assert "cards" not in today["views"][0]
+
+
+def test_nothing_parks_outside_a_sections_view_with_a_path():
+    masonry = analyze.find_removed(_config([A, B]), _config([A]))[0]
+    assert restore.parks(_config([A]), masonry) is False
+    old = {"views": [{"type": "sections", "sections": [{"cards": [A, B]}]}]}
+    pathless = next(i for i in analyze.find_removed(old, {"views": [{"type": "sections", "sections": [{"cards": [A]}]}]}) if i.payload == B)
+    assert restore.parks({"views": [{"type": "sections", "sections": [{"column_span": 2, "cards": []}, {"cards": [A]}]}]}, pathless) is False
+
+
+def test_a_section_item_never_parks():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    new = _sections({"cards": [C]})
+    item = analyze.find_removed(old, new)[0]
+    assert item.kind == "section"
+    assert restore.parks(new, item) is False
+
+
+def test_two_cards_of_one_section_go_back_one_after_the_other():
+    """Review focus 5: each put back is planned against today's state."""
+    old = _sections({"cards": [A, B, C]})
+    now = _sections({"cards": [A]})
+    first = next(i for i in analyze.find_removed(old, now) if i.payload == B)
+    now = restore.reinsert(now, first)
+    second = next(i for i in analyze.find_removed(old, now) if i.payload == C)
+    assert restore.parks(now, second) is False
+    assert restore.reinsert(now, second)["views"][0]["sections"][0]["cards"] == [A, B, C]

@@ -71,25 +71,52 @@ def _cards_at(view: dict, location: tuple) -> list | None:
     return current if isinstance(current, list) else None
 
 
-def _anchor_holds(view: dict, item: RemovedItem) -> bool:
-    """Whether the section at that index is still the one the card left.
+def _anchored_index(view: dict, item: RemovedItem) -> int | None:
+    """Where the card goes back in its section, or None if that is unproven.
 
     Only cards that sat in a section carry an anchor, so everything else
-    passes straight through. Measured on 2026-09-04: without this, a card
-    whose section had been pushed along by a new neighbour was filed in
-    that neighbour instead - no error, no mention in the preview.
+    passes straight through. The section has to have the same settings
+    and still hold the cards that stood beside this one, in their order;
+    cards added since may sit between them. A card that was alone has
+    nothing beside it to recognise the section by, so then the section
+    has to be empty. See `analyze._section_anchor` for why a title was
+    never enough.
+
+    The answer is an index, not a yes: right after the last survivor that
+    stood ahead of the card, or right before the first one if none did.
     """
-    if item.anchor is None:
-        return True
-    count, title = item.anchor
+    count, settings, survivors, before = item.anchor
     sections = view.get("sections") or []
     if len(sections) != count:
-        return False
-    index = item.location[1]
-    if not isinstance(index, int) or not 0 <= index < len(sections):
-        return False
-    section = sections[index]
-    return isinstance(section, dict) and section.get("title") == title
+        return None
+    at = item.location[1]
+    if not isinstance(at, int) or not 0 <= at < len(sections):
+        return None
+    section = sections[at]
+    if not isinstance(section, dict):
+        return None
+    own = {key: value for key, value in section.items() if key != "cards"}
+    if own != settings:
+        return None
+    cards = list(section.get("cards") or [])
+    if not survivors:
+        return 0 if not cards else None
+    # In order, extras allowed: each survivor is found after the last.
+    found: list[int] = []
+    position = 0
+    for wanted in survivors:
+        while position < len(cards) and cards[position] != wanted:
+            position += 1
+        if position == len(cards):
+            return None
+        found.append(position)
+        position += 1
+    return found[before - 1] + 1 if before else found[0]
+
+
+def _anchor_holds(view: dict, item: RemovedItem) -> bool:
+    """Whether the section at that index is still the one the card left."""
+    return item.anchor is None or _anchored_index(view, item) is not None
 
 
 def _section_gap_holds(view: dict, item: RemovedItem) -> bool:
@@ -222,9 +249,50 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
             f"(location={item.location!r})"
         )
 
-    # If the list has shrunk since, append rather than fail: getting the
-    # card back matters more than getting its exact old position back.
-    cards.insert(min(item.index, len(cards)), copy.deepcopy(item.payload))
+    # A card that sat in a section goes back beside the neighbour it had;
+    # the old index is only right while nothing was added in front.
+    index = item.index if item.anchor is None else _anchored_index(view, item)
+    cards.insert(min(index, len(cards)), copy.deepcopy(item.payload))
+    return result
+
+
+def parks(config: dict, item: RemovedItem) -> bool:
+    """Whether putting `item` back goes to "Imported cards" (decision 26).
+
+    Only a card, only in a sections view named by a path, and only when
+    the section it left can no longer be proven to be the one at that
+    index. Everything else is `reinsert`'s to answer - including its
+    refusals.
+    """
+    if item.kind != "card" or item.anchor is None or item.view_path is None:
+        return False
+    if _paths_share(config):
+        return False
+    view = _find_view(config.get("views") or [], item)
+    if view is None or view.get("type") != "sections":
+        return False
+    return not _anchor_holds(view, item) or _cards_at(view, item.location) is None
+
+
+def park(config: dict, item: RemovedItem) -> dict:
+    """Return a new configuration with `item` at the end of "Imported cards"."""
+    result = copy.deepcopy(config)
+    view = _find_view(result.get("views") or [], item)
+    if view is None:
+        raise LookupError(
+            f"the view this card belonged to no longer exists "
+            f"(path={item.view_path!r}, index={item.view_index})"
+        )
+    cards = view.get("cards")
+    if cards is None:
+        cards = []
+        view["cards"] = cards
+    elif not isinstance(cards, list):
+        raise LookupError(
+            "the view this card belonged to holds something other than a "
+            "card list under cards:, so nothing is parked there"
+        )
+    cards.append(copy.deepcopy(item.payload))
     return result
 
 
