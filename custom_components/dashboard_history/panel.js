@@ -1991,6 +1991,9 @@ class DashboardHistoryPanel extends HTMLElement {
       ? `<p>This state is what the dashboard holds right now, so there is
            nothing to apply.</p>`
       : (intro ? `<p class="lead">${escape(intro)}</p>` : "") +
+      (preview.parked?.length
+        ? `<p class="lead parked">These cards cannot go back into their exact section and are made available in "Imported cards" instead — you still have to place them: ${escape(preview.parked.join(", "))}</p>`
+        : "") +
       renderPlain(preview.explanation, "What applying this does") +
       `<details class="raw">
          <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
@@ -2020,7 +2023,7 @@ class DashboardHistoryPanel extends HTMLElement {
     // that arrives first would find nobody waiting.
     const recorded = this._recorded();
     let applied = await this._guard(async () => {
-      const result = await this._call(...request(true, keep, asked));
+      const result = await this._call(...request(true, keep, asked, false, preview));
       // Still busy until the recorder has it. Reloading in between reads
       // a history whose newest entry is the state just replaced - so
       // nothing matches the live configuration, nothing is crowned, and
@@ -2050,7 +2053,7 @@ class DashboardHistoryPanel extends HTMLElement {
       if (proceed && mine()) {
         const recordedAgain = this._recorded();
         applied = await this._guard(async () => {
-          const result = await this._call(...request(true, keep, asked, true));
+          const result = await this._call(...request(true, keep, asked, true, preview));
           await recordedAgain;
           return result;
         }, mine);
@@ -2968,11 +2971,14 @@ class DashboardHistoryPanel extends HTMLElement {
   _restoreItem(revision, item) {
     this._confirm(
       `Put back: ${item.label}`,
-      (confirm, keep, dashboard, override = false) => [
+      (confirm, keep, dashboard, override = false, shown = null) => [
         "restore_deleted",
         {
           dashboard, revision, position: item.position, confirm,
           override_unrecorded_state: override,
+          // What the dialog showed as parked; the server refuses the
+          // write if putting it back would now park where it did not.
+          ...(confirm && shown ? { expected_parked: shown.parked || [] } : {}),
         },
       ],
       false,
@@ -3014,7 +3020,7 @@ class DashboardHistoryPanel extends HTMLElement {
       made ? ` and keeps the ${made} change${made === 1 ? "" : "s"} made since` : "";
     this._confirm(
       "Undo this change",
-      (confirm, keep, dashboard, override = false) => [
+      (confirm, keep, dashboard, override = false, shown = null) => [
         "undo_change",
         // `preview` only on the call that shows one - the first, before
         // the write. The second call, with `confirm` true, already has
@@ -3023,6 +3029,9 @@ class DashboardHistoryPanel extends HTMLElement {
         {
           dashboard, revision, confirm, preview: !confirm,
           override_unrecorded_state: override,
+          // What the dialog showed as parked; the server refuses the
+          // write if its fresh plan would park anything else.
+          ...(confirm && shown ? { expected_parked: shown.parked || [] } : {}),
         },
       ],
       false,
@@ -3215,8 +3224,9 @@ class DashboardHistoryPanel extends HTMLElement {
     const named = this._alreadyNamed(change);
     const versionButton = `<button class="act ghost" data-version="${escape(change.revision)}"
                 >Version up to here</button>`;
+    const star = undo?.parked?.length ? "*" : "";
     const undoButton = undo
-      ? `<button class="act" data-undo="${escape(change.revision)}">Undo this change</button>`
+      ? `<button class="act" data-undo="${escape(change.revision)}">Undo this change${star}</button>`
       : "";
     const replaceButton = candidates.length
       ? `<button class="act replace-trigger" data-replace="${escape(change.revision)}"
@@ -3228,7 +3238,8 @@ class DashboardHistoryPanel extends HTMLElement {
         ${replaceButton}
         ${named ? `<span class="named">${escape(named)}</span>` : ""}
       </div>
-      ${why ? `<span class="why">${why}</span>` : ""}`;
+      ${why ? `<span class="why">${why}</span>` : ""}
+      ${star ? `<span class="why">* Some cards can no longer be put back into their exact section, because the sections of this view were rearranged since. They are placed in the view's "Imported cards" area — shown in edit mode — for you to move.</span>` : ""}`;
   }
 
   _renderDetail(change) {

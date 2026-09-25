@@ -7809,3 +7809,117 @@ def test_replace_also_offers_to_write_anyway_when_refused_for_it(
     assert open_replace_unrecorded["leftoverChoice"] == ""
     assert open_replace_unrecorded["callCount"] == 4
     assert open_replace_unrecorded["overrideCall"]["extra"]["override_unrecorded_state"] is True
+
+
+_PARKED_ACTION_BAR = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a" }];
+el._undo = { available: true, parked: ["tile: Bett"] };
+const starred = el._renderActionBar({ revision: "a" }, { offerReplace: false });
+el._undo = { available: true, parked: [] };
+const plain = el._renderActionBar({ revision: "a" }, { offerReplace: false });
+console.log(JSON.stringify({ starred, plain }));
+"""
+
+
+@pytest.fixture(scope="session")
+def parked_action_bar(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "parked_action_bar", _PARKED_ACTION_BAR)
+
+
+def test_a_parking_undo_carries_an_asterisk_and_says_why(parked_action_bar):
+    # Decision 26: one button, a second form of it. Nobody should expect
+    # an exact undo where the cards only become available.
+    assert "Undo this change*</button>" in parked_action_bar["starred"]
+    assert "Imported cards" in parked_action_bar["starred"]
+
+
+def test_an_exact_undo_has_no_asterisk(parked_action_bar):
+    assert "Undo this change</button>" in parked_action_bar["plain"]
+    assert "Imported cards" not in parked_action_bar["plain"]
+
+
+_PARKED_DIALOG = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a" }, { revision: "b" }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+el._undoChange("a");
+await settle();
+calls[0].resolve({
+  available: true, parked: ["tile: Bett"],
+  preview: "-x\\n+y", explanation: { groups: [], note: "" },
+});
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
+const bodyHtml = dialog.querySelector(".body").innerHTML;
+dialog.close("apply");
+await settle();
+await settle();
+const confirmExtra = calls[1] ? calls[1].extra : null;
+console.log(JSON.stringify({ bodyHtml, confirmExtra }));
+"""
+
+
+@pytest.fixture(scope="session")
+def parked_dialog(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "parked_dialog", _PARKED_DIALOG)
+
+
+def test_the_dialog_lists_every_parked_card_in_home_assistants_words(parked_dialog):
+    body = parked_dialog["bodyHtml"]
+    assert '"Imported cards"' in body or "&quot;Imported cards&quot;" in body
+    assert "tile: Bett" in body
+    assert body.index("Puts this change back") < body.index("Imported cards")
+
+
+def test_the_confirmation_sends_back_what_the_dialog_showed(parked_dialog):
+    assert parked_dialog["confirmExtra"]["expected_parked"] == ["tile: Bett"]
+
+
+_PARKED_PUT_BACK = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = [{ revision: "a" }];
+el.shadowRoot = node();
+el._recorded = () => Promise.resolve();
+
+const calls = [];
+el._call = (type, extra) => new Promise((resolve) => calls.push({ type, extra, resolve }));
+
+el._restoreItem("a", { label: "tile: light.c", position: 0 });
+await settle();
+calls[0].resolve({
+  applied: false, parked: ["tile: light.c"],
+  preview: "-x\\n+y", explanation: { groups: [], note: "" },
+});
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.confirm");
+const bodyHtml = dialog.querySelector(".body").innerHTML;
+dialog.close("apply");
+await settle();
+await settle();
+const confirmExtra = calls[1] ? calls[1].extra : null;
+console.log(JSON.stringify({ bodyHtml, confirmExtra }));
+"""
+
+
+@pytest.fixture(scope="session")
+def parked_put_back(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "parked_put_back", _PARKED_PUT_BACK)
+
+
+def test_a_parking_put_back_says_so_and_sends_it_back(parked_put_back):
+    # Review finding K1: "Put back" re-plans on confirmation too, so it
+    # needs the same guard as the undo - and the same sentence.
+    assert "Imported cards" in parked_put_back["bodyHtml"]
+    assert parked_put_back["confirmExtra"]["expected_parked"] == ["tile: light.c"]
