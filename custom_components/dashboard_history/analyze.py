@@ -70,6 +70,7 @@ class Summary:
     views_added: int = 0
     views_removed: int = 0
     settings: int = 0
+    badges: int = 0
 
 
 @dataclass(frozen=True)
@@ -1387,6 +1388,8 @@ def summarize(old: dict, new: dict) -> Summary:
     old_keys = {key for key, _ in _views_by_key(old)}
     new_keys = {key for key, _ in _views_by_key(new)}
 
+    badges = match_badges(old, new)
+
     # One entry per moved card already, so a swap contributes two.
     # Multiplying would count each of them twice.
     return Summary(
@@ -1397,12 +1400,18 @@ def summarize(old: dict, new: dict) -> Summary:
         views_added=len(new_keys - old_keys),
         views_removed=len(old_keys - new_keys),
         settings=len(setting_changes(old, new)),
+        badges=len(badges.removed) + len(badges.added) + len(badges.edited) + len(badges.moved),
     )
 
 
 # Card labels already carry their type ("tile: light.b"), so they need no
 # quotes. A view label is a bare name and does.
 _PAST = {
+    ("badge", "removed"): "the badge {label} was deleted",
+    ("badge", "added"): "the badge {label} was added",
+    ("badge", "edited"): "the badge {label} was changed",
+    ("badge", "moved"): "the badge {label} was moved",
+    ("badge", "moved_to"): "the badge {label} was moved to {where}",
     ("setting", "added"): 'the setting "{label}" was set to {new}',
     ("setting", "added_bare"): 'the setting "{label}" was set',
     ("setting", "removed"): 'the setting "{label}" was removed',
@@ -1419,6 +1428,11 @@ _PAST = {
 }
 
 _FUTURE = {
+    ("badge", "removed"): "the badge {label} will be deleted",
+    ("badge", "added"): "the badge {label} comes back",
+    ("badge", "edited"): "the badge {label} goes back to how it was",
+    ("badge", "moved"): "the badge {label} moves back to where it was",
+    ("badge", "moved_to"): "the badge {label} moves back to {where}",
     ("setting", "added"): 'the setting "{label}" comes back as {new}',
     ("setting", "added_bare"): 'the setting "{label}" comes back',
     ("setting", "removed"): 'the setting "{label}" will be removed',
@@ -1562,6 +1576,30 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
     settings_by_view: dict[Any, list[Entry]] = {}
     for change in setting_changes(old, new):
         settings_by_view.setdefault(change.view_key, []).append(_setting_entry(words, change))
+    badges_by_view: dict[Any, list[Entry]] = {}
+    badge_matching = match_badges(old, new)
+
+    def badge(key: Any, kind: str, item: Any, where: str | None = None) -> None:
+        label = _describe(item, fallback="badge")
+        text_key = ("badge", "moved_to" if where else kind)
+        badges_by_view.setdefault(key, []).append(
+            Entry(
+                kind=kind,
+                what="badge",
+                label=label,
+                text=words[text_key].format(label=label, where=where),
+            )
+        )
+
+    for slot in badge_matching.removed:
+        badge(slot.view_key, "removed", slot.card)
+    for slot in badge_matching.added:
+        badge(slot.view_key, "added", slot.card)
+    for _was, now in badge_matching.edited:
+        badge(now.view_key, "edited", now.card)
+    for was, now in badge_matching.moved:
+        where = _where(was, now) if _place(was) != _place(now) else None
+        badge(was.view_key, "moved", was.card, where)
     by_view: dict[Any, list[Entry]] = {}
 
     def add(key: Any, entry: Entry) -> None:
@@ -1609,7 +1647,11 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
             groups.append(ViewChanges(name, [_entry(words, "removed", "view", name)]))
             removed_anything = True
             continue
-        entries = [*settings_by_view.get(key, []), *by_view.get(key, [])]
+        entries = [
+            *settings_by_view.get(key, []),
+            *badges_by_view.get(key, []),
+            *by_view.get(key, []),
+        ]
         new_view = new_views[key]
         old_type, new_type = _view_type(old_view), _view_type(new_view)
         if old_type != new_type:
@@ -1727,6 +1769,9 @@ def change_message(
         f"{counts.settings} setting{'s' if counts.settings != 1 else ''} changed"
         if counts.settings
         else "",
+        f"{counts.badges} badge{'s' if counts.badges != 1 else ''} changed"
+        if counts.badges
+        else "",
     ]
     return f"{name}: " + (", ".join(part for part in parts if part) or "no card changes")
 
@@ -1737,7 +1782,8 @@ def change_message(
 # other on purpose, because a word added there and not here would read
 # as "this is not a generated message at all".
 _COUNT = re.compile(
-    r"^\d+ (?:views? (?:added|removed)|added|removed|edited|moved|settings? changed)$"
+    r"^\d+ (?:views? (?:added|removed)|added|removed|edited|moved"
+    r"|settings? changed|badges? changed)$"
 )
 
 

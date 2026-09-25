@@ -1872,3 +1872,48 @@ def test_a_badge_of_a_pathless_view_that_moved_refuses():
     current = {"views": [{"path": "new"}, {"badges": [SUN]}, {"path": "z", "cards": []}]}
     plan = analyze.plan_undo(old, new, current)
     assert plan.blocked == analyze._POSITION_REFUSAL
+
+
+def test_a_badge_is_explained_as_a_badge():
+    old = {"views": [{"path": "home", "badges": []}]}
+    new = {"views": [{"path": "home", "badges": [SUN]}]}
+    [group] = analyze.explain_change(old, new).groups
+    assert [(e.what, e.text) for e in group.entries] == [
+        ("badge", "the badge entity: sun.sun was added")
+    ]
+
+
+def test_a_badge_moved_to_another_view_says_where():
+    old = {"views": [{"path": "a", "title": "A", "badges": [SUN]},
+                     {"path": "b", "title": "Küche", "badges": []}]}
+    new = {"views": [{"path": "a", "title": "A", "badges": []},
+                     {"path": "b", "title": "Küche", "badges": [SUN]}]}
+    [group] = analyze.explain_change(old, new).groups
+    assert [e.text for e in group.entries] == [
+        'the badge entity: sun.sun was moved to "Küche"'
+    ]
+
+
+def test_badges_come_between_settings_and_cards():
+    old = {"views": [{"path": "home", "icon": "a", "badges": [], "cards": []}]}
+    new = {"views": [{"path": "home", "icon": "b", "badges": [SUN], "cards": [A]}]}
+    [group] = analyze.explain_change(old, new).groups
+    assert [e.what for e in group.entries] == ["setting", "badge", "card"]
+
+
+def test_badges_are_counted_in_the_history_line():
+    old = {"views": [{"path": "home", "badges": []}]}
+    new = {"views": [{"path": "home", "badges": [SUN, MOON]}]}
+    assert analyze.change_message("dash", old, new, "save") == "dash: 2 badges changed"
+    assert not analyze.message_adds("dash: 2 badges changed")
+    assert analyze.message_adds("dash: 1 added, 1 badge changed")
+
+
+def test_a_badge_inside_a_heading_card_is_part_of_the_card():
+    """A heading card's own `badges:` travel with the card, never as badges."""
+    heading = {"type": "heading", "heading": "Top", "badges": [SUN]}
+    grown = {**heading, "badges": [SUN, MOON]}
+    old = {"views": [{"path": "a", "cards": [heading], "badges": []}]}
+    new = {"views": [{"path": "a", "cards": [grown], "badges": []}]}
+    [group] = analyze.explain_change(old, new).groups
+    assert [e.what for e in group.entries] == ["card"]
