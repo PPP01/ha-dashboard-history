@@ -122,6 +122,9 @@ _COMMANDS = (
             vol.Required("position"): int,
             vol.Optional("confirm", default=False): bool,
             vol.Optional("override_unrecorded_state", default=False): bool,
+            # What the dialog showed as parked (decision 26); the
+            # confirming call refuses if the fresh plan parks otherwise.
+            vol.Optional("expected_parked"): [str],
         },
         operations.async_restore_deleted,
         lambda msg: {
@@ -130,6 +133,10 @@ _COMMANDS = (
             "position": msg["position"],
             "confirm": msg["confirm"],
             "override_unrecorded_state": msg["override_unrecorded_state"],
+            # Absent means "I expect no parking", as for the services: a
+            # write that would park has to be asked for on every route
+            # (second review). None stays for Python callers only.
+            "expected_parked": msg.get("expected_parked", []),
         },
     ),
     _command(
@@ -164,6 +171,9 @@ _COMMANDS = (
             # own rather than always being computed.
             vol.Optional("preview", default=False): bool,
             vol.Optional("override_unrecorded_state", default=False): bool,
+            # What the dialog showed as parked (decision 26); the
+            # confirming call refuses if the fresh plan parks otherwise.
+            vol.Optional("expected_parked"): [str],
         },
         operations.async_undo_change,
         lambda msg: {
@@ -172,6 +182,10 @@ _COMMANDS = (
             "confirm": msg["confirm"],
             "preview": msg["preview"],
             "override_unrecorded_state": msg["override_unrecorded_state"],
+            # Absent means "I expect no parking", as for the services: a
+            # write that would park has to be asked for on every route
+            # (second review). None stays for Python callers only.
+            "expected_parked": msg.get("expected_parked", []),
         },
     ),
     _command(

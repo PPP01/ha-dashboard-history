@@ -30,7 +30,7 @@ from .analyze import (
 from . import versions as versioning
 from .const import DOMAIN, EVENT_FORGET_PROGRESS
 from .keys import is_absent, is_live
-from .restore import apply_undo, reinsert
+from .restore import apply_undo, park, parks, reinsert
 from .snapshot import (
     async_create_dashboard,
     async_get_all_meta,
@@ -42,6 +42,15 @@ from .store import HistoryStore, StaleCursorError, Version, _FORGET_RACE_RETRIES
 from .yaml_io import dump, load_state
 
 _LOGGER = logging.getLogger(__name__)
+
+# A write that would park cards nobody was shown - the dashboard changed
+# between preview and confirmation, or a service call did not allow it.
+# A button without an asterisk must not park a card (decision 26).
+_UNEXPECTED_PARKING = (
+    "this would place cards in \"Imported cards\" that were not expected - "
+    "either the dashboard changed since the preview, or parking was not "
+    "allowed for this call - so nothing was written"
+)
 
 
 def _preview(old: dict, new: dict, name: str) -> tuple[str, dict, str]:
@@ -91,19 +100,22 @@ def _reinsertion(text: str, current: dict, position: int, key: str) -> dict:
         return {"error": "nothing is missing since that revision"}
     if not 0 <= position < len(items):
         return {"error": f"position {position} out of range (0..{len(items) - 1})"}
+    item = items[position]
+    parked = parks(current, item)
     try:
-        restored = reinsert(current, items[position])
+        restored = park(current, item) if parked else reinsert(current, item)
     except LookupError as err:
         # The place it belonged to is gone. Every other failure here
         # answers with a message rather than an exception; so does this.
         return {"error": str(err)}
     diff, explanation, live_text = _preview(current, restored, key)
     return {
-        "item": items[position],
+        "item": item,
         "restored": restored,
         "diff": diff,
         "explanation": explanation,
         "live_text": live_text,
+        "parked": [item.label] if parked else [],
     }
 
 
@@ -730,6 +742,7 @@ async def async_restore_deleted(
     position: int,
     confirm: bool = False,
     override_unrecorded_state: bool = False,
+    expected_parked: list[str] | None = None,
 ) -> dict:
     """Put one disappeared card or view back."""
     _, text, error = await _state_at(hass, store, key, revision)
@@ -741,7 +754,14 @@ async def async_restore_deleted(
         return {"applied": False, "error": plan["error"]}
     diff, explanation = plan["diff"], plan["explanation"]
     if not confirm:
-        return {"applied": False, "preview": diff, "explanation": explanation}
+        return {
+            "applied": False,
+            "preview": diff,
+            "explanation": explanation,
+            "parked": plan["parked"],
+        }
+    if expected_parked is not None and plan["parked"] != list(expected_parked):
+        return {"applied": False, "error": _UNEXPECTED_PARKING}
     lost = await _keep_the_live_state(
         hass, store, key, plan["live_text"] if live is not None else None
     )
@@ -754,6 +774,7 @@ async def async_restore_deleted(
         "preview": diff,
         "explanation": explanation,
         "restored": plan["item"].label,
+        "parked": plan["parked"],
     }
     if lost:
         result["note"] = lost
@@ -898,6 +919,7 @@ async def async_undo_change(
     confirm: bool = False,
     preview: bool = False,
     override_unrecorded_state: bool = False,
+    expected_parked: list[str] | None = None,
 ) -> dict:
     """Take one change back and keep everything since - if that is exact.
 
@@ -928,6 +950,16 @@ async def async_undo_change(
     and leaves `preview` at its default - it already showed the diff on
     the call before this one, and showing it twice would cost the same
     two dumps again for a screen already drawn.
+
+    `parked` names the cards this undo can only make available in the
+    view's "Imported cards", not put back into their section (decision
+    26). It is part of the cheap answer on purpose: the row asks on
+    every expansion, and the asterisk on its button has to be right
+    there already. `expected_parked` is what the dialog showed; a
+    confirming call whose fresh plan parks differently writes nothing,
+    because a button without an asterisk must not park a card. None
+    means "not compared" and is only for callers that decided that for
+    themselves - the service passes [] unless told `allow_parking`.
     """
     full, text, error = await _state_at(hass, store, key, revision)
     if error is not None:
@@ -979,6 +1011,10 @@ async def async_undo_change(
         # `apply_undo`.
         return {"available": False, "reason": "this change is already taken back"}
 
+    parked = list(plan.parked)
+    if confirm and expected_parked is not None and parked != list(expected_parked):
+        return {"available": False, "reason": _UNEXPECTED_PARKING}
+
     answer = {
         "available": True,
         "applied": False,
@@ -987,6 +1023,7 @@ async def async_undo_change(
         # Worked out here because it is a comparison, and a comparison in
         # the panel is logic in the panel.
         "equals_state_before": result == before_state,
+        "parked": parked,
     }
 
     # In an executor, and not out of habit: since the row itself asks for

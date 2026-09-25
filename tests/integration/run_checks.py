@@ -2255,10 +2255,33 @@ async def run_positions(access: str) -> None:
             revision=base,
             position=0,
         )
+        # Since GitHub #30 the card is parked in "Imported cards" rather
+        # than refused - what stays true is the point of this check: it
+        # never goes into the section that now stands at its old index.
+        # Written and looked at, not only previewed: the preview says
+        # where it would go, the live state says where it went.
+        label = gone["items"][0]["label"] if gone.get("items") else ""
+        before_write = await socket.call("lovelace/config", url_path=key)
+        written = await socket.call(
+            "dashboard_history/restore_deleted",
+            dashboard=key,
+            revision=base,
+            position=0,
+            confirm=True,
+            expected_parked=[label],
+        )
+        await asyncio.sleep(2)
+        live = await socket.call("lovelace/config", url_path=key)
         check(
-            "a card whose section was pushed along is not filed in a stranger",
-            bool(gone.get("items")) and "section" in (answer.get("error") or ""),
-            answer.get("error", "it was offered a place"),
+            "a card whose section was pushed along is parked, not filed in a stranger",
+            bool(label)
+            and not answer.get("error")
+            and answer.get("parked") == [label]
+            and written.get("applied") is True
+            and live["views"][0].get("sections") == before_write["views"][0].get("sections")
+            and live["views"][0].get("cards") == [guest],
+            answer.get("error") or written.get("error")
+            or f"parked={answer.get('parked')!r}, cards={live['views'][0].get('cards')!r}",
         )
 
         key = "dh-position-putback-steady"
@@ -2420,6 +2443,105 @@ async def run_sections(access: str) -> None:
             await socket.call(
                 "lovelace/dashboards/delete", dashboard_id=mine["id"]
             )
+
+
+async def run_parking(access: str) -> None:
+    """A card whose section moved since is parked, and Home Assistant keeps it.
+
+    Decision 26, GitHub #30. pytest proves the plan and the write; only a
+    running Home Assistant shows that its backend stores and returns a
+    sections view's `cards:` list unchanged, and that the refusal for a
+    preview that no longer matches reaches the caller. What the editor
+    then shows is decision 26's measurement, not this one's.
+    """
+    key = "dh-parking"
+    old = {"type": "markdown", "content": "# Licht\nalt"}
+    new = {"type": "markdown", "content": "# Licht\nneu"}
+    other = {"type": "markdown", "content": "# Wetter"}
+
+    def sections(*blocks):
+        return {
+            "views": [
+                {
+                    "path": "home",
+                    "title": "Home",
+                    "type": "sections",
+                    "sections": [dict(block) for block in blocks],
+                }
+            ]
+        }
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+        async def save(config: dict) -> list:
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            return await _wait_until_recorded(socket, key)
+
+        await save(sections({"cards": [old, other]}))
+        edited = await save(sections({"cards": [new, other]}))
+        revision = edited[0]["revision"]
+        await save(sections({"column_span": 2, "cards": []}, {"cards": [new, other]}))
+
+        asked = await socket.call(
+            "dashboard_history/undo_change", dashboard=key, revision=revision
+        )
+        check(
+            "an edit whose section moved since is undoable, parked",
+            asked.get("available") is True and asked.get("parked") == ["markdown: Licht"],
+            asked.get("reason") or f"parked={asked.get('parked')!r}",
+        )
+
+        stale = await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=revision,
+            confirm=True,
+            expected_parked=[],
+        )
+        check(
+            "a confirmation that did not show the parking writes nothing",
+            stale.get("available") is False and "preview" in (stale.get("reason") or ""),
+            stale.get("reason", ""),
+        )
+
+        await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=revision,
+            confirm=True,
+            expected_parked=["markdown: Licht"],
+        )
+        await asyncio.sleep(2)
+        live = await socket.call("lovelace/config", url_path=key)
+        view = live["views"][0]
+        check(
+            "the old card lands in Imported cards, the edited one is gone",
+            view.get("cards") == [old]
+            and [s.get("cards") for s in view["sections"]] == [[], [other]],
+            f"cards={view.get('cards')!r}, sections={view.get('sections')!r}",
+        )
+
+        # Saved once more through Home Assistant's API, untouched. This
+        # shows the backend stores and returns the list as it is - not
+        # what the editor does with it; decision 26 measured that in the
+        # editor, and no API reaches it.
+        await save(live)
+        again = await socket.call("lovelace/config", url_path=key)
+        check(
+            "and Home Assistant keeps it across the next save",
+            again["views"][0].get("cards") == [old],
+            f"cards={again['views'][0].get('cards')!r}",
+        )
+
+        # Named, never by prefix: this instance holds other dh-* boards.
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        mine = next((e for e in listed if e.get("url_path") == key), None)
+        if mine is not None:
+            await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
 
 
 async def run_missing_grouped_by_view(access: str) -> None:
@@ -4269,6 +4391,8 @@ if __name__ == "__main__":
     asyncio.run(run_positions(access))
     print("\n  -- Ein ganzer Abschnitt, als eine Sache --")
     asyncio.run(run_sections(access))
+    print("\n  -- Geparkt, wenn der Abschnitt sich nicht mehr beweisen laesst --")
+    asyncio.run(run_parking(access))
     print("\n  -- Gruppiert nach Views, nicht nach Pfaden --")
     asyncio.run(run_missing_grouped_by_view(access))
     print("\n  -- Versionen, die von selbst entstehen --")

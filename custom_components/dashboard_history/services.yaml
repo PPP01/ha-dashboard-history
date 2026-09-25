@@ -112,6 +112,14 @@ restore_deleted:
       default: false
       selector:
         boolean:
+    allow_parking:
+      required: false
+      default: false
+      description: >-
+        Allow cards whose section can no longer be proven to be placed
+        in the view's "Imported cards" area instead of refusing.
+      selector:
+        boolean:
 
 restore_state:
   name: Restore a whole state
@@ -163,9 +171,12 @@ undo_change:
   name: Undo one change
   description: >-
     Take a single change back and keep everything saved since. Only
-    offered when it is provably exact: the cards the change produced
-    must still be in the dashboard, unchanged and only once. Without
-    confirm it answers with a preview and writes nothing.
+    offered when it can be shown what it writes: the cards the change
+    produced must still be in the dashboard, unchanged and only once.
+    Where a card's section in a sections view cannot be proven any more,
+    it can only be placed in the view's "Imported cards" area - that
+    needs allow_parking, otherwise the call refuses. Without confirm it
+    answers with a preview and writes nothing.
   fields:
     dashboard:
       required: true
@@ -191,6 +202,14 @@ undo_change:
         matters when the repository could not be read or written at the
         exact moment this ran.
       default: false
+      selector:
+        boolean:
+    allow_parking:
+      required: false
+      default: false
+      description: >-
+        Allow cards whose section can no longer be proven to be placed
+        in the view's "Imported cards" area instead of refusing.
       selector:
         boolean:
 
