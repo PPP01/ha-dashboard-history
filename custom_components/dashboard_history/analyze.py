@@ -281,6 +281,11 @@ class UndoStep:
     expect: Any
     payload: Any
     label: str
+    # Decision 26: an insertion whose section cannot be proven any more
+    # goes to the end of the view's own `cards:` - Home Assistant's
+    # "Imported cards" - instead of to an index. `location` is then
+    # ("cards",), and `index` only keeps the order of the old place.
+    parked: bool = False
 
 
 @dataclass(frozen=True)
@@ -294,6 +299,11 @@ class UndoPlan:
 
     blocked: str | None
     steps: tuple = ()
+
+    @property
+    def parked(self) -> tuple[str, ...]:
+        """What this plan cannot put back exactly, only make available."""
+        return tuple(step.label for step in self.steps if step.parked)
 
 
 def _slots(config: dict, keys: set) -> list[Slot]:
@@ -616,24 +626,33 @@ def _section_marks(view: dict) -> list:
     ]
 
 
-def _sections_lie(one: dict, other: dict) -> bool:
-    """Whether a section index means a different section in the two states.
+def _section_drift(before: dict, after: dict, current: dict) -> tuple[set, set]:
+    """Which views' sections cannot be trusted, and in which of two ways.
 
-    Same reasoning as `_positions_lie`, one level down and without the
-    escape hatch: a view can have a path, a section never does. Any
-    change to the run of sections - one added, one removed, one renamed,
-    two swapped - makes every index below it point somewhere new.
+    `rebuilt`: the change itself altered the run of sections - added,
+    removed, swapped or re-set one. Undoing that means rebuilding the
+    sections, which no card step does, so it stays a refusal.
 
-    Two sections that agree on every setting and differ only in their
-    cards still slip through, indistinguishable from one another by
-    anything but content. The identity chain of package 2 is what closes
-    that; a section's own settings are what there is to work with today.
+    `shifted`: the change left the sections alone, but they have moved
+    since. A card can still be taken out exactly - it is found by its
+    fingerprint - but where one goes back in cannot be proven any more,
+    so an insertion there is parked in the view's own `cards:` (decision
+    26, GitHub #30).
+
+    Per view, not per dashboard: a section moved in one view says nothing
+    about an index in another. Two sections that agree on every setting
+    and differ only in their cards still slip through, as before (#31).
     """
-    here, there = dict(_views_by_key(one)), dict(_views_by_key(other))
-    return any(
-        _section_marks(here[key]) != _section_marks(there[key])
-        for key in set(here) & set(there)
-    )
+    old, new, now = (dict(_views_by_key(state)) for state in (before, after, current))
+    rebuilt: set = set()
+    shifted: set = set()
+    for key in set(old) & set(new):
+        marks = _section_marks(new[key])
+        if _section_marks(old[key]) != marks:
+            rebuilt.add(key)
+        elif key in now and _section_marks(now[key]) != marks:
+            shifted.add(key)
+    return rebuilt, shifted
 
 
 def _section_anchor(view: dict, location: tuple) -> tuple | None:
@@ -663,7 +682,7 @@ def _view_type_changed(one: dict, other: dict) -> bool:
     """Whether a view kept its identity but changed layout.
 
     Converting a view - masonry to sections, most commonly - adds an
-    empty grid section, which is exactly what `_sections_lie` reacts to:
+    empty grid section, which is exactly what `_section_drift` reacts to:
     the section list went from empty to one entry. Checked first, so the
     refusal names the conversion instead of blaming "the sections" for a
     side effect of it. GitHub #32.
@@ -679,10 +698,10 @@ _POSITION_REFUSAL = (
     "cannot tell which view is which"
 )
 
-_SECTION_REFUSAL = (
-    "the sections of this dashboard are arranged differently now, and a "
-    "section has no path to recognise it by, so an exact undo cannot tell "
-    "them apart"
+_SECTIONS_REBUILT_REFUSAL = (
+    "this change rearranged the sections of a view itself, and a section "
+    "has no path to recognise it by, so an exact undo cannot rebuild them "
+    "- a version or a whole-state restore covers it"
 )
 
 _VIEW_TYPE_REFUSAL = (
@@ -889,13 +908,14 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # `current` is where the steps land.
     if any(_positions_lie(one, other) for one, other in pairs):
         return UndoPlan(blocked=_POSITION_REFUSAL)
-    # Checked before `_sections_lie`: a conversion changes the section
+    # Checked before `_section_drift`: a conversion changes the section
     # list too, and would otherwise be blamed on "the sections" instead
     # of on itself.
     if type_changed:
         return UndoPlan(blocked=_VIEW_TYPE_REFUSAL)
-    if any(_sections_lie(one, other) for one, other in pairs):
-        return UndoPlan(blocked=_SECTION_REFUSAL)
+    rebuilt, shifted = _section_drift(before, after, current)
+    if rebuilt:
+        return UndoPlan(blocked=_SECTIONS_REBUILT_REFUSAL)
 
     by_mark: dict[str, list[Slot]] = {}
     for slot in _present(current):
@@ -916,6 +936,37 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         )
 
     steps: list[UndoStep] = []
+    parked: list[tuple[int, tuple, int, UndoStep]] = []
+
+    def put_back(old_slot: Slot, label: str) -> None:
+        """Insert where the card came from, or park it in "Imported cards"."""
+        if old_slot.view_key not in shifted or old_slot.location[:1] != ("sections",):
+            steps.append(_step(old_slot, "insert", None, old_slot.card, label))
+            return
+        # A pathless view is found by its position here, which
+        # `_positions_lie` above has already vouched for - the same proof
+        # an ordinary insert into it rests on.
+        parked.append(
+            (
+                old_slot.view_index,
+                old_slot.location,
+                old_slot.index,
+                UndoStep(
+                    action="insert",
+                    kind="card",
+                    view_path=old_slot.view.get("path"),
+                    view_index=old_slot.view_index,
+                    location=("cards",),
+                    index=old_slot.index,
+                    expect=None,
+                    payload=old_slot.card,
+                    # The card that is parked, not the one taken out: the
+                    # dialog lists what somebody has to go and place.
+                    label=_describe(old_slot.card),
+                    parked=True,
+                ),
+            )
+        )
 
     # An edit and a move are the same undo: take the card off the place
     # it sits on today, and put it back on the place it came from. Two
@@ -931,7 +982,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label))
-        steps.append(_step(old_slot, "insert", None, old_slot.card, label))
+        put_back(old_slot, label)
 
     for new_slot in matching.added:
         label = _describe(new_slot.card)
@@ -945,9 +996,11 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         # copy, and this part of the change is undone either way.
         if by_mark.get(fingerprint(old_slot.card)):
             continue
-        steps.append(
-            _step(old_slot, "insert", None, old_slot.card, _describe(old_slot.card))
-        )
+        put_back(old_slot, _describe(old_slot.card))
+
+    # In the order of the places they came from - view, section, card -
+    # whichever of the three tables in decision 15 produced them.
+    steps.extend(item[3] for item in sorted(parked, key=lambda item: item[:3]))
 
     # Whole views, which `match_cards` leaves out on purpose: a view that
     # only one state has is one line in the history, not one per card on

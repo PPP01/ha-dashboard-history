@@ -1144,11 +1144,11 @@ def test_undo_still_works_when_the_sections_stayed_put():
 
 
 def test_undo_refuses_when_two_untitled_sections_swap_settings():
-    """A section swap without titles must not slip past `_sections_lie`.
+    """A section swap without titles must not slip past `_section_drift`.
 
     Home Assistant names a section with a heading card, not `title` -
     untitled sections are the common case, and the docstring on
-    `_sections_lie` already names this gap. Swapping two whole sections
+    `_section_drift` already names this gap. Swapping two whole sections
     (settings included) leaves the ordered title list unchanged
     (`[None, None]` both times), so the old check saw nothing wrong and
     let the undo through. It would have moved the cards back but left
@@ -1168,13 +1168,153 @@ def test_undo_refuses_when_two_untitled_sections_swap_settings():
     assert "section" in plan.blocked
 
 
+# -- sections that moved since: park, do not refuse (GitHub #30) ---------
+
+BETT = {"type": "tile", "entity": "light.x", "name": "Bett"}
+BETTLAMPE = {"type": "tile", "entity": "light.x", "name": "Bettlampe"}
+
+
+def _sectioned(*sections, path="home", **extra):
+    view = {"type": "sections", "sections": [dict(s) for s in sections], **extra}
+    if path is not None:
+        view["path"] = path
+    return view
+
+
+def test_an_edit_whose_section_moved_since_is_parked():
+    """Decision 26: the card cannot be proven to belong at index 1 any more.
+
+    The change only edited a card. A section was put in front of it
+    afterwards. Taking the edited card out is exact - it is found by its
+    fingerprint - but where the old one goes back in is not, so it goes
+    into the view's own `cards:`, Home Assistant's "Imported cards".
+    """
+    before = {"views": [_sectioned({"cards": [BETT]})]}
+    after = {"views": [_sectioned({"cards": [BETTLAMPE]})]}
+    current = {"views": [_sectioned({"column_span": 2, "cards": []}, {"cards": [BETTLAMPE]})]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [(s.action, s.location, s.index, s.parked) for s in plan.steps] == [
+        ("remove", ("sections", 1, "cards"), 0, False),
+        ("insert", ("cards",), 0, True),
+    ]
+    assert plan.steps[1].payload == BETT
+    assert plan.parked == ("tile: Bett",)
+
+
+def test_sections_that_moved_in_another_view_do_not_block():
+    """The check used to cover the whole dashboard; now it covers a view."""
+    other = {"path": "a", "cards": [A]}
+    moved = _sectioned({"cards": [B]}, path="s")
+    moved_since = _sectioned({"cards": [B]}, {"column_span": 2, "cards": []}, path="s")
+    plan = analyze.plan_undo(
+        {"views": [other, moved]},
+        {"views": [{"path": "a", "cards": []}, moved]},
+        {"views": [{"path": "a", "cards": []}, moved_since]},
+    )
+    assert plan.blocked is None
+    assert plan.parked == ()
+    assert [(s.action, s.location, s.payload) for s in plan.steps] == [
+        ("insert", ("cards",), A)
+    ]
+
+
+def test_only_removals_in_a_shifted_view_stay_exact():
+    """Nothing goes back in, so there is nothing whose place is in doubt."""
+    before = {"views": [_sectioned({"cards": [A]})]}
+    after = {"views": [_sectioned({"cards": [A, B]})]}
+    current = {"views": [_sectioned({"column_span": 2, "cards": []}, {"cards": [A, B]})]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.parked == ()
+    assert [(s.action, s.location, s.index) for s in plan.steps] == [
+        ("remove", ("sections", 1, "cards"), 1)
+    ]
+
+
+def test_a_pathless_view_whose_sections_moved_parks_too():
+    """Reaching the section check means `_positions_lie` already vouched
+    for the view - the same proof an ordinary insert into it relies on.
+
+    Two views, so the single-view rule of #33 does not decide it: here
+    the unchanged title is what lets the position check pass. Without
+    it the view's changed content would refuse first, for a reason of
+    its own (`test_…_without_its_title_refuses_by_position` below)."""
+    first = {"path": "a", "cards": [A]}
+    before = {"views": [first, _sectioned({"cards": [BETT]}, path=None, title="Home")]}
+    after = {"views": [first, _sectioned({"cards": [BETTLAMPE]}, path=None, title="Home")]}
+    current = {"views": [first, _sectioned({"column_span": 2, "cards": []}, {"cards": [BETTLAMPE]},
+                                           path=None, title="Home")]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    parked = [s for s in plan.steps if s.parked]
+    assert [(s.view_path, s.view_index, s.location) for s in parked] == [(None, 1, ("cards",))]
+
+
+def test_a_pathless_view_whose_sections_moved_without_its_title_refuses_by_position():
+    """The control for the test above: the title is what decided it."""
+    first = {"path": "a", "cards": [A]}
+    before = {"views": [first, _sectioned({"cards": [BETT]}, path=None)]}
+    after = {"views": [first, _sectioned({"cards": [BETTLAMPE]}, path=None)]}
+    current = {"views": [first, _sectioned({"column_span": 2, "cards": []}, {"cards": [BETTLAMPE]},
+                                           path=None)]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert "URL path" in plan.blocked
+
+
+def test_a_change_that_rebuilt_the_sections_says_so():
+    """Parking answers "where does this card go", not "what did the view look like"."""
+    old = {"views": [_sectioned({"cards": [B]})]}
+    new = {"views": [_sectioned({"column_span": 2, "cards": [C]}, {"cards": [B]})]}
+    plan = analyze.plan_undo(old, new, new)
+    assert plan.blocked is not None
+    assert "this change rearranged the sections" in plan.blocked
+
+
+def test_a_card_from_imported_cards_goes_back_to_its_index_not_parked():
+    before = {"views": [_sectioned({"cards": [B]}, cards=[A])]}
+    after = {"views": [_sectioned({"cards": [B]}, cards=[])]}
+    current = {"views": [_sectioned({"column_span": 2, "cards": []}, {"cards": [B]}, cards=[])]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [(s.action, s.location, s.index, s.parked) for s in plan.steps] == [
+        ("insert", ("cards",), 0, False)
+    ]
+
+
+def test_several_parked_cards_keep_the_order_of_their_old_places():
+    before = {"views": [_sectioned({"cards": [A]}, {"cards": [B]})]}
+    after = {"views": [_sectioned({"cards": []}, {"cards": []})]}
+    current = {"views": [_sectioned({"cards": []}, {"cards": []}, {"column_span": 2, "cards": []})]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.parked == ("tile: light.a", "tile: light.b")
+
+
+def test_parked_cards_of_two_views_stay_grouped_by_view():
+    """The dialog lists them; interleaving two views' cards reads as noise."""
+    p_before = _sectioned({"cards": [A]}, {"cards": [B]}, path="p")
+    q_before = _sectioned({"cards": [C]}, path="q")
+    p_after = _sectioned({"cards": []}, {"cards": []}, path="p")
+    q_after = _sectioned({"cards": []}, path="q")
+    p_now = _sectioned({"cards": []}, {"cards": []}, {"column_span": 2, "cards": []}, path="p")
+    q_now = _sectioned({"cards": []}, {"column_span": 2, "cards": []}, path="q")
+    plan = analyze.plan_undo(
+        {"views": [p_before, q_before]},
+        {"views": [p_after, q_after]},
+        {"views": [p_now, q_now]},
+    )
+    assert plan.parked == ("tile: light.a", "tile: light.b", "tile: light.c")
+
+
 def test_undo_of_a_view_conversion_names_the_conversion_not_sections():
     """A converted view is refused for the right reason, not a coincidence.
 
     Here the conversion happens to coincide with a card moving into the
     new section, so `match_cards` already sees something to report.
     Converting a view to sections also adds an empty grid section -
-    exactly what `_sections_lie` reacts to, since the section list went
+    exactly what `_section_drift` reacts to, since the section list went
     from empty to one entry. It fired, but named "the sections", which
     was never the actual cause: the view itself was converted. GitHub #32.
     """
