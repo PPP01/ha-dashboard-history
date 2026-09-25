@@ -1175,18 +1175,29 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         )
 
     by_mark = _group_by_mark(_present(current))
+    card_then = _group_by_mark(_present(after))
 
-    def sole(card: Any, label: str) -> tuple[Slot | None, str | None]:
-        found = by_mark.get(fingerprint(card), [])
-        if len(found) == 1:
+    # Counted in two stages, the same way `sole_badge` below counts
+    # badges (GitHub #36): "exactly one today" is not proof by itself -
+    # an untouched copy that stood there before the change is not the
+    # one the change produced. Asked first dashboard-wide, then, failing
+    # that, in the card's own view.
+    def sole(card: Any, view_key: Any, label: str) -> tuple[Slot | None, str | None]:
+        mark = fingerprint(card)
+        found, left = by_mark.get(mark, []), card_then.get(mark, [])
+        if len(found) == 1 and len(left) == 1:
             return found[0], None
-        if not found:
+        mine = _in_view(found, view_key)
+        mine_then = _in_view(left, view_key)
+        if len(mine) == 1 and len(mine_then) == 1:
+            return mine[0], None
+        if len(mine) < len(mine_then):
             return None, (
                 f"{label} was changed again after this, so there is no "
                 f"exact version left to put back"
             )
         return None, (
-            f"{len(found)} cards now look exactly like {label}, so an "
+            f"{len(mine)} cards now look exactly like {label}, so an "
             f"exact undo cannot tell them apart"
         )
 
@@ -1233,7 +1244,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # way, and not one refusal more.
     for old_slot, new_slot in (*matching.edited, *matching.moved):
         label = _describe(new_slot.card)
-        here, why = sole(new_slot.card, label)
+        here, why = sole(new_slot.card, new_slot.view_key, label)
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label))
@@ -1241,7 +1252,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 
     for new_slot in matching.added:
         label = _describe(new_slot.card)
-        here, why = sole(new_slot.card, label)
+        here, why = sole(new_slot.card, new_slot.view_key, label)
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label))
@@ -1254,7 +1265,6 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # Mirrors the badge rule below (Vorhaben N) - `deleted` is how many
     # alike the change took from that view, `card_came_back` how many
     # more stand there now than the change left.
-    card_then = _group_by_mark(_present(after))
     removed_card_marks = [
         (old_slot, fingerprint(old_slot.card)) for old_slot in matching.removed
     ]

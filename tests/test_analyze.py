@@ -831,6 +831,29 @@ def test_an_added_card_is_planned_away():
     assert [(s.action, s.expect) for s in plan.steps] == [("remove", b)]
 
 
+def test_the_sole_surviving_card_of_several_added_is_not_proof():
+    """GitHub #36: the copy on "a" stood there before and is not the
+    change's to take away - the one the change added, on "b", is the
+    one that went missing since."""
+    old = {"views": [{"path": "a", "cards": [A]}, {"path": "b", "cards": []}]}
+    new = {"views": [{"path": "a", "cards": [A]}, {"path": "b", "cards": [A]}]}
+    current = {"views": [{"path": "a", "cards": [A]}, {"path": "b", "cards": []}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert plan.blocked == (
+        "tile: light.a was changed again after this, so there is no "
+        "exact version left to put back"
+    )
+
+
+def test_one_of_two_added_cards_gone_from_a_view_refuses():
+    """GitHub #36, within one view: which of the two the change added is lost."""
+    old = {"views": [{"path": "a", "cards": [A]}]}
+    new = {"views": [{"path": "a", "cards": [A, A]}]}
+    current = {"views": [{"path": "a", "cards": [A]}]}
+    plan = analyze.plan_undo(old, new, current)
+    assert "changed again after this" in plan.blocked
+
+
 def test_a_change_without_card_effect_is_refused():
     a = {"type": "tile", "entity": "light.a"}
     plan = analyze.plan_undo(_config([a]), _config([a]), _config([a]))
