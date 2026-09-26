@@ -2180,15 +2180,6 @@ async def run_positions(access: str) -> None:
             },
             "URL path",
         ),
-        (
-            "dh-position-section",
-            "a section inserted before another is refused",
-            sections({"title": "Unten", "cards": [weather]}),
-            sections(
-                {"title": "Neu", "cards": [guest]}, {"title": "Unten", "cards": [weather]}
-            ),
-            "section",
-        ),
     )
 
     async with Socket(access) as socket:
@@ -2222,6 +2213,38 @@ async def run_positions(access: str) -> None:
             "a card deleted from a pathless view that stayed put is still undoable",
             answer.get("available") is True,
             answer.get("reason", ""),
+        )
+
+        # Since GitHub #31, a section inserted before another is recognized
+        # as an atomic `sections_list` step and cleanly undone, instead of
+        # being refused as a rebuild (analogous to
+        # `test_a_section_inserted_before_another_is_taken_out_again`).
+        key = "dh-position-section"
+        await ready(socket, key)
+        changes = await save(
+            socket, key, sections({"title": "Unten", "cards": [weather]})
+        )
+        changes = await save(
+            socket,
+            key,
+            sections(
+                {"title": "Neu", "cards": [guest]}, {"title": "Unten", "cards": [weather]}
+            ),
+        )
+        answer = await socket.call(
+            "dashboard_history/undo_change",
+            dashboard=key,
+            revision=changes[0]["revision"],
+            confirm=True,
+            expected_parked=[],
+        )
+        await asyncio.sleep(2)
+        live = await socket.call("lovelace/config", url_path=key)
+        titles = [s.get("title") for s in live["views"][0].get("sections") or []]
+        check(
+            "a section inserted before another is cleanly undone",
+            answer.get("applied") is True and titles == ["Unten"],
+            f"applied={answer.get('applied')!r}, titles={titles!r}, reason={answer.get('reason')!r}",
         )
 
         # And the other way back, which walks the same section index.
@@ -2395,26 +2418,34 @@ async def run_sections(access: str) -> None:
                 f"{standing}",
             )
 
-        # Changed next door: the proof no longer holds, and the refusal
-        # has to be the section's own - not the card anchor's, which
-        # would mean the section was never recognised in the first place.
+        # Changed next door: since Vorhaben O (GitHub #31, Task 8) the
+        # neighbour now in the alike section means a swap and a drag
+        # across leave the same bytes. Instead of a whole-section refusal,
+        # the cards are reported as single removed cards and their restore
+        # parks them in "Imported cards".
         both = await save(sections({"cards": [a, b]}, {"cards": [c]}))
         base = both[0]["revision"]
         await save(sections({"cards": [c]}))
         await save(sections({"cards": [c, d]}))
-        refused = await socket.call(
+        gone = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=base
+        )
+        kinds = [item["kind"] for item in gone.get("items", [])]
+        check(
+            "a changed neighbour turns the section into single card items",
+            kinds == ["card", "card"],
+            f"kinds={kinds}",
+        )
+        answer = await socket.call(
             "dashboard_history/restore_deleted", dashboard=key, revision=base, position=0
         )
-        reason = str(refused.get("error", ""))
+        label = gone["items"][0]["label"] if gone.get("items") else ""
         check(
-            "a changed neighbour makes it refuse",
-            "stood beside" in reason,
-            f"error={reason!r}",
-        )
-        check(
-            "and it is the section's proof that refuses, not the card anchor",
-            "stranger" not in reason,
-            f"error={reason!r}",
+            "and restoring it parks rather than refusing with a neighbour error",
+            bool(label)
+            and not answer.get("error")
+            and answer.get("parked") == [label],
+            answer.get("error") or f"parked={answer.get('parked')!r}",
         )
 
         # A card of the deleted section found elsewhere counts as moved,
@@ -2710,6 +2741,111 @@ async def run_badges(access: str) -> None:
         if mine is not None:
             await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
 
+
+
+async def run_section_moves(access: str) -> None:
+    """Sections swapped or added whole, named and undone as one thing (GitHub #31)."""
+    key = "dh-section-moves"
+    heading = {"type": "heading", "heading": "Oben"}
+    a = {"type": "markdown", "content": "# A"}
+    b = {"type": "markdown", "content": "# B"}
+    c = {"type": "markdown", "content": "# C"}
+
+    def sections(*blocks):
+        return {
+            "views": [
+                {
+                    "path": "home",
+                    "title": "Home",
+                    "type": "sections",
+                    "sections": [{"type": "grid", "cards": list(block)} for block in blocks],
+                }
+            ]
+        }
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            await asyncio.sleep(3)
+
+        async def save(config: dict) -> list:
+            # `_wait_for_new_state`, not `_wait_until_recorded`: see
+            # `save` in `run_settings` (Vorhaben M) and in `run_undo`.
+            rows = (
+                await socket.call("dashboard_history/history", dashboard=key, limit=1)
+            )["changes"]
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            return await _wait_for_new_state(
+                socket, key, rows[0]["revision"] if rows else "", RECORDING_WAIT
+            )
+
+        async def undo(revision: str) -> dict:
+            rows = (
+                await socket.call("dashboard_history/history", dashboard=key, limit=1)
+            )["changes"]
+            asked = await socket.call(
+                "dashboard_history/undo_change", dashboard=key, revision=revision
+            )
+            if asked.get("available") is True:
+                await socket.call(
+                    "dashboard_history/undo_change",
+                    dashboard=key,
+                    revision=revision,
+                    confirm=True,
+                    expected_parked=[],
+                )
+                # The undo is a save of its own; the next `save` must not
+                # mistake its row for the one it waits for.
+                await _wait_for_new_state(socket, key, rows[0]["revision"], RECORDING_WAIT)
+            return asked
+
+        def standing(live: dict) -> list:
+            return [
+                [card.get("heading") or card.get("content") for card in section["cards"]]
+                for section in live["views"][0]["sections"]
+            ]
+
+        await save(sections([heading, a], [b]))
+        swapped = (await save(sections([b], [heading, a])))[0]
+        check(
+            "a swap of two sections is one move",
+            swapped["message"].endswith("1 section moved"),
+            swapped["message"],
+        )
+        asked = await undo(swapped["revision"])
+        check("and undoable", asked.get("available") is True, asked.get("reason", ""))
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "and the sections stand as before",
+            standing(live) == [["Oben", "# A"], ["# B"]],
+            f"{standing(live)}",
+        )
+
+        grown = (
+            await save(sections([heading, a], [b], [{"type": "heading", "heading": "Neu"}, c]))
+        )[0]
+        check(
+            "an added section is one line",
+            grown["message"].endswith("1 section added"),
+            grown["message"],
+        )
+        asked = await undo(grown["revision"])
+        check(
+            "and undoing it is available", asked.get("available") is True, asked.get("reason", "")
+        )
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "and takes it out again",
+            standing(live) == [["Oben", "# A"], ["# B"]],
+            f"{standing(live)}",
+        )
+
+        # Named, never by prefix: this instance holds other dh-* boards.
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        mine = next((e for e in listed if e.get("url_path") == key), None)
+        if mine is not None:
+            await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
 
 
 async def run_missing_grouped_by_view(access: str) -> None:
@@ -4565,6 +4701,8 @@ if __name__ == "__main__":
     asyncio.run(run_settings(access))
     print("\n  -- Badges einer Ansicht zuruecknehmen --")
     asyncio.run(run_badges(access))
+    print("\n  -- Sections als Einheit bewegen und zuruecknehmen --")
+    asyncio.run(run_section_moves(access))
     print("\n  -- Gruppiert nach Views, nicht nach Pfaden --")
     asyncio.run(run_missing_grouped_by_view(access))
     print("\n  -- Versionen, die von selbst entstehen --")

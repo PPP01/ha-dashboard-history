@@ -33,8 +33,9 @@ Every row below was empirically verified against the live codebase.
 | **Section added** | Cards shown as added | **Refuses** if this change added it; later additions park cards (see below) | — | **Works** |
 | **Sections rearranged after the change**, card edited or deleted by it | Correct | **Parks** the card in "Imported cards" — button shows *Undo this change\** — except sections alike in every setting, which still write silently to the old index (see below) | Parks in "Imported cards", same exception | **Works** |
 | **Titled sections reordered** | Correct | **Refuses** | **Refuses** | **Works** |
-| **Untitled sections swapped**, their settings differ (e.g. `column_span`) | `N moved` (cards, not the section) | **Refuses** (settings mismatch caught) | Refuses (nothing missing) | **Works** |
-| **Untitled sections swapped**, settings otherwise identical | `N moved` (cards, not the section) | **Exact** — nothing distinguishable is left behind either way | Refuses (nothing missing) | **Works** |
+| **Sections swapped or moved** as whole blocks, nothing else changed | `1 section moved` — one line per section, named by its heading | **Exact** — the whole row of sections is written back in one step, settings included | Refuses (nothing missing) | **Works** |
+| **Section added or deleted** whole (a deleted one with at least one card) | `1 section added` / `1 section removed` | **Exact** while that section and the sections around it are unchanged since | Deleted: offered as one item | **Works** |
+| **Section moved and edited in the same save** | Its cards, one line each | **Refuses** — nothing proves it is the same section | Refuses | **Works** |
 | **Untitled sections reordered**, and a card also edited in the same save | Correct | Writes positionally (see below) | **Parks in "Imported cards"** | **Works** |
 | **View without URL path** shifts position | May name an untouched view | **Refuses** | **Refuses** | **Works** |
 | …and was edited in the same save | Same | **Refuses** | Adds older copy as duplicate | **Works** |
@@ -69,7 +70,7 @@ Home Assistant assigns sections **no unique identifier and no URL path**. A sect
 
 - **Cards inside sections:** Fully supported. Moving, editing, and deleting cards within sections works exactly like regular views.
 - **Deleting a whole section:** Dashboard History restores the section as a complete unit into the gap it left (provided neighboring sections were not modified).
-- **Reordering untitled sections:** Until 2026-09-24 the one case where silent misplacement could occur — if two untitled sections swapped positions, their index changed but their empty titles matched, so an exact-looking *Undo* wrote cards back correctly while leaving section-level settings (`column_span` and the like) behind at the old position ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). The guard now compares each section's own settings, not just `title`, so a swap where those settings differ is refused instead of misapplied. What is left: two sections that agree on **every** setting and differ only in the cards they hold are still indistinguishable to the guard — harmlessly, since a swap between such sections leaves the same settings behind either way. Reordering untitled sections **together with a card edit** no longer writes a card into the wrong section: *Undo* refuses where the sections' settings differ and is exact where they do not, and *Put back* parks the card in "Imported cards" (in a view with a URL path; in one without, it refuses). What is still open is narrower — sections alike in every setting, reordered *after* the change — see the appendix below.
+- **Reordering sections:** Since 2026-09-26 sections are matched as whole blocks before their cards ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). A section swapped, moved, added or deleted in one save reads as one line — *section "Heizung" was moved* — and *Undo this change* writes the whole row of sections back in one step, own settings included. It refuses where it cannot prove that: a section moved **and** edited in the same save, two sections deleted at once, or the sections around it rearranged since.
 
 > [!TIP]
 > **When a section cannot be recognised, the card is parked, not guessed.**
@@ -197,9 +198,7 @@ was, cards inside them are recognised and recoverable like any others.
 | What you did | Why it refuses |
 | --- | --- |
 | Deleted a whole section, and a neighbouring section changed since | The proof *Put back* works from is that today's sections are the ones this one stood beside — then the gap is the only place it fits. An edit next door takes that away, and the undo refuses regardless: a section has no path to recognise it by. |
-| Added a section, **in the change being undone** | Undoing it would mean rebuilding the row of sections, which no card step does, so the undo refuses: *"this change rearranged the sections of a view itself"*. Stricter than it needs to be for a section appended at the end, which shifts nothing. A section added *after* the change is a different case and no longer refuses — the card is parked in "Imported cards" instead. |
-| Reordered sections **whose settings tell them apart** (a title, a `column_span`, …), **in the change being undone** | Same refusal, same reason: the guard compares each section's settings, position by position, and a reorder that moves distinguishable sections is exactly what it looks for. Reordered *after* the change instead, the card is parked. Sections alike in every setting, reordered in the same save as a card edit, do not refuse — the undo is exact there, because every card goes back to its old position and the settings left behind are identical. |
-| Renamed a section | A section's own properties are not cards. The change reads as `no card changes`, and the undo says *"this change did not alter any cards."* |
+| Added, deleted or reordered sections in the change being undone, **and** the sections around them were added, deleted or reordered since | The row of sections is written back in one piece, in the order it had before the change; that order only means the same thing while the sections around it still stand as the change left them. Card edits in other sections since do not refuse. |
 | Converted a view's layout (masonry to sections, typically) | Home Assistant adds an empty grid section on conversion, which used to be blamed on "the sections" — `_SECTION_REFUSAL` fired because the section list changed, not because it actually shifted. Fixed 2026-09-24: the conversion is now detected directly and named as the reason. [GitHub issue #32](https://github.com/PPP01/ha-dashboard-history/issues/32). The history entry itself named nothing at all before this — `type` is not a card, so a save that only converts a view had no entry to show. It now reads "the view … was converted from masonry to sections." |
 
 A refusal is the correct outcome for all five — Home Assistant's own
@@ -236,18 +235,12 @@ presented as an exact undo.
 — the guard now compares every field of a section but its `cards`, so a
 swap where the settings differ is refused instead of written silently.
 
-**What is still open from the same finding.** Two sections that agree
-on **every** setting and differ only in the cards they hold remain
-indistinguishable to the guard — harmlessly, since a swap between such
-sections leaves the same settings behind at each position either way,
-so nothing distinguishable is lost when the swap itself is undone. Not
-so when such a swap happens *after* some other change and that change
-is undone — the first case in the list below. What the fix does
-**not** touch is the *wording*: a whole-section swap still reads in the
-history as `N moved` cards, one line per card, rather than as the one
-event it actually is — the matcher has no concept of "this whole
-section relocated." Closing that needs sections matched as units, the
-same identity chain described below, not a guard.
+**Closed on 2026-09-26.** Sections are now matched as units
+([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)):
+a whole-section swap reads as one move and is undone as one, settings
+included. What remains is what no matching without an identity chain
+can close: a section moved and edited in the same save is refused
+rather than guessed.
 
 The original case, reordering untitled sections **together with** a
 card edit, used to head the list below: *Put back* filed the
@@ -272,7 +265,11 @@ own:
   stands there now, and without an asterisk. *Put back* does the same
   only where no card beside the restored one is left to tell the
   sections apart, typically when the section now at that index is
-  empty. Needs sections that differ in nothing but their cards — a
+  empty.
+  Since 2026-09-26 *Put back* parks instead where a neighbour of the card
+  now stands in another section alike in every setting — the one shape
+  of this in which a swap and a drag across leave the same bytes.
+  Needs sections that differ in nothing but their cards — a
   plain `type: grid`, the editor's default. This is the residual from
   #31, not a new gap.
 - **A URL path freed and handed to a new view.** Also an ordinary thing
