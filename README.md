@@ -103,6 +103,7 @@ The panel is designed for fast, daily troubleshooting as well as deep forensic i
 | ⚙️ **[How It Works](docs/how-it-works.md)** | Architecture, 4-pass card matching without IDs, container model, mathematical undo safety |
 | ⚠️ **[Limitations](docs/limitations.md)** | Complete 14-situation empirical matrix, edge cases, and design refusals — with a full case-by-case appendix for anyone who wants to go deeper |
 | ⚡ **[HA Actions (Services)](docs/services.md)** | Automation reference for all 16 `dashboard_history.*` actions with YAML examples |
+| 🤖 **[AI Agents](docs/ai-agents.md)** | How an AI agent changing dashboards through the API (e.g. via MCP) should use `create_version` and `describe` afterwards |
 | 🛠️ **[Development & Testing](docs/development.md)** | Test runner, throwaway Docker instance, real-storage fixtures, and architecture invariants |
 | ❓ **[FAQ](FAQ.md)** | Answers with the reasoning behind them — e.g. why a version number can't be changed afterwards |
 
