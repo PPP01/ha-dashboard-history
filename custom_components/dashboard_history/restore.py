@@ -86,7 +86,7 @@ def _anchored_index(view: dict, item: RemovedItem) -> int | None:
     The answer is an index, not a yes: right after the last survivor that
     stood ahead of the card, or right before the first one if none did.
     """
-    count, settings, survivors, before = item.anchor
+    count, settings, survivors, before, departed = item.anchor
     sections = view.get("sections") or []
     if len(sections) != count:
         return None
@@ -98,6 +98,11 @@ def _anchored_index(view: dict, item: RemovedItem) -> int | None:
         return None
     own = {key: value for key, value in section.items() if key != "cards"}
     if not _same_value(own, settings):
+        return None
+    # Only where no survivor is left to recognise the section by: then
+    # "empty" is all the anchor has, and a swap and a drag across cannot
+    # be told apart. With survivors, they already name the section.
+    if not survivors and _departed_is_ambiguous(sections, at, settings, departed):
         return None
     cards = list(section.get("cards") or [])
     if not survivors:
@@ -113,6 +118,33 @@ def _anchored_index(view: dict, item: RemovedItem) -> int | None:
         found.append(position)
         position += 1
     return found[before - 1] + 1 if before else found[0]
+
+
+def _departed_is_ambiguous(sections: list, at: int, settings: Any, departed: tuple) -> bool:
+    """Whether a neighbour that left makes a swap and a drag look the same.
+
+    Two sections alike in every setting, the card's neighbour now in the
+    other one: "the sections swapped" and "the neighbour was dragged
+    across" are then the same bytes, and where the card belongs is not in
+    them (spec O, section 5). A neighbour that stands more than once now
+    says as little - which of them left is not in the bytes either.
+    Either way the card is parked, never guessed.
+    """
+    for card in departed:
+        holders = [
+            j
+            for j, section in enumerate(sections)
+            if isinstance(section, dict)
+            for other in (section.get("cards") or [])
+            if _same_value(other, card)
+        ]
+        if len(holders) > 1:
+            return True
+        if holders and holders[0] != at:
+            own = {k: v for k, v in sections[holders[0]].items() if k != "cards"}
+            if _same_value(own, settings):
+                return True
+    return False
 
 
 def _anchor_holds(view: dict, item: RemovedItem) -> bool:

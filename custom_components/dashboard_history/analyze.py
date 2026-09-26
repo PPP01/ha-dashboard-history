@@ -26,8 +26,8 @@ class _SectionAnchor(NamedTuple):
     """What the section a removed card sat in was, when it sat in one.
 
     A plain `tuple` underneath - `restore._anchored_index` unpacks it
-    positionally and cannot import this type - but named here so the four
-    positions are not four unlabelled counts to keep straight in the two
+    positionally and cannot import this type - but named here so the five
+    positions are not five unlabelled counts to keep straight in the two
     places that build or read one.
     """
 
@@ -35,6 +35,7 @@ class _SectionAnchor(NamedTuple):
     settings: dict | None  # the section's own settings, everything but `cards`
     survivors: tuple  # the cards that should still stand beside this one
     before: int  # how many of them stood ahead of this card
+    departed: tuple = ()  # its neighbours that left for another list in the view since
 
 
 @dataclass(frozen=True)
@@ -1048,7 +1049,9 @@ def _section_drift(new_views: dict, now_views: dict) -> set:
     }
 
 
-def _section_anchor(view: dict, location: tuple, index: int, left: set) -> _SectionAnchor | None:
+def _section_anchor(
+    view: dict, location: tuple, index: int, left: set, departed: set = frozenset()
+) -> _SectionAnchor | None:
     """How to recognise the section a card sat in, or None outside one.
 
     What the section was, not what it was called: how many sections the
@@ -1063,6 +1066,11 @@ def _section_anchor(view: dict, location: tuple, index: int, left: set) -> _Sect
     `before` counts the survivors that stood ahead of the card, so it can
     go back right after the last of them rather than to an old index that
     cards added since may have moved.
+
+    `departed` are the neighbours that left for another list of the same
+    view: `restore._anchored_index` parks where one of them now stands in
+    a section alike this one, because a swap and a drag across are then
+    the same bytes (spec O, section 5).
     """
     if len(location) < 2 or location[0] != "sections":
         return None
@@ -1070,6 +1078,7 @@ def _section_anchor(view: dict, location: tuple, index: int, left: set) -> _Sect
     at = location[1]
     settings: dict | None = None
     survivors: list = []
+    away: list = []
     before = 0
     if isinstance(at, int) and 0 <= at < len(sections):
         section = sections[at]
@@ -1077,11 +1086,13 @@ def _section_anchor(view: dict, location: tuple, index: int, left: set) -> _Sect
             settings = _section_marks(view)[at]
             for position, card in enumerate(section.get("cards") or []):
                 if (location, position) in left:
+                    if (location, position) in departed:
+                        away.append(card)
                     continue
                 survivors.append(card)
                 if position < index:
                     before += 1
-    return _SectionAnchor(len(sections), settings, tuple(survivors), before)
+    return _SectionAnchor(len(sections), settings, tuple(survivors), before, tuple(away))
 
 
 def _view_type(view: dict) -> str:
@@ -1258,9 +1269,12 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     # Cards that left their place for another list: no survivor a
     # section has to keep for its anchor to hold (spec L, 4a).
     away_by_view: dict[int, set] = {}
+    departed_by_view: dict[int, set] = {}
     for was, now in matching.moved:
         if not matching.same_place(was, now):
             away_by_view.setdefault(was.view_index, set()).add((was.location, was.index))
+            if now.view_key == was.view_key:
+                departed_by_view.setdefault(was.view_index, set()).add((was.location, was.index))
 
     items: list[RemovedItem] = []
     for view_index, (key, old_view) in enumerate(_views_by_key(old)):
@@ -1318,7 +1332,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 index=slot.index,
                 payload=slot.card,
                 label=_describe(slot.card),
-                anchor=_section_anchor(old_view, slot.location, slot.index, left),
+                anchor=_section_anchor(old_view, slot.location, slot.index, left, departed_by_view.get(view_index, set())),
                 view_title=name,
             )
             for slot in gone

@@ -781,3 +781,54 @@ def test_a_sections_step_tells_1_from_true():
     with pytest.raises(LookupError):
         restore.apply_undo(_sections({"column_span": True, "cards": []}), plan)
 
+
+
+# -- a neighbour that left for an alike section (spec O, section 5) --------
+
+
+def test_a_neighbour_now_in_an_alike_section_parks_the_card():
+    """A swap since and a drag across leave the same bytes; neither is guessed."""
+    old = _sections({"cards": [A, B]}, {"cards": []})
+    new = _sections({"cards": []}, {"cards": [B]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    assert restore.parks(new, item) is True
+
+
+def test_a_neighbour_now_in_a_differently_set_section_does_not_park():
+    old = _sections({"cards": [A, B]}, {"column_span": 2, "cards": []})
+    new = _sections({"cards": []}, {"column_span": 2, "cards": [B]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    assert restore.parks(new, item) is False
+
+
+def test_a_neighbour_standing_twice_now_parks_the_card():
+    old = _sections(
+        {"cards": [A, B]},
+        {"column_span": 2, "cards": []},
+        {"column_span": 3, "cards": [B]},
+    )
+    new = _sections(
+        {"cards": []},
+        {"column_span": 2, "cards": [B]},
+        {"column_span": 3, "cards": [B]},
+    )
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    assert restore.parks(new, item) is True
+
+
+def test_a_neighbour_with_1_beside_a_card_with_true_is_no_double():
+    """The double-check counts strictly: 1 and True are two cards, not one twice."""
+    b_one = {**B, "state_color": 1}
+    b_true = {**B, "state_color": True}
+    old = _sections(
+        {"cards": [A, b_one]},
+        {"column_span": 2, "cards": []},
+        {"column_span": 3, "cards": [b_true]},
+    )
+    new = _sections(
+        {"cards": []},
+        {"column_span": 2, "cards": [b_one]},
+        {"column_span": 3, "cards": [b_true]},
+    )
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    assert restore.parks(new, item) is False
