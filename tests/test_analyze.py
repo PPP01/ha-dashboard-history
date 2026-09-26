@@ -13,6 +13,7 @@ import pathlib
 import pytest
 
 import analyze
+import restore
 
 # Set DASHBOARD_HISTORY_REAL_STORAGE to a Home Assistant .storage
 # directory to run the real-data checks against your own dashboards.
@@ -2277,4 +2278,120 @@ def test_moving_the_only_card_into_an_empty_alike_section_reads_as_a_section_mov
 
 def test_section_counts_parse_as_a_generated_message():
     assert analyze._counts("home: 2 sections moved, 1 removed") == ["2 sections moved", "1 removed"]
+
+def _section_plan(before, after, current, key="home"):
+    change = analyze.match_cards(before, after).sections
+    views = [dict(analyze._views_by_key(state)) for state in (before, after, current)]
+    index = next(i for i, (k, _) in enumerate(analyze._views_by_key(current)) if k == key)
+    return analyze._plan_sections(key, views[0][key], views[1][key], views[2].get(key), index, change)
+
+
+def _undone(current, step):
+    assert not isinstance(step, str), step
+    return restore.apply_undo(current, analyze.UndoPlan(blocked=None, steps=(step,)))
+
+
+def _row(names):
+    return {"views": [_sectioned(*(_sec(n) for n in names))]}
+
+
+def test_a_block_of_sections_moved_together_is_put_back_exactly():
+    """Astra's counter-example to the per-section indices of an earlier draft."""
+    before, after = _row("AXYZBWCD"), _row("ABCDWZYX")
+    assert _undone(after, _section_plan(before, after, after)) == before
+
+
+def test_a_swap_of_sections_with_different_settings_is_put_back_settings_and_all():
+    before = {"views": [_sectioned(_sec("a", column_span=2), _sec("b", column_span=1))]}
+    after = {"views": [_sectioned(_sec("b", column_span=1), _sec("a", column_span=2))]}
+    assert _undone(after, _section_plan(before, after, after)) == before
+
+
+def test_a_rotation_with_a_deleted_section_is_put_back():
+    before, after = _row("abcd"), _row("cab")
+    assert _undone(after, _section_plan(before, after, after)) == before
+
+
+def test_an_added_section_is_taken_out():
+    before = {"views": [_sectioned(_sec("a"))]}
+    after = {"views": [_sectioned(_sec("a"), _sec("n"))]}
+    assert _undone(after, _section_plan(before, after, after)) == before
+
+
+def test_a_changed_section_setting_is_set_back():
+    before = {"views": [_sectioned(_sec("a", column_span=1))]}
+    after = {"views": [_sectioned(_sec("a", column_span=2))]}
+    assert _undone(after, _section_plan(before, after, after)) == before
+
+
+def test_a_card_edited_since_in_another_section_does_not_block_and_stays():
+    before, after = _row("abc"), _row("bac")
+    current = {"views": [_sectioned(_sec("b"), _sec("a"), _sec("c", "c2"))]}
+    expected = {"views": [_sectioned(_sec("a"), _sec("b"), _sec("c", "c2"))]}
+    assert _undone(current, _section_plan(before, after, current)) == expected
+
+
+def test_survivors_rearranged_since_refuse():
+    before, after, current = _row("AXYZBWCD"), _row("ABCDWZYX"), _row("ACBDWZYX")
+    assert "rearranged since" in _section_plan(before, after, current)
+
+
+def test_an_added_section_edited_since_refuses():
+    before = {"views": [_sectioned(_sec("a"))]}
+    after = {"views": [_sectioned(_sec("a"), _sec("n"))]}
+    current = {"views": [_sectioned(_sec("a"), _sec("n", "n2"))]}
+    assert "was changed again after this" in _section_plan(before, after, current)
+
+
+def test_two_alike_sections_both_moved_refuse():
+    before = {"views": [_sectioned(_sec("a"), _sec("e"), _sec("e"))]}
+    after = {"views": [_sectioned(_sec("e"), _sec("e"), _sec("a"))]}
+    assert "look exactly like" in _section_plan(before, after, after)
+
+
+def test_a_card_dragged_into_a_new_section_refuses():
+    before = {"views": [_sectioned(_sec("a", "b"))]}
+    after = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    assert "cannot account for" in _section_plan(before, after, after)
+
+
+def test_a_section_moved_and_edited_in_one_save_refuses():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a", "z"))]}
+    assert "cannot account for" in _section_plan(before, after, after)
+
+
+def test_a_view_without_section_changes_needs_no_step():
+    state = _row("ab")
+    assert _section_plan(state, state, state) is None
+
+
+def test_two_survivors_edited_and_swapped_since_refuse():
+    """Astra's counter-example to the first draft of this plan.
+
+    B moved to the front; since then A and C were both edited and A was
+    sent to the end. Paired by index, "A -> C edited" and "C -> A edited"
+    look like two edits in place, and the merge wrote C before B.
+    """
+    before, after = _row("abc"), _row("bac")
+    current = {"views": [_sectioned(_sec("b"), _sec("c", "c2"), _sec("a", "a2"))]}
+    assert "more than one section" in _section_plan(before, after, current)
+
+
+def test_a_view_whose_sections_were_missing_before_refuses():
+    before = {"views": [{"path": "home", "type": "sections"}]}
+    after = {"views": [_sectioned({"type": "grid", "cards": [{"type": "heading", "heading": "Neu"}]})]}
+    assert "not a plain list" in _section_plan(before, after, after)
+
+
+def test_a_view_whose_sections_are_null_today_refuses():
+    before, after = _row("ab"), _row("ba")
+    current = {"views": [{"path": "home", "type": "sections", "sections": None}]}
+    assert "not a plain list" in _section_plan(before, after, current)
+
+
+def test_the_only_card_moved_into_an_empty_alike_section_is_undone_exactly():
+    before = {"views": [_sectioned(_sec("a"), _sec())]}
+    after = {"views": [_sectioned(_sec(), _sec("a"))]}
+    assert _undone(after, _section_plan(before, after, after)) == before
 

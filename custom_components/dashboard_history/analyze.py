@@ -14,6 +14,7 @@ something that is still there.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from collections.abc import Iterator
@@ -364,7 +365,7 @@ class UndoStep:
     """
 
     action: str  # "remove" | "insert" | "set" | "unset"
-    kind: str  # "card" | "badge" | "view" | "dashboard_setting" | "view_setting"
+    kind: str  # "card" | "badge" | "view" | "dashboard_setting" | "view_setting" | "sections_list"
     view_path: str | None
     view_index: int
     location: tuple
@@ -1380,6 +1381,106 @@ def _step(
         payload=payload,
         label=label,
         parked=parked,
+    )
+
+
+def _plan_sections(
+    key: Any,
+    before_view: dict,
+    after_view: dict,
+    current_view: dict | None,
+    current_index: int,
+    change: SectionMatching,
+) -> UndoStep | str | None:
+    """The one step that puts a view's sections back, why it cannot, or None.
+
+    Decision 15 for sections (GitHub #31). A section has no address but
+    its index, and several moved at once shift each other's - so nothing
+    here is an index: the whole row is rebuilt in `before`'s order and
+    written in one step. `before`'s order says where each goes; today's
+    state is where each one's content comes from. What makes that exact
+    is asked first, all of it or nothing.
+    """
+    name = _view_name(after_view, key)
+    mine = [pair for pair in change.pairs if pair.old.view_key == key]
+    moved = [pair for pair in change.moved if pair.old.view_key == key]
+    reset = [pair for pair in mine if pair.how == "settings"]
+    added = [slot for slot in change.added if slot.view_key == key]
+    removed = [slot for slot in change.removed if slot.view_key == key]
+    if any(slot.view_key == key for slot in (*change.rest_old, *change.rest_new)):
+        return (
+            f'the sections of the view "{name}" changed in a way this undo '
+            f"cannot account for, so it refuses rather than guess"
+        )
+    if not (moved or reset or added or removed):
+        return None
+    if current_view is None:
+        return f'the view "{name}" is no longer on the dashboard, so its sections cannot be taken back'
+    if not isinstance(before_view.get("sections"), list) or not isinstance(
+        current_view.get("sections"), list
+    ):
+        return (
+            f'the sections of the view "{name}" are not a plain list in every '
+            f"state, so an exact undo cannot write them back"
+        )
+
+    # Since the change: nothing arrived, went or moved among the sections,
+    # so each stands at the index it had after the change. One of them may
+    # have been edited since - its identity is then forced, every other
+    # one standing byte for byte in its place. Two edited since could as
+    # well have swapped places too, and index is no proof of which is
+    # which.
+    since, gone, came = _pair_view_sections(key, 0, after_view, 0, current_view)
+    if gone or came or _moved(since):
+        return (
+            f'the other sections of the view "{name}" were rearranged since, '
+            f"so there is no telling where these go back"
+        )
+    if sum(1 for pair in since if pair.how in ("settings", "cards")) > 1:
+        return (
+            f'more than one section of the view "{name}" was changed since, '
+            f"so which is which can no longer be proven"
+        )
+
+    then_sections = _section_list(after_view)
+    now_sections = _section_list(current_view)
+    then_marks = [fingerprint(section) for section in then_sections]
+    now_marks = [fingerprint(section) for section in now_sections]
+    for index in sorted({*(slot.index for slot in added), *(pair.new.index for pair in (*moved, *reset))}):
+        title = _section_title(then_sections[index], index)
+        mark = then_marks[index]
+        if now_marks[index] != mark:
+            return (
+                f"the {title} was changed again after this, so there is no "
+                f"exact version left to take back"
+            )
+        alike = max(now_marks.count(mark), then_marks.count(mark))
+        if alike > 1:
+            return (
+                f"{alike} sections now look exactly like {title}, so an "
+                f"exact undo cannot tell them apart"
+            )
+
+    by_old = {pair.old.index: pair for pair in mine}
+    target = []
+    for index, section in enumerate(_section_list(before_view)):
+        pair = by_old.get(index)
+        if pair is None or pair.how == "settings":
+            # Gone whole, or only its own settings changed - and its cards
+            # are today's, proven above.
+            target.append(copy.deepcopy(section))
+        else:
+            target.append(copy.deepcopy(now_sections[pair.new.index]))
+    return UndoStep(
+        action="set",
+        kind="sections_list",
+        view_path=current_view.get("path"),
+        view_index=current_index,
+        location=(),
+        index=0,
+        expect=copy.deepcopy(now_sections),
+        payload=target,
+        label=f'the sections of the view "{name}"',
     )
 
 
