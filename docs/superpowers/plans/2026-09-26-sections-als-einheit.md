@@ -31,7 +31,7 @@
 - Für Sections wird nicht geparkt.
 - Das Panel bleibt unverändert: Erklärungseinträge benutzen nur die vorhandenen `kind`-Werte `removed`, `added`, `edited`, `moved`.
 - `python3 -m pytest tests/ -v` nach jedem Task – es zählt nur »0 failed« (die Zahl schwankt mit der echten `.storage`).
-- Englisch in Code, Kommentaren, Meldungen und Commits; Deutsch im Journal. Commit-Format wie in `CLAUDE.md` (Subject ≤ 50 Zeichen, Imperativ), Verweis auf `#31`, Abschluss `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Ein Commit je Task auf `main`, kein Push (Umsetzer-Regel 4).
+- Englisch in Code, Kommentaren, Meldungen und Commits; Deutsch im Journal. Commit-Format wie in `CLAUDE.md` (Subject ≤ 50 Zeichen, Imperativ), Verweis auf `#31`. Ein Commit je Task auf `main`, kein Push (Umsetzer-Regel 4).
 
 ## Review Focus
 
@@ -144,9 +144,7 @@ git commit -m "Compare section settings strictly" -m "The section checks compare
 column_span: 1 and column_span: true equal - the same blindness #28
 closed for named settings. Both the check for sections moved since and
 the put-back anchor now compare the way fingerprint does. Groundwork
-for GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+for GitHub #31."
 ```
 
 ---
@@ -451,9 +449,7 @@ git commit -m "Pair a view's sections outside in" -m "A section carries no id, s
 in place, identical elsewhere in the view, then the same cards under
 other settings or the same settings over other cards at the same index.
 Moves are what lies outside the longest run that kept its order, so a
-swap is one move. Not wired in yet. GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+swap is one move. Not wired in yet. GitHub #31."
 ```
 
 ---
@@ -885,9 +881,7 @@ git commit -m "Match cards through their paired sections" -m "Sections are paire
 its section, so a section moved whole no longer moves every card on it.
 A section that went or came whole is proven by its cards, the way
 put-back already proved a deleted one; find_removed now reads that
-instead of its own copy of the proof. GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+instead of its own copy of the proof. GitHub #31."
 ```
 
 ---
@@ -1185,9 +1179,7 @@ git add custom_components/dashboard_history/analyze.py tests/test_analyze.py
 git commit -m "Explain and count whole sections" -m "A section swapped, moved, added or deleted whole is one line now,
 named by its heading card, and counted as such in the history line; a
 section's own settings read like a view's. Sections are named by one
-rule everywhere. GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+rule everywhere. GitHub #31."
 ```
 
 ---
@@ -1306,9 +1298,7 @@ git add custom_components/dashboard_history/restore.py tests/test_restore.py
 git commit -m "Apply a whole-list sections step" -m "An undo can now write a view's whole row of sections in one step,
 refusing when the row is no longer the one it was planned against,
 compared the way fingerprint compares. Nothing plans such a step yet.
-GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+GitHub #31."
 ```
 
 ---
@@ -1582,9 +1572,7 @@ git commit -m "Plan a view's sections as one step" -m "Undoing section changes r
 before the change and writes it in one step, so sections moved together
 cannot shift each other into an order that never existed. It refuses
 whatever it cannot prove: a section left unexplained, the others moved
-since, or one of its own changed again. Not wired in yet. GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+since, or one of its own changed again. Not wired in yet. GitHub #31."
 ```
 
 ---
@@ -1838,9 +1826,7 @@ git commit -m "Undo section changes as one step" -m "A change that swapped, move
 undone by writing the view's whole row back, instead of being refused
 as rebuilt sections. A swap of two untitled sections with different
 settings - the case from GitHub #31 - is exact now. A view that would
-need both that step and single card steps is refused.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+need both that step and single card steps is refused."
 ```
 
 ---
@@ -2031,9 +2017,7 @@ git commit -m "Park when a neighbour left for an alike section" -m "Two sections
 the other one: a swap since and a drag across leave the same bytes, so
 put back filed the card by its old index. It parks the card instead,
 and also when that neighbour now stands twice. The residual gap named
-in vorhaben L. GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+in vorhaben L. GitHub #31."
 ```
 
 ---
@@ -2244,9 +2228,7 @@ git add tests/integration/run_checks.py docs/limitations.md docs/how-it-works.md
 git commit -m "Check section moves live and document them" -m "A running Home Assistant now proves that a section swap is recorded as
 one move and that undoing it, or undoing an added section, writes the
 row back as it was. The limitations, how-it-works and the journal
-describe sections matched as units. GitHub #31.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+describe sections matched as units. GitHub #31."
 ```
 
 ---
