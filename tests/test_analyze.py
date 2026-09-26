@@ -1994,3 +1994,114 @@ def test_a_badge_inside_a_heading_card_is_part_of_the_card():
     new = {"views": [{"path": "a", "cards": [grown], "badges": []}]}
     [group] = analyze.explain_change(old, new).groups
     assert [e.what for e in group.entries] == ["card"]
+
+# -- sections as units (GitHub #31) ---------------------------------------
+
+
+def _md(text):
+    return {"type": "markdown", "content": text}
+
+
+def _sec(*names, **own):
+    return {"type": "grid", **own, "cards": [_md(name) for name in names]}
+
+
+def _pairing(before, after):
+    pairs, gone, came = analyze._pair_sections(before, after)
+    return (
+        sorted((pair.old.index, pair.new.index, pair.how) for pair in pairs),
+        [slot.index for slot in gone],
+        [slot.index for slot in came],
+    )
+
+
+def test_identical_sections_in_place_pair_as_same():
+    view = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    assert _pairing(view, view) == ([(0, 0, "same"), (1, 1, "same")], [], [])
+
+
+def test_a_swap_pairs_both_as_found():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a"))]}
+    assert _pairing(before, after) == ([(0, 1, "found"), (1, 0, "found")], [], [])
+
+
+def test_changed_settings_with_the_same_cards_pair_as_settings():
+    before = {"views": [_sectioned(_sec("a", column_span=1))]}
+    after = {"views": [_sectioned(_sec("a", column_span=2))]}
+    assert _pairing(before, after) == ([(0, 0, "settings")], [], [])
+
+
+def test_changed_cards_under_the_same_settings_pair_as_cards():
+    before = {"views": [_sectioned(_sec("a"))]}
+    after = {"views": [_sectioned(_sec("a", "b"))]}
+    assert _pairing(before, after) == ([(0, 0, "cards")], [], [])
+
+
+def test_a_section_changed_in_both_is_left_over():
+    before = {"views": [_sectioned(_sec("a", column_span=1))]}
+    after = {"views": [_sectioned(_sec("b", column_span=2))]}
+    assert _pairing(before, after) == ([], [0], [0])
+
+
+def test_a_deleted_section_leaves_one_old_section_over():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [_sectioned(_sec("b"))]}
+    assert _pairing(before, after) == ([(1, 0, "found")], [0], [])
+
+
+def test_a_converted_view_has_no_section_pairing():
+    """The empty section a conversion adds belongs to the conversion (#32)."""
+    before = {"views": [{"path": "home", "cards": [A]}]}
+    after = {"views": [{"path": "home", "type": "sections", "cards": [A],
+                        "sections": [{"type": "grid", "cards": []}]}]}
+    assert _pairing(before, after) == ([], [], [])
+
+
+def test_a_missing_or_null_sections_list_is_no_section():
+    before = {"views": [{"path": "home", "type": "sections", "sections": None}]}
+    after = {"views": [{"path": "home", "type": "sections"}]}
+    assert _pairing(before, after) == ([], [], [])
+
+
+def test_a_stray_non_dict_section_does_not_crash():
+    before = {"views": [{"path": "home", "type": "sections", "sections": [_sec("a"), "junk"]}]}
+    after = {"views": [{"path": "home", "type": "sections", "sections": ["junk", _sec("a")]}]}
+    assert _pairing(before, after) == ([(0, 1, "found"), (1, 0, "found")], [], [])
+
+
+def _moved_names(before, after):
+    pairs, _, _ = analyze._pair_sections(before, after)
+    return sorted(pair.old.section["cards"][0]["content"] for pair in analyze._moved(pairs))
+
+
+def test_a_swap_is_one_move():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a"))]}
+    assert _moved_names(before, after) == ["b"]
+
+
+def test_the_first_of_five_sent_to_the_end_is_one_move():
+    before = {"views": [_sectioned(*(_sec(n) for n in "abcde"))]}
+    after = {"views": [_sectioned(*(_sec(n) for n in "bcdea"))]}
+    assert _moved_names(before, after) == ["a"]
+
+
+def test_closing_a_gap_is_no_move():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"), _sec("c"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("c"))]}
+    assert _moved_names(before, after) == []
+
+
+def test_a_block_of_four_moved_is_four_moves():
+    before = {"views": [_sectioned(*(_sec(n) for n in "AXYZBWCD"))]}
+    after = {"views": [_sectioned(*(_sec(n) for n in "ABCDWZYX"))]}
+    assert _moved_names(before, after) == ["W", "X", "Y", "Z"]
+
+
+def test_ties_between_equally_long_runs_keep_the_earlier_old_sections():
+    """[a, b, c, d] -> [c, d, a, b]: "a b" and "c d" both keep their order."""
+    before = {"views": [_sectioned(*(_sec(n) for n in "abcd"))]}
+    after = {"views": [_sectioned(*(_sec(n) for n in "cdab"))]}
+    assert _moved_names(before, after) == ["c", "d"]
+

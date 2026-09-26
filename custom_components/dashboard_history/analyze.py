@@ -581,6 +581,148 @@ def _reordered(
     return out
 
 
+@dataclass(frozen=True)
+class SectionSlot:
+    """One section at the place it sits in a view (GitHub #31)."""
+
+    view_key: Any
+    view_index: int
+    index: int
+    section: Any
+
+
+@dataclass(frozen=True)
+class SectionPair:
+    """One section found in both states; `how` names the pass that found it."""
+
+    old: SectionSlot
+    new: SectionSlot
+    how: str  # "same", "found", "settings" or "cards"
+
+
+def _own(section: Any) -> Any:
+    """A section's own settings: everything but its cards."""
+    if not isinstance(section, dict):
+        return section
+    return {key: value for key, value in section.items() if key != "cards"}
+
+
+def _section_list(view: dict) -> list:
+    """A view's sections, or none - `sections:` may be missing or null."""
+    sections = view.get("sections")
+    return sections if isinstance(sections, list) else []
+
+
+def _pair_view_sections(
+    key: Any, old_index: int, old_view: dict, new_index: int, new_view: dict
+) -> tuple[list[SectionPair], list[SectionSlot], list[SectionSlot]]:
+    """Pair one view's sections across two states, outside in.
+
+    The shape of `match_cards`: identical at the same index, identical
+    anywhere else in the view, then - at the same index only - the same
+    cards under other settings, and the same settings over other cards.
+    The last is the ordinary save, a card edited inside a section. What
+    is left is returned as it is; whether it went or came whole is for
+    `_settle_sections` to prove, with the cards.
+    """
+    olds = [SectionSlot(key, old_index, i, s) for i, s in enumerate(_section_list(old_view))]
+    news = [SectionSlot(key, new_index, j, s) for j, s in enumerate(_section_list(new_view))]
+    old_marks = [fingerprint(slot.section) for slot in olds]
+    new_marks = [fingerprint(slot.section) for slot in news]
+    taken_old: set[int] = set()
+    taken_new: set[int] = set()
+    pairs: list[SectionPair] = []
+
+    def claim(i: int, j: int, how: str) -> None:
+        taken_old.add(i)
+        taken_new.add(j)
+        pairs.append(SectionPair(olds[i], news[j], how))
+
+    for i in range(min(len(olds), len(news))):
+        if old_marks[i] == new_marks[i]:
+            claim(i, i, "same")
+    # Old sections in their order, each taking the first free new one:
+    # the same pair of states always produces the same pairing.
+    for i in range(len(olds)):
+        if i in taken_old:
+            continue
+        j = next(
+            (j for j in range(len(news)) if j not in taken_new and new_marks[j] == old_marks[i]),
+            None,
+        )
+        if j is not None:
+            claim(i, j, "found")
+    for i in range(min(len(olds), len(news))):
+        if i in taken_old or i in taken_new:
+            continue
+        old, new = olds[i].section, news[i].section
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            continue
+        same_cards = fingerprint(old.get("cards")) == fingerprint(new.get("cards"))
+        same_own = fingerprint(_own(old)) == fingerprint(_own(new))
+        if same_cards and not same_own:
+            claim(i, i, "settings")
+        elif same_own and not same_cards:
+            claim(i, i, "cards")
+    return (
+        pairs,
+        [slot for i, slot in enumerate(olds) if i not in taken_old],
+        [slot for j, slot in enumerate(news) if j not in taken_new],
+    )
+
+
+def _pair_sections(
+    old: dict, new: dict
+) -> tuple[list[SectionPair], list[SectionSlot], list[SectionSlot]]:
+    """`_pair_view_sections` for every view both states have.
+
+    A converted view (#32) is left out: its layout changed, and the empty
+    section Home Assistant adds with a conversion is a side effect of that
+    event, not an event of its own.
+    """
+    pairs: list[SectionPair] = []
+    rest_old: list[SectionSlot] = []
+    rest_new: list[SectionSlot] = []
+    new_views = {key: (index, view) for index, (key, view) in enumerate(_views_by_key(new))}
+    for old_index, (key, old_view) in enumerate(_views_by_key(old)):
+        if key not in new_views:
+            continue
+        new_index, new_view = new_views[key]
+        if _view_type(old_view) != _view_type(new_view):
+            continue
+        found, gone, came = _pair_view_sections(key, old_index, old_view, new_index, new_view)
+        pairs += found
+        rest_old += gone
+        rest_new += came
+    return pairs, rest_old, rest_new
+
+
+def _moved(pairs: list[SectionPair]) -> list[SectionPair]:
+    """The pairs of one view outside the longest run that kept its order.
+
+    The run is the longest increasing subsequence of the new indices, read
+    in old order; of several equally long, the one whose old indices come
+    first, element by element. A swap is then one move, the first of five
+    sent to the end is one move, and a section that only closed a gap
+    after a deletion is none.
+    """
+    ordered = sorted(pairs, key=lambda pair: pair.old.index)
+    longest = [1] * len(ordered)
+    for i in range(len(ordered) - 1, -1, -1):
+        for k in range(i + 1, len(ordered)):
+            if ordered[k].new.index > ordered[i].new.index:
+                longest[i] = max(longest[i], longest[k] + 1)
+    kept: set[int] = set()
+    need = max(longest, default=0)
+    last = -1
+    for i, pair in enumerate(ordered):
+        if need and longest[i] == need and pair.new.index > last:
+            kept.add(i)
+            last = pair.new.index
+            need -= 1
+    return [pair for i, pair in enumerate(ordered) if i not in kept]
+
+
 def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
     """Views paired with the key that identifies them across states."""
     result = []
