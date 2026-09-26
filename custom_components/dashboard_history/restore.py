@@ -397,13 +397,33 @@ def _apply_setting(config: dict, views: list, step: UndoStep) -> None:
         container[leaf] = copy.deepcopy(step.payload)
 
 
+def _apply_sections_list(views: list, step: UndoStep) -> None:
+    """Write a view's whole row of sections back, if it is still the one planned against.
+
+    One step for the whole list (GitHub #31): sections have no address but
+    their index, and several moved at once shift each other's. The list
+    was built in `analyze.plan_undo`; this only checks and writes.
+    """
+    view = _find_view(views, step)
+    if view is None:
+        raise LookupError(
+            f"the view of {step.label} no longer exists "
+            f"(path={step.view_path!r}, index={step.view_index})"
+        )
+    if not _same_value(view.get("sections"), step.expect):
+        raise LookupError(f"{step.label} are no longer as the undo was planned for them")
+    view["sections"] = copy.deepcopy(step.payload)
+
+
 def apply_undo(config: dict, plan: UndoPlan) -> dict:
     """Return a new configuration with an undo plan applied.
 
     The order is not a detail. Removals first, highest index first, so
     an earlier removal never shifts a later one. Insertions last, lowest
     index first, so each one lands at the index it was given. Any other
-    order silently writes to the wrong place.
+    order silently writes to the wrong place. A view's sections, when a
+    change moved them, are one step that writes the whole list (GitHub
+    #31) - after single cards, before whole views.
 
     There is no replacement step, deliberately: a card is put back by
     being removed where it sits today and inserted where it came from.
@@ -449,6 +469,12 @@ def apply_undo(config: dict, plan: UndoPlan) -> dict:
         cards = _cards_for(views, step)
         _standing_there(cards, step)
         del cards[step.index]
+    # A whole row of sections, after single cards and before whole views:
+    # a view is found by its path, else by the index removing a view
+    # would move.
+    for step in plan.steps:
+        if step.kind == "sections_list":
+            _apply_sections_list(views, step)
     for step in sorted(
         (step for step in removals if step.kind == "view"), key=lambda s: -s.index
     ):

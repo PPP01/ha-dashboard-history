@@ -736,3 +736,48 @@ def test_a_badge_written_as_a_bare_string_is_undone():
     old = {"views": [{"path": "a", "badges": ["sun.sun"]}]}
     new = {"views": [{"path": "a", "badges": ["sensor.moon"]}]}
     assert restore.apply_undo(new, analyze.plan_undo(old, new, new)) == old
+
+# -- a whole row of sections (GitHub #31) ----------------------------------
+
+
+def _sections_step(expect, payload):
+    return analyze.UndoStep(
+        action="set",
+        kind="sections_list",
+        view_path="home",
+        view_index=0,
+        location=(),
+        index=0,
+        expect=expect,
+        payload=payload,
+        label='the sections of the view "home"',
+    )
+
+
+def test_a_sections_step_replaces_the_whole_list():
+    now = [{"cards": [B]}, {"cards": [A]}]
+    target = [{"cards": [A]}, {"cards": [B]}]
+    config = _sections(*now)
+    plan = analyze.UndoPlan(blocked=None, steps=(_sections_step(now, target),))
+    assert restore.apply_undo(config, plan) == _sections(*target)
+    assert config == _sections(*now)
+
+
+def test_a_sections_step_refuses_when_the_list_changed_since():
+    now = [{"cards": [B]}, {"cards": [A]}]
+    plan = analyze.UndoPlan(
+        blocked=None,
+        steps=(_sections_step(now, [{"cards": [A]}, {"cards": [B]}]),),
+    )
+    with pytest.raises(LookupError, match="sections"):
+        restore.apply_undo(_sections({"cards": [B]}, {"cards": [A, C]}), plan)
+
+
+def test_a_sections_step_tells_1_from_true():
+    plan = analyze.UndoPlan(
+        blocked=None,
+        steps=(_sections_step([{"column_span": 1, "cards": []}], [{"cards": []}]),),
+    )
+    with pytest.raises(LookupError):
+        restore.apply_undo(_sections({"column_span": True, "cards": []}), plan)
+
