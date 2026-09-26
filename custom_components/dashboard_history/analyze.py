@@ -278,6 +278,11 @@ class Slot:
     location: tuple
     index: int
     card: Any
+    # The card's fingerprint, computed once here rather than by every
+    # consumer that needs it (GitHub #38) - `match_cards`'s own passes,
+    # `_group_by_mark`, and `plan_undo`'s `sole`/`sole_badge` all read
+    # this instead of calling `fingerprint(slot.card)` again.
+    mark: str
 
 
 @dataclass(frozen=True)
@@ -352,7 +357,7 @@ def _slots(config: dict, keys: set, containers=card_containers) -> list[Slot]:
             continue
         for location, cards in containers(view):
             for index, card in enumerate(cards):
-                found.append(Slot(key, view_index, view, location, index, card))
+                found.append(Slot(key, view_index, view, location, index, card, fingerprint(card)))
     return found
 
 
@@ -484,7 +489,7 @@ def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
     here: dict[tuple, list[int]] = {}
     anywhere: dict[str, list[int]] = {}
     for j, new_slot in enumerate(new_open):
-        mark = fingerprint(new_slot.card)
+        mark = new_slot.mark
         here.setdefault((_place(new_slot), mark), []).append(j)
         anywhere.setdefault(mark, []).append(j)
 
@@ -495,7 +500,7 @@ def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
         for i, old_slot in enumerate(old_open):
             if i in taken_old:
                 continue
-            mark = fingerprint(old_slot.card)
+            mark = old_slot.mark
             waiting = buckets.get((_place(old_slot), mark) if at_place else mark, ())
             match = next((j for j in waiting if j not in taken_new), None)
             if match is not None:
@@ -1031,7 +1036,7 @@ def _group_by_mark(slots: list[Slot]) -> dict[str, list[Slot]]:
     """Slots keyed by their fingerprint, in the order found."""
     groups: dict[str, list[Slot]] = {}
     for slot in slots:
-        groups.setdefault(fingerprint(slot.card), []).append(slot)
+        groups.setdefault(slot.mark, []).append(slot)
     return groups
 
 
@@ -1182,11 +1187,11 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # an untouched copy that stood there before the change is not the
     # one the change produced. Asked first dashboard-wide, then, failing
     # that, in the card's own view.
-    def sole(card: Any, view_key: Any, label: str) -> tuple[Slot | None, str | None]:
-        mark = fingerprint(card)
-        found, left = by_mark.get(mark, []), card_then.get(mark, [])
+    def sole(slot: Slot, label: str) -> tuple[Slot | None, str | None]:
+        found, left = by_mark.get(slot.mark, []), card_then.get(slot.mark, [])
         if len(found) == 1 and len(left) == 1:
             return found[0], None
+        view_key = slot.view_key
         mine = _in_view(found, view_key)
         mine_then = _in_view(left, view_key)
         if len(mine) == 1 and len(mine_then) == 1:
@@ -1244,7 +1249,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # way, and not one refusal more.
     for old_slot, new_slot in (*matching.edited, *matching.moved):
         label = _describe(new_slot.card)
-        here, why = sole(new_slot.card, new_slot.view_key, label)
+        here, why = sole(new_slot, label)
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label))
@@ -1252,7 +1257,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 
     for new_slot in matching.added:
         label = _describe(new_slot.card)
-        here, why = sole(new_slot.card, new_slot.view_key, label)
+        here, why = sole(new_slot, label)
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label))
@@ -1265,9 +1270,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # Mirrors the badge rule below (Vorhaben N) - `deleted` is how many
     # alike the change took from that view, `card_came_back` how many
     # more stand there now than the change left.
-    removed_card_marks = [
-        (old_slot, fingerprint(old_slot.card)) for old_slot in matching.removed
-    ]
+    removed_card_marks = [(old_slot, old_slot.mark) for old_slot in matching.removed]
     deleted_cards: dict[tuple[str, Any], int] = {}
     for old_slot, mark in removed_card_marks:
         place = (mark, old_slot.view_key)
@@ -1317,11 +1320,11 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     badge_now = _group_by_mark(_present(current, badge_containers))
     badge_then = _group_by_mark(_present(after, badge_containers))
 
-    def sole_badge(badge: Any, view_key: Any, label: str) -> tuple[Slot | None, str | None]:
-        mark = fingerprint(badge)
-        found, left = badge_now.get(mark, []), badge_then.get(mark, [])
+    def sole_badge(slot: Slot, label: str) -> tuple[Slot | None, str | None]:
+        found, left = badge_now.get(slot.mark, []), badge_then.get(slot.mark, [])
         if len(found) == 1 and len(left) == 1:
             return found[0], None
+        view_key = slot.view_key
         mine = _in_view(found, view_key)
         mine_then = _in_view(left, view_key)
         if len(mine) == 1 and len(mine_then) == 1:
@@ -1343,10 +1346,8 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # coming back. `came_back` is how many more stand there now than the
     # change left; `deleted` how many alike it took from that view. Each
     # removed slot's mark is kept beside it - `deleted` and the loop
-    # below both need it, and fingerprinting is not free to redo.
-    removed_marks = [
-        (old_slot, fingerprint(old_slot.card)) for old_slot in badge_matching.removed
-    ]
+    # below both need it, and it is already sitting on the slot.
+    removed_marks = [(old_slot, old_slot.mark) for old_slot in badge_matching.removed]
     deleted: dict[tuple[str, Any], int] = {}
     for old_slot, mark in removed_marks:
         place = (mark, old_slot.view_key)
@@ -1362,7 +1363,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 
     for old_slot, new_slot in (*badge_matching.edited, *badge_matching.moved):
         label = badge_label(new_slot.card)
-        here, why = sole_badge(new_slot.card, new_slot.view_key, label)
+        here, why = sole_badge(new_slot, label)
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
@@ -1370,7 +1371,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
 
     for new_slot in badge_matching.added:
         label = badge_label(new_slot.card)
-        here, why = sole_badge(new_slot.card, new_slot.view_key, label)
+        here, why = sole_badge(new_slot, label)
         if here is None:
             return UndoPlan(blocked=why)
         steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
