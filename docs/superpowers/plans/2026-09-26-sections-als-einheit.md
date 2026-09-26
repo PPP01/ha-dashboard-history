@@ -7,7 +7,7 @@
 1. **Task für Task, in der Reihenfolge 1–9.** Pro Task genau die genannten Dateien und Stellen. Keine »Verbesserungen nebenbei«, keine Umbenennungen, keine eigenen Architekturentscheidungen.
 2. **Abweichung heißt anhalten.** Passt eine Stelle im Code nicht zu dem, was der Plan beschreibt (Zeile fehlt, Funktion heißt anders, ein im Plan als grün vorhergesagter Test ist rot, ein als rot vorhergesagter ist grün), dann nicht umdeuten, sondern stoppen und die Abweichung wörtlich melden: Datei, erwartet, vorgefunden.
 3. **Tests sind Teil des Tasks.** Die `-k`-Filter in den Rot-/Grün-Schritten sind nur eine Abkürzung. Maßgeblich ist: **Jeder** in Step 1 neu geschriebene Test ist im Rot-Schritt rot und im Grün-Schritt grün. Erfasst ein Filter einen neuen Test nicht, diesen zusätzlich namentlich aufrufen. Erfasst er alte Tests mit, müssen diese grün sein. Der Rot-Schritt wird wirklich ausgeführt und sein Ergebnis gemeldet, ebenso der Grün-Schritt und `python3 -m pytest tests/ -v` am Ende jedes Tasks. Es zählt nur »0 failed«. Ein einzelner `JSONDecodeError` in `tests/test_yaml_io.py` gegen ein echtes Dashboard ist ein bekannter Lese-Wettlauf mit einer fremden Datei: Den einzelnen Test isoliert wiederholen und melden, nicht »reparieren«.
-4. **Nicht committen.** Die Commit-Schritte enthalten die fertigen Nachrichten, ausgeführt werden sie erst nach ausdrücklichem Go des Nutzers. Bis dahin bleiben die Änderungen uncommittet im Arbeitsverzeichnis. Kein Push, kein Tag, keine Veröffentlichung.
+4. **Ein Commit je Task, auf `main`.** Der Nutzer hat am 2026-09-26 entschieden: Gemini arbeitet alle neun Tasks durch und committet jeden Task, sobald dessen Akzeptanzkriterium erfüllt ist, mit der Nachricht aus dem Commit-Schritt, wörtlich. Das Go für die Schritte »Commit (nach Go des Nutzers)« ist damit erteilt. Vor jedem Commit mit `git status --short` prüfen: Gestaged werden nur die im Task genannten Dateien, nie etwas Fremdes. Kein Push, kein Tag, keine Veröffentlichung.
 5. **Test-Anlage.** `docker compose -f docker/compose.yaml restart`, danach 15 Sekunden warten und **nicht pollen** (HAs IP-Sperre). Erst dann `python3 tests/integration/run_checks.py`. Kein Test darf per Präfix löschen, nur über den eigenen, exakt benannten Schlüssel.
 6. **Nach jedem Task melden:** geänderte Dateien, Ergebnis Rot/Grün, Suite-Ergebnis, Akzeptanzkriterium erfüllt ja/nein.
 7. **Am Ende:** eine Liste aller Stellen, an denen der Plan korrigiert werden müsste (falsche Zeilen, falsche Erwartungen), damit er im Journal nachgezogen werden kann.
@@ -31,7 +31,7 @@
 - Für Sections wird nicht geparkt.
 - Das Panel bleibt unverändert: Erklärungseinträge benutzen nur die vorhandenen `kind`-Werte `removed`, `added`, `edited`, `moved`.
 - `python3 -m pytest tests/ -v` nach jedem Task – es zählt nur »0 failed« (die Zahl schwankt mit der echten `.storage`).
-- Englisch in Code, Kommentaren, Meldungen und Commits; Deutsch im Journal. Commit-Format wie in `CLAUDE.md` (Subject ≤ 50 Zeichen, Imperativ), Verweis auf `#31`, Abschluss `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. **Committet wird erst nach ausdrücklichem Go des Nutzers.**
+- Englisch in Code, Kommentaren, Meldungen und Commits; Deutsch im Journal. Commit-Format wie in `CLAUDE.md` (Subject ≤ 50 Zeichen, Imperativ), Verweis auf `#31`, Abschluss `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Ein Commit je Task auf `main`, kein Push (Umsetzer-Regel 4).
 
 ## Review Focus
 
