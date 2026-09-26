@@ -439,15 +439,15 @@ def test_a_long_list_is_capped_and_says_how_much_it_hides():
 
 
 def test_an_unnameable_change_never_claims_that_nothing_changed():
-    # A section setting: the cards match exactly, and a section has no
-    # name to address a setting by (GitHub #28 leaves sections out on
-    # purpose). The summary sits directly above a diff that plainly shows
-    # the difference - claiming "nothing changed" there would be refuted
-    # at a glance, which is worse than having no summary at all.
+    # An empty section deleted: no card went, and an empty section is
+    # never reported as gone (spec O, section 1) - it has nothing to
+    # prove itself with. The summary sits directly above a diff that
+    # plainly shows the difference - claiming "nothing changed" there
+    # would be refuted at a glance, which is worse than no summary.
     old = {"views": [{"path": "home", "type": "sections",
-                      "sections": [{"type": "grid", "cards": [A]}]}]}
+                      "sections": [{"type": "grid", "cards": [A]}, {"type": "grid", "cards": []}]}]}
     new = {"views": [{"path": "home", "type": "sections",
-                      "sections": [{"type": "grid", "column_span": 2, "cards": [A]}]}]}
+                      "sections": [{"type": "grid", "cards": [A]}]}]}
     result = analyze.explain_change(old, new)
     assert result.groups == []
     assert "see the details" in result.note
@@ -553,7 +553,7 @@ def test_every_real_card_can_be_named():
             for entry in group.entries:
                 assert entry.text.strip(), f"an empty sentence in {path.name}"
                 assert entry.kind in ("removed", "added", "edited", "moved")
-                assert entry.what in ("card", "view")
+                assert entry.what in ("card", "view", "section", "section_setting")
                 # The label is what makes this worth reading at all. An
                 # empty one would produce " was deleted" and tell nobody
                 # which card is gone.
@@ -2202,4 +2202,79 @@ def test_real_dashboards_pair_every_section_with_itself():
         sections = analyze.match_sections(config, config)
         assert sections.views() == set(), path.name
         assert all(pair.how == "same" for pair in sections.pairs), path.name
+
+def _said(before, after):
+    return [e.text for g in analyze.explain_change(before, after).groups for e in g.entries]
+
+
+def test_a_swap_of_two_sections_is_explained_as_one_move():
+    """The case from dashboard test_2, view a2."""
+    heading = {"type": "heading", "heading": "Neuer Abschnitt"}
+    first = {"type": "grid", "cards": [heading, _md("noon")]}
+    second = {"type": "grid", "cards": [_md("person"), _md("sun")]}
+    before = {"views": [_sectioned(first, second, title="A2")]}
+    after = {"views": [_sectioned(second, first, title="A2")]}
+    assert _said(before, after) == ["section 2 was moved"]
+    assert analyze.change_message("test-2", before, after, "save") == "test-2: 1 section moved"
+
+
+def test_undoing_a_swap_is_said_in_the_future_tense():
+    heading = {"type": "heading", "heading": "Neuer Abschnitt"}
+    first = {"type": "grid", "cards": [heading, _md("noon")]}
+    second = {"type": "grid", "cards": [_md("person")]}
+    before = {"views": [_sectioned(first, second)]}
+    after = {"views": [_sectioned(second, first)]}
+    effect = analyze.explain_effect(after, before)
+    assert [e.text for g in effect.groups for e in g.entries] == [
+        'section "Neuer Abschnitt" moves back to where it was'
+    ]
+
+
+def test_a_deleted_section_is_one_line_named_by_its_heading():
+    heading = {"type": "heading", "heading": "Heizung"}
+    before = {"views": [_sectioned(_sec("a"), {"type": "grid", "cards": [heading, _md("b")]})]}
+    after = {"views": [_sectioned(_sec("a"))]}
+    assert _said(before, after) == ['section "Heizung" was removed']
+    assert analyze.change_message("home", before, after, "save") == "home: 1 section removed"
+
+
+def test_an_added_section_is_one_line_and_counts_as_added():
+    before = {"views": [_sectioned(_sec("a"))]}
+    after = {"views": [_sectioned(_sec("a"), {"type": "grid", "cards": [{"type": "heading", "heading": "Neu"}]})]}
+    assert _said(before, after) == ['section "Neu" was added']
+    message = analyze.change_message("home", before, after, "save")
+    assert message == "home: 1 section added"
+    assert analyze.message_adds(message) is True
+
+
+def test_a_changed_section_setting_is_named_with_old_and_new():
+    before = {"views": [_sectioned(_sec("a", column_span=1))]}
+    after = {"views": [_sectioned(_sec("a", column_span=2))]}
+    assert _said(before, after) == ['section 1: the setting "column_span" was changed from 1 to 2']
+    assert analyze.change_message("home", before, after, "save") == "home: 1 setting changed"
+
+
+def test_a_heading_field_on_another_card_type_names_no_section():
+    impostor = {"type": "markdown", "heading": "Nope", "content": "x"}
+    before = {"views": [_sectioned(_sec("a"), {"type": "grid", "title": "Titel", "cards": [impostor]})]}
+    after = {"views": [_sectioned(_sec("a"))]}
+    assert _said(before, after) == ['section "Titel" was removed']
+
+
+def test_an_empty_heading_falls_back_to_the_position():
+    blank = {"type": "heading", "heading": "  "}
+    before = {"views": [_sectioned(_sec("a"), {"type": "grid", "cards": [blank]})]}
+    after = {"views": [_sectioned(_sec("a"))]}
+    assert _said(before, after) == ["section 2 was removed"]
+
+
+def test_moving_the_only_card_into_an_empty_alike_section_reads_as_a_section_move():
+    """Both readings are the same bytes; the pairing takes the exact one."""
+    before = {"views": [_sectioned(_sec("a"), _sec())]}
+    after = {"views": [_sectioned(_sec(), _sec("a"))]}
+    assert _said(before, after) == ["section 2 was moved"]
+
+
+def test_section_counts_parse_as_a_generated_message():
+    assert analyze._counts("home: 2 sections moved, 1 removed") == ["2 sections moved", "1 removed"]
 

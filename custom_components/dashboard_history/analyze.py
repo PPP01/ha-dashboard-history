@@ -86,6 +86,9 @@ class Summary:
     views_removed: int = 0
     settings: int = 0
     badges: int = 0
+    sections_moved: int = 0
+    sections_added: int = 0
+    sections_removed: int = 0
 
 
 @dataclass(frozen=True)
@@ -93,7 +96,7 @@ class Entry:
     """One nameable thing that changed."""
 
     kind: str  # "removed", "added", "edited" or "moved"
-    what: str  # "card" or "view"
+    what: str  # "card", "view", "badge", "setting", "section" or "section_setting"
     label: str
     text: str  # the finished sentence, ready to show
 
@@ -1224,17 +1227,26 @@ _DUPLICATE_PATH_REFUSAL = (
 )
 
 
-def _section_label(section: dict, index: int) -> str:
-    """What to call a section in a list somebody has to choose from.
+def _section_title(section: Any, index: int) -> str:
+    """What to call a section: its heading card, else its title, else its place.
 
-    Its title where it has one. Where it has none - and on the
-    installation this was built against, none of the 80 sections did -
-    the position it sat at, one-based, because that is the only thing
-    left to say about it.
+    Home Assistant names a section with a heading card at its top - 72
+    of 102 on the installation this was built against - and all but never
+    with `title` (0 of 102). Only a real heading card counts: a card of
+    another type with a `heading` field of its own names nothing.
     """
-    title = section.get("title")
+    cards = section.get("cards") if isinstance(section, dict) else None
+    first = cards[0] if isinstance(cards, list) and cards else None
+    if (
+        isinstance(first, dict)
+        and first.get("type") == "heading"
+        and isinstance(first.get("heading"), str)
+        and first["heading"].strip()
+    ):
+        return f'section "{_shorten(first["heading"])}"'
+    title = section.get("title") if isinstance(section, dict) else None
     if isinstance(title, str) and title.strip():
-        return f"section: {_shorten(title)}"
+        return f'section "{_shorten(title)}"'
     return f"section {index + 1}"
 
 
@@ -1298,7 +1310,7 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                     location=("sections",),
                     index=index,
                     payload=section,
-                    label=_section_label(section, index),
+                    label=_section_title(section, index),
                     neighbours=tuple(
                         other
                         for position, other in enumerate(old_view.get("sections") or [])
@@ -1791,23 +1803,35 @@ def summarize(old: dict, new: dict) -> Summary:
 
     badges = match_badges(old, new)
 
+    section_settings = sum(
+        len(_section_setting_changes(pair))
+        for pair in matching.sections.pairs
+        if pair.how == "settings"
+    )
+
     # One entry per moved card already, so a swap contributes two.
     # Multiplying would count each of them twice.
     return Summary(
-        added=len(matching.added),
-        removed=len(matching.removed),
+        added=len(matching.loose_added()),
+        removed=len(matching.loose_removed()),
         edited=len(matching.edited),
         moved=len(matching.moved),
         views_added=len(new_keys - old_keys),
         views_removed=len(old_keys - new_keys),
-        settings=len(setting_changes(old, new)),
+        settings=len(setting_changes(old, new)) + section_settings,
         badges=len(badges.removed) + len(badges.added) + len(badges.edited) + len(badges.moved),
+        sections_moved=len(matching.sections.moved),
+        sections_added=len(matching.sections.added),
+        sections_removed=len(matching.sections.removed),
     )
 
 
 # Card labels already carry their type ("tile: light.b"), so they need no
 # quotes. A view label is a bare name and does.
 _PAST = {
+    ("section", "removed"): "{label} was removed",
+    ("section", "added"): "{label} was added",
+    ("section", "moved"): "{label} was moved",
     ("badge", "removed"): "the badge {label} was deleted",
     ("badge", "added"): "the badge {label} was added",
     ("badge", "edited"): "the badge {label} was changed",
@@ -1829,6 +1853,9 @@ _PAST = {
 }
 
 _FUTURE = {
+    ("section", "removed"): "{label} will be removed",
+    ("section", "added"): "{label} comes back",
+    ("section", "moved"): "{label} moves back to where it was",
     ("badge", "removed"): "the badge {label} will be deleted",
     ("badge", "added"): "the badge {label} comes back",
     ("badge", "edited"): "the badge {label} goes back to how it was",
@@ -1918,6 +1945,13 @@ def _setting_entry(words: dict, change: SettingChange) -> Entry:
     )
 
 
+def _section_setting_changes(pair: SectionPair) -> list[SettingChange]:
+    """A paired section's own settings that differ, by name like a view's (M)."""
+    out: list[SettingChange] = []
+    _setting_leaves(pair.old.view_key, _own(pair.old.section), _own(pair.new.section), (), out)
+    return out
+
+
 def _capped(name: str, entries: list[Entry], scope: str = "view") -> ViewChanges:
     """Keep the list readable, and say how much it hides.
 
@@ -1941,7 +1975,8 @@ def _section_name(slot: Slot) -> str:
     against, 0 of 80 sections carry one. Home Assistant names a section
     with a `heading` card at its top instead, and 51 of those 80 have
     one. Where there is none there is no name to give, and saying so
-    beats inventing one.
+    beats inventing one. Named by the same rule as every other section
+    (`_section_title`).
     """
     if slot.location[:1] != ("sections",):
         if slot.location == ("cards",) and _view_type(slot.view) == "sections":
@@ -1952,11 +1987,8 @@ def _section_name(slot: Slot) -> str:
     sections = slot.view.get("sections") or []
     index = slot.location[1]
     section = sections[index] if 0 <= index < len(sections) else {}
-    cards = (section or {}).get("cards") or []
-    first = cards[0] if cards else None
-    if isinstance(first, dict) and first.get("type") == "heading" and first.get("heading"):
-        return f'the section "{first["heading"]}"'
-    return "another section"
+    title = _section_title(section, index)
+    return f"the {title}" if title.startswith('section "') else title
 
 
 def _where(old_slot: Slot, new_slot: Slot) -> str:
@@ -2006,14 +2038,41 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
     for was, now in badge_matching.moved:
         where = _where(was, now) if _place(was) != _place(now) else None
         badge(was.view_key, "moved", was.card, where)
+    sections_by_view: dict[Any, list[Entry]] = {}
+
+    def section(key: Any, kind: str, slot: SectionSlot) -> None:
+        sections_by_view.setdefault(key, []).append(
+            _entry(words, kind, "section", _section_title(slot.section, slot.index))
+        )
+
+    for slot in matching.sections.removed:
+        section(slot.view_key, "removed", slot)
+    for slot in matching.sections.added:
+        section(slot.view_key, "added", slot)
+    for pair in matching.sections.moved:
+        section(pair.old.view_key, "moved", pair.old)
+    for pair in matching.sections.pairs:
+        if pair.how != "settings":
+            continue
+        title = _section_title(pair.old.section, pair.old.index)
+        for change in _section_setting_changes(pair):
+            said = _setting_entry(words, change)
+            sections_by_view.setdefault(pair.old.view_key, []).append(
+                Entry(
+                    kind=said.kind,
+                    what="section_setting",
+                    label=f"{title}: {said.label}",
+                    text=f"{title}: {said.text}",
+                )
+            )
     by_view: dict[Any, list[Entry]] = {}
 
     def add(key: Any, entry: Entry) -> None:
         by_view.setdefault(key, []).append(entry)
 
-    for slot in matching.removed:
+    for slot in matching.loose_removed():
         add(slot.view_key, _entry(words, "removed", "card", _describe(slot.card)))
-    for slot in matching.added:
+    for slot in matching.loose_added():
         add(slot.view_key, _entry(words, "added", "card", _describe(slot.card)))
     for _was, now in matching.edited:
         add(now.view_key, _entry(words, "edited", "card", _describe(now.card)))
@@ -2056,6 +2115,7 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
         entries = [
             *settings_by_view.get(key, []),
             *badges_by_view.get(key, []),
+            *sections_by_view.get(key, []),
             *by_view.get(key, []),
         ]
         new_view = new_views[key]
@@ -2131,6 +2191,13 @@ def _views(count: int, verb: str) -> str:
     return f"{count} view{'s' if count != 1 else ''} {verb}"
 
 
+def _sections_part(count: int, verb: str) -> str:
+    """"1 section moved", "2 sections added", or nothing."""
+    if not count:
+        return ""
+    return f"{count} section{'s' if count != 1 else ''} {verb}"
+
+
 def change_message(
     name: str,
     old: dict | None,
@@ -2168,6 +2235,9 @@ def change_message(
     parts = [
         _views(counts.views_removed, "removed"),
         _views(counts.views_added, "added"),
+        _sections_part(counts.sections_removed, "removed"),
+        _sections_part(counts.sections_added, "added"),
+        _sections_part(counts.sections_moved, "moved"),
         f"{counts.removed} removed" if counts.removed else "",
         f"{counts.added} added" if counts.added else "",
         f"{counts.edited} edited" if counts.edited else "",
@@ -2188,8 +2258,8 @@ def change_message(
 # other on purpose, because a word added there and not here would read
 # as "this is not a generated message at all".
 _COUNT = re.compile(
-    r"^\d+ (?:views? (?:added|removed)|added|removed|edited|moved"
-    r"|settings? changed|badges? changed)$"
+    r"^\d+ (?:views? (?:added|removed)|sections? (?:added|removed|moved)"
+    r"|added|removed|edited|moved|settings? changed|badges? changed)$"
 )
 
 
