@@ -97,7 +97,7 @@ def _anchored_index(view: dict, item: RemovedItem) -> int | None:
     if not isinstance(section, dict):
         return None
     own = {key: value for key, value in section.items() if key != "cards"}
-    if own != settings:
+    if not _same_value(own, settings):
         return None
     cards = list(section.get("cards") or [])
     if not survivors:

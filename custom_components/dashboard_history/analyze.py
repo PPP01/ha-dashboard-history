@@ -694,6 +694,15 @@ def _section_marks(view: dict) -> list:
     ]
 
 
+def _same_marks(one: dict, other: dict) -> bool:
+    """Whether two views' sections agree on every setting, strictly.
+
+    Through `fingerprint`, not `==`: `column_span: 1` and `column_span:
+    true` are two states, which `==` calls equal (GitHub #28).
+    """
+    return fingerprint(_section_marks(one)) == fingerprint(_section_marks(other))
+
+
 def _section_drift(old_views: dict, new_views: dict, now_views: dict) -> tuple[set, set]:
     """Which views' sections cannot be trusted, and in which of two ways.
 
@@ -718,10 +727,9 @@ def _section_drift(old_views: dict, new_views: dict, now_views: dict) -> tuple[s
     rebuilt: set = set()
     shifted: set = set()
     for key in set(old_views) & set(new_views):
-        marks = _section_marks(new_views[key])
-        if _section_marks(old_views[key]) != marks:
+        if not _same_marks(old_views[key], new_views[key]):
             rebuilt.add(key)
-        elif key in now_views and _section_marks(now_views[key]) != marks:
+        elif key in now_views and not _same_marks(now_views[key], new_views[key]):
             shifted.add(key)
     return rebuilt, shifted
 

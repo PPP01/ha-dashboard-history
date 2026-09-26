@@ -494,6 +494,15 @@ def test_the_anchor_notices_an_edited_neighbour():
     assert restore.parks(_sections({"cards": [edited_a]}), item) is True
 
 
+def test_the_anchor_tells_1_from_true():
+    """A section whose setting went from 1 to true is not the same section."""
+    old = _sections({"column_span": 1, "cards": [A, B]})
+    new = _sections({"column_span": 1, "cards": [A]})
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == B)
+    today = _sections({"column_span": True, "cards": [A]})
+    assert restore.parks(today, item) is True
+
+
 def test_an_untouched_section_does_not_park():
     old = _sections({"cards": [A, B]})
     new = _sections({"cards": [A]})

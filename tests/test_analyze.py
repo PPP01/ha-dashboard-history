@@ -1261,6 +1261,16 @@ def _sectioned(*sections, path="home", **extra):
     return view
 
 
+def test_a_section_setting_of_1_against_true_counts_as_moved_since():
+    """`==` calls 1 and True equal; the section check must not (#28, #31)."""
+    before = {"views": [_sectioned({"column_span": 1, "cards": [A]})]}
+    after = {"views": [_sectioned({"column_span": 1, "cards": []})]}
+    current = {"views": [_sectioned({"column_span": True, "cards": []})]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.parked == ("tile: light.a",)
+
+
 def test_an_edit_whose_section_moved_since_is_parked():
     """Decision 26: the card cannot be proven to belong at index 1 any more.
 
