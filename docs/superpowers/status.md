@@ -130,6 +130,51 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
   Bearbeitung von Löschung unterscheiden kann. Das ist eine benannte
   Grenze, keine Aufgabe: siehe Spec, »Was ausdrücklich nicht passiert«.
 
+## Geprüfte Vorschläge, nicht umgesetzt
+
+- **GitHub-Issue [#13](https://github.com/PPP01/ha-dashboard-history/issues/13)
+  — Ein in derselben Instanz konfigurierter Conversation-Agent könnte
+  Titel/Beschreibung einer Version vorschlagen.** Am 2026-09-26 am Code
+  von HA 2026.8.3 nachgeprüft (Container `dashboard-history-test`), nicht
+  nur vermutet:
+  - **Technisch machbar, ohne neue Abhängigkeit.**
+    `homeassistant.components.conversation.async_converse(hass, text,
+    conversation_id, context, agent_id=<entity_id>,
+    extra_system_prompt=<Text>)` ist eine öffentliche, immer verfügbare
+    Kernfunktion – `conversation` ist fester Bestandteil jeder
+    HA-Instanz, kein optionales Paket. Eine konkrete Entity-ID
+    (`conversation.<name>`) als `agent_id` lässt `async_get_agent` diese
+    Entity direkt holen (`hass.data[DATA_COMPONENT].get_entity(...)`)
+    und übergeht Home Assistants eigene lokale Intent-/Assist-Erkennung
+    vollständig – der Aufruf geht unmittelbar an das gewählte
+    LLM-Backend.
+  - **`extra_system_prompt` ist der richtige Kanal für das
+    Rohmaterial.** Am Quelltext von
+    `homeassistant.components.anthropic.conversation` bestätigt:
+    `user_input.extra_system_prompt` wird tatsächlich in den ans Modell
+    gesendeten System-Prompt übernommen, nicht nur entgegengenommen und
+    verworfen. `explain()`s Klartext-Zusammenfassung (nicht `compare()`s
+    Rohdiff) wäre das naheliegende Material dafür – passt zur
+    bestehenden Linie dieses Projekts, eher Worte als Diff-Syntax zu
+    zeigen.
+  - **Eine Auswahl-UI existiert bereits als Baustein.**
+    `homeassistant.helpers.selector.ConversationAgentSelector` – dieselbe
+    Art Selector, die `services.yaml` schon für `text`/`boolean`-Felder
+    nutzt.
+  - **Nicht empirisch getestet:** Kein LLM-Backend war in der
+    Testinstanz mit einem echten API-Schlüssel konfiguriert (Google
+    Generative AI, OpenAI, Anthropic und Ollama sind als
+    Kernkomponenten vorhanden, aber ungenutzt) – ob vorgeschlagene Titel
+    tatsächlich brauchbar wären, wurde deshalb nicht gemessen, nur die
+    Zuleitung dorthin.
+  - **Entscheidung: nicht umgesetzt.** Der Nutzen (zwei Textfelder
+    vorausfüllen, die ohnehin überprüft werden müssen) steht in keinem
+    guten Verhältnis zum Aufwand (Auswahl-UI, Fehlerbehandlung für einen
+    nicht konfigurierten oder nicht antwortenden Agenten, ein
+    ausdrücklich anzustoßender Dienst statt eines automatischen,
+    stillen Vorschlags bei jeder Version). Die Machbarkeit oben bleibt
+    als Ausgangspunkt belastbar, falls das später doch gewünscht wird.
+
 ## Modul-Übersicht
 
 `custom_components/dashboard_history/`, nach Aufgabe geordnet. Die sieben
