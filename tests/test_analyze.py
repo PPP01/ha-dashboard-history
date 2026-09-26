@@ -2105,3 +2105,101 @@ def test_ties_between_equally_long_runs_keep_the_earlier_old_sections():
     after = {"views": [_sectioned(*(_sec(n) for n in "cdab"))]}
     assert _moved_names(before, after) == ["c", "d"]
 
+def test_the_cards_of_a_swapped_section_are_not_moved():
+    before = {"views": [_sectioned(_sec("a1", "a2"), _sec("b1"))]}
+    after = {"views": [_sectioned(_sec("b1"), _sec("a1", "a2"))]}
+    matching = analyze.match_cards(before, after)
+    assert (matching.removed, matching.added, matching.edited, matching.moved) == ([], [], [], [])
+    assert len(matching.sections.moved) == 1
+
+
+def test_a_card_reordered_beside_a_swap_is_still_moved():
+    before = {"views": [_sectioned(_sec("a1", "a2"), _sec("b"), _sec("c"))]}
+    after = {"views": [_sectioned(_sec("a2", "a1"), _sec("c"), _sec("b"))]}
+    matching = analyze.match_cards(before, after)
+    assert {slot.card["content"] for slot, _ in matching.moved} == {"a1", "a2"}
+    assert len(matching.sections.moved) == 1
+
+
+def test_a_deleted_section_is_proven_whole():
+    before = {"views": [_sectioned(_sec("a"), _sec("b1", "b2"))]}
+    after = {"views": [_sectioned(_sec("a"))]}
+    matching = analyze.match_cards(before, after)
+    assert [slot.index for slot in matching.sections.removed] == [1]
+    assert matching.loose_removed() == []
+    assert len(matching.removed) == 2
+
+
+def test_an_added_section_with_a_heading_is_proven_whole():
+    heading = {"type": "heading", "heading": "Neu"}
+    before = {"views": [_sectioned(_sec("a"))]}
+    after = {"views": [_sectioned(_sec("a"), {"type": "grid", "cards": [heading]})]}
+    matching = analyze.match_cards(before, after)
+    assert [slot.index for slot in matching.sections.added] == [1]
+    assert matching.loose_added() == []
+
+
+def test_an_added_empty_section_is_proven_whole():
+    """The one left over in a view that grew by one - Home Assistant's "add section"."""
+    before = {"views": [_sectioned(_sec("a"))]}
+    after = {"views": [_sectioned(_sec("a"), _sec())]}
+    assert [s.index for s in analyze.match_cards(before, after).sections.added] == [1]
+
+
+def test_a_deleted_empty_section_is_left_over():
+    before = {"views": [_sectioned(_sec("a"), _sec())]}
+    after = {"views": [_sectioned(_sec("a"))]}
+    sections = analyze.match_cards(before, after).sections
+    assert (sections.removed, [s.index for s in sections.rest_old]) == ((), [1])
+
+
+def test_two_sections_deleted_at_once_are_left_over():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"), _sec("c"))]}
+    after = {"views": [_sectioned(_sec("a"))]}
+    sections = analyze.match_cards(before, after).sections
+    assert (sections.removed, sorted(s.index for s in sections.rest_old)) == ((), [1, 2])
+
+
+def test_a_section_whose_card_turned_up_elsewhere_is_left_over():
+    before = {"views": [_sectioned(_sec("a", "b"), _sec("c"))]}
+    after = {"views": [_sectioned(_sec("c", "a"))]}
+    sections = analyze.match_cards(before, after).sections
+    assert sections.removed == ()
+    assert [s.index for s in sections.rest_old] == [1]
+
+
+def test_a_deleted_section_is_proven_although_the_next_one_holds_the_same_card():
+    """The next section moved up to index 0; its own card must stay its own."""
+    before = {"views": [_sectioned(_sec("x"), _sec("x", "y"))]}
+    after = {"views": [_sectioned(_sec("x", "y"))]}
+    assert [s.index for s in analyze.match_sections(before, after).removed] == [0]
+
+
+def test_cards_of_an_unexplained_section_keep_their_real_index():
+    """Spec O, section 1: a rest section is as if there were no pairing."""
+    k = {"type": "tile", "entity": "light.k"}
+    l = {"type": "tile", "entity": "light.l"}
+    before = {"views": [_sectioned({"type": "grid", "column_span": 1, "cards": [k, l]})]}
+    after = {"views": [_sectioned({"type": "grid", "column_span": 2, "cards": [k, {**l, "name": "x"}]})]}
+    matching = analyze.match_cards(before, after)
+    assert (matching.removed, matching.added, matching.moved) == ([], [], [])
+    assert len(matching.edited) == 1
+
+
+def test_a_pure_section_swap_is_not_nothing_to_undo():
+    """No card event any more - but the change did something."""
+    before = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a"))]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None or "did not alter any cards" not in plan.blocked
+
+
+def test_real_dashboards_pair_every_section_with_itself():
+    if not REAL_DASHBOARDS:
+        pytest.skip("set DASHBOARD_HISTORY_REAL_STORAGE to run this")
+    for path in REAL_DASHBOARDS:
+        config = json.loads(path.read_text(encoding="utf-8"))["data"]["config"]
+        sections = analyze.match_sections(config, config)
+        assert sections.views() == set(), path.name
+        assert all(pair.how == "same" for pair in sections.pairs), path.name
+

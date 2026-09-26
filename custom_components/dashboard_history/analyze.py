@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, NamedTuple
 
 
@@ -286,6 +286,36 @@ class Slot:
 
 
 @dataclass(frozen=True)
+class SectionMatching:
+    """What happened to a dashboard's sections between two states (#31).
+
+    `pairs` are the sections found in both, `moved` the pairs outside the
+    run that kept its order. `removed` and `added` are sections proven to
+    have gone or come whole. `rest_old` and `rest_new` are what neither
+    explains: the explanation says nothing about them, and an undo of a
+    view that has any refuses.
+    """
+
+    pairs: tuple = ()
+    moved: tuple = ()
+    removed: tuple = ()
+    added: tuple = ()
+    rest_old: tuple = ()
+    rest_new: tuple = ()
+
+    def views(self) -> set:
+        """Every view this matching has something to say about."""
+        return (
+            {pair.old.view_key for pair in self.moved}
+            | {pair.old.view_key for pair in self.pairs if pair.how == "settings"}
+            | {
+                slot.view_key
+                for slot in (*self.removed, *self.added, *self.rest_old, *self.rest_new)
+            }
+        )
+
+
+@dataclass(frozen=True)
 class Matching:
     """Every card of one dashboard, paired across two of its states."""
 
@@ -293,6 +323,24 @@ class Matching:
     added: list
     edited: list  # (old, new)
     moved: list  # (old, new)
+    sections: SectionMatching = field(default_factory=SectionMatching)
+    # (view key, old section index) -> new index, for every paired
+    # section (GitHub #31).
+    translate: dict = field(default_factory=dict)
+
+    def same_place(self, old: Slot, new: Slot) -> bool:
+        """Whether a card stayed in its list, its section followed wherever it went."""
+        return _translated(old, self.translate) == _place(new)
+
+    def loose_removed(self) -> list:
+        """Removed cards, less those of a section that went whole."""
+        whole = {(s.view_key, ("sections", s.index, "cards")) for s in self.sections.removed}
+        return [slot for slot in self.removed if (slot.view_key, slot.location) not in whole]
+
+    def loose_added(self) -> list:
+        """Added cards, less those of a section that came whole."""
+        whole = {(s.view_key, ("sections", s.index, "cards")) for s in self.sections.added}
+        return [slot for slot in self.added if (slot.view_key, slot.location) not in whole]
 
 
 @dataclass(frozen=True)
@@ -423,6 +471,31 @@ def _place(slot: Slot) -> tuple:
     return (slot.view_key, slot.location)
 
 
+def _translated(slot: Slot, translate: dict) -> tuple:
+    """Where an old slot's list is in the new state, its section followed.
+
+    A card in a paired section sits, for comparison, in the list of that
+    section wherever it went - so a section moved whole moves none of its
+    cards. Every other card keeps its plain place, its real index (spec
+    O, section 1): a section nothing paired is as if there were no
+    section pairing at all.
+    """
+    location = slot.location
+    if len(location) == 3 and location[0] == "sections" and (slot.view_key, location[1]) in translate:
+        return (slot.view_key, ("sections", translate[(slot.view_key, location[1])], "cards"))
+    return _place(slot)
+
+
+def _unpaired(slot: Slot, translate: dict) -> bool:
+    """Whether a slot sits in a section the pairing left unexplained."""
+    location = slot.location
+    return (
+        len(location) == 3
+        and location[0] == "sections"
+        and (slot.view_key, location[1]) not in translate
+    )
+
+
 def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
     """Pair the cards of two states of one dashboard.
 
@@ -461,7 +534,37 @@ def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
     pass 3 (no longer in the same place), so it still reads as a deletion
     plus an addition. Weak matching across views would close it and open
     a worse hole, because the same entity on two views is ordinary.
+
+    Sections first (GitHub #31). A section carries no id either, and a
+    card's place names its section by index - so a section moved whole
+    used to move every card on it. The sections are paired first, outside
+    in, and a card's old place is followed to where its section went
+    before the passes compare places. Badges never sit in sections and
+    skip this.
     """
+    if containers is not card_containers:
+        return _match_slots(old, new, containers, {})
+    pairs, rest_old, rest_new = _pair_sections(old, new)
+    translate = {(pair.old.view_key, pair.old.index): pair.new.index for pair in pairs}
+    matching = _match_slots(old, new, containers, translate)
+    return replace(
+        matching,
+        sections=_settle_sections(old, new, pairs, rest_old, rest_new, matching),
+    )
+
+
+def match_sections(old: dict, new: dict) -> SectionMatching:
+    """What happened to a dashboard's sections between two states (spec O, section 1).
+
+    The section half of `match_cards`, which needs the cards to prove a
+    section went or came whole - so it is that call, read for its
+    sections.
+    """
+    return match_cards(old, new).sections
+
+
+def _match_slots(old: dict, new: dict, containers, translate: dict) -> Matching:
+    """The four card passes of `match_cards`, old places followed through `translate`."""
     old_keys = {key for key, _ in _views_by_key(old)}
     new_keys = {key for key, _ in _views_by_key(new)}
     common = old_keys & new_keys
@@ -493,15 +596,22 @@ def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
         here.setdefault((_place(new_slot), mark), []).append(j)
         anywhere.setdefault(mark, []).append(j)
 
+    # Cards of paired sections, and cards outside sections, claim their
+    # places first. A card of a section nothing paired keeps its real
+    # index but comes last: when a section before it went, that index
+    # now names the section that moved up, and its own identical card
+    # must not be taken from it (GitHub #31).
+    order = sorted(range(len(old_open)), key=lambda i: _unpaired(old_open[i], translate))
     for pairs, buckets, at_place in (
         (in_place, here, True),
         (displaced, anywhere, False),
     ):
-        for i, old_slot in enumerate(old_open):
+        for i in order:
+            old_slot = old_open[i]
             if i in taken_old:
                 continue
             mark = old_slot.mark
-            waiting = buckets.get((_place(old_slot), mark) if at_place else mark, ())
+            waiting = buckets.get((_translated(old_slot, translate), mark) if at_place else mark, ())
             match = next((j for j in waiting if j not in taken_new), None)
             if match is not None:
                 claim(pairs, i, match)
@@ -514,7 +624,7 @@ def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
         if key is None:
             continue
         for j, new_slot in enumerate(new_open):
-            if j in taken_new or _place(new_slot) != _place(old_slot):
+            if j in taken_new or _place(new_slot) != _translated(old_slot, translate):
                 continue
             if _weak_key(new_slot.card) == key:
                 candidates.append((_similarity(old_slot.card, new_slot.card), i, j))
@@ -530,6 +640,7 @@ def match_cards(old: dict, new: dict, containers=card_containers) -> Matching:
         edited=[(old_open[i], new_open[j]) for i, j in edited],
         moved=[(old_open[i], new_open[j]) for i, j in displaced]
         + _reordered(old_open, new_open, in_place, edited),
+        translate=translate,
     )
 
 
@@ -561,7 +672,7 @@ def _reordered(
     kept = set(in_place)
     grouped: dict[tuple, list[tuple[int, int]]] = {}
     for pair in in_place + edited:
-        grouped.setdefault(_place(old_open[pair[0]]), []).append(pair)
+        grouped.setdefault(_place(new_open[pair[1]]), []).append(pair)
 
     out: list[tuple[Slot, Slot]] = []
     for pairs in grouped.values():
@@ -721,6 +832,73 @@ def _moved(pairs: list[SectionPair]) -> list[SectionPair]:
             last = pair.new.index
             need -= 1
     return [pair for i, pair in enumerate(ordered) if i not in kept]
+
+
+def _count_places(slots: list[Slot]) -> dict:
+    """How many of these slots sit in each card list."""
+    counts: dict = {}
+    for slot in slots:
+        place = (slot.view_key, slot.location)
+        counts[place] = counts.get(place, 0) + 1
+    return counts
+
+
+def _whole(slot: SectionSlot, counted: dict, empty_counts: bool) -> bool:
+    """Whether every card of a section is among the counted ones."""
+    cards = slot.section.get("cards") if isinstance(slot.section, dict) else None
+    if not isinstance(cards, list):
+        return False
+    if not cards:
+        return empty_counts
+    return counted.get((slot.view_key, ("sections", slot.index, "cards")), 0) == len(cards)
+
+
+def _settle_sections(
+    old: dict,
+    new: dict,
+    pairs: list[SectionPair],
+    rest_old: list[SectionSlot],
+    rest_new: list[SectionSlot],
+    matching: Matching,
+) -> SectionMatching:
+    """Moves from the pairs, and whole sections from what is left, proven by the cards.
+
+    A left-over section went whole only where its view lost exactly one
+    section and every card of it is among those the card matching gave up
+    on - the proof put-back has used since package 3 of vorhaben F. An
+    empty one never counts as gone: it has nothing to prove itself with,
+    and every empty section of a shrunken view would look equally lost.
+    Arriving is the same question the other way round. There an empty
+    section counts: it is the single one left over in a view that grew by
+    exactly one, and Home Assistant's own "add section" makes one.
+    """
+    old_counts = {key: len(_section_list(view)) for key, view in _views_by_key(old)}
+    new_counts = {key: len(_section_list(view)) for key, view in _views_by_key(new)}
+    gone = _count_places(matching.removed)
+    came = _count_places(matching.added)
+    removed: list[SectionSlot] = []
+    added: list[SectionSlot] = []
+    for key in sorted({slot.view_key for slot in rest_old}, key=str):
+        if old_counts[key] - new_counts[key] == 1:
+            found = [s for s in rest_old if s.view_key == key and _whole(s, gone, False)]
+            if len(found) == 1:
+                removed.append(found[0])
+    for key in sorted({slot.view_key for slot in rest_new}, key=str):
+        if new_counts[key] - old_counts[key] == 1:
+            found = [s for s in rest_new if s.view_key == key and _whole(s, came, True)]
+            if len(found) == 1:
+                added.append(found[0])
+    moved: list[SectionPair] = []
+    for key in sorted({pair.old.view_key for pair in pairs}, key=str):
+        moved += _moved([pair for pair in pairs if pair.old.view_key == key])
+    return SectionMatching(
+        pairs=tuple(pairs),
+        moved=tuple(moved),
+        removed=tuple(removed),
+        added=tuple(added),
+        rest_old=tuple(slot for slot in rest_old if slot not in removed),
+        rest_new=tuple(slot for slot in rest_new if slot not in added),
+    )
 
 
 def _views_by_key(config: dict) -> list[tuple[Any, dict]]:
@@ -1046,37 +1224,6 @@ _DUPLICATE_PATH_REFUSAL = (
 )
 
 
-def _sections_gone(old_view: dict, new_view: dict, gone: list[Slot]) -> dict:
-    """Sections of `old_view` that went away whole, by their old index.
-
-    Answers with at most one, and only where the answer is not a guess:
-    the view has to have lost exactly one section, and every card of the
-    section in question has to be among the ones the matching gave up on.
-    A section whose cards turned up elsewhere is not gone - they are in
-    `moved`, not in `removed` - and then nothing is reported here, which
-    is correct: nothing was lost.
-
-    An **empty** section is never reported. It has no cards to prove
-    anything with, so every empty section in a shrunken view would look
-    equally deleted; and there is nothing on it to lose.
-    """
-    old_sections = old_view.get("sections") or []
-    new_sections = new_view.get("sections") or []
-    if len(new_sections) != len(old_sections) - 1:
-        return {}
-    found = {}
-    for index, section in enumerate(old_sections):
-        if not isinstance(section, dict):
-            continue
-        cards = section.get("cards")
-        if not isinstance(cards, list) or not cards:
-            continue
-        here = ("sections", index, "cards")
-        if sum(1 for slot in gone if slot.location == here) == len(cards):
-            found[index] = section
-    return found if len(found) == 1 else {}
-
-
 def _section_label(section: dict, index: int) -> str:
     """What to call a section in a list somebody has to choose from.
 
@@ -1104,13 +1251,13 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
     new_views = dict(_views_by_key(new))
     matching = match_cards(old, new)
     gone_by_view: dict[int, list[Slot]] = {}
-    for slot in matching.removed:
+    for slot in matching.loose_removed():
         gone_by_view.setdefault(slot.view_index, []).append(slot)
     # Cards that left their place for another list: no survivor a
     # section has to keep for its anchor to hold (spec L, 4a).
     away_by_view: dict[int, set] = {}
     for was, now in matching.moved:
-        if _place(was) != _place(now):
+        if not matching.same_place(was, now):
             away_by_view.setdefault(was.view_index, set()).add((was.location, was.index))
 
     items: list[RemovedItem] = []
@@ -1135,11 +1282,13 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
             continue
         gone = gone_by_view.get(view_index, [])
         left = {(slot.location, slot.index) for slot in gone} | away_by_view.get(view_index, set())
-        # A section that went whole is one item, not one per card on it.
-        # Its cards each refuse on their own - the section they name is
-        # not the one standing at that index now - so offering them was
-        # offering buttons that reliably fail.
-        whole = _sections_gone(old_view, new_views[key], gone)
+        # A section that went whole is one item, not one per card on it -
+        # its cards are already out of `gone` (`loose_removed`).
+        whole = {
+            slot.index: slot.section
+            for slot in matching.sections.removed
+            if slot.view_key == key
+        }
         for index, section in whole.items():
             items.append(
                 RemovedItem(
@@ -1158,7 +1307,6 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                     view_title=name,
                 )
             )
-        swallowed = {("sections", index, "cards") for index in whole}
         items += [
             RemovedItem(
                 kind="card",
@@ -1172,7 +1320,6 @@ def find_removed(old: dict, new: dict) -> list[RemovedItem]:
                 view_title=name,
             )
             for slot in gone
-            if slot.location not in swallowed
         ]
     return items
 
@@ -1267,6 +1414,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         or view_work
         or type_changed
         or settings
+        or matching.sections.views()
     ):
         return UndoPlan(blocked="this change did not alter any cards")
 
@@ -1871,7 +2019,7 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
         add(now.view_key, _entry(words, "edited", "card", _describe(now.card)))
     for was, now in matching.moved:
         label = _describe(was.card)
-        if _place(was) == _place(now):
+        if matching.same_place(was, now):
             add(was.view_key, _entry(words, "moved", "card", label))
         else:
             add(
