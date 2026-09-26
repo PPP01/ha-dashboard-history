@@ -68,7 +68,7 @@ let STYLE;
 let escape, renderDiff, renderPlain, when, joinNames;
 let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton;
 let DIALOGS;
-let renderSimple;
+let renderSimple, steps, spanOf;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
 
 const partsReady = Promise.all([
@@ -83,7 +83,7 @@ const partsReady = Promise.all([
   ({ escape, renderDiff, renderPlain, when, joinNames } = render);
   ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton } = rows);
   ({ DIALOGS } = dialogs);
-  ({ renderSimple } = simple);
+  ({ renderSimple, steps, spanOf } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
 });
 
@@ -2772,6 +2772,20 @@ class DashboardHistoryPanel extends HTMLElement {
          second name for the same content.`
       : "";
     carries.hidden = !already;
+    // What "everything from ... up to and including this change" above
+    // actually means, spelled out (GitHub #15). `spanOf` is the same
+    // walk the simple mode already does for a version's own fold - from
+    // `change` downwards, stopping at the next version below it - so a
+    // version made from an old row shows that row's own span, not the
+    // newest one's.
+    const pending = spanOf(change, this._changes);
+    const pendingDetails = dialog.querySelector("[data-pending]");
+    pendingDetails.hidden = !pending.length;
+    if (pending.length) {
+      dialog.querySelector("[data-pending-summary]").textContent =
+        pending.length === 1 ? "1 pending change" : `${pending.length} pending changes`;
+      dialog.querySelector("[data-pending-body]").innerHTML = steps(pending);
+    }
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
     buttons.forEach((button) => {

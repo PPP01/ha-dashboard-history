@@ -53,12 +53,13 @@ const number = (version) => escape(version.name.split("/").pop());
 /**
  * The loaded changes of one span, as the lines under an opened row.
  *
- * One function for the version rows and for the current-state block:
- * they say the same thing about two different spans. Written twice in
- * this file's first draft of the second one, and the two copies had
- * already begun to differ before either was read.
+ * One function for the version rows, the current-state block, and the
+ * "Create a version" dialog (GitHub #15): all three say the same thing
+ * about a span of changes. Written twice in this file's first draft of
+ * the second one, and the two copies had already begun to differ before
+ * either was read.
  */
-const steps = (list) =>
+export const steps = (list) =>
   list
     .map(
       (c) =>
@@ -75,11 +76,13 @@ const steps = (list) =>
  * somebody goes back to and it is always there, so a span the window
  * does not reach costs a fold, not a way back.
  *
- * Its own function because two places need it now: the row for the
- * version, and the current-state block for the version it has been
- * folded together with.
+ * Its own function because three places need it now: the row for the
+ * version, the current-state block for the version it has been folded
+ * together with, and the "Create a version" dialog (GitHub #15) - which
+ * hands in the change being named rather than a version, since both
+ * carry the `.revision` this reads.
  */
-const spanOf = (version, changes) => {
+export const spanOf = (version, changes) => {
   const start = changes.findIndex((c) => c.revision === version.revision);
   if (start < 0) return [];
   const inside = [];

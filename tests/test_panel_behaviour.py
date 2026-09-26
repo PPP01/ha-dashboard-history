@@ -5650,6 +5650,73 @@ def test_a_version_offered_without_its_numbers_still_writes(missing_level):
     assert missing_level["title"] == ""
 
 
+# -- the create-version dialog shows what it is about to name (#15) --------
+
+_PENDING_CHANGES = """
+const changes = [
+  { revision: "c", message: "3rd card added", versions: [] },
+  { revision: "b", message: "2nd card added", description: "a note", versions: [] },
+  { revision: "a", message: "1st card added", versions: [{ name: "dash/v1.0.0" }] },
+];
+const dialogFor = async (revision) => {
+  const el = new Panel();
+  el._render = () => {};
+  el._selected = "dash";
+  el._changes = changes;
+  el.shadowRoot = node();
+  el._reloadAfterWrite = async () => null;
+  el._call = (type) =>
+    type === "next_versions"
+      ? Promise.resolve({ candidates: { patch: "dash/v1.0.1" } })
+      : Promise.resolve({ created: "dash/v1.0.1" });
+  const versioning = el._createVersion(revision);
+  await settle();
+  const dialog = el.shadowRoot.querySelector("dialog.version");
+  const facts = {
+    hidden: dialog.querySelector("[data-pending]").hidden,
+    summary: dialog.querySelector("[data-pending-summary]").textContent,
+    body: dialog.querySelector("[data-pending-body]").innerHTML,
+  };
+  dialog.close("create");
+  await versioning;
+  return facts;
+};
+
+// Two unversioned changes sit above the tagged one - both belong to the
+// version about to be made from the newest of them.
+const two = await dialogFor("c");
+
+// Naming the tagged change itself: its own span is only its own change,
+// singular wording and all.
+const one = await dialogFor("a");
+
+console.log(JSON.stringify({ two, one }));
+"""
+
+
+@pytest.fixture(scope="session")
+def pending_changes(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "pending_changes", _PENDING_CHANGES)
+
+
+def test_the_version_dialog_shows_its_own_pending_changes(pending_changes):
+    # The count and the messages of exactly the span the scope sentence
+    # already describes - not the whole loaded history, and not the
+    # change that already carries the older version.
+    two = pending_changes["two"]
+    assert two["hidden"] is False
+    assert two["summary"] == "2 pending changes"
+    assert "3rd card added" in two["body"]
+    assert "a note" in two["body"]  # the description, not the raw message
+    assert "1st card added" not in two["body"]
+
+
+def test_the_version_dialog_uses_singular_wording_for_one_change(pending_changes):
+    one = pending_changes["one"]
+    assert one["hidden"] is False
+    assert one["summary"] == "1 pending change"
+
+
 # -- today is the installation's day, not the browser's --------------------
 #
 # The restore dialog offers to keep the state it replaces and fills the
