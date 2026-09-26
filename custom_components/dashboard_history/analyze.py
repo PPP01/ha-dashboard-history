@@ -1008,7 +1008,8 @@ def _section_marks(view: dict) -> list:
     with a heading card, not `title`) but differ in a setting such as
     `column_span`. GitHub #31: the swap read as an exact card move, and
     the settings stayed pinned to their index, writing a state that
-    never existed.
+    never existed. Compared through `_same_marks`, strictly, since
+    vorhaben O.
     """
     return [
         {key: value for key, value in section.items() if key != "cards"}
@@ -1027,35 +1028,24 @@ def _same_marks(one: dict, other: dict) -> bool:
     return fingerprint(_section_marks(one)) == fingerprint(_section_marks(other))
 
 
-def _section_drift(old_views: dict, new_views: dict, now_views: dict) -> tuple[set, set]:
-    """Which views' sections cannot be trusted, and in which of two ways.
+def _section_drift(new_views: dict, now_views: dict) -> set:
+    """The views whose sections moved since the change - their inserts park.
 
-    Takes the same `{key: view}` dicts `plan_undo` already built with
-    `_views_by_key`, rather than the three raw configurations - one less
-    walk of `views` per state, on a path run for every undo.
-
-    `rebuilt`: the change itself altered the run of sections - added,
-    removed, swapped or re-set one. Undoing that means rebuilding the
-    sections, which no card step does, so it stays a refusal.
-
-    `shifted`: the change left the sections alone, but they have moved
-    since. A card can still be taken out exactly - it is found by its
-    fingerprint - but where one goes back in cannot be proven any more,
-    so an insertion there is parked in the view's own `cards:` (decision
-    26, GitHub #30).
+    The change left the sections of these views as they were, or undoes
+    its own section changes in one step of its own (`_plan_sections`);
+    either way they have moved since. A card can still be taken out
+    exactly - it is found by its fingerprint - but where one goes back in
+    cannot be proven any more, so an insertion there is parked in the
+    view's own `cards:` (decision 26, GitHub #30).
 
     Per view, not per dashboard: a section moved in one view says nothing
-    about an index in another. Two sections that agree on every setting
-    and differ only in their cards still slip through, as before (#31).
+    about an index in another.
     """
-    rebuilt: set = set()
-    shifted: set = set()
-    for key in set(old_views) & set(new_views):
-        if not _same_marks(old_views[key], new_views[key]):
-            rebuilt.add(key)
-        elif key in now_views and not _same_marks(now_views[key], new_views[key]):
-            shifted.add(key)
-    return rebuilt, shifted
+    return {
+        key
+        for key in set(new_views) & set(now_views)
+        if not _same_marks(now_views[key], new_views[key])
+    }
 
 
 def _section_anchor(view: dict, location: tuple, index: int, left: set) -> _SectionAnchor | None:
@@ -1210,10 +1200,9 @@ _POSITION_REFUSAL = (
     "cannot tell which view is which"
 )
 
-_SECTIONS_REBUILT_REFUSAL = (
-    "this change rearranged the sections of a view itself, and a section "
-    "has no path to recognise it by, so an exact undo cannot rebuild them "
-    "- a version or a whole-state restore covers it"
+_SECTIONS_AND_CARDS_REFUSAL = (
+    "this change moved sections of a view and also changed single cards "
+    "in it, so an exact undo cannot put both back at once"
 )
 
 _VIEW_TYPE_REFUSAL = (
@@ -1512,6 +1501,9 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # a save that did nothing but convert the view had nothing here to
     # register, and fell through to "did not alter any cards" - true of
     # the cards, false of the view.
+    #
+    # A section moved or re-set is a real alteration too, with no card event
+    # of its own since its cards follow it (GitHub #31).
     pairs = ((before, after), (before, current), (after, current))
     type_changed = any(_view_type_changed(one, other) for one, other in pairs)
     settings = setting_changes(before, after)
@@ -1546,9 +1538,24 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # of on itself.
     if type_changed:
         return UndoPlan(blocked=_VIEW_TYPE_REFUSAL)
-    rebuilt, shifted = _section_drift(old_views, new_views, now_views)
-    if rebuilt:
-        return UndoPlan(blocked=_SECTIONS_REBUILT_REFUSAL)
+    shifted = _section_drift(new_views, now_views)
+    # A view whose sections the change rearranged is put back in one step
+    # of its own (GitHub #31) - or refused, and then before anything else.
+    now_index = {key: index for index, (key, _) in enumerate(_views_by_key(current))}
+    section_steps: list[UndoStep] = []
+    for key in sorted(matching.sections.views(), key=str):
+        planned = _plan_sections(
+            key,
+            old_views[key],
+            new_views[key],
+            now_views.get(key),
+            now_index.get(key, -1),
+            matching.sections,
+        )
+        if isinstance(planned, str):
+            return UndoPlan(blocked=planned)
+        if planned is not None:
+            section_steps.append(planned)
 
     setting_steps: list[UndoStep] = []
     for change in settings:
@@ -1666,7 +1673,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         steps.append(_step(here, "remove", new_slot.card, None, label))
         put_back(old_slot, label)
 
-    for new_slot in matching.added:
+    for new_slot in matching.loose_added():
         label = _describe(new_slot.card)
         here, why = sole(new_slot, label)
         if here is None:
@@ -1681,7 +1688,7 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # Mirrors the badge rule below (Vorhaben N) - `deleted` is how many
     # alike the change took from that view, `card_came_back` how many
     # more stand there now than the change left.
-    removed_card_marks = [(old_slot, old_slot.mark) for old_slot in matching.removed]
+    removed_card_marks = [(old_slot, old_slot.mark) for old_slot in matching.loose_removed()]
     deleted_cards: dict[tuple[str, Any], int] = {}
     for old_slot, mark in removed_card_marks:
         place = (mark, old_slot.view_key)
@@ -1886,6 +1893,15 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
             )
         )
 
+    # One step writes a view's whole row of sections; a card step in the
+    # same view would write into a row that step replaces.
+    rewritten = {step.view_path or ("#", step.view_index) for step in section_steps}
+    if any(
+        step.kind == "card" and (step.view_path or ("#", step.view_index)) in rewritten
+        for step in steps
+    ):
+        return UndoPlan(blocked=_SECTIONS_AND_CARDS_REFUSAL)
+    steps.extend(section_steps)
     return UndoPlan(blocked=None, steps=tuple(steps))
 
 

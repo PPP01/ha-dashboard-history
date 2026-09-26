@@ -1191,13 +1191,11 @@ def test_undo_refuses_when_a_pathless_view_was_inserted_before_another():
     assert "URL path" in plan.blocked
 
 
-def test_undo_refuses_when_a_section_was_inserted_before_another():
-    """Sections are addressed by index too, and never carry a path.
+def test_a_section_inserted_before_another_is_taken_out_again():
+    """It used to refuse: ("sections", 1, "cards") named a different section.
 
-    Home Assistant gives a section no path and no id, so ("sections", 1,
-    "cards") is the only address there is. Put a section in front and it
-    names a different one: measured, the undo pulled a card into the new
-    section and left the old one empty.
+    Since #31 the inserted section is proven added and the row goes back
+    as a whole, so no index has to mean anything.
     """
     old = {"views": [{"path": "home", "type": "sections",
                       "sections": [{"title": "Unten", "cards": [B]}]}]}
@@ -1205,8 +1203,8 @@ def test_undo_refuses_when_a_section_was_inserted_before_another():
                       "sections": [{"title": "Neu", "cards": [C]},
                                    {"title": "Unten", "cards": [B]}]}]}
     plan = analyze.plan_undo(old, new, new)
-    assert plan.blocked is not None
-    assert "section" in plan.blocked
+    assert plan.blocked is None
+    assert restore.apply_undo(new, plan) == old
 
 
 def test_undo_still_works_when_the_sections_stayed_put():
@@ -1224,18 +1222,8 @@ def test_undo_still_works_when_the_sections_stayed_put():
     ]
 
 
-def test_undo_refuses_when_two_untitled_sections_swap_settings():
-    """A section swap without titles must not slip past `_section_drift`.
-
-    Home Assistant names a section with a heading card, not `title` -
-    untitled sections are the common case, and the docstring on
-    `_section_drift` already names this gap. Swapping two whole sections
-    (settings included) leaves the ordered title list unchanged
-    (`[None, None]` both times), so the old check saw nothing wrong and
-    let the undo through. It would have moved the cards back but left
-    `column_span` pinned to its index - section 0 ends up with card A's
-    old neighbour's setting, a state that never existed. GitHub #31.
-    """
+def test_a_swap_of_two_untitled_sections_is_undone_settings_and_all():
+    """GitHub #31: once refused, before that silently wrong - now exact."""
     old = {"views": [{"path": "home", "type": "sections", "sections": [
         {"column_span": 2, "cards": [A]},
         {"column_span": 1, "cards": [B]},
@@ -1245,8 +1233,9 @@ def test_undo_refuses_when_two_untitled_sections_swap_settings():
         {"column_span": 2, "cards": [A]},
     ]}]}
     plan = analyze.plan_undo(old, new, new)
-    assert plan.blocked is not None
-    assert "section" in plan.blocked
+    assert plan.blocked is None
+    assert [step.kind for step in plan.steps] == ["sections_list"]
+    assert restore.apply_undo(new, plan) == old
 
 
 # -- sections that moved since: park, do not refuse (GitHub #30) ---------
@@ -1354,13 +1343,12 @@ def test_a_pathless_view_whose_sections_moved_without_its_title_refuses_by_posit
     assert "URL path" in plan.blocked
 
 
-def test_a_change_that_rebuilt_the_sections_says_so():
-    """Parking answers "where does this card go", not "what did the view look like"."""
+def test_a_change_that_added_a_section_takes_it_out_again():
     old = {"views": [_sectioned({"cards": [B]})]}
     new = {"views": [_sectioned({"column_span": 2, "cards": [C]}, {"cards": [B]})]}
     plan = analyze.plan_undo(old, new, new)
-    assert plan.blocked is not None
-    assert "this change rearranged the sections" in plan.blocked
+    assert plan.blocked is None
+    assert restore.apply_undo(new, plan) == old
 
 
 def test_a_card_from_imported_cards_goes_back_to_its_index_not_parked():
@@ -2394,4 +2382,81 @@ def test_the_only_card_moved_into_an_empty_alike_section_is_undone_exactly():
     before = {"views": [_sectioned(_sec("a"), _sec())]}
     after = {"views": [_sectioned(_sec(), _sec("a"))]}
     assert _undone(after, _section_plan(before, after, after)) == before
+
+def test_the_test_2_swap_is_one_step_and_exact():
+    heading = {"type": "heading", "heading": "Neuer Abschnitt"}
+    first = {"type": "grid", "cards": [heading, _md("noon")]}
+    second = {"type": "grid", "cards": [_md("person"), _md("sun")]}
+    before = {"views": [_sectioned(first, second, title="A2")]}
+    after = {"views": [_sectioned(second, first, title="A2")]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert [step.kind for step in plan.steps] == ["sections_list"]
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_a_section_setting_alone_is_undoable():
+    before = {"views": [_sectioned(_sec("a", column_span=1))]}
+    after = {"views": [_sectioned(_sec("a", column_span=2))]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_sections_and_single_cards_of_one_view_refuse_together():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"), _sec("c"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a"), _sec("c", "c2"))]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked == analyze._SECTIONS_AND_CARDS_REFUSAL
+
+
+def test_a_section_swap_in_a_pathless_view_is_undone():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"), path=None)]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a"), path=None)]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert restore.apply_undo(after, plan) == before
+
+
+def test_two_sections_deleted_at_once_refuse_the_undo():
+    before, after = _row("abc"), _row("a")
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is not None and "cannot account for" in plan.blocked
+
+
+def test_a_section_moved_and_edited_in_one_save_refuses_the_undo():
+    before = {"views": [_sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [_sectioned(_sec("b"), _sec("a", "z"))]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is not None and "cannot account for" in plan.blocked
+
+
+def test_a_section_setting_goes_back_from_true_to_1():
+    """`==` calls them equal; the written state must not (#28)."""
+    before = {"views": [_sectioned(_sec("a", column_span=1))]}
+    after = {"views": [_sectioned(_sec("a", column_span=True))]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    result = restore.apply_undo(after, plan)
+    assert json.dumps(result, sort_keys=True) == json.dumps(before, sort_keys=True)
+
+
+def test_a_planned_sections_step_refuses_a_state_changed_after_planning():
+    before, after = _row("ab"), _row("ba")
+    plan = analyze.plan_undo(before, after, after)
+    changed = {"views": [_sectioned(_sec("b", "b2"), _sec("a"))]}
+    with pytest.raises(LookupError):
+        restore.apply_undo(changed, plan)
+
+
+def test_a_section_swap_in_one_view_leaves_cards_in_another_alone():
+    home_before = _sectioned(_sec("a"), _sec("b"))
+    home_after = _sectioned(_sec("b"), _sec("a"))
+    other_before = {"path": "other", "cards": [A]}
+    other_after = {"path": "other", "cards": [A, B]}
+    before = {"views": [home_before, other_before]}
+    after = {"views": [home_after, other_after]}
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert restore.apply_undo(after, plan) == before
 
