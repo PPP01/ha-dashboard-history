@@ -902,7 +902,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: `Matching.sections`, `loose_removed`, `loose_added`, `SectionPair`, `SectionSlot`, `_own` (Tasks 2/3).
 - Produces: `_section_title(section: Any, index: int) -> str` (`'section "X"'` oder `"section N"`); `Summary.sections_moved`, `Summary.sections_added`, `Summary.sections_removed`; `_section_setting_changes(pair: SectionPair) -> list[SettingChange]`.
 
-**Akzeptanz:** Neue Tests grün, darunter Review Focus 1 und 5; `test_a_card_moved_into_a_named_section_says_its_name` bleibt unverändert grün; im Echt-Dashboard-Test ist nur die erlaubte `what`-Menge erweitert; Suite 0 failed.
+**Akzeptanz:** Neue Tests grün, darunter Review Focus 1 und 5; `test_a_card_moved_into_a_named_section_says_its_name` bleibt unverändert grün; `test_an_unnameable_change_never_claims_that_nothing_changed` ist wie angegeben umgeschrieben; im Echt-Dashboard-Test ist nur die erlaubte `what`-Menge erweitert; Suite 0 failed.
 
 - [ ] **Step 1: Tests schreiben**
 
@@ -983,6 +983,24 @@ def test_moving_the_only_card_into_an_empty_alike_section_reads_as_a_section_mov
 
 def test_section_counts_parse_as_a_generated_message():
     assert analyze._counts("home: 2 sections moved, 1 removed") == ["2 sections moved", "1 removed"]
+```
+
+`test_an_unnameable_change_never_claims_that_nothing_changed` (bisher mit einer Section-Einstellung als Beispiel, die Task 4 jetzt benennt) **bewusst umschreiben**. Der Fall muss unbenennbar bleiben, und das bleibt nach O eine gelöschte **leere** Section: Spec §1 meldet sie ausdrücklich nie (Plan-Review 2026-09-26, Terra). Die ganze Funktion ersetzen durch:
+
+```python
+def test_an_unnameable_change_never_claims_that_nothing_changed():
+    # An empty section deleted: no card went, and an empty section is
+    # never reported as gone (spec O, section 1) - it has nothing to
+    # prove itself with. The summary sits directly above a diff that
+    # plainly shows the difference - claiming "nothing changed" there
+    # would be refuted at a glance, which is worse than no summary.
+    old = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"type": "grid", "cards": [A]}, {"type": "grid", "cards": []}]}]}
+    new = {"views": [{"path": "home", "type": "sections",
+                      "sections": [{"type": "grid", "cards": [A]}]}]}
+    result = analyze.explain_change(old, new)
+    assert result.groups == []
+    assert "see the details" in result.note
 ```
 
 In `test_every_real_card_can_be_named` die Zeile `assert entry.what in ("card", "view")` ersetzen durch `assert entry.what in ("card", "view", "section", "section_setting")` – wird eine Section beim Entfernen ihrer ersten Karte leer und ist eine gleich eingestellte leere daneben, liest die Zuordnung das berechtigt als Section-Bewegung (Review Focus 1).
@@ -1876,12 +1894,30 @@ def test_a_neighbour_standing_twice_now_parks_the_card():
     )
     item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
     assert restore.parks(new, item) is True
+
+
+def test_a_neighbour_with_1_beside_a_card_with_true_is_no_double():
+    """The double-check counts strictly: 1 and True are two cards, not one twice."""
+    b_one = {**B, "state_color": 1}
+    b_true = {**B, "state_color": True}
+    old = _sections(
+        {"cards": [A, b_one]},
+        {"column_span": 2, "cards": []},
+        {"column_span": 3, "cards": [b_true]},
+    )
+    new = _sections(
+        {"cards": []},
+        {"column_span": 2, "cards": [b_one]},
+        {"column_span": 3, "cards": [b_true]},
+    )
+    item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
+    assert restore.parks(new, item) is False
 ```
 
 - [ ] **Step 2: Rot prüfen**
 
-Run: `python3 -m pytest tests/test_restore.py -k "neighbour_now or neighbour_standing" -v`
-Expected: der erste und der dritte Test FAIL (`parks` ist `False`), der zweite PASS.
+Run: `python3 -m pytest tests/test_restore.py -k "neighbour_now or neighbour_standing or neighbour_with_1" -v`
+Expected: der erste und der dritte Test FAIL (`parks` ist `False`), der zweite PASS. `test_a_neighbour_with_1_beside_a_card_with_true_is_no_double` ist ein Wächter und schon jetzt grün. Er muss nach Step 4 grün bleiben, und das tut er nur mit `_same_value`: Mit `==` zählte `b_one` doppelt und die Karte würde fälschlich geparkt (Plan-Review 2026-09-26, Terra, mit ausgeführter Gegenprobe).
 
 - [ ] **Step 3: Umsetzen – `analyze.py`**
 
@@ -2242,7 +2278,8 @@ Drei Prüfungen: Codex (Terra, breit), Codex (Astra, eine Frage) und Gemini mit 
 | Künstlicher Platz für Karten nicht gepaarter Sections widerspricht Spec §1 | Terra, Kritisch 1 | **Angenommen, anders gelöst:** echter Index, aber gepaarte Sections zuerst (Auslegung 6); Wächter- und Löschfall-Test in Task 3 |
 | `sections` fehlend oder `null`: normalisiertes `expect`/`payload` passt nicht zum Rohvergleich | Terra, Kritisch 2 | **Angenommen, als Verweigerung** (Task 6, Beweis 4) statt Rohwert-Durchreichen: Ein fehlender Schlüssel ließe sich in `restore` nur mit einem neuen Abwesenheits-Marker wiederherstellen, für einen in der Praxis handeditierten Randfall |
 | Fehlende Tests über den vollen `plan_undo`-Pfad | Terra, Hoch 1 | **Angenommen:** vier Tests in Task 7; die Nachbar-Proben sind Spec-Relikte (Auslegung 8) |
-| `==` statt strenger Gleichheit in `_departed_is_ambiguous` | Terra, Hoch 2 | **Angenommen:** `_same_value`. Kein eigener Test: Eine im Wert `1`/`True` geänderte Karte ist nicht »weggezogen«, sondern entfernt, sie erreicht diesen Pfad gar nicht |
+| `==` statt strenger Gleichheit in `_departed_is_ambiguous` | Terra, Hoch 2 | **Angenommen:** `_same_value`. Den zunächst begründeten Verzicht auf einen eigenen Test hat Terras Bestätigungsrunde widerlegt: Eine *unverändert* weggezogene Karte mit `1` kann neben einer anderen mit `True` stehen. Wächter-Test in Task 8 |
+| bestehender Test `test_an_unnameable_change_never_claims_that_nothing_changed` bricht ab Task 4 | Terra, Bestätigungsrunde | **Angenommen:** in Task 4 bewusst auf eine gelöschte leere Section umgeschrieben, die auch nach O unbenennbar bleibt |
 | Wortlaut der Section-Einstellungen weicht vom Spec-Beispiel ab | Terra, Mittel | **Plan-Wortlaut beibehalten** (Form aus Vorhaben M, wie Spec §3 selbst verlangt); das Spec-Beispiel wurde angeglichen |
 | `<Datum>` für Gemini nicht bestimmbar | Terra, Mittel | **Angenommen:** Datum der Ausführung |
 | Bestehender L-Test bricht in Task 8 | Gemini, Finding 1 | **Angenommen.** Ursache war eine zu breite Regel: Mehrdeutigkeit nur ohne Überlebende (Task 8, Step 4) |
@@ -2250,6 +2287,8 @@ Drei Prüfungen: Codex (Terra, breit), Codex (Astra, eine Frage) und Gemini mit 
 | Testfilter in Task 2 unvollständig | Gemini, Finding 3 | **Angenommen**, dazu Umsetzer-Regel 3 (Filter sind nur Abkürzung) |
 | Nachbar-Relikt in der Spec | Gemini, Finding 4 | **Angenommen** (Auslegung 8) |
 | doppelter Artikel in der Mehrdeutigkeits-Meldung | Gemini, Finding 5 | **Angenommen** |
+
+**Bestätigungsrunde (2026-09-26).** Astra hat die Korrektur zu Beweis 5 gegen nachgebauten Plan-Code ausgeführt: Das Gegenbeispiel wird verweigert. Die Begründung trägt: Ohne Rest und ohne Bewegung ist die Paarung zwischen `after` und heute eine streng steigende Bijektion, also Index auf Index. Ein einzelnes Paar aus Durchgang 3/4 ist dann der einzige veränderte Index, und Durchgang 2 kann daran nichts ändern, ohne die Bewegungsprobe auszulösen. Terra hat die übrigen Korrekturen bestätigt und zwei Nachträge geliefert (Wächtertest `1`/`True` in Task 8, Umschreiben von `test_an_unnameable_change_never_claims_that_nothing_changed` in Task 4), beide eingearbeitet. Terra hat nach jedem Task nur die Analyse- und Restore-Tests ausgeführt, nicht die volle Suite. Umsetzer-Regel 2 gilt deshalb unverändert.
 
 **Platzhalter-Suche:** `<Datum>` ist das Commit-Datum. Die Markierung `<bisheriger Docstring unverändert>` in Task 3 ist ausdrücklich als »wörtlich übernehmen« erklärt. Sonst keine offenen Stellen.
 
