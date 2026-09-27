@@ -1,5 +1,81 @@
 # Changelog
 
+## v0.9.0
+
+Targeted undo now reaches nearly everything a dashboard save can
+produce, not just its cards: named settings, badges, whole sections,
+and a card whose section moved out from under it. Two long-standing
+edge cases in the undo of cards themselves are also fixed. No change
+to the Home Assistant version floor — still **2024.11 or newer**.
+
+### Named settings, undone by name
+
+- Changing something outside `views:` — a `strategy:` key on the
+  dashboard itself, or a view's `icon`, `title`, `theme`, `visible`,
+  `max_columns`, and the like — used to be invisible to per-change
+  undo: only cards were tracked. These settings are now named in the
+  explanation ("On the dashboard itself" gets its own group), counted
+  in the history line ("N setting(s) changed"), and can be taken back
+  on their own, addressed by where they sit rather than matched by
+  content.
+- A setting changed again since is refused rather than guessed at —
+  the same rule undo has always applied to cards.
+
+### Badges, matched like cards
+
+- A view's `badges:` list — separate from its cards, and usually
+  repeated across several views — now goes through the same four-pass
+  matching cards do, in a world of its own so a badge and a card that
+  happen to look alike are never confused. Undo puts a removed badge
+  back or takes an added one away; there is no "Put back" for badges.
+
+### Cards whose section moved: parked, not refused
+
+- Undoing a change inside a sections view used to refuse almost every
+  time the *sections themselves* had been rearranged since — even when
+  the card being undone had nothing to do with the rearrangement. Such
+  a card is now inserted into the view's own "Imported cards" area
+  instead (the same place Home Assistant's editor uses for a card it
+  cannot place), with the undo button marked with an asterisk and the
+  card named in the plan even without a preview.
+
+### Sections matched as whole blocks
+
+- Moving, adding, removing, or resizing a section used to be invisible
+  as such: matching only ever saw the cards inside it, so swapping two
+  sections showed up as several individual card moves, and an undo of
+  that swap could quietly leave section settings scrambled. Sections
+  are now matched first, as whole blocks, before their cards — a swap
+  is reported and undone as one step that rewrites the view's whole
+  section list in its original order. What's still refused, honestly:
+  two sections identical apart from which cards moved between them,
+  where nothing tells the two candidates apart. That residual is
+  documented, not hidden.
+
+### Two correctness fixes in the existing card undo
+
+- A card whose deleted copy could not be told apart from an untouched,
+  identical one elsewhere used to be reported as "already taken back"
+  while it was, in fact, still missing.
+- The reverse mistake also existed: undoing an *added* card could
+  remove a matching card the change never touched, if an identical one
+  already stood elsewhere on the dashboard.
+- Both are fixed by the same rule cards and badges now share: "exactly
+  one today" only counts once it's also proven the change left exactly
+  one behind.
+
+### Elsewhere
+
+- The "Create a version" dialog shows the pending changes it covers,
+  instead of only describing their span in a sentence.
+- A card's fingerprint used to be recomputed several times over the
+  course of one undo plan; it's computed once now, where the card is
+  first read.
+- A new doc explains what it means for this integration's history when
+  an AI agent changes a dashboard through Home Assistant's own API: an
+  unnamed, automatic entry, the same as any other save nobody
+  described afterward.
+
 ## v0.8.1
 
 ### "Load older changes" no longer goes silent after a forget
