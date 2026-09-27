@@ -29,6 +29,7 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | M | Benannte Einstellungen des Dashboards und der Ansichten gezielt zurücknehmen (Issue #28) | Erledigt (2026-09-25) | `specs/2026-09-24-einstellungen-zuruecknehmen-design.md`, `plans/2026-09-24-einstellungen-zuruecknehmen.md` |
 | N | Badges einer Ansicht gezielt zurücknehmen (Issue #29) | Erledigt (2026-09-25) | `specs/2026-09-24-badges-zuruecknehmen-design.md`, `plans/2026-09-24-badges-zuruecknehmen.md` |
 | O | Sections als Einheit – Zuordnung von außen nach innen, ein Undo-Schritt je Ansicht (Issue #31) | Erledigt (2026-09-26) | `specs/2026-09-25-sections-als-einheit-design.md`, `plans/2026-09-26-sections-als-einheit.md` |
+| P | `analyze.py` aufteilen – Komplexitäts-Sperrklinke und Importverträge, Paket mit fünf Modulen, `plan_undo` als Planer je Art (Issue #41) | Erledigt (2026-09-27) | `specs/2026-09-27-analyze-aufteilen-design.md`, `plans/2026-09-27-analyze-aufteilen.md` |
 
 ## Laufzeit `forget` (Versionsmarken in einem Zug)
 
@@ -181,12 +182,12 @@ Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
 
 `custom_components/dashboard_history/`, nach Aufgabe geordnet. Die sieben
 mit ✓ müssen HA-frei bleiben (siehe CLAUDE.md, »Harte Regeln«) und sind es
-laut Grep auch (Stand 2026-09-19).
+laut Grep auch (Stand 2026-09-19), seit Vorhaben P zusätzlich von `lint-imports` geprüft.
 
 | Datei | Aufgabe |
 |---|---|
 | `yaml_io.py` ✓ | Deterministisches Lesen/Schreiben von Dashboard-YAML |
-| `analyze.py` ✓ | Erkennt, was sich zwischen zwei Ständen geändert hat; plant Undo |
+| `analyze/` ✓ | Erkennt, was sich zwischen zwei Ständen geändert hat; plant Undo. Paket in Schichten: `model` (Typen, Lesen, Benennen) → `matching` (Zuordnung) → `removed` (Put back) → `explain` (Worte) | `undo` (gezielte Rücknahme); geprüft von `lint-imports` |
 | `restore.py` ✓ | Setzt Verschwundenes additiv wieder ein |
 | `versions.py` ✓ | Versionsnummern und Tagesmarken: lesen, ordnen, hochzählen |
 | `keys.py` ✓ | Welcher Dashboard-Schlüssel gültig/gelöscht ist |

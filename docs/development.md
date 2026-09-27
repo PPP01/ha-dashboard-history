@@ -19,7 +19,7 @@ flowchart TD
     end
 
     subgraph Core_Layer ["Core Logic (Pure Python, Zero HA Imports)"]
-        Analyze["analyze.py (4-Pass Card Matching & Diff Engine)"]
+        Analyze["analyze/ (card matching, explanation, undo planning)"]
         Restore["restore.py (Surgical Undo & Replacement Planner)"]
         Store["store.py (Dulwich Git Commit & Tree Management)"]
         Versions["versions.py (Milestone Tags & Automatic Versioning Rules)"]
@@ -32,7 +32,7 @@ flowchart TD
 
 ### Pure Python Modules (No HA Imports)
 The following six modules contain zero `import homeassistant` statements:
-- `analyze.py`: Computes card diffs, moves, additions, and deletions using similarity heuristics.
+- `analyze/`: Package (`model`, `matching`, `removed`, `explain`, `undo`) for card diffs, moves, additions, deletions, explanations, and undo planning.
 - `restore.py`: Generates surgical undo patches, conflict detection, and replacement previews.
 - `store.py`: Dulwich-based repository storage, commit creation, and tree management.
 - `versions.py`: Named milestone tags and the rules behind the automatic ones (initial baseline, daily marks).

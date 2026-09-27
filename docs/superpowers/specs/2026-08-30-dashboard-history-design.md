@@ -52,7 +52,7 @@ Vorbild ist die Versionsansicht von TYPO3 pro Seite.
 |---|---|---|
 | `keys.py` | Welches Dashboard welches ist, und welches fehlt | **ja** |
 | `identity.py` | Welche Ansicht und welche Section über zwei Stände hinweg dieselbe ist — siehe Entscheidung 16 | **ja** |
-| `analyze.py` | Zwei Stände vergleichen und die Änderungen einordnen: Karte gelöscht, View gelöscht, bearbeitet, verschoben | **ja** |
+| `analyze/` (Paket: `model`, `matching`, `removed`, `explain`, `undo`) | Zwei Stände vergleichen und die Änderungen einordnen: Karte gelöscht, View gelöscht, bearbeitet, verschoben | **ja** |
 | `restore.py` | Die Umkehrung anwenden: gelöschtes Objekt wieder einsetzen, oder einen ganzen Stand herstellen | **ja** |
 | `versions.py` | Versionsnummern: einlesen, ordnen, hochzählen, Namen bilden — siehe Entscheidung 13 | **ja** |
 | `store.py` | Das eigene Repository: Stände ablegen, Verlauf lesen, Versionen als Markierungen | **Kern ja** |
@@ -96,13 +96,13 @@ Die fünf oberen sind reine Logik und ohne laufendes Home Assistant prüfbar. Di
 Speichern in der Oberflaeche
   └─► HA feuert lovelace_updated
        └─► capture.py holt den Stand DIREKT vom Lovelace-Objekt im Speicher
-            └─► analyze.py vergleicht mit dem letzten Commit
+            └─► analyze vergleicht mit dem letzten Commit
                  └─► store.py legt einen Commit an (nur bei echter Aenderung)
 
 Zurueckholen
   Dienst / WebSocket-Befehl
     └─► store.py liest den alten Stand
-         └─► analyze.py bestimmt, was verschwunden ist
+         └─► analyze bestimmt, was verschwunden ist
               └─► restore.py setzt es in den AKTUELLEN Stand ein
                    └─► Vorschau als Diff
                         └─► erst nach Bestaetigung: lovelace/config/save
@@ -916,6 +916,10 @@ Aus drei GitHub-Issues, die zusammen mit #31, #32 und #33 dieselbe Lücke von dr
 **Warum diese Reihenfolge:** L zuerst, weil es die dashboardweite Section-Verweigerung auflöst, die sonst auch jede Rücknahme aus M und N unnötig mitverweigern würde. M vor N, weil beide an denselben Stellen ansetzen (frühe Bedingung in `plan_undo`, `_explain`, `change_message`/`_COUNT`) und M die einfachere Hälfte ist: keine Zuordnung, nur Adressen. N verallgemeinert danach die Kartenzuordnung, ohne dass M darauf warten muss.
 
 **Was keines der drei enthält:** die Identitätskette aus Entscheidung 16. Alle drei kommen ohne sie aus, und keines macht sie später schwerer.
+
+### Nachgetragen am 2026-09-27: P
+
+- **P — `analyze.py` aufteilen.** *(Issue [#41](https://github.com/PPP01/ha-dashboard-history/issues/41).)* `specs/2026-09-27-analyze-aufteilen-design.md`. Kein neues Verhalten: eine Sperrklinke für Komplexität und Importverträge in der CI, `analyze` als Paket mit fünf Modulen in Schichten, `plan_undo` als Kombinierer über einen Planer je Art. Prüf- und Ausgabereihenfolge stehen seither als zwei Tupel in `analyze/undo.py`.
 
 ## Offene Punkte
 

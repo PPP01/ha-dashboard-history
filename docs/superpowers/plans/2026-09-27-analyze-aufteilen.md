@@ -2751,3 +2751,86 @@ Alle übernommenen Befunde sind an einer Kopie nachgeprüft; die Codeblöcke obe
 - **Spec-Abdeckung:** P1 Sperrklinke → Aufgabe 1; `import-linter` beide Verträge → Aufgabe 2; CI-Job → 1 und 2; Paket per `git mv` → 3; fünf Module in der Reihenfolge der Spec → 4–8; Schnittstelle mit 26 Namen und Test → 9; Werkzeug mit `dulwich`, ganzem Paket, strenger kanonischer Form, konstruierten Fällen, Generator, echten Dashboards, Laufzeit und Zusammenfassung → 10; Kontext, V1–V4, fünf Planer, Q1, zwei Tupel, Hilfsfunktionen auf Modulebene → 11; Baseline sinkt von 23 auf 20 → 11; Dokumentation einschließlich der Stellen der Haupt-Spec → 12; Entfernen als eigener letzter Commit → 13. Das Sammel-Issue der Spec → Aufgabe 1, Schritt 6.
 - **Platzhalter:** zwei Werte entstehen erst bei der Ausführung und sind als solche benannt – die Issue-Nummer `#N` (Aufgabe 1, Schritt 6) und `BASE_COMMIT` (Aufgabe 9, letzter Schritt).
 - **Namen:** `UndoContext`, `_GATES`, `_PLANNERS`, `_CHECK_ORDER`, `_OUTPUT_ORDER`, `_sections_meet_cards` sind in Aufgabe 11 definiert und in Aufgabe 10 genauso benutzt; `card_now` heißt im Kontext so, was im alten Code `by_mark` hieß.
+
+## Nachtrag: Abnahme vom 2026-09-27
+
+```
+base commit: 37472532a1d9e54031a16e370bd828ad39daf025
+inputs: 10011 (constructed: 11, bases: 5 built in + 14 real, seeds: (1, 2, 3, 4, 5))
+differences: 0
+refusal templates reached: 23 of 23
+     184  the sections of the view "{…}" changed in a way this undo cannot account for, so it refuses rather than guess
+      46  the view "{…}" is no longer on the dashboard, so its sections cannot be taken back
+       1  the sections of the view "{…}" are not a plain list in every state, so an exact undo cannot write them back
+     148  the other sections of the view "{…}" were rearranged since, so there is no telling where these go back
+      33  more than one section of the view "{…}" was changed since, so which is which can no longer be proven
+      64  the {…} was changed again after this, so there is no exact version left to take back
+       1  {…} sections now look exactly like {…}, so an exact undo cannot tell them apart
+    2152  this change did not alter any cards
+     475  __DUPLICATE_PATH__
+    1010  __POSITION__
+     514  __VIEW_TYPE__
+      26  the view "{…}" is no longer on the dashboard, so its setting "{…}" cannot be taken back
+       1  the setting "{…}" no longer has the "{…}" block it belonged to
+      29  the setting "{…}" was changed again after this
+     286  {…} was changed again after this, so there is no exact version left to put back
+     172  {…} cards now look exactly like {…}, so an exact undo cannot tell them apart
+       2  only some of the copies of {…} this change deleted are back, so an exact undo cannot tell which are missing
+      54  {…} badges now look exactly like {…}, so an exact undo cannot tell them apart
+       9  {…} views now look exactly like "{…}", so an exact undo cannot tell them apart
+     222  the view "{…}" was changed again after this
+     117  the view "{…}" is no longer on the dashboard as this change left it, so an exact undo cannot take it away
+       1  a different view now sits at "{…}", so the view "{…}" cannot be put back there
+      82  __SECTIONS_AND_CARDS__
+pairs of refusing stages met: 33
+  x  V1 + V2
+  x  V1 + V3
+  .  V1 + V4
+  .  V1 + sections
+  .  V1 + settings
+  .  V1 + cards
+  .  V1 + badges
+  .  V1 + views
+  .  V1 + Q1
+  x  V2 + V3
+  x  V2 + V4
+  x  V2 + sections
+  x  V2 + settings
+  x  V2 + cards
+  x  V2 + badges
+  x  V2 + views
+  x  V2 + Q1
+  x  V3 + V4
+  x  V3 + sections
+  x  V3 + settings
+  x  V3 + cards
+  x  V3 + badges
+  x  V3 + views
+  x  V3 + Q1
+  x  V4 + sections
+  x  V4 + settings
+  x  V4 + cards
+  x  V4 + badges
+  x  V4 + views
+  x  V4 + Q1
+  x  sections + settings
+  x  sections + cards
+  x  sections + badges
+  x  sections + views
+  .  sections + Q1
+  x  settings + cards
+  x  settings + badges
+  x  settings + views
+  .  settings + Q1
+  x  cards + badges
+  x  cards + views
+  .  cards + Q1
+  x  badges + views
+  .  badges + Q1
+  .  views + Q1
+plan_undo time: old 19.07s, new 19.23s, ratio 1.01
+```
+
+Es fehlen genau die zwölf erwarteten Vorrang-Paare, die in beiden Fassungen strukturell unmöglich sind:
+- **V1 mit V4, `sections`, `settings`, `cards`, `badges`, `views`, Q1** – V1 verweigert nur, wenn die Änderung nichts geändert hat; eine Typänderung zählt dort als Änderung, und ohne Änderung hat kein Planer etwas zu verweigern.
+- **Q1 mit `sections`, `settings`, `cards`, `badges`, `views`** – Q1 wird nur ausgewertet, wenn alle Planer durchgekommen sind; das gilt in der alten Fassung genauso.
