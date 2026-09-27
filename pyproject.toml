@@ -1,0 +1,15 @@
+# Tool configuration only. The integration is distributed through HACS,
+# which copies custom_components/dashboard_history/ and nothing else;
+# there is deliberately no [project] table and no build system here.
+
+[tool.ruff.lint]
+# Complexity only (spec P, decision 6). Style and formatting rules would
+# touch nearly every file, and style changes happen here on request only.
+select = ["C901", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-branches = 12
+max-statements = 50

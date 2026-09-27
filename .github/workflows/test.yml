@@ -28,3 +28,21 @@ jobs:
 
       - name: Run pytest
         run: python3 -m pytest tests/ -v
+
+  guards:
+    name: complexity and imports
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned tools
+        run: python3 -m pip install "ruff==0.16.9" "import-linter==2.15"
+
+      - name: Complexity may only go down
+        run: python3 tools/complexity_ratchet.py
