@@ -19,13 +19,13 @@ Alles Folgende wurde am 2026-09-27 vor dem Schreiben an Kopien des Repositorys i
 | Sperrklinke (Aufgabe 1) | an einer Kopie: 23 Werte, grün; ein um eins gewachsenes `plan_undo` und ein neu über die Grenze geschobenes `_similarity` werden gemeldet, Exit-Code 1 |
 | Importverträge (Aufgabe 2) | HA-Freiheit hält am echten Paket, Gegenprobe mit `operations` bricht; optionale Schichten in Klammern halten, solange ein Modul fehlt, und werden streng geprüft, sobald es existiert; der Vertrag gilt auch, solange `analyze` noch eine Datei ist |
 | Umzugsskript (Aufgaben 4–8) | an einer Kopie alle fünf Module nacheinander herausgelöst, nach jedem Schritt `968 passed, 2 skipped`; am Ende beide Verträge `KEPT`; `matching.py` 723 Zeilen, `undo.py` 650 vor P3 |
-| Planer (Aufgabe 11) | Prototyp gegen das heutige `plan_undo`: alle 105 Aufrufe der Testsuite gleich; 10 001 erzeugte und konstruierte Eingaben (19 Ausgangsstände, davon 14 echte Dashboards) mit 0 Abweichungen; höchste Komplexität 9; `plan_undo` allein rund 18 % schneller (7,4 s gegen 9,0 s, zweimal gemessen) |
+| Planer (Aufgabe 11) | Prototyp gegen das heutige `plan_undo`: alle 105 Aufrufe der Testsuite gleich; 10 001 erzeugte und konstruierte Eingaben (19 Ausgangsstände, davon 14 echte Dashboards) mit 0 Abweichungen; höchste Komplexität 9; `plan_undo` allein rund 18 % schneller (7,4 s gegen 9,0 s) – **nach dem Plan-Review überholt:** der Vorsprung kam daher, dass der Kontext Werte nicht berechnete, die die alte Fassung vorab berechnete, und genau darin lag Astras Befund; mit der Korrektur Verhältnis 1,01 |
 | Vergleichswerkzeug (Aufgabe 10) | erreicht mit dem Generator 18 der 23 Verweigerungstexte, mit sieben konstruierten Fällen alle 23; 33 Vorrang-Paare, die übrigen 12 sind strukturell unmöglich (siehe Aufgabe 12) |
-| **Der ganze Plan, Aufgaben 1–11** | an einer Kopie mit Wegwerf-Git, jeder Codeblock **wörtlich aus diesem Plan** herausgezogen: Sperrklinke 23 Werte grün, Verträge 2 kept; Umzug 34/27/1/23/10 Namen; `976 passed, 2 skipped` (968 plus 6 plus 2 neue Tests); Werkzeug alt gegen alt 0 Abweichungen, 23/23; nach Aufgabe 11 0 Abweichungen, 23/23, 33 Paare mit genau den zwölf vorhergesagten Lücken, Verhältnis 0,86, drei erwartete Sperrklinken-Zeilen, danach 20 Werte grün; `undo.py` 810 Zeilen, höchste Komplexität dort `_plan_sections` mit 12 (bleibt in der Baseline), dann die Planer mit 9. Dabei gefunden und hier schon korrigiert: der Schnittstellentest ist vor Schritt 3 von Aufgabe 9 nur halb rot, und das Werkzeug brauchte eine abwechselnde Reihenfolge für eine ehrliche Laufzeit |
+| **Der ganze Plan, Aufgaben 1–11** (vor dem Plan-Review) | an einer Kopie mit Wegwerf-Git, jeder Codeblock **wörtlich aus diesem Plan** herausgezogen: Sperrklinke 23 Werte grün, Verträge 2 kept; Umzug 34/27/1/23/10 Namen; `976 passed, 2 skipped` (968 plus 6 plus 2 neue Tests); Werkzeug alt gegen alt 0 Abweichungen, 23/23; nach Aufgabe 11 0 Abweichungen, 23/23, 33 Paare mit genau den zwölf vorhergesagten Lücken, Verhältnis 0,86, drei erwartete Sperrklinken-Zeilen, danach 20 Werte grün; `undo.py` 810 Zeilen, höchste Komplexität dort `_plan_sections` mit 12 (bleibt in der Baseline), dann die Planer mit 9. Dabei gefunden und hier schon korrigiert: der Schnittstellentest ist vor Schritt 3 von Aufgabe 9 nur halb rot, und das Werkzeug brauchte eine abwechselnde Reihenfolge für eine ehrliche Laufzeit |
 
 ## Global Constraints
 
-- **Verhaltensneutral:** Für jede Eingabe liefert jede öffentliche Funktion byte-gleich dasselbe Ergebnis, einschließlich Schrittreihenfolge und Wortlaut jeder Verweigerung. Ausgenommen sind nur Klassenmetadaten (`__module__`, Klassen-`repr`, `pickle`-Bytes), Spec Entscheidung 14.
+- **Verhaltensneutral:** Für jede Eingabe liefert jede öffentliche Funktion byte-gleich dasselbe Ergebnis, einschließlich Schrittreihenfolge und Wortlaut jeder Verweigerung. **Eine Ausnahme ist auch ein Ergebnis:** Wo die alte Fassung wirft, wirft die neue dieselbe Ausnahme an derselben Stelle (Astra, Plan-Review). Ausgenommen sind nur Klassenmetadaten (`__module__`, Klassen-`repr`, `pickle`-Bytes), Spec Entscheidung 14.
 - **Kein bestehender Test wird geändert.** Muss einer geändert werden, ist das ein Export-Fehler, kein Testfehler – anhalten und melden.
 - **Keine Stilregeln:** `ruff` prüft nur `C901`, `PLR0912`, `PLR0915` mit den Grenzen 10 / 12 / 50. Nichts wird umformatiert.
 - **Keine Änderung** an `operations.py`, `restore.py`, `services.py`, `store.py`, `panel.js` – auch kein Kommentar.
@@ -172,6 +172,7 @@ import ast
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 
@@ -203,10 +204,16 @@ def function_at(source: str, row: int) -> str:
     return name
 
 
+def _ruff() -> list[str]:
+    """ruff on PATH, else the ruff installed next to this interpreter."""
+    found = shutil.which("ruff")
+    return [found] if found else [sys.executable, "-m", "ruff"]
+
+
 def measure(root: pathlib.Path = ROOT) -> dict[str, dict[str, int]]:
     """Every reported value, keyed by `path::function`, then by rule."""
     result = subprocess.run(
-        ["ruff", "check", CHECKED, "--ignore-noqa", "--output-format", "json", "--exit-zero"],
+        [*_ruff(), "check", CHECKED, "--ignore-noqa", "--output-format", "json", "--exit-zero"],
         cwd=root,
         capture_output=True,
         text=True,
@@ -369,12 +376,26 @@ In `.github/workflows/test.yml` unter `jobs:` nach dem Job `pytest` anfügen:
         run: python3 tools/complexity_ratchet.py
 ```
 
-- [ ] **Step 11: Gesamte Suite**
+- [ ] **Step 11: `hassfest` stört sich nicht an `pyproject.toml`**
+
+Spec P, »Fehler- und Randfälle«: Die CI prüft `hassfest` und HACS erst nach einem Push, und gepusht wird in diesem Vorhaben nicht. Deshalb lokal, an einer Kopie außerhalb des Repositorys:
+
+```bash
+rm -rf /tmp/dh-hassfest && mkdir -p /tmp/dh-hassfest
+cp -r custom_components pyproject.toml /tmp/dh-hassfest/
+docker run --rm -v /tmp/dh-hassfest:/github/workspace ghcr.io/home-assistant/hassfest
+```
+
+Expected: `Invalid integrations: 0`. Die HACS-Validierung lässt sich lokal nicht sinnvoll nachstellen; HACS kopiert laut eigener Dokumentation nur `custom_components/<domain>/`, und `hacs/integration` selbst hat eine `pyproject.toml` an der Wurzel (Gemini, Spec-Review zweite Fassung). Sie läuft beim ersten Push in `validate.yml`.
+
+**Wenn `hassfest` hier oder HACS nach dem Push anschlägt**, zieht die Konfiguration in zwei eigene Dateien um und `pyproject.toml` entfällt: `ruff.toml` mit demselben Inhalt wie der `ruff`-Teil, nur ohne das Präfix `tool.ruff.` in den Tabellennamen (`[lint]`, `[lint.mccabe]`, `[lint.pylint]`), und `.importlinter` im INI-Format mit dem Inhalt aus Aufgabe 2, Schritt 1a. Die Befehle bleiben dieselben; beide Werkzeuge finden die Dateien von selbst.
+
+- [ ] **Step 12: Gesamte Suite**
 
 Run: `python3 -m pytest tests/ -q`
 Expected: `0 failed` (die Zahl der bestandenen Tests schwankt mit den echten Dashboards; nur `0 failed` zählt).
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
 git add pyproject.toml tools/complexity_ratchet.py tools/complexity-baseline.json tests/test_complexity_ratchet.py .github/workflows/test.yml
@@ -394,7 +415,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-**Akzeptanz:** 6 neue Tests grün, Sperrklinke grün mit 23 Werten, Gegenprobe rot, CI-Job vorhanden, `git diff HEAD~1 --stat` zeigt keine Datei unter `custom_components/`.
+**Akzeptanz:** 6 neue Tests grün, Sperrklinke grün mit 23 Werten, Gegenprobe rot, `hassfest` ohne Befund, CI-Job vorhanden, `git diff HEAD~1 --stat` zeigt keine Datei unter `custom_components/`.
 
 ---
 
@@ -447,6 +468,41 @@ layers = [
     "(matching)",
     "(model)",
 ]
+```
+
+- [ ] **Step 1a: Die Fallback-Fassung bereithalten (nur für den Fall aus Aufgabe 1, Schritt 11)**
+
+Nicht anlegen, solange `pyproject.toml` funktioniert. Falls doch nötig, lautet `.importlinter` (am 2026-09-27 in dieser Form erprobt):
+
+```ini
+[importlinter]
+root_package = custom_components.dashboard_history
+include_external_packages = True
+
+[importlinter:contract:ha-free]
+name = The core modules stay free of Home Assistant
+type = forbidden
+source_modules =
+    custom_components.dashboard_history.yaml_io
+    custom_components.dashboard_history.analyze
+    custom_components.dashboard_history.restore
+    custom_components.dashboard_history.versions
+    custom_components.dashboard_history.store
+    custom_components.dashboard_history.report
+    custom_components.dashboard_history.keys
+forbidden_modules =
+    homeassistant
+
+[importlinter:contract:layers]
+name = analyze is layered
+type = layers
+containers =
+    custom_components.dashboard_history.analyze
+layers =
+    (explain) | (undo)
+    (removed)
+    (matching)
+    (model)
 ```
 
 - [ ] **Step 2: Verträge prüfen**
@@ -673,6 +729,14 @@ def main(package: pathlib.Path, module: str, docstring: str, wanted: list[str]) 
         else:
             break
     imports = [n for n in body[:header_end] if isinstance(n, (ast.Import, ast.ImportFrom))]
+    # Two things this helper does not handle, neither of which analyze.py
+    # has - refuse rather than write a module that fails on import
+    # (Gemini, plan review).
+    if any(alias.asname for node in imports for alias in node.names):
+        sys.exit("an import with 'as' in the header; not supported")
+    for node in body[header_end:]:
+        if isinstance(node, ast.Assign) and not all(isinstance(t, ast.Name) for t in node.targets):
+            sys.exit(f"line {node.lineno}: unpacking at the top level; not supported")
 
     segments: list[tuple[int, int, ast.stmt]] = []  # (first line, last line, node), 1-based
     found: set[str] = set()
@@ -1215,6 +1279,7 @@ import re
 import sys
 import tempfile
 import time
+import traceback
 
 from dulwich.object_store import tree_lookup_path
 from dulwich.repo import Repo
@@ -1240,6 +1305,14 @@ def _load_old():
             name = entry.path.decode()
             if name.endswith(".py"):
                 (target / name).write_bytes(repo[entry.sha].data)
+        # Both versions run through the working tree's restore.py. That is
+        # only fair while it is the restore.py of BASE_COMMIT - P changes
+        # nothing there, and this holds it to that (Gemini, plan review).
+        _mode, restore_sha = tree_lookup_path(
+            repo.__getitem__, commit.tree, b"custom_components/dashboard_history/restore.py"
+        )
+        if repo[restore_sha].data != (PACKAGE_DIR / "restore.py").read_bytes():
+            sys.exit("restore.py differs from BASE_COMMIT; P must not change it")
     sys.path.insert(0, str(target.parent))
     return importlib.import_module("analyze_before_p3")
 
@@ -1330,13 +1403,25 @@ def outcome(module, before, after, current):
     try:
         plan = module.plan_undo(before, after, current)
     except Exception as exc:  # compared, not hidden
-        return ("raised", type(exc).__name__, str(exc)), None, time.perf_counter() - start
+        return ("raised", *_where_raised(exc)), None, time.perf_counter() - start
     took = time.perf_counter() - start
     try:
         effect = ("applied", canon(restore.apply_undo(current, plan)))
-    except LookupError as exc:
-        effect = ("lookup", str(exc))
+    except Exception as exc:  # LookupError is the expected one; any other is compared too
+        effect = ("apply raised", *_where_raised(exc))
     return (canon(plan), effect), plan, took
+
+
+def _where_raised(exc: Exception) -> tuple:
+    """Type, text, and the function and source line that raised.
+
+    The innermost frame sits in code both versions share unchanged (the
+    helpers moved in P2, restore.py), so the same failure names the same
+    function and line in both - and a different one does not (Gemini,
+    plan review).
+    """
+    frame = traceback.extract_tb(exc.__traceback__)[-1]
+    return type(exc).__name__, str(exc), frame.name, (frame.line or "").strip()
 
 
 # -- inputs ---------------------------------------------------------------
@@ -1624,6 +1709,39 @@ def constructed():
         {"views": [{"path": "v", "cards": [], "badges": [tile("y")]}]},
         {"views": [{"path": "v", "cards": [], "badges": [tile("x"), tile("y")]}]},
     )
+    imported = tile("k")
+    imported_edited = {**tile("k"), "name": "n"}
+    swapped_before = {"type": "sections", "sections": [first, second], "cards": [imported]}
+    swapped_after = {"type": "sections", "sections": [second, first], "cards": [imported_edited]}
+    doubled = [{"path": "d", "cards": []}, {"path": "d", "cards": []}]
+    yield (
+        "V2 before Q1",
+        {"views": [{**swapped_before, "path": "s"}, *doubled]},
+        {"views": [{**swapped_after, "path": "s"}, *doubled]},
+        {"views": [{**swapped_after, "path": "s"}, *doubled]},
+    )
+    yield (
+        "V3 before Q1",
+        {"views": [swapped_before, {"cards": [tile("m")]}]},
+        {"views": [swapped_after, {"cards": [tile("m")]}]},
+        {"views": [swapped_after, {"cards": [tile("q")]}]},
+    )
+    # A section moved and edited in one save: the sections planner refuses.
+    second_edited = {**second, "cards": [heading("B"), {**tile("y"), "name": "n"}]}
+    yield (
+        "V3 before sections",
+        {"views": [{"type": "sections", "sections": [first, second]}, {"cards": [tile("k")]}]},
+        {"views": [{"type": "sections", "sections": [second_edited, first]}, {"cards": [tile("k")]}]},
+        {"views": [{"type": "sections", "sections": [second_edited, first]}, {"cards": [tile("m")]}]},
+    )
+    # Astra, plan review: the old function computed `shifted` before the
+    # settings planner and raised on a view whose sections is a number.
+    yield (
+        "raises where it raised before",
+        {"views": [{"path": "a", "title": "Before", "cards": []}]},
+        {"views": [{"path": "a", "title": "After", "cards": []}]},
+        {"views": [{"path": "a", "title": "Later", "cards": [], "sections": 1}]},
+    )
     yield (
         "a different view at the path",
         {"views": [{"path": "a", "title": "A", "cards": []}, {"path": "b", "cards": []}]},
@@ -1636,8 +1754,31 @@ def constructed():
 
 STAGES = ("V1", "V2", "V3", "V4", "sections", "settings", "cards", "badges", "views", "Q1")
 
+# Pairs that cannot both refuse for one input, in the old version as in
+# the new: V1 refuses only when the change changed nothing, and then no
+# other stage has anything to refuse (a type change counts as a change);
+# Q1 is only reached once every planner has passed. Every other pair
+# must be met - and one of these showing up means the reasoning is wrong.
+UNREACHABLE = {
+    frozenset(pair)
+    for pair in (
+        ("V1", "V4"), ("V1", "sections"), ("V1", "settings"), ("V1", "cards"),
+        ("V1", "badges"), ("V1", "views"), ("V1", "Q1"),
+        ("sections", "Q1"), ("settings", "Q1"), ("cards", "Q1"), ("badges", "Q1"), ("views", "Q1"),
+    )
+}
+RATIO_LIMIT = 1.10
+
 
 def refusing_stages(before, after, current) -> frozenset:
+    """Which stages would refuse, each asked on its own; empty if one raises."""
+    try:
+        return _refusing_stages(before, after, current)
+    except Exception:  # an input that raises has no stages to measure
+        return frozenset()
+
+
+def _refusing_stages(before, after, current) -> frozenset:
     ctx = NEW_UNDO.UndoContext(before, after, current)
     out = {name for name, gate in zip(STAGES[:4], NEW_UNDO._GATES) if gate(ctx) is not None}
     planned = {}
@@ -1692,8 +1833,27 @@ def main() -> int:
         print(f"pairs of refusing stages met: {len(pairs)}")
         for a, b in itertools.combinations(STAGES, 2):
             print(f"  {'x' if frozenset((a, b)) in pairs else '.'}  {a} + {b}")
-    print(f"plan_undo time: old {t_old:.2f}s, new {t_new:.2f}s, ratio {t_new / t_old:.2f}")
-    return 1 if diffs else 0
+    ratio = t_new / t_old
+    print(f"plan_undo time: old {t_old:.2f}s, new {t_new:.2f}s, ratio {ratio:.2f}")
+    failures = []
+    if diffs:
+        failures.append(f"{diffs} input(s) answered differently")
+    missing = [t for t in TEMPLATES if t not in templates]
+    if missing:
+        failures.append(f"{len(missing)} refusal template(s) never reached")
+    if measure_stages:
+        expected = {frozenset(p) for p in itertools.combinations(STAGES, 2)} - UNREACHABLE
+        if pairs != expected:
+            failures.append(
+                f"pairs met are not the expected {len(expected)}: "
+                f"missing {sorted(sorted(p) for p in expected - pairs)}, "
+                f"unexpected {sorted(sorted(p) for p in pairs - expected)}"
+            )
+    if ratio > RATIO_LIMIT:
+        failures.append(f"plan_undo is {ratio:.2f} times as slow, over {RATIO_LIMIT}")
+    for failure in failures:
+        print(f"FAIL: {failure}")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
@@ -1703,11 +1863,11 @@ if __name__ == "__main__":
 - [ ] **Step 2: Alt gegen alt**
 
 Run: `python3 tests/equivalence/compare_undo.py`
-Expected: `differences: 0`; `refusal templates reached: 23 of 23` (mit echten Dashboards; ohne sie mindestens die 7 konstruierten plus die Generator-Treffer – bei 23 muss es bleiben, sonst fehlt ein konstruierter Fall); keine Paarzeilen (die Planer existieren noch nicht); Laufzeitverhältnis `1.00` (erprobt zweimal: 1,00 und 1,00 – ohne die abwechselnde Reihenfolge im Werkzeug waren es 0,85 bei zwei identischen Fassungen). Meldet `template_of` einen Text mit 0 oder 2 Treffern, ist die Vorlagenliste unvollständig – anhalten und melden.
+Expected: Exit 0; `differences: 0`; `refusal templates reached: 23 of 23` – mit und ohne echte Dashboards (erprobt beides); keine Paarzeilen (die Planer existieren noch nicht); Laufzeitverhältnis `1.00` (erprobt zweimal: 1,00 und 1,00 – ohne die abwechselnde Reihenfolge im Werkzeug waren es 0,85 bei zwei identischen Fassungen). Meldet `template_of` einen Text mit 0 oder 2 Treffern, ist die Vorlagenliste unvollständig – anhalten und melden.
 
 - [ ] **Step 3: pytest sammelt das Werkzeug nicht ein**
 
-Run: `python3 -m pytest tests/ -q --collect-only 2>&1 | grep -c compare_undo`
+Run: `python3 -m pytest tests/ -q --collect-only 2>&1 | (grep -c compare_undo || true)`
 Expected: `0`.
 
 - [ ] **Step 4: Commit**
@@ -1729,7 +1889,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF
 ```
 
-**Akzeptanz:** 0 Abweichungen alt gegen alt, 23 von 23 Vorlagen, pytest sammelt das Werkzeug nicht ein.
+**Akzeptanz:** Exit 0, 0 Abweichungen alt gegen alt, 23 von 23 Vorlagen, pytest sammelt das Werkzeug nicht ein. Das Werkzeug beendet sich mit Exit 1 und einer Zeile `FAIL: …`, sobald es eine Abweichung, eine nie erreichte Vorlage, ein anderes als die 33 erwarteten Vorrang-Paare oder eine Laufzeit über 110 % findet (Terra, Plan-Review, Hoch 1).
 
 ---
 
@@ -1763,8 +1923,10 @@ Die gesamte Funktion `def plan_undo(…)` bis zu ihrem letzten `return` durch de
 class UndoContext:
     """The three states of one undo, and what several planners read of them.
 
-    Everything derived is computed on first use and kept, so a plan that
-    is refused early computes no more than it did as one function.
+    Everything derived is computed once and kept. `plan_undo` asks for
+    each value at the point where the single function it replaced
+    computed it (`_COMPUTED_FIRST`, `_COMPUTED_BEFORE`), so an input that
+    makes one of them raise still raises there.
     """
 
     before: dict
@@ -2306,6 +2468,27 @@ _PLANNERS = {
 # change adds its planner here AND to _OUTPUT_ORDER, deciding both places.
 _CHECK_ORDER = ("sections", "settings", "cards", "badges", "views")
 
+# Computed where the single plan_undo computed them, whether a planner
+# goes on to read them or not. An input that makes one of them raise -
+# a view whose "sections" is a number, say - has to raise at the same
+# point as before, not later or not at all (Astra, plan review). The
+# order inside each tuple is the order they were computed in.
+_COMPUTED_FIRST = (
+    "matching",
+    "badge_matching",
+    "old_views",
+    "new_views",
+    "now_views",
+    "type_changed",
+    "settings",
+)
+_COMPUTED_BEFORE = {
+    "sections": ("shifted", "now_index"),
+    "cards": ("card_now", "card_then"),
+    "badges": ("badge_now", "badge_then"),
+    "views": ("now_places",),
+}
+
 # The order in which the steps are handed to apply_undo. It is observable:
 # apply_undo sorts by index only, with a stable sort, so steps on equal
 # indices keep this order - across kinds too. Settings first (they shift
@@ -2328,18 +2511,22 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     behind, never on its surroundings: a card added *next to* an edited
     one does not make the edit ambiguous, and blocking there would refuse
     almost every real history.
-
-    The work is done by four checks, one planner per kind and one check
-    across two planners (spec P, section 3); this function only runs them
-    in `_CHECK_ORDER` and hands the steps on in `_OUTPUT_ORDER`.
     """
+    # The work is done by four checks, one planner per kind and one check
+    # across two planners (spec P, section 3); this function only runs
+    # them in _CHECK_ORDER and hands the steps on in _OUTPUT_ORDER. The
+    # docstring above is the old one, unchanged (spec P, section 3).
     ctx = UndoContext(before, after, current)
+    for name in _COMPUTED_FIRST:
+        getattr(ctx, name)
     for gate in _GATES:
         refusal = gate(ctx)
         if refusal is not None:
             return UndoPlan(blocked=refusal)
     planned: dict[str, tuple[UndoStep, ...]] = {}
     for kind in _CHECK_ORDER:
+        for name in _COMPUTED_BEFORE.get(kind, ()):
+            getattr(ctx, name)
         result = _PLANNERS[kind](ctx)
         if isinstance(result, str):
             return UndoPlan(blocked=result)
@@ -2358,12 +2545,19 @@ Expected: `0 failed`.
 - [ ] **Step 4: Der Vergleich**
 
 Run: `python3 tests/equivalence/compare_undo.py`
-Expected: `differences: 0`; `23 of 23`; `pairs of refusing stages met: 33`; `ratio` höchstens `1.10` (erprobt: 0,86). Fehlen dürfen genau die zwölf Paare, die Aufgabe 12, Schritt 7 begründet. Jede Abweichung ist ein Fehler in diesem Schritt – nicht das Werkzeug ändern, sondern den Planer mit dem alten `plan_undo` aus `git show HEAD:custom_components/dashboard_history/analyze/undo.py` vergleichen.
+Expected: Exit 0 ohne `FAIL`-Zeile; `differences: 0`; `23 of 23`; `pairs of refusing stages met: 33`; `ratio` höchstens `1.10` (erprobt: 1,01 – die neue Fassung berechnet vorab, was die alte vorab berechnete, und ist deshalb nicht schneller; eine frühere Fassung dieses Plans war mit 0,86 genau deshalb schneller, weil sie das nicht tat). Fehlen dürfen genau die zwölf Paare aus `UNREACHABLE`; das Werkzeug prüft das selbst. Jede Abweichung ist ein Fehler in diesem Schritt – nicht das Werkzeug ändern, sondern den Planer mit dem alten `plan_undo` aus `git show HEAD:custom_components/dashboard_history/analyze/undo.py` vergleichen.
+
+- [ ] **Step 4a: Die Gegenprobe**
+
+In `undo.py` vorübergehend `_GATES` umstellen auf `(_nothing_changed, _view_type_converted, _positions_disagree, _paths_collide_anywhere)`.
+Run: `python3 tests/equivalence/compare_undo.py`
+Expected: Exit 1, `FAIL: … input(s) answered differently` (erprobt: 366) und `FAIL: pairs met are not the expected 33: missing [['V1', 'V2']], unexpected [['V1', 'V4']]`.
+Dann zurücknehmen; `git diff` zeigt wieder nur die Änderungen aus Schritt 1 und 2.
 
 - [ ] **Step 5: Die Sperrklinke**
 
 Run: `python3 tools/complexity_ratchet.py`
-Expected: drei Zeilen `…/analyze/undo.py::plan_undo: C901 is within the limit now - remove it from the baseline` (ebenso `PLR0912`, `PLR0915`), sonst nichts. Keine Zeile »over the limit and not in the baseline« – eine solche wäre ein Planer über der Grenze und wird durch weiteres Zerlegen in `undo.py` behoben, nicht durch die Baseline.
+Expected: **Exit 1** mit genau drei Zeilen `…/analyze/undo.py::plan_undo: C901 is within the limit now - remove it from the baseline` (ebenso `PLR0912`, `PLR0915`), sonst nichts – das Rot ist hier gewollt: Die Sperrklinke verlangt, die Baseline zu senken (Gemini, Plan-Review). Keine Zeile »over the limit and not in the baseline« – eine solche wäre ein Planer über der Grenze und wird durch weiteres Zerlegen in `undo.py` behoben, nicht durch die Baseline.
 
 - [ ] **Step 6: Baseline senken**
 
@@ -2374,7 +2568,7 @@ Expected: `complexity: 20 known values, none grew`; `2 kept, 0 broken`.
 - [ ] **Step 7: Länge**
 
 Run: `wc -l custom_components/dashboard_history/analyze/undo.py`
-Expected: unter 900 (erprobt: 810).
+Expected: unter 900 (erprobt: 837).
 
 - [ ] **Step 8: Commit**
 
@@ -2531,6 +2725,26 @@ EOF
 **Akzeptanz:** `git show --stat HEAD` zeigt genau eine gelöschte Datei; nichts sonst.
 
 ---
+
+## Plan-Review vom 2026-09-27 (Terra, Astra, Gemini)
+
+Alle übernommenen Befunde sind an einer Kopie nachgeprüft; die Codeblöcke oben sind die geänderten.
+
+**Übernommen:**
+
+- *Terra Hoch 1* – das Vergleichswerkzeug gab nur aus, statt zu erzwingen. Es endet jetzt mit Exit 1 bei jeder Abweichung, jeder nie erreichten Vorlage, jedem anderen als den 33 erwarteten Vorrang-Paaren (auch einem angeblich unmöglichen, das doch auftaucht) und einer Laufzeit über 110 %. Beim Einarbeiten selbst gefunden: Ohne echte Dashboards kamen nur 30 Paare zustande; drei neue konstruierte Fälle schließen das, 33 Paare mit und ohne.
+- *Terra Hoch 2* – der Docstring von `plan_undo` bleibt byte-gleich; der Zusatz ist ein Kommentar.
+- *Terra Mittel 1* – `hassfest` nach der neuen `pyproject.toml` lokal im Container (Aufgabe 1, Schritt 11); die Ausweichlösung `ruff.toml`/`.importlinter` steht fertig da, die INI-Fassung erprobt.
+- *Astra* – eine Eingabe, bei der die alte Fassung wirft und die neue eine Verweigerung liefert. Behoben für die ganze Klasse: `_COMPUTED_FIRST` und `_COMPUTED_BEFORE` erzwingen jeden Wert an der Stelle, an der die alte Funktion ihn berechnete. Astras Eingabe ist der elfte konstruierte Fall; ohne die Korrektur wird das Werkzeug rot. Preis: der Geschwindigkeitsvorteil ist weg (Verhältnis 1,01 statt 0,86) – er kam genau daher, dass Werte nicht berechnet wurden.
+- *Gemini Hoch 1* – die Sperrklinke findet `ruff` auch ohne `PATH` (`shutil.which`, sonst `python -m ruff`).
+- *Gemini Hoch 2* – das Werkzeug bricht ab, wenn `restore.py` vom Stand in `BASE_COMMIT` abweicht (beide Fassungen laufen durch dasselbe `restore.py`, und P ändert es nicht).
+- *Gemini Mittel 4* – eine Ausnahme wird mit Funktion und Quellzeile ihres innersten Rahmens verglichen, nicht nur mit Typ und Text; eine Ausnahme in `apply_undo` wird verglichen statt das Werkzeug abzubrechen; `refusing_stages` übergeht Eingaben, die werfen.
+- *Gemini Mittel 5* – das Umzugsskript bricht bei Importen mit `as` und bei Entpacken auf oberster Ebene ab, statt stillschweigend falsch zu schreiben. Beides kommt in `analyze.py` nicht vor (von Gemini am AST geprüft); es läuft dort unverändert.
+- *Gemini Niedrig 6 und 7* – `grep -c … || true`; der gewollte Exit 1 der Sperrklinke in Aufgabe 11, Schritt 5 steht jetzt dabei.
+
+**Zurückgewiesen:**
+
+- *Gemini Mittel 3* (die kanonische Form solle die Reihenfolge von Dict-Schlüsseln ignorieren). `yaml_io.dump` schreibt mit `sort_keys=False`; die Reihenfolge landet byte-genau im gespeicherten Dashboard und ist damit Verhalten. Eine Fassung, die Schlüssel anders ordnet, soll auffallen. Die Feld-Dicts von Datenklassen haben durch ihre Klasse ohnehin eine feste Reihenfolge.
 
 ## Selbstprüfung (beim Schreiben erledigt)
 
