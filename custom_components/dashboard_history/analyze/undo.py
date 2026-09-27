@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
 from .matching import (
@@ -217,27 +219,92 @@ def _plan_sections(
 
 
 
-def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
-    """How to take one change back, or why that cannot be exact.
+@dataclass(frozen=True, eq=False)
+class UndoContext:
+    """The three states of one undo, and what several planners read of them.
 
-    The change is read as `match_cards(before, after)` - what it removed,
-    added, edited and moved. For everything it *produced*, the plan then
-    asks one question of the state as it stands today: does this card sit
-    there exactly once? Once means it can be pointed at. Zero means
-    somebody changed it again since. Two or more means an undo would have
-    to guess which - and guessing is what decision 4 forbids.
-
-    Note which side is looked up. The check is on what the change left
-    behind, never on its surroundings: a card added *next to* an edited
-    one does not make the edit ambiguous, and blocking there would refuse
-    almost every real history.
+    Everything derived is computed once and kept. `plan_undo` asks for
+    each value at the point where the single function it replaced
+    computed it (`_COMPUTED_FIRST`, `_COMPUTED_BEFORE`), so an input that
+    makes one of them raise still raises there.
     """
-    matching = match_cards(before, after)
-    badge_matching = match_badges(before, after)
-    old_views = dict(_views_by_key(before))
-    new_views = dict(_views_by_key(after))
-    now_views = dict(_views_by_key(current))
-    view_work = set(old_views) ^ set(new_views)
+
+    before: dict
+    after: dict
+    current: dict
+
+    @cached_property
+    def matching(self):
+        return match_cards(self.before, self.after)
+
+    @cached_property
+    def badge_matching(self):
+        return match_badges(self.before, self.after)
+
+    @cached_property
+    def old_views(self) -> dict:
+        return dict(_views_by_key(self.before))
+
+    @cached_property
+    def new_views(self) -> dict:
+        return dict(_views_by_key(self.after))
+
+    @cached_property
+    def now_views(self) -> dict:
+        return dict(_views_by_key(self.current))
+
+    @cached_property
+    def now_places(self) -> list:
+        return _views_by_key(self.current)
+
+    @cached_property
+    def now_index(self) -> dict:
+        return {key: index for index, (key, _) in enumerate(_views_by_key(self.current))}
+
+    @cached_property
+    def pairs(self) -> tuple:
+        # Every state this plan reads from or writes to has to agree on
+        # what a position means: `before` and `after` decide what the
+        # change was, `current` is where the steps land.
+        return (
+            (self.before, self.after),
+            (self.before, self.current),
+            (self.after, self.current),
+        )
+
+    @cached_property
+    def type_changed(self) -> bool:
+        return any(_view_type_changed(one, other) for one, other in self.pairs)
+
+    @cached_property
+    def settings(self) -> list:
+        return setting_changes(self.before, self.after)
+
+    @cached_property
+    def shifted(self) -> set:
+        return _section_drift(self.new_views, self.now_views)
+
+    @cached_property
+    def card_now(self) -> dict:
+        return _group_by_mark(_present(self.current))
+
+    @cached_property
+    def card_then(self) -> dict:
+        return _group_by_mark(_present(self.after))
+
+    @cached_property
+    def badge_now(self) -> dict:
+        return _group_by_mark(_present(self.current, badge_containers))
+
+    @cached_property
+    def badge_then(self) -> dict:
+        return _group_by_mark(_present(self.after, badge_containers))
+
+
+# -- checks that come before any planner -----------------------------------
+
+
+def _nothing_changed(ctx: UndoContext) -> str | None:
     # A conversion (masonry to sections, typically) is a real alteration
     # even though it touches no card: Home Assistant leaves every
     # existing card exactly where it was, in the view's own `cards:`
@@ -248,85 +315,93 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     #
     # A section moved or re-set is a real alteration too, with no card event
     # of its own since its cards follow it (GitHub #31).
-    pairs = ((before, after), (before, current), (after, current))
-    type_changed = any(_view_type_changed(one, other) for one, other in pairs)
-    settings = setting_changes(before, after)
-    if not (
+    matching, badges = ctx.matching, ctx.badge_matching
+    if (
         matching.removed
         or matching.added
         or matching.edited
         or matching.moved
-        or badge_matching.removed
-        or badge_matching.added
-        or badge_matching.edited
-        or badge_matching.moved
-        or view_work
-        or type_changed
-        or settings
+        or badges.removed
+        or badges.added
+        or badges.edited
+        or badges.moved
+        or set(ctx.old_views) ^ set(ctx.new_views)
+        or ctx.type_changed
+        or ctx.settings
         or matching.sections.views()
     ):
-        return UndoPlan(blocked="this change did not alter any cards")
+        return None
+    return "this change did not alter any cards"
 
+
+def _paths_collide_anywhere(ctx: UndoContext) -> str | None:
     # Before any pair is compared: a path that names two views is not an
     # identity, and everything below reads views by their path.
-    if any(_paths_collide(state) for state in (before, after, current)):
-        return UndoPlan(blocked=_DUPLICATE_PATH_REFUSAL)
+    if any(_paths_collide(state) for state in (ctx.before, ctx.after, ctx.current)):
+        return _DUPLICATE_PATH_REFUSAL
+    return None
 
-    # Every state this plan reads from or writes to has to agree on what
-    # a position means: `before` and `after` decide what the change was,
-    # `current` is where the steps land.
-    if any(_positions_lie(one, other) for one, other in pairs):
-        return UndoPlan(blocked=_POSITION_REFUSAL)
+
+def _positions_disagree(ctx: UndoContext) -> str | None:
+    if any(_positions_lie(one, other) for one, other in ctx.pairs):
+        return _POSITION_REFUSAL
+    return None
+
+
+def _view_type_converted(ctx: UndoContext) -> str | None:
     # Checked before `_section_drift`: a conversion changes the section
     # list too, and would otherwise be blamed on "the sections" instead
     # of on itself.
-    if type_changed:
-        return UndoPlan(blocked=_VIEW_TYPE_REFUSAL)
-    shifted = _section_drift(new_views, now_views)
+    return _VIEW_TYPE_REFUSAL if ctx.type_changed else None
+
+
+# -- the planners, one per kind --------------------------------------------
+
+
+def _plan_section_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
     # A view whose sections the change rearranged is put back in one step
     # of its own (GitHub #31) - or refused, and then before anything else.
-    now_index = {key: index for index, (key, _) in enumerate(_views_by_key(current))}
-    section_steps: list[UndoStep] = []
-    for key in sorted(matching.sections.views(), key=str):
+    steps: list[UndoStep] = []
+    for key in sorted(ctx.matching.sections.views(), key=str):
         planned = _plan_sections(
             key,
-            old_views[key],
-            new_views[key],
-            now_views.get(key),
-            now_index.get(key, -1),
-            matching.sections,
+            ctx.old_views[key],
+            ctx.new_views[key],
+            ctx.now_views.get(key),
+            ctx.now_index.get(key, -1),
+            ctx.matching.sections,
         )
         if isinstance(planned, str):
-            return UndoPlan(blocked=planned)
+            return planned
         if planned is not None:
-            section_steps.append(planned)
+            steps.append(planned)
+    return tuple(steps)
 
-    setting_steps: list[UndoStep] = []
-    for change in settings:
+
+def _plan_setting_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
+    steps: list[UndoStep] = []
+    for change in ctx.settings:
         label = ".".join(str(key) for key in change.path)
         if change.view_key is None:
-            container = current
+            container = ctx.current
         else:
-            container = now_views.get(change.view_key)
+            container = ctx.now_views.get(change.view_key)
             if container is None:
-                name = _view_name(old_views[change.view_key], change.view_key)
-                return UndoPlan(
-                    blocked=f'the view "{name}" is no longer on the dashboard, '
+                name = _view_name(ctx.old_views[change.view_key], change.view_key)
+                return (
+                    f'the view "{name}" is no longer on the dashboard, '
                     f'so its setting "{label}" cannot be taken back'
                 )
         standing, vanished = _setting_at(container, change.path)
         if vanished is not None:
-            return UndoPlan(
-                blocked=f'the setting "{label}" no longer has the "{vanished}" '
-                f"block it belonged to"
-            )
+            return f'the setting "{label}" no longer has the "{vanished}" block it belonged to'
         if _same(standing, change.old):
             # Already back, the way a deleted card that returned is.
             continue
         if not _same(standing, change.new):
-            return UndoPlan(blocked=f'the setting "{label}" was changed again after this')
+            return f'the setting "{label}" was changed again after this'
         key = change.view_key
-        setting_steps.append(
+        steps.append(
             UndoStep(
                 action="unset" if change.old is _ABSENT else "set",
                 kind="dashboard_setting" if key is None else "view_setting",
@@ -340,66 +415,77 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
                 expect_absent=change.new is _ABSENT,
             )
         )
+    return tuple(steps)
 
-    by_mark = _group_by_mark(_present(current))
-    card_then = _group_by_mark(_present(after))
 
-    # Counted in two stages, the same way `sole_badge` below counts
+def _sole_card(ctx: UndoContext, slot: Slot, label: str) -> tuple[Slot | None, str | None]:
+    # Counted in two stages, the same way `_sole_badge` below counts
     # badges (GitHub #36): "exactly one today" is not proof by itself -
     # an untouched copy that stood there before the change is not the
     # one the change produced. Asked first dashboard-wide, then, failing
     # that, in the card's own view.
-    def sole(slot: Slot, label: str) -> tuple[Slot | None, str | None]:
-        found, left = by_mark.get(slot.mark, []), card_then.get(slot.mark, [])
-        if len(found) == 1 and len(left) == 1:
-            return found[0], None
-        view_key = slot.view_key
-        mine = _in_view(found, view_key)
-        mine_then = _in_view(left, view_key)
-        if len(mine) == 1 and len(mine_then) == 1:
-            return mine[0], None
-        if len(mine) < len(mine_then):
-            return None, (
-                f"{label} was changed again after this, so there is no "
-                f"exact version left to put back"
-            )
+    found, left = ctx.card_now.get(slot.mark, []), ctx.card_then.get(slot.mark, [])
+    if len(found) == 1 and len(left) == 1:
+        return found[0], None
+    view_key = slot.view_key
+    mine = _in_view(found, view_key)
+    mine_then = _in_view(left, view_key)
+    if len(mine) == 1 and len(mine_then) == 1:
+        return mine[0], None
+    if len(mine) < len(mine_then):
         return None, (
-            f"{len(mine)} cards now look exactly like {label}, so an "
-            f"exact undo cannot tell them apart"
+            f"{label} was changed again after this, so there is no "
+            f"exact version left to put back"
         )
+    return None, (
+        f"{len(mine)} cards now look exactly like {label}, so an "
+        f"exact undo cannot tell them apart"
+    )
 
-    steps: list[UndoStep] = []
-    steps.extend(setting_steps)
-    # The step's own `view_index` and `index` already carry `old_slot`'s -
-    # only its original `location` does not, overwritten below to
-    # `("cards",)` for `apply_undo` to find and to show, so that is the
-    # one piece this still has to keep beside the step for sorting.
-    parked: list[tuple[tuple, UndoStep]] = []
 
-    def put_back(old_slot: Slot, label: str) -> None:
-        """Insert where the card came from, or park it in "Imported cards"."""
-        if old_slot.view_key not in shifted or old_slot.location[:1] != ("sections",):
-            steps.append(_step(old_slot, "insert", None, old_slot.card, label))
-            return
-        # A pathless view is found by its position here, which
-        # `_positions_lie` above has already vouched for - the same proof
-        # an ordinary insert into it rests on.
-        parked.append(
-            (
-                old_slot.location,
-                _step(
-                    old_slot,
-                    "insert",
-                    None,
-                    old_slot.card,
-                    # The card that is parked, not the one taken out: the
-                    # dialog lists what somebody has to go and place.
-                    _describe(old_slot.card),
-                    location=("cards",),
-                    parked=True,
-                ),
-            )
-        )
+def _put_back(ctx: UndoContext, old_slot: Slot, label: str) -> tuple[tuple | None, UndoStep]:
+    """Insert where the card came from, or park it in "Imported cards".
+
+    Returns the step and, for a parked one, the place it came from - the
+    step's own `view_index` and `index` already carry `old_slot`'s, only
+    its original `location` does not, overwritten to `("cards",)` for
+    `apply_undo` to find and to show, so that is the one piece kept
+    beside the step for sorting. An ordinary insert comes with `None`.
+    """
+    if old_slot.view_key not in ctx.shifted or old_slot.location[:1] != ("sections",):
+        return None, _step(old_slot, "insert", None, old_slot.card, label)
+    # A pathless view is found by its position here, which
+    # `_positions_lie` has already vouched for - the same proof an
+    # ordinary insert into it rests on.
+    return old_slot.location, _step(
+        old_slot,
+        "insert",
+        None,
+        old_slot.card,
+        # The card that is parked, not the one taken out: the dialog
+        # lists what somebody has to go and place.
+        _describe(old_slot.card),
+        location=("cards",),
+        parked=True,
+    )
+
+
+def _card_came_back(ctx: UndoContext, mark: str, view_key: Any) -> int:
+    return len(_in_view(ctx.card_now.get(mark, []), view_key)) - len(
+        _in_view(ctx.card_then.get(mark, []), view_key)
+    )
+
+
+def _parked_order(item: tuple[tuple, UndoStep]) -> tuple:
+    # In the order of the places they came from - view, section, card -
+    # whichever of the three tables in decision 15 produced them.
+    location, step = item
+    return (step.view_index, location, step.index)
+
+
+def _plan_card_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
+    matching = ctx.matching
+    placed: list[tuple[tuple | None, UndoStep]] = []
 
     # An edit and a move are the same undo: take the card off the place
     # it sits on today, and put it back on the place it came from. Two
@@ -411,18 +497,18 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # way, and not one refusal more.
     for old_slot, new_slot in (*matching.edited, *matching.moved):
         label = _describe(new_slot.card)
-        here, why = sole(new_slot, label)
+        here, why = _sole_card(ctx, new_slot, label)
         if here is None:
-            return UndoPlan(blocked=why)
-        steps.append(_step(here, "remove", new_slot.card, None, label))
-        put_back(old_slot, label)
+            return why
+        placed.append((None, _step(here, "remove", new_slot.card, None, label)))
+        placed.append(_put_back(ctx, old_slot, label))
 
     for new_slot in matching.loose_added():
         label = _describe(new_slot.card)
-        here, why = sole(new_slot, label)
+        here, why = _sole_card(ctx, new_slot, label)
         if here is None:
-            return UndoPlan(blocked=why)
-        steps.append(_step(here, "remove", new_slot.card, None, label))
+            return why
+        placed.append((None, _step(here, "remove", new_slot.card, None, label)))
 
     # Counted, not looked up, and only in the card's own view (GitHub
     # #35): an untouched copy on another view - there all along or added
@@ -430,23 +516,18 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # reopen the same door the bug used: a copy someone else placed
     # elsewhere after the change would count as this card's return.
     # Mirrors the badge rule below (Vorhaben N) - `deleted` is how many
-    # alike the change took from that view, `card_came_back` how many
+    # alike the change took from that view, `_card_came_back` how many
     # more stand there now than the change left.
-    removed_card_marks = [(old_slot, old_slot.mark) for old_slot in matching.loose_removed()]
-    deleted_cards: dict[tuple[str, Any], int] = {}
-    for old_slot, mark in removed_card_marks:
+    removed = [(old_slot, old_slot.mark) for old_slot in matching.loose_removed()]
+    deleted: dict[tuple[str, Any], int] = {}
+    for old_slot, mark in removed:
         place = (mark, old_slot.view_key)
-        deleted_cards[place] = deleted_cards.get(place, 0) + 1
+        deleted[place] = deleted.get(place, 0) + 1
 
-    def card_came_back(mark: str, view_key: Any) -> int:
-        return len(_in_view(by_mark.get(mark, []), view_key)) - len(
-            _in_view(card_then.get(mark, []), view_key)
-        )
-
-    for old_slot, mark in removed_card_marks:
+    for old_slot, mark in removed:
         label = _describe(old_slot.card)
-        back = card_came_back(mark, old_slot.view_key)
-        if back >= deleted_cards[(mark, old_slot.view_key)]:
+        back = _card_came_back(ctx, mark, old_slot.view_key)
+        if back >= deleted[(mark, old_slot.view_key)]:
             # Already back by some other route. Inserting would make a
             # second copy, and this part of the change is undone either
             # way.
@@ -454,23 +535,20 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
         if back > 0:
             # Some of several alike are back: which places they took is
             # not in the states, and picking one would be a guess.
-            return UndoPlan(
-                blocked=(
-                    f"only some of the copies of {label} this change "
-                    f"deleted are back, so an exact undo cannot tell "
-                    f"which are missing"
-                )
+            return (
+                f"only some of the copies of {label} this change "
+                f"deleted are back, so an exact undo cannot tell "
+                f"which are missing"
             )
-        put_back(old_slot, label)
+        placed.append(_put_back(ctx, old_slot, label))
 
-    # In the order of the places they came from - view, section, card -
-    # whichever of the three tables in decision 15 produced them.
-    def parked_order(item: tuple[tuple, UndoStep]) -> tuple:
-        location, step = item
-        return (step.view_index, location, step.index)
+    # Parked insertions go after every other card step, sorted.
+    ordinary = [step for where, step in placed if where is None]
+    parked = sorted(((where, step) for where, step in placed if where is not None), key=_parked_order)
+    return (*ordinary, *(step for _where, step in parked))
 
-    steps.extend(step for _location, step in sorted(parked, key=parked_order))
 
+def _sole_badge(ctx: UndoContext, slot: Slot, label: str) -> tuple[Slot | None, str | None]:
     # Badges (GitHub #29): the same table as cards, counted in their own
     # world. The same badge on several views is ordinary - 6 of 23 on the
     # installation this was built against - so "exactly once" is asked in
@@ -479,115 +557,115 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
     # second only asks it where the badge was left. And both compare
     # today with what the change left: one standing today, out of several
     # the change left, may be the one that was there before it.
-    badge_now = _group_by_mark(_present(current, badge_containers))
-    badge_then = _group_by_mark(_present(after, badge_containers))
-
-    def sole_badge(slot: Slot, label: str) -> tuple[Slot | None, str | None]:
-        found, left = badge_now.get(slot.mark, []), badge_then.get(slot.mark, [])
-        if len(found) == 1 and len(left) == 1:
-            return found[0], None
-        view_key = slot.view_key
-        mine = _in_view(found, view_key)
-        mine_then = _in_view(left, view_key)
-        if len(mine) == 1 and len(mine_then) == 1:
-            return mine[0], None
-        if len(mine) < len(mine_then):
-            return None, (
-                f"{label} was changed again after this, so there is no "
-                f"exact version left to put back"
-            )
-        # Here `mine` holds at least two: the view has as many as the
-        # change left, or more, and not exactly one of each.
+    found, left = ctx.badge_now.get(slot.mark, []), ctx.badge_then.get(slot.mark, [])
+    if len(found) == 1 and len(left) == 1:
+        return found[0], None
+    view_key = slot.view_key
+    mine = _in_view(found, view_key)
+    mine_then = _in_view(left, view_key)
+    if len(mine) == 1 and len(mine_then) == 1:
+        return mine[0], None
+    if len(mine) < len(mine_then):
         return None, (
-            f"{len(mine)} badges now look exactly like {label}, "
-            f"so an exact undo cannot tell them apart"
+            f"{label} was changed again after this, so there is no "
+            f"exact version left to put back"
         )
+    # Here `mine` holds at least two: the view has as many as the
+    # change left, or more, and not exactly one of each.
+    return None, (
+        f"{len(mine)} badges now look exactly like {label}, "
+        f"so an exact undo cannot tell them apart"
+    )
 
-    # Counted, not looked up, and only in the badge's own view: a copy on
-    # another view - there all along or added since - is not this badge
-    # coming back. `came_back` is how many more stand there now than the
-    # change left; `deleted` how many alike it took from that view. Each
-    # removed slot's mark is kept beside it - `deleted` and the loop
-    # below both need it, and it is already sitting on the slot.
-    removed_marks = [(old_slot, old_slot.mark) for old_slot in badge_matching.removed]
-    deleted: dict[tuple[str, Any], int] = {}
-    for old_slot, mark in removed_marks:
-        place = (mark, old_slot.view_key)
-        deleted[place] = deleted.get(place, 0) + 1
 
-    def came_back(mark: str, view_key: Any) -> int:
-        return len(_in_view(badge_now.get(mark, []), view_key)) - len(
-            _in_view(badge_then.get(mark, []), view_key)
-        )
+def _badge_came_back(ctx: UndoContext, mark: str, view_key: Any) -> int:
+    return len(_in_view(ctx.badge_now.get(mark, []), view_key)) - len(
+        _in_view(ctx.badge_then.get(mark, []), view_key)
+    )
 
-    def badge_label(badge: Any) -> str:
-        return f"the badge {_describe(badge, fallback='badge')}"
 
-    for old_slot, new_slot in (*badge_matching.edited, *badge_matching.moved):
-        label = badge_label(new_slot.card)
-        here, why = sole_badge(new_slot, label)
+def _badge_label(badge: Any) -> str:
+    return f"the badge {_describe(badge, fallback='badge')}"
+
+
+def _plan_badge_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
+    matching = ctx.badge_matching
+    steps: list[UndoStep] = []
+    for old_slot, new_slot in (*matching.edited, *matching.moved):
+        label = _badge_label(new_slot.card)
+        here, why = _sole_badge(ctx, new_slot, label)
         if here is None:
-            return UndoPlan(blocked=why)
+            return why
         steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
         steps.append(_step(old_slot, "insert", None, old_slot.card, label, kind="badge"))
 
-    for new_slot in badge_matching.added:
-        label = badge_label(new_slot.card)
-        here, why = sole_badge(new_slot, label)
+    for new_slot in matching.added:
+        label = _badge_label(new_slot.card)
+        here, why = _sole_badge(ctx, new_slot, label)
         if here is None:
-            return UndoPlan(blocked=why)
+            return why
         steps.append(_step(here, "remove", new_slot.card, None, label, kind="badge"))
 
-    for old_slot, mark in removed_marks:
-        label = badge_label(old_slot.card)
-        back = came_back(mark, old_slot.view_key)
+    # Counted, not looked up, and only in the badge's own view: a copy on
+    # another view - there all along or added since - is not this badge
+    # coming back. `_badge_came_back` is how many more stand there now
+    # than the change left; `deleted` how many alike it took from that
+    # view. Each removed slot's mark is kept beside it - `deleted` and the
+    # loop below both need it, and it is already sitting on the slot.
+    removed = [(old_slot, old_slot.mark) for old_slot in matching.removed]
+    deleted: dict[tuple[str, Any], int] = {}
+    for old_slot, mark in removed:
+        place = (mark, old_slot.view_key)
+        deleted[place] = deleted.get(place, 0) + 1
+
+    for old_slot, mark in removed:
+        label = _badge_label(old_slot.card)
+        back = _badge_came_back(ctx, mark, old_slot.view_key)
         if back >= deleted[(mark, old_slot.view_key)]:
             continue
         if back > 0:
             # Some of several alike are back: which places they took is
             # not in the states, and picking one would be a guess.
-            return UndoPlan(
-                blocked=(
-                    f"only some of the copies of {label} this change deleted "
-                    f"are back, so an exact undo cannot tell which are missing"
-                )
+            return (
+                f"only some of the copies of {label} this change deleted "
+                f"are back, so an exact undo cannot tell which are missing"
             )
         steps.append(_step(old_slot, "insert", None, old_slot.card, label, kind="badge"))
+    return tuple(steps)
 
-    # Whole views, which `match_cards` leaves out on purpose: a view that
-    # only one state has is one line in the history, not one per card on
-    # it. Undoing it is the same two questions in a coarser grain - is it
-    # still exactly as the change left it, and is it still there at all.
-    #
-    # Both branches ask that of the view's *content*, not of its key. A
-    # key is a path, and a path is renameable and reusable: asking only
-    # whether one is present answers "already taken back" for a view
-    # somebody renamed, and "already back" for a stranger that happens to
-    # sit on the same path. Both are the one error this tool must never
-    # make - a sentence that says nothing changed while something did.
-    now_places = _views_by_key(current)
 
-    for key, view in _views_by_key(after):
-        if key in old_views:
+# Whole views, which `match_cards` leaves out on purpose: a view that
+# only one state has is one line in the history, not one per card on
+# it. Undoing it is the same two questions in a coarser grain - is it
+# still exactly as the change left it, and is it still there at all.
+#
+# Both halves ask that of the view's *content*, not of its key. A
+# key is a path, and a path is renameable and reusable: asking only
+# whether one is present answers "already taken back" for a view
+# somebody renamed, and "already back" for a stranger that happens to
+# sit on the same path. Both are the one error this tool must never
+# make - a sentence that says nothing changed while something did.
+
+
+def _plan_added_views(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
+    steps: list[UndoStep] = []
+    for key, view in _views_by_key(ctx.after):
+        if key in ctx.old_views:
             continue
         # The change added this view. Take it away - the very one it
         # added, found by what it holds.
         name = _view_name(view, key)
-        found = [
-            index for index, (_, standing) in enumerate(now_places) if standing == view
-        ]
+        found = [index for index, (_, standing) in enumerate(ctx.now_places) if standing == view]
         if len(found) > 1:
-            return UndoPlan(
-                blocked=f'{len(found)} views now look exactly like "{name}", '
+            return (
+                f'{len(found)} views now look exactly like "{name}", '
                 f"so an exact undo cannot tell them apart"
             )
         if not found:
-            if key in now_views:
-                return UndoPlan(
-                    blocked=f'the view "{name}" was changed again after this'
-                )
-            return UndoPlan(
-                blocked=f'the view "{name}" is no longer on the dashboard as '
+            if key in ctx.now_views:
+                return f'the view "{name}" was changed again after this'
+            return (
+                f'the view "{name}" is no longer on the dashboard as '
                 f"this change left it, so an exact undo cannot take it away"
             )
         index = found[0]
@@ -604,23 +682,27 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
                 label=f'view: {name}',
             )
         )
+    return tuple(steps)
 
-    for index, (key, view) in enumerate(_views_by_key(before)):
-        if key in new_views:
+
+def _plan_removed_views(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
+    steps: list[UndoStep] = []
+    for index, (key, view) in enumerate(_views_by_key(ctx.before)):
+        if key in ctx.new_views:
             # The change did not remove it.
             continue
         # Already back, either on its own path or - a view without one is
         # keyed by its position - somewhere else. Inserting would make a
         # second copy.
-        if any(standing == view for _, standing in now_places):
+        if any(standing == view for _, standing in ctx.now_places):
             continue
-        standing = now_views.get(key)
+        standing = ctx.now_views.get(key)
         if standing is not None and view.get("path") is not None:
             # A different view holds that path today. Two views on one
             # path is a broken dashboard, and picking one of them is a
             # guess, so this refuses instead.
-            return UndoPlan(
-                blocked=f'a different view now sits at "{view["path"]}", so the '
+            return (
+                f'a different view now sits at "{view["path"]}", so the '
                 f'view "{_view_name(view, key)}" cannot be put back there'
             )
         steps.append(
@@ -636,14 +718,120 @@ def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
                 label=f'view: {_view_name(view, key)}',
             )
         )
+    return tuple(steps)
 
-    # One step writes a view's whole row of sections; a card step in the
-    # same view would write into a row that step replaces.
-    rewritten = {step.view_path or ("#", step.view_index) for step in section_steps}
+
+def _plan_view_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
+    added = _plan_added_views(ctx)
+    if isinstance(added, str):
+        return added
+    removed = _plan_removed_views(ctx)
+    if isinstance(removed, str):
+        return removed
+    return (*added, *removed)
+
+
+def _sections_meet_cards(planned: dict) -> str | None:
+    """Q1: a view's whole row of sections next to a card step in the same view.
+
+    One step writes a view's whole row of sections; a card step in the
+    same view would write into a row that step replaces. Unlike the
+    other stages this reads what the planners produced, not the context,
+    so the combiner calls it after the last planner.
+    """
+    rewritten = {step.view_path or ("#", step.view_index) for step in planned["sections"]}
     if any(
         step.kind == "card" and (step.view_path or ("#", step.view_index)) in rewritten
-        for step in steps
+        for kind in _OUTPUT_ORDER
+        if kind != "sections"
+        for step in planned[kind]
     ):
-        return UndoPlan(blocked=_SECTIONS_AND_CARDS_REFUSAL)
-    steps.extend(section_steps)
-    return UndoPlan(blocked=None, steps=tuple(steps))
+        return _SECTIONS_AND_CARDS_REFUSAL
+    return None
+
+
+# -- the combiner ------------------------------------------------------------
+
+_GATES = (_nothing_changed, _paths_collide_anywhere, _positions_disagree, _view_type_converted)
+
+_PLANNERS = {
+    "sections": _plan_section_steps,
+    "settings": _plan_setting_steps,
+    "cards": _plan_card_steps,
+    "badges": _plan_badge_steps,
+    "views": _plan_view_steps,
+}
+
+# The order in which refusals are looked for; the first one found is the
+# answer. Sections first: a view whose sections the change rearranged is
+# refused before anything else is asked of it (GitHub #31). A new kind of
+# change adds its planner here AND to _OUTPUT_ORDER, deciding both places.
+_CHECK_ORDER = ("sections", "settings", "cards", "badges", "views")
+
+# Computed where the single plan_undo computed them, whether a planner
+# goes on to read them or not. An input that makes one of them raise -
+# a view whose "sections" is a number, say - has to raise at the same
+# point as before, not later or not at all (Astra, plan review). The
+# order inside each tuple is the order they were computed in.
+_COMPUTED_FIRST = (
+    "matching",
+    "badge_matching",
+    "old_views",
+    "new_views",
+    "now_views",
+    "type_changed",
+    "settings",
+)
+_COMPUTED_BEFORE = {
+    "sections": ("shifted", "now_index"),
+    "cards": ("card_now", "card_then"),
+    "badges": ("badge_now", "badge_then"),
+    "views": ("now_places",),
+}
+
+# The order in which the steps are handed to apply_undo. It is observable:
+# apply_undo sorts by index only, with a stable sort, so steps on equal
+# indices keep this order - across kinds too. Settings first (they shift
+# no index), sections last although checked first: a section step
+# replaces a whole row, after the single cards in it are settled.
+_OUTPUT_ORDER = ("settings", "cards", "badges", "views", "sections")
+
+
+def plan_undo(before: dict, after: dict, current: dict) -> UndoPlan:
+    """How to take one change back, or why that cannot be exact.
+
+    The change is read as `match_cards(before, after)` - what it removed,
+    added, edited and moved. For everything it *produced*, the plan then
+    asks one question of the state as it stands today: does this card sit
+    there exactly once? Once means it can be pointed at. Zero means
+    somebody changed it again since. Two or more means an undo would have
+    to guess which - and guessing is what decision 4 forbids.
+
+    Note which side is looked up. The check is on what the change left
+    behind, never on its surroundings: a card added *next to* an edited
+    one does not make the edit ambiguous, and blocking there would refuse
+    almost every real history.
+    """
+    # The work is done by four checks, one planner per kind and one check
+    # across two planners (spec P, section 3); this function only runs
+    # them in _CHECK_ORDER and hands the steps on in _OUTPUT_ORDER. The
+    # docstring above is the old one, unchanged (spec P, section 3).
+    ctx = UndoContext(before, after, current)
+    for name in _COMPUTED_FIRST:
+        getattr(ctx, name)
+    for gate in _GATES:
+        refusal = gate(ctx)
+        if refusal is not None:
+            return UndoPlan(blocked=refusal)
+    planned: dict[str, tuple[UndoStep, ...]] = {}
+    for kind in _CHECK_ORDER:
+        for name in _COMPUTED_BEFORE.get(kind, ()):
+            getattr(ctx, name)
+        result = _PLANNERS[kind](ctx)
+        if isinstance(result, str):
+            return UndoPlan(blocked=result)
+        planned[kind] = result
+    refusal = _sections_meet_cards(planned)
+    if refusal is not None:
+        return UndoPlan(blocked=refusal)
+    return UndoPlan(blocked=None, steps=tuple(step for kind in _OUTPUT_ORDER for step in planned[kind]))

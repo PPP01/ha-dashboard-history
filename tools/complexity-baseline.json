@@ -1,17 +1,64 @@
 {
-  "custom_components/dashboard_history/analyze/matching.py::_match_slots": {"issue": "#43", "C901": 15, "PLR0912": 13},
-  "custom_components/dashboard_history/analyze/matching.py::_pair_view_sections": {"issue": "#43", "C901": 12},
-  "custom_components/dashboard_history/analyze/undo.py::_plan_sections": {"issue": "#41", "C901": 12},
-  "custom_components/dashboard_history/analyze/undo.py::plan_undo": {"issue": "#41", "C901": 54, "PLR0912": 40, "PLR0915": 128},
-  "custom_components/dashboard_history/analyze/explain.py::_explain": {"issue": "#37", "C901": 29, "PLR0912": 26, "PLR0915": 63},
-  "custom_components/dashboard_history/operations.py::async_restore_state": {"issue": "#43", "C901": 11},
-  "custom_components/dashboard_history/operations.py::async_undo_change": {"issue": "#43", "C901": 14, "PLR0912": 13},
-  "custom_components/dashboard_history/operations.py::async_compare": {"issue": "#43", "C901": 15},
-  "custom_components/dashboard_history/restore.py::reinsert": {"issue": "#43", "C901": 12},
-  "custom_components/dashboard_history/restore.py::apply_undo": {"issue": "#43", "C901": 14, "PLR0912": 13},
-  "custom_components/dashboard_history/services.py::async_register": {"issue": "#43", "C901": 18},
-  "custom_components/dashboard_history/store.py::HistoryStore._read_checkpoint": {"issue": "#42", "C901": 15, "PLR0912": 15},
-  "custom_components/dashboard_history/store.py::HistoryStore._walked_changes": {"issue": "#42", "C901": 12},
-  "custom_components/dashboard_history/store.py::HistoryStore._resolve": {"issue": "#42", "C901": 11},
-  "custom_components/dashboard_history/store.py::HistoryStore.survey": {"issue": "#42", "C901": 13}
+  "custom_components/dashboard_history/analyze/matching.py::_match_slots": {
+    "issue": "#43",
+    "C901": 15,
+    "PLR0912": 13
+  },
+  "custom_components/dashboard_history/analyze/matching.py::_pair_view_sections": {
+    "issue": "#43",
+    "C901": 12
+  },
+  "custom_components/dashboard_history/analyze/undo.py::_plan_sections": {
+    "issue": "#41",
+    "C901": 12
+  },
+  "custom_components/dashboard_history/analyze/explain.py::_explain": {
+    "issue": "#37",
+    "C901": 29,
+    "PLR0912": 26,
+    "PLR0915": 63
+  },
+  "custom_components/dashboard_history/operations.py::async_restore_state": {
+    "issue": "#43",
+    "C901": 11
+  },
+  "custom_components/dashboard_history/operations.py::async_undo_change": {
+    "issue": "#43",
+    "C901": 14,
+    "PLR0912": 13
+  },
+  "custom_components/dashboard_history/operations.py::async_compare": {
+    "issue": "#43",
+    "C901": 15
+  },
+  "custom_components/dashboard_history/restore.py::reinsert": {
+    "issue": "#43",
+    "C901": 12
+  },
+  "custom_components/dashboard_history/restore.py::apply_undo": {
+    "issue": "#43",
+    "C901": 14,
+    "PLR0912": 13
+  },
+  "custom_components/dashboard_history/services.py::async_register": {
+    "issue": "#43",
+    "C901": 18
+  },
+  "custom_components/dashboard_history/store.py::HistoryStore._read_checkpoint": {
+    "issue": "#42",
+    "C901": 15,
+    "PLR0912": 15
+  },
+  "custom_components/dashboard_history/store.py::HistoryStore._walked_changes": {
+    "issue": "#42",
+    "C901": 12
+  },
+  "custom_components/dashboard_history/store.py::HistoryStore._resolve": {
+    "issue": "#42",
+    "C901": 11
+  },
+  "custom_components/dashboard_history/store.py::HistoryStore.survey": {
+    "issue": "#42",
+    "C901": 13
+  }
 }
