@@ -46,3 +46,6 @@ jobs:
 
       - name: Complexity may only go down
         run: python3 tools/complexity_ratchet.py
+
+      - name: Import contracts
+        run: lint-imports

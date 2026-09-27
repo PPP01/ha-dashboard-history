@@ -65,6 +65,17 @@ Unit tests are executed via `pytest`:
 python3 -m pytest tests/ -v
 ```
 
+### Complexity and Import Guards
+
+Two guards run in CI next to pytest, and locally with the pinned versions (`python3 -m pip install "ruff==0.16.9" "import-linter==2.15"`, best in a virtualenv outside the repository):
+
+```bash
+python3 tools/complexity_ratchet.py   # complexity may only go down
+lint-imports                          # Home Assistant stays out of the core; analyze is layered
+```
+
+The ratchet compares ruff's complexity measurements with `tools/complexity-baseline.json`. A function new to the list, or a known one that grew, fails it; so does one that shrank without the baseline being lowered. `# noqa` does not help — the exception belongs in the baseline, where a reviewer sees it.
+
 ### Real Storage Integration Tests
 Some tests verify behavior against real-world, complex dashboard datasets (1,000+ cards and deeply nested stacks):
 - Set the environment variable `DASHBOARD_HISTORY_REAL_STORAGE=/path/to/.storage`, or

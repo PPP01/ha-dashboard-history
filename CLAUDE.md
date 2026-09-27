@@ -30,7 +30,7 @@ These are stated as such in the spec and are not negotiable:
 - **No shelling out to `git`.** `dulwich` only. Whether a `git` binary exists differs between HA OS, Container, Core, and Supervised. Measured, it's only a 15 ms difference per save — for twice the behavioral surface.
 - **No intercepting or replacing Home Assistant internals.** No monkey-patching of WebSocket commands or services. That would hit every user at once on release.
 - **Nothing blocks Home Assistant's startup.** Errors while recording are logged and swallowed. A broken history is annoying; a broken HA startup is not.
-- **`yaml_io.py`, `analyze.py`, `restore.py`, `versions.py`, `store.py`, `report.py`, and `keys.py` stay free of Home Assistant.** No `import homeassistant` in them — they are the core and have to stay testable in plain pytest.
+- **`yaml_io.py`, `analyze.py`, `restore.py`, `versions.py`, `store.py`, `report.py`, and `keys.py` stay free of Home Assistant.** No `import homeassistant` in them, not even through another module — they are the core and have to stay testable in plain pytest. `lint-imports` checks this (contract in `pyproject.toml`).
 - **Blocking work belongs in an executor** (`hass.async_add_executor_job`). A commit takes about 30 ms.
 - **Every service and every WebSocket command requires admin rights** (`async_register_admin_service` / `@websocket_api.require_admin`, since 2026-09-03). No write path is reachable without admin.
 - **Nothing is written without a preview.** Any service that triggers an irreversible or hard-to-undo step — changing a dashboard state, rewriting history (`forget`), removing a version (`remove_version`) — requires `confirm: true` and otherwise returns only the preview. Exempt, because none of that applies: `describe` (writes a note), `create_version` and `retitle_version` (set or rename a tag) — no dashboard changes, and a confirmation dialog beforehand would be ceremony without any protective effect (spec Decision 7, boundary from 2026-08-31).
@@ -41,6 +41,15 @@ These are stated as such in the spec and are not negotiable:
 ```bash
 python3 -m pytest tests/ -v
 ```
+
+Two guards run in CI next to pytest, and locally with the pinned versions (`python3 -m pip install "ruff==0.16.9" "import-linter==2.15"`, best in a virtualenv outside the repository):
+
+```bash
+python3 tools/complexity_ratchet.py   # complexity may only go down
+lint-imports                          # Home Assistant stays out of the core; analyze is layered
+```
+
+The ratchet compares ruff's complexity measurements with `tools/complexity-baseline.json`. A function new to the list, or a known one that grew, fails it; so does one that shrank without the baseline being lowered. `# noqa` does not help — the exception belongs in the baseline, where a reviewer sees it.
 
 The seven Home-Assistant-free modules run without a live installation. `tests/conftest.py` puts the package directory on `sys.path`, so `import analyze` works flat, without running the HA-importing `__init__.py`.
 

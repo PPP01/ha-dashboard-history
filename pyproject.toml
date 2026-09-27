@@ -13,3 +13,38 @@ max-complexity = 10
 [tool.ruff.lint.pylint]
 max-branches = 12
 max-statements = 50
+
+[tool.importlinter]
+root_package = "custom_components.dashboard_history"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+# The hard rule in CLAUDE.md, made checkable. Transitive imports count:
+# a core module importing const.py would import Home Assistant through it.
+name = "The core modules stay free of Home Assistant"
+type = "forbidden"
+source_modules = [
+    "custom_components.dashboard_history.yaml_io",
+    "custom_components.dashboard_history.analyze",
+    "custom_components.dashboard_history.restore",
+    "custom_components.dashboard_history.versions",
+    "custom_components.dashboard_history.store",
+    "custom_components.dashboard_history.report",
+    "custom_components.dashboard_history.keys",
+]
+forbidden_modules = ["homeassistant"]
+
+[[tool.importlinter.contracts]]
+# Spec P, section 2: each module imports only from the layers below it;
+# explain and undo share a layer and do not import each other. The
+# parentheses make a layer optional, so the contract holds while the
+# package is being built one module at a time.
+name = "analyze is layered"
+type = "layers"
+containers = ["custom_components.dashboard_history.analyze"]
+layers = [
+    "(explain) | (undo)",
+    "(removed)",
+    "(matching)",
+    "(model)",
+]
