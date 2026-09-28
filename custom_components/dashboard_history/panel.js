@@ -420,7 +420,12 @@ class DashboardHistoryPanel extends HTMLElement {
   /**
    * The jump a refused undo offers into compare mode: the row's own
    * predecessor against the current state, the same pair the removed
-   * row-level list used to show automatically.
+   * row-level list used to show automatically. Also the jump a
+   * version's own "Compare with current state" button takes (GitHub
+   * issue #34) - there `label` is given rather than looked up, because
+   * a version's own name resolves fine as a revision (`store.resolve`
+   * already accepts it) but is not in `_changes` to look a label up
+   * from.
    *
    * Sets the end state directly rather than calling
    * `_toggleCompareMode`/`_toggleCompareRevision` in sequence - doing
@@ -428,12 +433,12 @@ class DashboardHistoryPanel extends HTMLElement {
    * `_openCompare` once with the wrong pair and once more on top of
    * the dialog that first call already opened.
    */
-  _jumpToCompareFrom(previousRevision) {
+  _jumpToCompareFrom(previousRevision, label) {
     if (!previousRevision) return;
-    const row = this._changeAt(previousRevision);
+    const row = label === undefined ? this._changeAt(previousRevision) : null;
     this._compareMode = true;
     this._compareSelection = [
-      { revision: previousRevision, label: row?.description || row?.message || "" },
+      { revision: previousRevision, label: label ?? row?.description ?? row?.message ?? "" },
       { revision: null, label: "Current state", now: true },
     ];
     this._render();
@@ -3405,11 +3410,13 @@ class DashboardHistoryPanel extends HTMLElement {
 
   _renderVersionHead(section, version, crowned = false) {
     const top = section.rows[0];
+    const dashboard = (this._dashboards ?? []).find((d) => d.key === this._selected);
     return versionHead({
       version,
       top,
       count: section.rows.length,
       here: this._changes[top]?.same_as_now,
+      exists: dashboard?.exists !== false,
       compareMode: this._compareMode,
       compareChecked: this._compareSelection.some((s) => s.revision === version.name),
       crowned,
@@ -3542,30 +3549,25 @@ class DashboardHistoryPanel extends HTMLElement {
           open: this._verOpen,
         })
       );
-    // "Current state" is left out for a dashboard Home Assistant does
-    // not currently have: there is nothing there to compare against,
-    // and Put-back only ever writes into a live state (spec decision
-    // 19's edge case table).
-    //
-    // Also left out wherever the newest change already stands for the
-    // current state - as a crowned row, or as the version head above
-    // it, both marked `now` in `_renderNowSection`/`_renderVersionHead`
-    // - because ticking that one already means the same thing, and a
-    // second checkbox for one fact reads as two different facts. Kept
-    // only for decision 9's own edge case, the one thing it exists
-    // for: nothing recorded matches what Home Assistant holds right
-    // now, so nothing on screen can stand in for "Current state" but
-    // this pick itself.
-    const somethingIsAlreadyCurrent = Boolean(this._changes[0]?.same_as_now);
-    // The toggle itself now sits in the search row (`_renderSearch`),
-    // beside the field rather than on a row of its own beneath it -
-    // this is only the pinned pick that appears once compare mode is
-    // actually on.
-    const comparePin =
-      this._compareMode && dashboard?.exists !== false && !somethingIsAlreadyCurrent
-        ? currentStateRow(this._compareSelection.some((s) => s.revision === null))
-        : "";
-    const topBar = banner + comparePin;
+    // "Current state" used to be a pinned pick of its own, floating
+    // above the list, hidden whenever the newest change already stood
+    // for it (a crowned row, or the version head above it) - GitHub
+    // issue #34: hidden that way, it was reachable without opening
+    // anything only in the one case decision 9 needed it for, and the
+    // ordinary case (an unversioned "Right now" that matches today's
+    // live state, arguably the commonest state a fresh dashboard is
+    // ever in) had no substitute at all - only `_changes[0]`'s own
+    // checkbox, folded shut inside a collapsed disclosure by default.
+    // The pick now lives directly in `_renderNowSection`'s and
+    // `_renderNowBanner`'s own head instead, exactly where a crowned
+    // row has always carried it - always visible, open or closed,
+    // because a `<summary>` never is. A second, different-valued
+    // checkbox for the same fact can still exist once the row itself
+    // is expanded; that redundancy is left alone, the same way the
+    // crowned row's own tag-vs-revision duplicate has always been left
+    // alone - doubling a pick is harmless, it only ever answers "No
+    // difference" back.
+    const topBar = banner;
     const shown = this._shown();
     // Nobody has answered yet: the walk is out, or the query is too
     // short to send. The note above the list says which, and a sentence
@@ -3578,9 +3580,17 @@ class DashboardHistoryPanel extends HTMLElement {
         : "No changes recorded for this dashboard."}</p>`;
     // Solely while searching: the list is flat and "Load older" is gone,
     // because a page belongs to a list that goes on, not to one a search
-    // just cut down to whatever matched.
+    // just cut down to whatever matched. A search result has no "Right
+    // now" head to carry the "Current state" pick the ordinary list
+    // gives it either - a search can easily miss whichever row would
+    // have been that head - so it gets its own labelled row here,
+    // built from the very same checkbox.
     if (query)
-      return topBar + shown.map((c) => this._renderRow(c, false, false)).join("");
+      return (
+        topBar +
+        this._searchComparePin() +
+        shown.map((c) => this._renderRow(c, false, false)).join("")
+      );
 
     // Only the first section can be version-less: every later one starts
     // at the change a version sits on. So the unbundled case is handled
@@ -3745,7 +3755,7 @@ class DashboardHistoryPanel extends HTMLElement {
     return `<details class="now-panel${namedClass}" data-key="${key}"
               ${this._verOpen.has(key) ? "open" : ""}>
               <summary class="now-head">
-                <p class="heading">Right now ${chip}
+                <p class="heading">${this._compareCurrentPick()}Right now ${chip}
                   <span class="count">${count} change${count === 1 ? "" : "s"}</span></p>
                 ${body}
               </summary>
@@ -3762,13 +3772,48 @@ class DashboardHistoryPanel extends HTMLElement {
    * drifted since that tag was made, so nothing here is crowned
    * either. No rows are left unaccounted for, so this carries no body
    * of its own - only the badge and the sentence.
+   *
+   * The one shape with no child row at all to carry a "Current state"
+   * pick, were it not for `_compareCurrentPick` living in the head
+   * itself - there is nothing under this one to expand into.
    */
   _renderNowBanner() {
     const { chip, namedClass, body } = this._nowFacts();
     return `<div class="now-panel now-head${namedClass}">
-              <p class="heading">Right now ${chip}</p>
+              <p class="heading">${this._compareCurrentPick()}Right now ${chip}</p>
               ${body}
             </div>`;
+  }
+
+  /**
+   * The "Current state" checkbox both "right now" heads carry - GitHub
+   * issue #34. Left out for a dashboard Home Assistant does not
+   * currently have: there is nothing there to compare against, and
+   * Put-back only ever writes into a live state (spec decision 19's
+   * edge case table).
+   */
+  _compareCurrentPick() {
+    const dashboard = (this._dashboards ?? []).find((d) => d.key === this._selected);
+    if (!this._compareMode || dashboard?.exists === false) return "";
+    return currentStateRow(this._compareSelection.some((s) => s.revision === null));
+  }
+
+  /**
+   * The search list's own way to reach "Current state" - GitHub issue
+   * #34, the same gap `_compareCurrentPick` closes for the ordinary
+   * list. A search result is flat and has no "Right now" head to carry
+   * the checkbox the way `_renderNowSection`/`_renderNowBanner` do -
+   * the very row that head would have folded away is exactly the kind
+   * of row a search can miss - so this draws its own small, labelled
+   * one instead, from the same bare checkbox.
+   */
+  _searchComparePin() {
+    const pick = this._compareCurrentPick();
+    return pick
+      ? `<div class="card current-pick">
+           <div class="change penholder">${pick}<span class="what">Current state</span></div>
+         </div>`
+      : "";
   }
 
   // `connector` off only for the flat search list: that one has no
@@ -4081,6 +4126,13 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick("[data-compare-from]", (element, event) => {
       event.stopPropagation();
       this._jumpToCompareFrom(element.dataset.compareFrom);
+    });
+    onClick("[data-compare-from-version]", (element, event) => {
+      event.stopPropagation();
+      this._jumpToCompareFrom(
+        element.dataset.compareFromVersion,
+        element.dataset.compareFromLabel,
+      );
     });
     // `[data-compare-restore]` buttons are not in the DOM at the moment
     // this generic pass runs - they are injected later, into

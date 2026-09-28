@@ -1853,7 +1853,7 @@ def test_put_back_stays_hidden_between_two_past_revisions(
     assert "Put back" not in result["bodyHtml"]
 
 
-_COMPARE_BAR_PINNED_PICK = """
+_COMPARE_NOW_HEAD_PICK = """
 const el = new Panel();
 el._selected = "dash";
 el._mode = "advanced";
@@ -1861,52 +1861,106 @@ el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
 el._versions = [];
 el.shadowRoot = node();
 
-// The newest change already stands for the current state - the same
-// fact a crowned row or a version head would show on screen. A second,
-// separate checkbox saying the same thing is what confused a real user
-// (2026-09-13): "the current state is already known, why isn't that
-// checkbox the same as this one?" It should be - there is only one.
+// GitHub issue #34: the "Current state" pick used to float above the
+// list as a row of its own, hidden whenever the newest change already
+// stood for it (2026-09-13's fix for a real user's "why are there two
+// checkboxes for the same thing?"). Hiding it there, though, left the
+// ordinary case - an unversioned "Right now" that already matches
+// today's live state, arguably the commonest state a fresh dashboard
+// is ever in - with no reachable pick at all, only `_changes[0]`'s own
+// checkbox, folded shut inside a collapsed disclosure by default. The
+// pick now lives directly in the "Right now" head itself instead - a
+// `<summary>`, never hidden by its own fold - in both shapes that head
+// can take, whether or not anything downstream already stands for it.
 el._changes = [
   { revision: "a", message: "1 removed", timestamp: 1731000000,
     same_as_now: true, versions: [] },
 ];
-// Not "current-pick" alone: that class name also sits in the
-// stylesheet's own CSS rule, right at the top of every render
-// (`<style>${STYLE}</style>`), so it is never actually absent from
-// `innerHTML` - only the pinned row's own markup is.
-const PINNED_PICK = 'data-compare-label="Current state"';
 el._toggleCompareMode();
 await settle();
-const withCrownedRow = el.shadowRoot.innerHTML.includes(PINNED_PICK);
+const details = el.shadowRoot.querySelector("details.now-panel");
+const cleanFront = {
+  inHead: Boolean(details.querySelector(
+    'summary.now-head [data-compare-label="Current state"]',
+  )),
+  stillFolded: !details.open,
+};
 
 // Decision 9's own edge case: the dashboard changed at Home Assistant's
-// back, so nothing recorded matches it any more. Nothing on screen can
-// stand in for "Current state" here, so the pinned pick stays - it is
-// the one thing decision 9 keeps it for.
+// back, nothing recorded matches it any more - the pick has to stay
+// reachable here too, same as before this change.
 el._changes = [
   { revision: "a", message: "1 removed", timestamp: 1731000000,
     same_as_now: false, versions: [] },
 ];
 el._render();
-const withNothingCrowned = el.shadowRoot.innerHTML.includes(PINNED_PICK);
+const drifted = {
+  inHead: Boolean(el.shadowRoot.querySelector(
+    'summary.now-head [data-compare-label="Current state"]',
+  )),
+};
 
-console.log(JSON.stringify({ withCrownedRow, withNothingCrowned }));
+console.log(JSON.stringify({ cleanFront, drifted }));
 """
 
 
 @pytest.fixture(scope="session")
-def compare_bar_pinned_pick(tmp_path_factory):
+def compare_now_head_pick(tmp_path_factory):
     return _run_in_node(
-        tmp_path_factory, "compare_bar_pinned_pick", _COMPARE_BAR_PINNED_PICK
+        tmp_path_factory, "compare_now_head_pick", _COMPARE_NOW_HEAD_PICK
     )
 
 
-def test_the_pinned_current_state_pick_hides_once_a_row_already_stands_for_it(
-    compare_bar_pinned_pick,
+def test_the_current_state_pick_lives_in_the_right_now_head_either_way(
+    compare_now_head_pick,
 ):
-    result = compare_bar_pinned_pick
-    assert result["withCrownedRow"] is False
-    assert result["withNothingCrowned"] is True
+    result = compare_now_head_pick
+    assert result["cleanFront"]["inHead"] is True
+    assert result["cleanFront"]["stillFolded"] is True
+    assert result["drifted"]["inHead"] is True
+
+
+_COMPARE_SEARCH_PIN = """
+const el = new Panel();
+el._selected = "dash";
+el._mode = "advanced";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._versions = [];
+el.shadowRoot = node();
+
+// Found in review: a search result is flat, drawn by neither
+// `_renderNowSection` nor `_renderNowBanner` - the two places the
+// "Current state" pick moved into. Without its own row here, turning
+// on compare mode while a search is active left no way at all to pick
+// "Current state", where before this change the old floating pin,
+// being part of `topBar`, had covered exactly this case.
+el._changes = [
+  { revision: "a", message: "1 removed", timestamp: 1731000000,
+    same_as_now: false, versions: [] },
+];
+el._query = "removed";
+el._toggleCompareMode();
+await settle();
+
+const html = el.shadowRoot.innerHTML;
+console.log(JSON.stringify({
+  pinPresent: html.includes('class="card current-pick"'),
+  pinLabelled: html.includes(">Current state<"),
+  rowStillShown: html.includes("1 removed"),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_search_pin(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "compare_search_pin", _COMPARE_SEARCH_PIN)
+
+
+def test_the_current_state_pick_survives_an_active_search(compare_search_pin):
+    result = compare_search_pin
+    assert result["pinPresent"] is True
+    assert result["pinLabelled"] is True
+    assert result["rowStillShown"] is True
 
 
 _COMPARE_MISSING_GROUPED_BY_VIEW = """
@@ -2341,6 +2395,41 @@ def test_jump_to_compare_from_replaces_any_standing_selection(compare_from_click
     assert compare_from_click["mode"] is True
     assert compare_from_click["selection"] == ["a", None]
     assert compare_from_click["openCount"] == 1
+
+
+_COMPARE_FROM_VERSION_LABEL = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+// A version's own name is not in `_changes` - `_changeAt` would find
+// nothing there - so this call carries its label along explicitly,
+// the way the version head's button does, rather than leaving
+// `_jumpToCompareFrom` to fall back to a lookup that cannot succeed.
+el._changes = [];
+el._openCompare = () => Promise.resolve();
+
+el._jumpToCompareFrom("dash/v1.0.0", "Winter rebuild");
+
+console.log(JSON.stringify({
+  selection: el._compareSelection.map((s) => ({ revision: s.revision, label: s.label })),
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def compare_from_version_label(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "compare_from_version_label", _COMPARE_FROM_VERSION_LABEL
+    )
+
+
+def test_jump_to_compare_from_takes_an_explicit_label_for_a_version(
+    compare_from_version_label,
+):
+    assert compare_from_version_label["selection"] == [
+        {"revision": "dash/v1.0.0", "label": "Winter rebuild"},
+        {"revision": None, "label": "Current state"},
+    ]
 
 
 _SEARCH = """
@@ -3996,12 +4085,13 @@ const cut = rows.sections([
   { revision: "c", versions: [] },
 ]);
 
-const head = (here, top) =>
+const head = (here, top, extra = {}) =>
   rows.versionHead({
     version: { name: "dash/v1.0.0", title: "One", annotated: true },
     here,
     top,
     count: 2,
+    ...extra,
   });
 const headCompare = (here, top) =>
   rows.versionHead({
@@ -4011,6 +4101,13 @@ const headCompare = (here, top) =>
     count: 2,
     compareMode: true,
   });
+const crownedHead = rows.versionHead({
+  version: { name: "dash/v1.0.0", title: "One", annotated: true },
+  here: true,
+  top: 0,
+  count: 2,
+  crowned: true,
+});
 
 // Two versions on one state: each gets a head of its own - stacked,
 // not folded into one head naming both - so both need their own way
@@ -4067,6 +4164,23 @@ console.log(JSON.stringify({
   sameState: head(true, 2).includes("same state as now"),
   wayBack: head(false, 2).includes("Back to this version"),
   noWayBackWhereYouAre: head(true, 0).includes("Back to this version"),
+  // GitHub issue #34: a direct route into the compare dialog, without
+  // turning compare mode on and without scrolling past however many
+  // unversioned changes sit between this version and the top of the
+  // list - suppressed under the same `here` condition the way back
+  // already is, since a version already known to hold today's content
+  // would only ever open on "No difference".
+  compareFromOffered: head(false, 2).includes('data-compare-from-version="dash/v1.0.0"'),
+  compareFromCarriesTheLabel: head(false, 2).includes('data-compare-from-label="One"'),
+  noCompareFromWhereYouAre: head(true, 2).includes("data-compare-from-version"),
+  noCompareFromWhereCrowned: crownedHead.includes("data-compare-from-version"),
+  // GitHub issue #34, found in review: the button has no reachable way
+  // to compare against a dashboard Home Assistant does not currently
+  // have - the jump would only pick a "current state" that does not
+  // exist, the same reason the refused-undo jump already guards itself
+  // this way.
+  noCompareFromOnADeletedDashboard: head(false, 2, { exists: false })
+    .includes("data-compare-from-version"),
   names: [
     rows.someNames(["v1.0.0"]),
     rows.someNames(["v1.0.0", "v1.1.0"]),
@@ -4154,6 +4268,20 @@ def test_a_section_head_offers_the_way_back_only_where_it_leads_somewhere(
     assert row_parts["sameStateOnTop"] is True
     assert row_parts["noCurrentStateOnTop"] is False
     assert row_parts["sameState"] is True
+
+
+def test_a_version_offers_a_direct_route_to_compare_with_current_state(row_parts):
+    assert row_parts["compareFromOffered"] is True
+    assert row_parts["compareFromCarriesTheLabel"] is True
+    # Already known to be today's content either way - offering a
+    # button that could only ever answer "No difference" is not an
+    # offer, the same reasoning "Back to this version" already follows.
+    assert row_parts["noCompareFromWhereYouAre"] is False
+    assert row_parts["noCompareFromWhereCrowned"] is False
+    # Found in review: comparing against a "current state" a deleted
+    # dashboard does not have leaves a `null` pick standing in
+    # `_compareSelection` with no checkbox left on screen to undo it.
+    assert row_parts["noCompareFromOnADeletedDashboard"] is False
 
 
 def test_a_chip_says_which_kind_of_sameness_it_means(row_parts):

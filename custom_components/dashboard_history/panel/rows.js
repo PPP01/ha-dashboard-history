@@ -107,7 +107,8 @@ export function someNames(names) {
  * and the button that would only ever open on "No difference."
  */
 export function versionHead({
-  version, here, top, count, compareMode = false, compareChecked = false, crowned = false,
+  version, here, top, count, exists = true, compareMode = false, compareChecked = false,
+  crowned = false,
 }) {
   const auto = version.automatic
     ? `<span class="auto">saved automatically</span>`
@@ -126,11 +127,29 @@ export function versionHead({
     ? ""
     : here
       ? `<span class="count">same state as now</span>`
-      : `<button class="act ghost" data-state="${escape(version.name)}"
-               >Back to this version</button>`;
+      : `<button class="pen" data-state="${escape(version.name)}"
+               title="Back to this version">↩</button>`;
   const rightNow = crowned
     ? `<p class="heading">Right now ${nowChip(true)}</p>`
     : "";
+  // A direct route to the same dialog compare mode's two checkboxes
+  // open (GitHub issue #34) - no mode to turn on, no scrolling past
+  // however many unversioned changes sit between this version and the
+  // top of the list. Left out under the same condition `back` already
+  // reads `here` for: a version already known to hold today's content
+  // would only ever open on "No difference", the one answer nobody
+  // needs a button to go looking for. Left out too where the dashboard
+  // does not currently exist - the same reason the refused-undo jump
+  // into compare mode already guards itself this way: the jump ends
+  // up picking "current state" for a dashboard that has none, and the
+  // resulting error leaves a `null` pick standing in `_compareSelection`
+  // with no checkbox left on screen to uncheck it again.
+  const compareFromNow =
+    here || !exists
+      ? ""
+      : `<button class="pen" data-compare-from-version="${escape(version.name)}"
+               data-compare-from-label="${escape(version.title || version.name)}"
+               title="Compare with current state">⇄</button>`;
   return `
     <summary>
       ${rightNow}
@@ -146,6 +165,7 @@ export function versionHead({
         ${made}
         <span class="count">${count} change${count === 1 ? "" : "s"}</span>
         ${back}
+        ${compareFromNow}
         ${pen(version)}
         ${bin(version)}
       </span>
@@ -295,17 +315,12 @@ export function renderRow({
 
 /**
  * The compare mode's one pick that is not a row: "Current state".
- * Pinned above the list rather than drawn from `_changes[0]`, because
- * the newest entry is not always the current state (decision 9) - and
- * unlike every row, this pick's `data-compare` carries no revision.
+ * Drawn straight into a "right now" head (`_renderNowSection`,
+ * `_renderNowBanner`), not from `_changes[0]` - the newest entry is not
+ * always the current state (decision 9), and unlike every row, this
+ * pick's `data-compare` carries no revision at all.
  */
 export function currentStateRow(checked) {
-  return `
-      <div class="card current-pick">
-        <div class="change penholder">
-          <input type="checkbox" class="compare-check" data-compare=""
-                 data-compare-label="Current state" ${checked ? "checked" : ""}>
-          <span class="what">Current state</span>
-        </div>
-      </div>`;
+  return `<input type="checkbox" class="compare-check" data-compare=""
+                 data-compare-label="Current state" ${checked ? "checked" : ""}>`;
 }

@@ -137,12 +137,14 @@ Compare Mode allows you to compare any two states in the dashboard's history and
 ### How to use Compare Mode:
 
 1. In Advanced view, activate **Compare** mode.
-2. Checkboxes appear next to each row, including **Current state**.
+2. Checkboxes appear next to each row and next to **Current state**, which sits directly in the **Right now** section's own header - reachable without expanding it.
 3. Select **any two rows** to compare.
 4. A comparison modal opens:
    - Differences are grouped by view.
    - For every card that existed in the older state but is missing in today's state, a **Put back** button is offered.
 5. **Put back** is strictly additive: it inserts the missing item into today's dashboard at its original location without overwriting or modifying any other cards saved since then.
+
+Every version also carries its own **compare icon (⇄)**, right next to the pencil and trash bin - hover over the version row to reveal it. It works independent of Compare mode: a direct shortcut to the same comparison against today's live state, without needing to scroll to a version buried behind older changes.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/08-compare-mode-dark.png">

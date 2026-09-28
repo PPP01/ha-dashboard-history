@@ -1354,6 +1354,9 @@ export const STYLE = `
     }
   }
   .compare-check { margin-right: 8px; width: 16px; height: 16px; flex-shrink: 0; }
+  /* The search list's own "Current state" row (_searchComparePin) -
+     the only place this pick still needs a label of its own, since it
+     has no "Right now" heading beside it saying so already. */
   .current-pick .change { background: var(--secondary-background-color, #eee); }
   /* The lock screen a running forget puts over everything. Centred in
      the viewport rather than in a layout, because at that moment there
