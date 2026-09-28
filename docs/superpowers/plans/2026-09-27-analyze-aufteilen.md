@@ -2831,6 +2831,27 @@ pairs of refusing stages met: 33
 plan_undo time: old 19.07s, new 19.23s, ratio 1.01
 ```
 
-Es fehlen genau die zwölf erwarteten Vorrang-Paare, die in beiden Fassungen strukturell unmöglich sind:
+**Nachtrag zum Nachtrag (2026-09-28, nach dem Korrektheits-Review der Umsetzung):**
+Von den zwölf ursprünglich erwarteten Paaren sind nur neun wirklich
+strukturell unmöglich:
+
 - **V1 mit V4, `sections`, `settings`, `cards`, `badges`, `views`, Q1** – V1 verweigert nur, wenn die Änderung nichts geändert hat; eine Typänderung zählt dort als Änderung, und ohne Änderung hat kein Planer etwas zu verweigern.
-- **Q1 mit `sections`, `settings`, `cards`, `badges`, `views`** – Q1 wird nur ausgewertet, wenn alle Planer durchgekommen sind; das gilt in der alten Fassung genauso.
+- **Q1 mit `sections`, `cards`** – Q1 liest die bereits eingesammelten Schritte von `sections` und `cards`; verweigert einer der beiden, hat Q1 nichts mehr zu prüfen.
+
+Die restlichen drei (**Q1 mit `settings`, `badges`, `views`**) sind *nicht*
+strukturell unmöglich – Q1 liest nur `sections` und `cards`, könnte also
+sehr wohl gleichzeitig mit `settings`, `badges` oder `views` verweigern.
+Sie fehlten nur, weil `_refusing_stages` Q1 ausschließlich auswertete,
+wenn zuvor alle Planer durchgekommen waren – ein Artefakt der Messmethode
+des Werkzeugs, keine Eigenschaft von `plan_undo` selbst. Ein konstruierter
+Fall (Sections-Ansicht, eine Karte bearbeitet, ein Badge verdoppelt) zeigt
+das: Badge-Planer und Q1 verweigern hier gleichzeitig, alt und neu liefern
+übereinstimmend den Badge-Grund. Am Code ändert das nichts.
+
+`base commit: 37472532a1d9e54031a16e370bd828ad39daf025` ist nach dem
+Rebase dieses Branches nicht mehr über `main` oder
+`refactor/analyze-package` erreichbar, nur noch über das Reflog. Nachgeprüft:
+sein Baum von `analyze/` und von `restore.py` ist baumgleich mit dem
+von `b04e530` (`git rev-parse 3747253:… b04e530:…` liefert beide
+`5a63288b1e700876671ec454908fca315b1b12c5`) – am Ergebnis dieses
+Nachtrags ändert sich dadurch nichts.
