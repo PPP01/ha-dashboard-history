@@ -1933,7 +1933,7 @@ def test_repair_clears_a_stale_object_lock(store):
     """
     store.write_snapshot("home", "a: 1\n", "first")
     stale_lock = store.path / ".git" / "objects" / "ab" / "cdef0123456789.lock"
-    stale_lock.parent.mkdir(parents=True)
+    stale_lock.parent.mkdir(parents=True, exist_ok=True)
     stale_lock.touch()
 
     store.repair_pending_forget()
