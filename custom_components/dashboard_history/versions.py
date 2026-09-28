@@ -3,7 +3,7 @@
 Home-Assistant-free on purpose. This is a small calculation that can be
 wrong in a way nobody notices for months - `v1.10.0` sorting below
 `v1.9.0` is the classic - so it lives where plain pytest reaches it,
-rather than in the panel. Same rule as the wording in `analyze.py`.
+rather than in the panel. Same rule as the wording in `analyze`.
 
 A version is an annotated git tag named `<key>/v<major>.<minor>.<patch>`.
 The dashboard key is part of the name because git tags share a single
