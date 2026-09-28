@@ -8,6 +8,77 @@ control.
 The repository is created and maintained by this integration alone. It
 never shells out to a git binary: whether one exists differs between
 Home Assistant OS, Container, Core and Supervised installations.
+
+Concurrency
+-----------
+Five rules, each with the decision of the design record it comes from
+and the test that pins it. They were spread over a score of docstrings
+below; this is the one place that states them together.
+
+1. **One lock per repository path, not per instance.** `_lock_for`
+   hands every `HistoryStore` for the same resolved path the same
+   `threading.Lock` (decision 21, correction 4), so a reload's fresh
+   instance cannot run beside an old one that is still writing. It is
+   a plain lock, not a re-entrant one: nothing called while it is held
+   may take it again - which is why `_tag_at_locked` exists. Pinned by
+   `test_two_instances_of_the_same_path_share_one_lock`, and for
+   re-entry by the `lock_guard` fixture in `tests/conftest.py`, which
+   fails any test whose code path takes the lock twice.
+2. **Ten methods take it,** and each is one critical section:
+   `ensure`, `write_snapshot`, `mark_deleted`, `create_version`,
+   `retitle_version`, `read_version`, `remove_version`,
+   `set_description`, `forget`, `repair_pending_forget`. For `forget`
+   and `repair_pending_forget` that section holds the checkpoint, the
+   generation counter, HEAD, notes, tags, the index and the garbage
+   collection together. `read_version` is the one reader among them:
+   the preview of a removal must not see a half-finished write. Pinned
+   by the `*_waits_for_forget` tests in
+   `tests/test_store_concurrency.py` - all but `ensure`, which after
+   its first call per path and process only checks that `.git` exists.
+3. **Every other read runs without it, on purpose** - a sensor must
+   never wait fifteen seconds for a `forget`. What that costs differs,
+   and each public read belongs to exactly one of three groups:
+
+   * *Consistent or refused.* `list_changes`, and `search_changes`
+     when it reads the versions itself, rebuild their whole answer when
+     a `forget` raced them, and raise `RuntimeError` once the retry
+     budget is spent (`_retrying_a_forget_race`, decision 24).
+   * *Cannot meet a pruned object.* `list_versions` skips a tag that
+     vanished while it listed (`_each_tag`); `forget_generation` and
+     `forget_in_progress` read plain files.
+   * *Best effort.* All the others - `survey`, `measure`,
+     `previous_change`, `commit_times`, `commit_order`,
+     `list_dashboards`, `list_all_dashboards`, `matching_revisions`,
+     `same_state`, `resolve`, `read_at`, `read_meta_at`,
+     `descriptions`. They catch a pruned object at the places a race
+     was once observed and skip it or answer empty, but not
+     throughout: `_resolve` loads the object it has just found without
+     a guard, `_read_from` loads the blob without one, and building the
+     index walks without one. While a `forget` prunes, any of them can
+     still raise `KeyError` or `MissingCommitError`. Decision 24 does
+     not cover them.
+
+   Pinned: that the reads do not wait, by
+   `test_list_changes_does_not_wait_for_forget` and
+   `test_measure_does_not_wait_for_forget`; the retry, by
+   `test_list_changes_retries_a_read_that_raced_forget`. The best-effort
+   group is pinned by nothing, on purpose - best effort is all it
+   promises; its unguarded loads are issue #44.
+4. **The caches belong to the instance, not to the path.** `_index` and
+   `_survey` are filled by readers without the lock and dropped by
+   `forget` and `repair_pending_forget` under it. Both are keyed by
+   HEAD, so an entry built before a rewrite - even one a reader stored
+   after `forget` had dropped the cache - is recognised on its next use
+   and rebuilt. Pinned by `test_the_survey_follows_head`,
+   `test_forgetting_a_dashboard_leaves_no_stale_index_behind` and
+   `test_an_index_built_across_a_rewrite_is_not_kept`.
+5. **The checkpoint is a signal in both directions.** While the file an
+   unfinished `forget` leaves behind exists, every write refuses
+   (`_refuse_if_forget_pending`, decision 21), and the reads with a
+   retry distrust their answer (decision 24). The other reads do not
+   look at it. Pinned by
+   `test_writes_refuse_while_a_forget_checkpoint_is_pending` and
+   `test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable`.
 """
 
 from __future__ import annotations
