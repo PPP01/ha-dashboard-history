@@ -11,8 +11,10 @@ Home Assistant OS, Container, Core and Supervised installations.
 
 Concurrency
 -----------
-Five rules, each with the decision of the design record it comes from
-and the test that pins it. They were spread over a score of docstrings
+Five rules, each with the test that pins it; three of them also with
+the decision of the design record they come from - rules 2 and 4 are
+not any single decision's subject, just how the lock and the caches
+have always been used. They were spread over a score of docstrings
 below; this is the one place that states them together.
 
 1. **One lock per repository path, not per instance.** `_lock_for`
@@ -73,11 +75,15 @@ below; this is the one place that states them together.
    `test_forgetting_a_dashboard_leaves_no_stale_index_behind` and
    `test_an_index_built_across_a_rewrite_is_not_kept`.
 5. **The checkpoint is a signal in both directions.** While the file an
-   unfinished `forget` leaves behind exists, every write refuses
-   (`_refuse_if_forget_pending`, decision 21), and the reads with a
-   retry distrust their answer (decision 24). The other reads do not
+   unfinished `forget` leaves behind exists, every write but
+   `repair_pending_forget` refuses (`_refuse_if_forget_pending`,
+   decision 21) - `repair_pending_forget` is the one lock holder whose
+   whole job is to act on the checkpoint instead, and it is deliberately
+   not behind that same refusal. The reads with a retry distrust their
+   answer while it exists too (decision 24). The other reads do not
    look at it. Pinned by
-   `test_writes_refuse_while_a_forget_checkpoint_is_pending` and
+   `test_writes_refuse_while_a_forget_checkpoint_is_pending`,
+   `test_repair_finishes_an_interrupted_forget` and
    `test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable`.
 """
 
@@ -616,17 +622,25 @@ class HistoryStore:
         taking the same lock (issue #19).
 
         Never repeated after that first call, and that restriction is
-        load-bearing, not a minor optimisation: a *reload* builds a new
-        `HistoryStore` - a new instance, a new `threading.Lock` - while
-        a write dispatched through `hass.async_create_task` before the
-        reload can still be running in the executor, unwaited, holding
-        a lock of its own. That process is not dead. Sweeping on every
-        call raced exactly that write in the review of issue #19's
-        first fix, breaking its rename with `FileNotFoundError`. `_ensure`
-        already serialises every call to this store instance through
-        `self._lock`, but a reload's old and new instances share no
-        lock at all - `_swept_paths` is what stands in for one, across
-        instances, for the life of this process.
+        load-bearing, not a minor optimisation. It dates from before
+        decision 21, correction 4: at that time a *reload* built a new
+        `HistoryStore` - a new instance, a lock of its own - while a
+        write dispatched through `hass.async_create_task` before the
+        reload could still be running in the executor, unwaited, on
+        the *old* instance's separate lock. That process was not dead.
+        Sweeping on every call raced exactly that write in the review
+        of issue #19's first fix, breaking its rename with
+        `FileNotFoundError`.
+
+        Correction 4 closed that race a different way, by sharing one
+        lock per path across every instance (`_lock_for`, this
+        module's Concurrency section, rule 1) - a reload's old and new
+        instances now serialise through the very same lock, and
+        `_ensure` already runs under it on every call. `_swept_paths`
+        was kept alongside that fix rather than removed: nothing here
+        has re-examined whether the shared lock alone would now make a
+        repeated sweep safe, and doing so is outside what this
+        docstring update is for.
 
         Restricted to `refs/` rather than the whole `.git` directory:
         that is the only place besides the top level where dulwich

@@ -58,6 +58,16 @@ class GuardedLock:
         self._waited: set[threading.Thread] = set()
 
     def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        """Mirrors `threading.Lock.acquire`, with one caveat.
+
+        `waited()` only means "this thread found the lock held and
+        registered as such" - with `timeout=0` that registration still
+        happens even though the immediate re-attempt below then fails
+        at once, so the thread never actually blocked. Nothing in this
+        suite calls `acquire` with a `timeout`, and `HistoryStore`
+        itself never does either, so this stays a documented edge case
+        rather than a fix (found in review).
+        """
         me = threading.current_thread()
         if self._owner is me:
             raise RuntimeError(
