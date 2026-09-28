@@ -59,6 +59,8 @@ Gemessen am 2026-09-19 im Container gegen die Prüfbank (7518 Commits, 68 Dashbo
 Aus der Spec, Abschnitt »Offene Punkte« (dort mit vollem Messbefund). Bei
 Zweifeln über den aktuellen Stand zählt der Code, nicht diese Zeile.
 
+- **Umgesetzt am 2026-09-28** (GitHub-Issue [#42](https://github.com/PPP01/ha-dashboard-history/issues/42), nur der erste Teil): Die Nebenläufigkeitsregeln von `HistoryStore` stehen im Abschnitt »Concurrency« des Modul-Docstrings von `store.py`, jede mit Test, drei davon zusätzlich mit einer Entscheidung der Hauptspec. Ein prüfender Lock in `tests/conftest.py` lässt jeden Test fehlschlagen, der den Lock doppelt nimmt, und `tests/test_store_concurrency.py` lässt `forget` gegen jede andere Methode laufen, die den Lock nimmt – mit nachgewiesenem Warten und geprüftem Endzustand. Der Umbau von `store.py` (Herauslösen von `forget`) ist ausgearbeitet, aber geparkt, bis `forget` selbst wieder geändert wird; #42 bleibt dafür offen. Spec: `specs/2026-09-28-historystore-aufteilen-design.md`.
+
 - ~~**Umkehrbarkeit endet an einem nie aufgezeichneten Stand.** *(Gefunden am
   2026-09-17.)* Misslingt das Nachtragen des lebenden Stands, wird trotzdem
   geschrieben, und ein Stand, den der Rekorder nie gehört hat, ist damit fort.
