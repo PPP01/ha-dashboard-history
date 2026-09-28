@@ -178,3 +178,159 @@ def test_guard_is_the_lock_every_store_of_that_path_takes(lock_guard, tmp_path):
     other.join()
     assert other.error is None
     assert other.result is not None
+
+
+# -- forget against every other lock holder ------------------------------
+
+
+def test_write_snapshot_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(lock, store.write_snapshot, "home", "a: 3\n", "home third")
+    other.join()
+
+    assert_forgotten(store, before)
+    assert other.error is None
+    assert other.result is not None
+    assert store.resolve("HEAD") == other.result
+    rewritten = store.read_version("home", "home/v1.0.0").revision
+    assert store.previous_change("home", other.result) == rewritten
+    assert store.read_at("gone", "HEAD") is None
+    index = Repo(str(store.path)).open_index()
+    assert b"gone.yaml" not in index
+    assert b"meta/gone.yaml" not in index
+
+
+def test_mark_deleted_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(lock, store.mark_deleted, "gone", "gone: deleted")
+    other.join()
+
+    assert_forgotten(store, before)
+    assert other.error is None
+    assert other.result is None
+    assert store.list_changes("home", 1)[0].revision == store.resolve("HEAD")
+
+
+def test_create_version_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(
+            lock, store.create_version, "home/v9.0.0", "Late", "", before.home_v2
+        )
+    other.join()
+
+    assert_forgotten(store, before)
+    assert isinstance(other.error, ValueError)
+    assert "unknown revision" in str(other.error)
+    assert "home/v9.0.0" not in [v.name for v in store.list_versions()]
+
+
+def test_retitle_version_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(
+            lock, store.retitle_version, "gone", "gone/v1.0.0", "New", ""
+        )
+    other.join()
+
+    assert_forgotten(store, before)
+    assert isinstance(other.error, ValueError)
+    assert "unknown version" in str(other.error)
+
+
+def test_remove_version_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(lock, store.remove_version, "gone", "gone/v1.0.0")
+    other.join()
+
+    assert_forgotten(store, before)
+    assert isinstance(other.error, ValueError)
+    assert "unknown version" in str(other.error)
+    assert "gone/v1.0.0" not in [v.name for v in store.list_versions()]
+
+
+def test_set_description_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(lock, store.set_description, before.home_v2, "late note")
+    other.join()
+
+    assert_forgotten(store, before)
+    assert other.error is None
+    assert other.result is False
+    assert "late note" not in store.descriptions().values()
+
+
+def test_read_version_waits_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(lock, store.read_version, "home", "home/v1.0.0")
+    other.join()
+
+    assert_forgotten(store, before)
+    assert other.error is None
+    assert other.result.revision != before.home_v2
+    assert other.result.revision == store.resolve("HEAD")
+
+
+def test_repair_waits_for_forget(store, lock_guard):
+    before = history(store)
+    second = HistoryStore(store.path)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        other = queued_behind(lock, second.repair_pending_forget)
+    other.join()
+
+    assert_forgotten(store, before)
+    assert other.error is None
+    assert not store.forget_in_progress()
+    assert store.forget_generation() == 1
+    # Exactly what forget alone leaves behind - nothing the queued repair
+    # could have added, moved or dropped: HEAD, the note, the one tag.
+    rewritten = store.resolve("HEAD")
+    assert store.read_version("home", "home/v1.0.0").revision == rewritten
+    assert store.descriptions() == {rewritten: "a note on home_v2"}
+    refs = Repo(str(store.path)).refs.as_dict()
+    assert set(refs) == {
+        b"HEAD",
+        b"refs/heads/master",
+        b"refs/notes/commits",
+        b"refs/tags/home/v1.0.0",
+    }
+    assert refs[b"refs/heads/master"].decode() == rewritten
+
+
+# -- reads that deliberately do not wait ---------------------------------
+
+
+def test_list_changes_does_not_wait_for_forget(store, lock_guard):
+    before = history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        reader = Background(store.list_changes, "gone")
+        reader.join()
+        assert not lock.ever_waited(reader.thread)
+    assert reader.error is None
+    assert [change.revision for change in reader.result] == [before.gone]
+
+
+def test_measure_does_not_wait_for_forget(store, lock_guard):
+    history(store)
+    lock = lock_guard.for_path(store.path)
+    with forget_paused(store, "gone"):
+        reader = Background(store.measure)
+        reader.join()
+        assert not lock.ever_waited(reader.thread)
+    assert reader.error is None
+    assert reader.result.revisions == 3
+    assert sorted(row.key for row in reader.result.dashboards) == ["gone", "home"]
