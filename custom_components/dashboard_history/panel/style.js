@@ -59,6 +59,20 @@ export const STYLE = `
        value to keep in step. */
     --sc-hover-bg: rgba(127, 127, 127, 0.16);
     --sc-accent: var(--primary-color, #2563eb);
+    /* The pressed state's extra ring (checked against a real dark
+       theme, see the comment on .switcher-tab[aria-pressed] below) -
+       one token so the three controls that share it stay in step
+       instead of three hand-copied box-shadow layers drifting apart
+       the next time one of them is retuned. */
+    --sc-active-ring: inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
+    /* A diff's own padding has to equal this exactly, on both the
+       generic pre rule below and .switcher-body pre further down: the
+       pre-span bleed trick right after the generic rule cancels that
+       padding with a matching negative margin, so a mismatch does not
+       error, it just leaves a sliver of the container's own background
+       unlit at the edge. One token instead of the same number spelled
+       out in three places that have to stay in step by convention alone. */
+    --pre-pad: 12px;
   }
   .bar {
     display: flex;
@@ -475,7 +489,7 @@ export const STYLE = `
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; padding: 16px; }
   pre {
     margin: 0;
-    padding: 12px;
+    padding: var(--pre-pad);
     border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: 4px;
     background: var(--primary-background-color, #f5f5f5);
@@ -761,8 +775,8 @@ export const STYLE = `
      border. */
   pre span {
     display: block;
-    margin: 0 -12px;
-    padding: 0 12px;
+    margin: 0 calc(-1 * var(--pre-pad));
+    padding: 0 var(--pre-pad);
   }
   pre .add {
     color: var(--success-color, #0f9d58);
@@ -830,22 +844,16 @@ export const STYLE = `
     max-height: 260px;
     overflow: auto;
   }
-  /* The diff keeps its own horizontal padding rather than inheriting
-     the card's, and at exactly the generic pre rule's own 12px
-     (style.js above): the shared pre-span rule bleeds a line's colour
-     into that padding by the same 12px, on the assumption that the
-     padding it is cancelling is the pre's own - true for every other
-     pre in this file, and only true here once the card stops supplying
-     it instead. Get this wrong and the colour stops a few pixels short
-     of the border on every line, which is what shipped on 2026-09-29
-     before somebody compared it against the mockup pixel for pixel.
-
-     No vertical padding at all, unlike the generic rule: the mockup's
-     first line sits right under the card's own top border, and a
-     top/bottom inset the span-bleed trick above never reaches (it is
-     margin on the *sides* only) left a bar of plain background there
-     instead - background, not "white", now that the line below fixes
-     what that plain background actually is.
+  /* The diff keeps its own padding rather than inheriting the card's,
+     and at exactly --pre-pad (:host above, the same value the generic
+     pre rule below uses): the shared pre-span rule bleeds a line's
+     colour into that padding by the same amount, on the assumption
+     that the padding it is cancelling is the pre's own - true for
+     every other pre in this file, and only true here once the card
+     stops supplying it instead. Get this wrong and the colour stops a
+     few pixels short of the border on every line, which is what
+     shipped on 2026-09-29 before somebody compared it against the
+     mockup pixel for pixel.
 
      max-height and overflow reset for the second reason this pre is
      not the generic one: the generic rule also caps it at 400px with
@@ -855,7 +863,7 @@ export const STYLE = `
   .switcher-body:has(pre) { padding: 0; }
   .switcher-body pre {
     margin: 0;
-    padding: 12px;
+    padding: var(--pre-pad);
     border: 0;
     /* The same base every other diff in this panel sits on (the
        generic pre rule above) - not "none": leaving it transparent
@@ -911,14 +919,15 @@ export const STYLE = `
      backgrounds do - a theme's own accent hue keeps its chroma against
      both light and dark surfaces - so the ring is built from that
      instead, at low enough alpha to stay a quiet detail where the
-     background contrast already works. The same ring goes on every
-     control sharing these tokens (.levels button and
-     .segmented-control__glider below), for the same reason. */
+     background contrast already works. --sc-active-ring (:host above)
+     holds the ring itself, so the same token goes on every control
+     sharing these tokens (.levels button and .segmented-control__glider
+     below) instead of three hand-copied box-shadow layers. */
   .switcher-tab[aria-pressed="true"] {
     background: var(--sc-card-active);
     color: var(--primary-text-color, #37474f);
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
-      inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
+      var(--sc-active-ring);
   }
   .switcher-tab[aria-pressed="true"]::after { transform: rotate(180deg); }
   @media (max-width: 600px) {
@@ -1172,7 +1181,7 @@ export const STYLE = `
   .levels button[aria-pressed="true"] {
     background: var(--sc-card-active);
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
-      inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
+      var(--sc-active-ring);
   }
   .levels button strong { font-family: monospace; font-size: 15px; }
   .levels button span {
@@ -1209,7 +1218,7 @@ export const STYLE = `
     background-color: var(--sc-card-active);
     border-radius: 6px;
     box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
-      inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
+      var(--sc-active-ring);
     pointer-events: none;
     z-index: 1;
     transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);

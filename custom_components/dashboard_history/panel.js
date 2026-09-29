@@ -2810,11 +2810,13 @@ class DashboardHistoryPanel extends HTMLElement {
       // "changes" here, not "pending changes", because this line already
       // sits under a heading that says "Included" and doesn't need the
       // word twice - plus the span the count covers, which the tab alone
-      // never said at all.
-      const timestamps = pending.map((change) => change.timestamp);
+      // never said at all. The endpoints, not a scan for them: `pending`
+      // is `spanOf`'s own walk from the newest change downward, so its
+      // first entry is already the newest timestamp and its last the
+      // oldest.
       dialog.querySelector("[data-pending-range]").textContent =
         `${pending.length === 1 ? "1 change" : `${pending.length} changes`} · ` +
-        whenRange(Math.min(...timestamps), Math.max(...timestamps));
+        whenRange(pending[pending.length - 1].timestamp, pending[0].timestamp);
     }
     // The same span, as an exact diff rather than words. Fetched without
     // `_guard`: `_guard` re-renders, which would replace this very
