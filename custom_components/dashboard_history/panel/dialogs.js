@@ -129,6 +129,18 @@ export const DIALOGS = `
     <div class="body" style="padding:0 16px 8px">
       <p class="muted" style="font-size:13px" data-scope></p>
       <p class="carries" data-carries hidden></p>
+      <div class="levels">
+        <button type="button" data-level="patch" aria-pressed="true">
+          <strong></strong><span>Patch</span>
+        </button>
+        <button type="button" data-level="minor" aria-pressed="false">
+          <strong></strong><span>Minor</span>
+        </button>
+        <button type="button" data-level="major" aria-pressed="false">
+          <strong></strong><span>Major</span>
+        </button>
+      </div>
+      ${VERSION_FIELDS}
       <div class="switcher" data-pending hidden>
         <div class="switcher-bar">
           <span class="switcher-label">Included</span>
@@ -146,18 +158,6 @@ export const DIALOGS = `
         <div class="switcher-body" data-pending-body id="version-pending-body"></div>
         <div class="switcher-body" data-technical-body id="version-technical-body" hidden></div>
       </div>
-      <div class="levels">
-        <button type="button" data-level="patch" aria-pressed="true">
-          <strong></strong><span>Patch</span>
-        </button>
-        <button type="button" data-level="minor" aria-pressed="false">
-          <strong></strong><span>Minor</span>
-        </button>
-        <button type="button" data-level="major" aria-pressed="false">
-          <strong></strong><span>Major</span>
-        </button>
-      </div>
-      ${VERSION_FIELDS}
     </div>
     <div class="actions">
       <button class="act ghost" value="cancel">Cancel</button>

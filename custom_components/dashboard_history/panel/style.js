@@ -1038,23 +1038,39 @@ export const STYLE = `
   }
   .entry::before { left: -16px; width: 16px; height: 2px; }
   .entry::after { left: -21px; width: 8px; height: 8px; border-radius: 50%; }
-  .levels { display: flex; gap: 8px; margin: 12px 0; }
+  /* The same flat-track-plus-raised-pill look as .segmented-control
+     below, and the same tokens (--sc-bg/--sc-border/--sc-card-active) -
+     two segmented controls in one panel reading as one design rather
+     than two, redesigned 2026-09-29 to match the create-version
+     dialog's reference mockup. Still three plain buttons driven by
+     aria-pressed from _createVersion, not a radio group - unlike
+     .segmented-control, three options rather than two suit a button
+     group's simpler semantics better than a two-cell glider grid. */
+  .levels {
+    display: flex;
+    gap: 2px;
+    margin: 12px 0;
+    padding: 2px;
+    background: var(--sc-bg);
+    border: 1px solid var(--sc-border);
+    border-radius: 8px;
+  }
   .levels button {
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
     padding: 10px;
-    border: 1px solid var(--divider-color, #e0e0e0);
-    border-radius: 4px;
+    border: 0;
+    border-radius: 6px;
     background: none;
     color: inherit;
     font: inherit;
     cursor: pointer;
   }
   .levels button[aria-pressed="true"] {
-    border-color: var(--primary-color, #03a9f4);
-    box-shadow: inset 0 0 0 1px var(--primary-color, #03a9f4);
+    background: var(--sc-card-active);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
   }
   .levels button strong { font-family: monospace; font-size: 15px; }
   .levels button span {
