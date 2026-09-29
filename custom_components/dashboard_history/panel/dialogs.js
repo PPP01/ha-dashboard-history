@@ -143,7 +143,10 @@ export const DIALOGS = `
       ${VERSION_FIELDS}
       <div class="switcher" data-pending hidden>
         <div class="switcher-bar">
-          <span class="switcher-label">Included</span>
+          <div class="switcher-heading">
+            <span class="switcher-label">Included</span>
+            <p class="switcher-range muted" data-pending-range></p>
+          </div>
           <div class="switcher-tabs">
             <button type="button" class="switcher-tab" data-pending-tab
                     aria-pressed="false" aria-controls="version-pending-body">
@@ -160,6 +163,7 @@ export const DIALOGS = `
       </div>
     </div>
     <div class="actions">
+      <span class="note muted" data-creates style="margin-right:auto"></span>
       <button class="act ghost" value="cancel">Cancel</button>
       <button class="act" value="create">Create</button>
     </div>

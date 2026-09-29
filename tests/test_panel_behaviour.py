@@ -6043,10 +6043,29 @@ def test_render_diff_wraps_every_line_in_its_own_block_span(tmp_path_factory):
     )
     assert html == (
         "<pre>"
-        '<span class="del">--- before</span>'
-        '<span class="add">+++ after</span>'
+        '<span class="hdr-del">--- before</span>'
+        '<span class="hdr-add">+++ after</span>'
         '<span class="at">@@ -1 +1 @@</span>'
         "<span> context</span>"
+        '<span class="del">-old</span>'
+        '<span class="add">+new</span>'
+        "</pre>"
+    )
+
+
+def test_render_diff_gives_the_file_markers_their_own_class(tmp_path_factory):
+    # "---"/"+++" name the file the diff is about, not a line that
+    # changed - and both start with a single "-" or "+" too, the same
+    # prefix a real removed or added line starts with. Classed the same
+    # as "del"/"add", style.js's full-row background gave the file's own
+    # name the same weight as an actual change (shipped 2026-09-29, caught
+    # comparing the create-version dialog against its mockup pixel for
+    # pixel - the mockup colours these two lines' text and nothing else).
+    html = _render_diff(tmp_path_factory, "--- before\n+++ after\n-old\n+new")
+    assert html == (
+        "<pre>"
+        '<span class="hdr-del">--- before</span>'
+        '<span class="hdr-add">+++ after</span>'
         '<span class="del">-old</span>'
         '<span class="add">+new</span>'
         "</pre>"

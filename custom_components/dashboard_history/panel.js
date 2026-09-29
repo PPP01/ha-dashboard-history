@@ -65,7 +65,7 @@ const DETAILS_KEPT = PAGE;
 // and the shadow root attached, but `set hass` never fired once in
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
-let escape, renderDiff, renderPlain, when, joinNames;
+let escape, renderDiff, renderPlain, when, whenRange, joinNames;
 let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton;
 let DIALOGS;
 let renderSimple, steps, spanOf;
@@ -80,7 +80,7 @@ const partsReady = Promise.all([
   import(`./panel/sidebar.js${PARTS}`),
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
-  ({ escape, renderDiff, renderPlain, when, joinNames } = render);
+  ({ escape, renderDiff, renderPlain, when, whenRange, joinNames } = render);
   ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple, steps, spanOf } = simple);
@@ -2806,6 +2806,15 @@ class DashboardHistoryPanel extends HTMLElement {
       dialog.querySelector("[data-pending-summary]").textContent =
         pending.length === 1 ? "1 pending change" : `${pending.length} pending changes`;
       dialog.querySelector("[data-pending-body]").innerHTML = steps(pending);
+      // The count again, in the label's own words rather than the tab's -
+      // "changes" here, not "pending changes", because this line already
+      // sits under a heading that says "Included" and doesn't need the
+      // word twice - plus the span the count covers, which the tab alone
+      // never said at all.
+      const timestamps = pending.map((change) => change.timestamp);
+      dialog.querySelector("[data-pending-range]").textContent =
+        `${pending.length === 1 ? "1 change" : `${pending.length} changes`} · ` +
+        whenRange(Math.min(...timestamps), Math.max(...timestamps));
     }
     // The same span, as an exact diff rather than words. Fetched without
     // `_guard`: `_guard` re-renders, which would replace this very
@@ -2866,6 +2875,14 @@ class DashboardHistoryPanel extends HTMLElement {
     );
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
+    const creates = dialog.querySelector("[data-creates]");
+    // Said once here and kept current below, rather than worked out
+    // again at submit time: the number on the pressed button is exactly
+    // what `create_version` is about to be asked to make, so this is the
+    // one place that can say it ahead of the click without guessing.
+    const updateCreates = () => {
+      creates.textContent = candidates[level] ? `Creates ${candidates[level]}` : "";
+    };
     buttons.forEach((button) => {
       const which = button.dataset.level;
       button.querySelector("strong").textContent = shortName(
@@ -2873,6 +2890,7 @@ class DashboardHistoryPanel extends HTMLElement {
       );
       button.setAttribute("aria-pressed", String(which === level));
     });
+    updateCreates();
     // One listener on the group rather than three on the buttons. Not
     // because they would pile up - _guard re-renders before this line, so
     // the dialog is a fresh element every time - but because relying on
@@ -2887,6 +2905,7 @@ class DashboardHistoryPanel extends HTMLElement {
           String(other.dataset.level === level),
         ),
       );
+      updateCreates();
     });
     const title = dialog.querySelector("input.title");
     const description = dialog.querySelector("textarea.desc");

@@ -27,13 +27,23 @@ export const renderDiff = (diff) => {
   const body = diff
     .split("\n")
     .map((line) => {
-      const cls = line.startsWith("+")
-        ? "add"
-        : line.startsWith("-")
-          ? "del"
-          : line.startsWith("@@")
-            ? "at"
-            : "";
+      // The two file markers first, and not folded into the plain
+      // "+"/"-" checks below: unified diff spells them "---"/"+++",
+      // which both start with a single "+" or "-" too, and without this
+      // the file's own name got the same full-row block a changed line
+      // gets - reading as one more change in the list rather than as
+      // the header sitting above all of them.
+      const cls = line.startsWith("+++")
+        ? "hdr-add"
+        : line.startsWith("---")
+          ? "hdr-del"
+          : line.startsWith("+")
+            ? "add"
+            : line.startsWith("-")
+              ? "del"
+              : line.startsWith("@@")
+                ? "at"
+                : "";
       return `<span${cls ? ` class="${cls}"` : ""}>${escape(line)}</span>`;
     })
     .join("");
@@ -86,3 +96,24 @@ export const when = (timestamp) =>
     dateStyle: "medium",
     timeStyle: "short",
   });
+
+/**
+ * A span of time as one line: one date and two times where both ends
+ * fall on the same day, `when(from) – when(to)` where they do not - the
+ * create-version dialog's own pending span usually opens and closes
+ * within minutes of each other, and repeating the date on both sides of
+ * the dash reads as a stutter where it never changed.
+ */
+export const whenRange = (fromTimestamp, toTimestamp) => {
+  const from = new Date(fromTimestamp * 1000);
+  const to = new Date(toTimestamp * 1000);
+  const sameDay =
+    from.getFullYear() === to.getFullYear() &&
+    from.getMonth() === to.getMonth() &&
+    from.getDate() === to.getDate();
+  if (!sameDay) return `${when(fromTimestamp)} – ${when(toTimestamp)}`;
+  const date = from.toLocaleDateString(undefined, { dateStyle: "medium" });
+  const time = (value) =>
+    value.toLocaleTimeString(undefined, { timeStyle: "short" });
+  return `${date}, ${time(from)} – ${time(to)}`;
+};

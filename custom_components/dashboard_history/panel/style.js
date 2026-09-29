@@ -39,7 +39,17 @@ export const STYLE = `
        controls in this panel stay one thing. The fallbacks are the
        light values it had before, so a Home Assistant that sets none
        of these looks exactly as it did. */
-    --sc-bg: var(--secondary-background-color, #f1f5f9);
+    /* Halfway between the two backgrounds Home Assistant sets, not
+       either one straight: on a real installation (2026-09-29)
+       --primary-background-color reads as too pale a track for a
+       raised pill to sit on, and --secondary-background-color a shade
+       too dark for a control this quiet. color-mix keeps it theme-aware
+       rather than pinning a colour neither variable actually holds. */
+    --sc-bg: color-mix(
+      in srgb,
+      var(--primary-background-color, #f5f5f5),
+      var(--secondary-background-color, #e5e5e5)
+    );
     --sc-border: var(--divider-color, #e2e8f0);
     --sc-text-muted: var(--secondary-text-color, #64748b);
     --sc-text-active: var(--primary-text-color, #0f172a);
@@ -769,6 +779,14 @@ export const STYLE = `
     background: rgba(224, 224, 224, 0.45);
     background: color-mix(in srgb, var(--divider-color, #e0e0e0) 45%, transparent);
   }
+  /* The "---"/"+++" file markers: coloured the same as a real add or
+     del line so the sign still reads at a glance, but with no block of
+     their own - they name the file the diff is about, not a line that
+     changed, and a full-row tint the same weight as an actual change
+     read as one more change in the list rather than as the header
+     sitting above all of them. */
+  pre .hdr-add { color: var(--success-color, #0f9d58); }
+  pre .hdr-del { color: var(--error-color, #db4437); }
   /* The create-version dialog's own switch between the plain-language
      span and its exact diff (GitHub issue #15, redesigned 2026-09-29):
      one row, a muted label and one pill-shaped segmented control - the
@@ -778,7 +796,7 @@ export const STYLE = `
      click on the pressed one collapses both bodies) - unlike the
      independent details.raw pairs above, which can both be open
      together, this pair cannot show both bodies at once. */
-  .switcher { margin: 8px 0; }
+  .switcher { margin: 20px 0; }
   .switcher-bar {
     display: flex;
     align-items: center;
@@ -786,6 +804,7 @@ export const STYLE = `
     flex-wrap: wrap;
     gap: 8px;
   }
+  .switcher-heading { display: flex; flex-direction: column; gap: 2px; }
   .switcher-label {
     color: var(--secondary-text-color, #727272);
     font-size: 11px;
@@ -793,6 +812,62 @@ export const STYLE = `
     letter-spacing: .06em;
     text-transform: uppercase;
   }
+  .switcher-range { margin: 0; font-size: 12.5px; }
+  /* The span's content itself, revealed under whichever tab is pressed:
+     a bordered, rounded card so the pill it hangs from reads as the lid
+     of a box rather than a label floating over bare dialog background -
+     the live version had neither a border nor a background here before
+     2026-09-29 and the diff's <pre> (render.js) supplied its own
+     instead, leaving a gap of plain dialog background above its first
+     line. Reset to flush against this card's own padding now that the
+     card carries the border and the background both. */
+  .switcher-body {
+    margin-top: 8px;
+    padding: 8px 14px;
+    border: 1px solid var(--sc-border);
+    border-radius: 8px;
+    background: var(--card-background-color, #fff);
+    max-height: 260px;
+    overflow: auto;
+  }
+  /* The diff keeps its own horizontal padding rather than inheriting
+     the card's, and at exactly the generic pre rule's own 12px
+     (style.js above): the shared pre-span rule bleeds a line's colour
+     into that padding by the same 12px, on the assumption that the
+     padding it is cancelling is the pre's own - true for every other
+     pre in this file, and only true here once the card stops supplying
+     it instead. Get this wrong and the colour stops a few pixels short
+     of the border on every line, which is what shipped on 2026-09-29
+     before somebody compared it against the mockup pixel for pixel.
+
+     No vertical padding at all, unlike the generic rule: the mockup's
+     first line sits right under the card's own top border, and a
+     top/bottom inset the span-bleed trick above never reaches (it is
+     margin on the *sides* only) left a bar of plain background there
+     instead - background, not "white", now that the line below fixes
+     what that plain background actually is.
+
+     max-height and overflow reset for the second reason this pre is
+     not the generic one: the generic rule also caps it at 400px with
+     its own scrollbar, nested inside the card's, which already caps
+     and scrolls at 260px - two scrollbars for one span of text where a
+     person expects one. */
+  .switcher-body:has(pre) { padding: 0; }
+  .switcher-body pre {
+    margin: 0;
+    padding: 12px;
+    border: 0;
+    /* The same base every other diff in this panel sits on (the
+       generic pre rule above) - not "none": leaving it transparent
+       showed the card's white through every unclassed context line and
+       through this padding, which is exactly the white the mockup has
+       nowhere in its diff area. */
+    background: var(--primary-background-color, #f5f5f5);
+    max-height: none;
+    overflow: visible;
+  }
+  .switcher-body .step { margin-top: 10px; }
+  .switcher-body .step:first-child { margin-top: 0; }
   .switcher-tabs {
     display: flex;
     gap: 2px;
@@ -824,10 +899,26 @@ export const STYLE = `
     display: inline-block;
     transition: transform .15s ease;
   }
+  /* The inset ring, not just the background swap, is what actually
+     marks the pressed segment - checked against a real Home Assistant
+     dark theme (2026-09-29), where --card-background-color and the
+     track's own --sc-bg sit a handful of hex values apart (#1c1c1c
+     against roughly #191919): a contrast that reads clearly in a light
+     theme (card white against a light-grey track) nearly vanishes once
+     both sides are dark greys of similar depth, and the soft drop
+     shadow beside it is just as invisible dark-on-dark. --sc-accent is
+     the one token that does not move with theme darkness the same way
+     backgrounds do - a theme's own accent hue keeps its chroma against
+     both light and dark surfaces - so the ring is built from that
+     instead, at low enough alpha to stay a quiet detail where the
+     background contrast already works. The same ring goes on every
+     control sharing these tokens (.levels button and
+     .segmented-control__glider below), for the same reason. */
   .switcher-tab[aria-pressed="true"] {
     background: var(--sc-card-active);
     color: var(--primary-text-color, #37474f);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
+      inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
   }
   .switcher-tab[aria-pressed="true"]::after { transform: rotate(180deg); }
   @media (max-width: 600px) {
@@ -1059,7 +1150,7 @@ export const STYLE = `
   .levels {
     display: flex;
     gap: 2px;
-    margin: 12px 0;
+    margin: 16px 0;
     padding: 2px;
     background: var(--sc-bg);
     border: 1px solid var(--sc-border);
@@ -1080,7 +1171,8 @@ export const STYLE = `
   }
   .levels button[aria-pressed="true"] {
     background: var(--sc-card-active);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
+      inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
   }
   .levels button strong { font-family: monospace; font-size: 15px; }
   .levels button span {
@@ -1116,7 +1208,8 @@ export const STYLE = `
     width: calc((100% - 4px) / 2);
     background-color: var(--sc-card-active);
     border-radius: 6px;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
+      inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
     pointer-events: none;
     z-index: 1;
     transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
