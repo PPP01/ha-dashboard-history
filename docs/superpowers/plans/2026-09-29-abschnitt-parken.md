@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-29-abschnitt-parken-design.md` (Commit `5a3f8b5`). Die Spec ist verbindlich; bei Widerspruch gilt sie, nicht dieser Plan.
 
+> **Nachtrag vom 2026-09-29 (nach dem Ausprobieren):** Die hier beschriebene Umsetzung parkt die Karten einer Section **einzeln**. Das wurde nach dem Test auf `test-sections` als unbrauchbar erkannt und umgebaut: Die ganze Section kommt als *eine* Grid-Karte in `cards:` (Spec, Entscheidung 8). Die Aufgaben 1 und 2 und die Zählung `max(0, deleted − back)` sind in diesem Punkt überholt; maßgeblich sind Spec und Code. Der Rest (Sperre bei Kartenereignissen, Doppel-Schutz, Reihenfolge der Prüfungen) gilt weiter.
+
 ## Global Constraints
 
 - Der Kern (`analyze/`, `restore.py`, …) bleibt frei von Home Assistant; `restore.py` importiert `analyze` **nicht** zur Laufzeit (nur unter `TYPE_CHECKING`). Deshalb zählt `restore.py` keine Fingerabdrücke.

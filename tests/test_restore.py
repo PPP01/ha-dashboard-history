@@ -851,14 +851,23 @@ def test_a_section_whose_neighbours_changed_parks():
     assert restore.parks(today, item) is True
 
 
-def test_a_section_parks_into_the_view_cards_as_one_block_in_order():
+def test_a_section_parks_into_the_view_cards_as_one_grid_card():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     new = _sections({"cards": [C]})
     item = _removed_section(old, new)
     today = _sections({"cards": [C]}, {"cards": [A]})
     result = restore.park(today, item)
-    assert result["views"][0]["cards"] == [A, B]
+    assert result["views"][0]["cards"] == [{"type": "grid", "cards": [A, B]}]
     assert result["views"][0]["sections"] == today["views"][0]["sections"]
+
+
+def test_a_section_keeps_its_own_settings_when_parked():
+    old = _sections({"type": "grid", "column_span": 2, "cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    assert restore.park(today, item)["views"][0]["cards"] == [
+        {"type": "grid", "column_span": 2, "cards": [A, B]}
+    ]
 
 
 def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_parks():
@@ -873,8 +882,19 @@ def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_parks():
     item = next(i for i in analyze.find_removed(old, today) if i.kind == "section")
     assert restore.parks(today, item) is True
     parked = restore.park(today, item)
-    assert parked["views"][0]["cards"] == [A]
-    assert [i for i in analyze.find_removed(old, parked) if i.kind == "section"] == []
+    assert parked["views"][0]["cards"] == [{"type": "grid", "cards": [A]}]
+
+
+def test_a_section_already_parked_is_refused_the_second_time():
+    """Its cards are nested in the parked grid card now, so `find_removed`
+    keeps offering it; the second click must not add a second copy."""
+    old = _sections({"cards": [A]}, {"cards": [B]}, {"cards": [C]})
+    today = _sections({"cards": [C]}, {"cards": [B]})
+    item = next(i for i in analyze.find_removed(old, today) if i.kind == "section")
+    parked = restore.park(today, item)
+    again = next(i for i in analyze.find_removed(old, parked) if i.kind == "section")
+    with pytest.raises(LookupError, match="already sits"):
+        restore.park(parked, again)
 
 
 def test_parking_a_section_leaves_the_input_alone():
@@ -891,7 +911,7 @@ def test_parking_a_section_creates_cards_when_null():
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": [A]})
     today["views"][0]["cards"] = None
-    assert restore.park(today, item)["views"][0]["cards"] == [A, B]
+    assert restore.park(today, item)["views"][0]["cards"] == [{"type": "grid", "cards": [A, B]}]
 
 
 def test_parking_a_section_appends_after_cards_already_there():
@@ -899,7 +919,7 @@ def test_parking_a_section_appends_after_cards_already_there():
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": []})
     today["views"][0]["cards"] = [C]
-    assert restore.park(today, item)["views"][0]["cards"] == [C, A, B]
+    assert restore.park(today, item)["views"][0]["cards"] == [C, {"type": "grid", "cards": [A, B]}]
 
 
 def test_parking_a_section_into_a_cards_that_is_no_list_refuses():

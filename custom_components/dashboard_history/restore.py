@@ -298,9 +298,8 @@ def _section_parks(config: dict, item: RemovedItem) -> bool:
 
     The same footing as a card: a sections view named by a path, and the
     gap the section left no longer the only one it fits. Anything else is
-    `reinsert`'s to answer, refusals included. Whether the section's cards
-    already stand is not asked here: `find_removed` does not offer a
-    section then.
+    `reinsert`'s to answer, refusals included. Whether the section is
+    parked already is `park`'s to refuse.
     """
     if item.view_path is None or _paths_share(config):
         return False
@@ -364,18 +363,18 @@ def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
 def park(config: dict, item: RemovedItem) -> dict:
     """Return a new configuration with `item` at the end of "Imported cards".
 
-    A removed section brings its cards, as one block and in order
-    (GitHub #39); its own settings do not come along, since there is no
-    section to hold them.
+    A removed section goes in whole, as the one grid card it already is
+    (GitHub #39): however many cards it held, they come back together
+    and can be dragged into a section at once. A section already parked
+    there is refused instead of parked a second time - `find_removed`
+    keeps offering it, since its cards are no longer top-level ones.
     """
     result = copy.deepcopy(config)
     cards = _park_for(result.get("views") or [], item)
-    if item.kind != "section":
-        cards.append(copy.deepcopy(item.payload))
-        return result
-    # `find_removed` offers only a section whose cards it proved gone, so
-    # the list is there and not empty.
-    cards.extend(copy.deepcopy(item.payload["cards"]))
+    card = {"type": "grid", **item.payload} if item.kind == "section" else item.payload
+    if item.kind == "section" and card in cards:
+        raise LookupError(f"the section {item.label} already sits in this view's Imported cards")
+    cards.append(copy.deepcopy(card))
     return result
 
 

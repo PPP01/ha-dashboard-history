@@ -150,46 +150,38 @@ def _park_removed_section(
     current_index: int,
     removed: SectionSlot,
 ) -> tuple[UndoStep, ...]:
-    """The cards of a removed section, parked in the view's "Imported cards".
+    """The removed section, parked whole in the view's "Imported cards".
 
     GitHub #39, decision 26 for a whole section: where the section stood
-    can no longer be proven, so its cards go to the end of `cards:` -
-    one step each, the form `apply_undo` already writes for a parked
-    card. Idempotent like the card path: per card, as many copies as
-    the change took from the view and are not back since. Nothing is
-    ever refused here - only added, so a copy too many is the lesser
-    harm, and which of several alike is missing does not matter.
+    can no longer be proven, so it goes to the end of `cards:` as one
+    card. A section is `{type: grid, cards: [...]}` - a grid card as it
+    stands - so nothing of it is lost and it is one drag away from being
+    a section again, however many cards it held. Idempotent like the
+    card path: a byte-identical card already in the view (parked by an
+    earlier undo, or placed by hand) means this part is undone either
+    way. Nothing is ever refused here - only added.
 
     Reads `ctx.card_now`/`ctx.card_then` here, earlier than the cards
     planner would - both are cached, and only on this path, so no
     entry in `_COMPUTED_BEFORE["sections"]` is needed.
     """
-    cards = removed.section["cards"]
-    marks = [fingerprint(card) for card in cards]
-    missing = {
-        mark: max(0, marks.count(mark) - _card_came_back(ctx, mark, key))
-        for mark in set(marks)
-    }
-    steps: list[UndoStep] = []
-    for position, (card, mark) in enumerate(zip(cards, marks)):
-        if missing[mark] == 0:
-            continue
-        missing[mark] -= 1
-        steps.append(
-            UndoStep(
-                action="insert",
-                kind="card",
-                view_path=current_view.get("path"),
-                view_index=current_index,
-                location=("cards",),
-                index=position,
-                expect=None,
-                payload=copy.deepcopy(card),
-                label=_describe(card),
-                parked=True,
-            )
-        )
-    return tuple(steps)
+    card = {"type": "grid", **removed.section}
+    if _card_came_back(ctx, fingerprint(card), key) > 0:
+        return ()
+    return (
+        UndoStep(
+            action="insert",
+            kind="card",
+            view_path=current_view.get("path"),
+            view_index=current_index,
+            location=("cards",),
+            index=removed.index,
+            expect=None,
+            payload=copy.deepcopy(card),
+            label=_section_title(removed.section, removed.index),
+            parked=True,
+        ),
+    )
 
 
 def _card_events_in(ctx: UndoContext, key: Any) -> bool:

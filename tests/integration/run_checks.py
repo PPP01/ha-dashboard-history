@@ -2859,6 +2859,8 @@ async def run_section_parking(access: str) -> None:
     b = {"type": "markdown", "content": "B"}
     c = {"type": "markdown", "content": "C"}
 
+    grid_a = {"type": "grid", "cards": [a]}
+
     def sections(*blocks):
         return {
             "views": [
@@ -2927,16 +2929,16 @@ async def run_section_parking(access: str) -> None:
 
         asked = await undo(key, revision)
         live = await socket.call("lovelace/config", url_path=key)
-        # The label is read, not guessed: `_describe` drops a markdown
-        # heading mark, so the card "A" is "markdown: A".
+        # The whole section goes in as one grid card (GitHub #39), named
+        # by the section's own title: "section 1", as it has no heading.
         check(
             "the undo of a removed section is available, parked",
-            asked.get("available") is True and asked.get("parked") == ["markdown: A"],
+            asked.get("available") is True and asked.get("parked") == ["section 1"],
             asked.get("reason") or f"parked={asked.get('parked')!r}",
         )
         check(
             "the card sits in cards: and the sections are untouched",
-            live["views"][0].get("cards") == [a] and len(live["views"][0]["sections"]) == 2,
+            live["views"][0].get("cards") == [grid_a] and len(live["views"][0]["sections"]) == 2,
             f"cards={live['views'][0].get('cards')!r}",
         )
 
@@ -2945,7 +2947,7 @@ async def run_section_parking(access: str) -> None:
         live = await socket.call("lovelace/config", url_path=key)
         check(
             "a second undo of the same change adds nothing",
-            live["views"][0].get("cards") == [a],
+            live["views"][0].get("cards") == [grid_a],
             f"cards={live['views'][0].get('cards')!r}",
         )
         await drop(key)
@@ -2987,7 +2989,7 @@ async def run_section_parking(access: str) -> None:
             and not answer.get("error")
             and answer.get("parked") == [label]
             and written.get("applied") is True
-            and live["views"][0].get("cards") == [a],
+            and live["views"][0].get("cards") == [grid_a],
             answer.get("error") or written.get("error")
             or f"parked={answer.get('parked')!r}, cards={live['views'][0].get('cards')!r}",
         )
