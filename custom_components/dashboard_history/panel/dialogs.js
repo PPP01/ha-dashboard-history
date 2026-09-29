@@ -129,6 +129,10 @@ export const DIALOGS = `
         <summary data-pending-summary></summary>
         <div data-pending-body></div>
       </details>
+      <details class="raw" data-technical hidden>
+        <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
+        <div data-technical-body></div>
+      </details>
       <div class="levels">
         <button type="button" data-level="patch" aria-pressed="true">
           <strong></strong><span>Patch</span>

@@ -5845,6 +5845,91 @@ def test_the_version_dialog_uses_singular_wording_for_one_change(pending_changes
     assert one["summary"] == "1 pending change"
 
 
+# -- the create-version dialog offers the diff behind the pending span -----
+
+_TECHNICAL_DETAILS = """
+const changes = [
+  { revision: "c", message: "3rd card added", versions: [] },
+  { revision: "b", message: "2nd card added", versions: [] },
+  { revision: "a", message: "1st card added", versions: [{ name: "dash/v1.0.0" }] },
+];
+const dialogFor = async (current) => {
+  const calls = [];
+  const el = new Panel();
+  el._render = () => {};
+  el._selected = "dash";
+  el._changes = changes;
+  el.shadowRoot = node();
+  el._reloadAfterWrite = async () => null;
+  el._call = (type, extra) => {
+    calls.push({ type, extra });
+    if (type === "next_versions") {
+      const candidates = { patch: "dash/v1.0.1" };
+      if (current) candidates.current = current;
+      return Promise.resolve({ candidates });
+    }
+    if (type === "compare") {
+      return Promise.resolve({ diff: "--- before\\n+++ after\\n@@ -1 +1 @@\\n-old\\n+new\\n" });
+    }
+    return Promise.resolve({ created: "dash/v1.0.1" });
+  };
+  const versioning = el._createVersion("c");
+  await settle();
+  const dialog = el.shadowRoot.querySelector("dialog.version");
+  const facts = {
+    hidden: dialog.querySelector("[data-technical]").hidden,
+    body: dialog.querySelector("[data-technical-body]").innerHTML,
+    compareCall: calls.find((c) => c.type === "compare") || null,
+  };
+  dialog.close("create");
+  await versioning;
+  return facts;
+};
+
+// A prior version exists: the span has something to be diffed against.
+const withVersion = await dialogFor("dash/v1.0.0");
+
+// No prior version at all: nothing to diff against, same as the first
+// recorded state elsewhere in the panel.
+const withoutVersion = await dialogFor(null);
+
+console.log(JSON.stringify({ withVersion, withoutVersion }));
+"""
+
+
+@pytest.fixture(scope="session")
+def technical_details(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "technical_details", _TECHNICAL_DETAILS)
+
+
+def test_the_version_dialog_shows_technical_details_for_the_pending_span(
+    technical_details,
+):
+    # The same span the pending-changes bubble already counts, handed to
+    # the already-existing `compare` command exactly as the compare
+    # dialog and the row detail expander already call it - no new
+    # backend command for what the panel can already ask for.
+    with_version = technical_details["withVersion"]
+    assert with_version["hidden"] is False
+    assert "new" in with_version["body"]
+    assert with_version["compareCall"]["extra"] == {
+        "dashboard": "dash",
+        "revision_a": "dash/v1.0.0",
+        "revision_b": "c",
+    }
+
+
+def test_the_version_dialog_hides_technical_details_without_a_prior_version(
+    technical_details,
+):
+    # An empty diff - here, none to even ask for - stays an empty
+    # bubble rather than a hollow "no difference" note (panel.js's own
+    # rule for the row detail expander).
+    without_version = technical_details["withoutVersion"]
+    assert without_version["hidden"] is True
+    assert without_version["compareCall"] is None
+
+
 # -- today is the installation's day, not the browser's --------------------
 #
 # The restore dialog offers to keep the state it replaces and fills the

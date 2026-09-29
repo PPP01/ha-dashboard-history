@@ -2791,6 +2791,33 @@ class DashboardHistoryPanel extends HTMLElement {
         pending.length === 1 ? "1 pending change" : `${pending.length} pending changes`;
       dialog.querySelector("[data-pending-body]").innerHTML = steps(pending);
     }
+    // The same span, as an exact diff rather than words. Fetched without
+    // `_guard`: `_guard` re-renders, which would replace this very
+    // `dialog` out from under the code below it (the reason the numbers
+    // above are fetched before `dialog` is ever read) - and the fetch is
+    // a bonus on top of an already-open dialog, not something worth
+    // making Create wait for. Left unresolved when there is no prior
+    // version to diff against (the dashboard's very first version, with
+    // nothing `compare` could be asked to treat as "before anything
+    // existed") or when the request fails: either way an empty bubble,
+    // not a hollow "no difference" note (the row detail expander's own
+    // rule, `technical` above).
+    const technicalDetails = dialog.querySelector("[data-technical]");
+    technicalDetails.hidden = true;
+    if (pending.length && candidates.current) {
+      this._call("compare", {
+        dashboard: asked,
+        revision_a: candidates.current,
+        revision_b: change.revision,
+      })
+        .then((comparison) => {
+          if (!mine() || !comparison?.diff) return;
+          technicalDetails.hidden = false;
+          dialog.querySelector("[data-technical-body]").innerHTML =
+            renderDiff(comparison.diff);
+        })
+        .catch(() => {});
+    }
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
     buttons.forEach((button) => {
