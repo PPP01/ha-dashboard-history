@@ -2836,15 +2836,15 @@ class DashboardHistoryPanel extends HTMLElement {
     }
     // The two views of the same pending span switch each other off -
     // unlike the independent <details class="raw"> pairs elsewhere in
-    // the panel, only one of "changes" and "Technical details" is ever
-    // on screen at once. Plain toggle buttons (aria-pressed), not a
-    // full ARIA tabs pattern - there is no keyboard roving-tabindex
-    // navigation here, and claiming role="tab" without it would be
-    // worse than claiming nothing. Reset on every open: the dialog
-    // element can outlive several openings (_render never runs while a
-    // dialog is open), and a tab left on "technical" from the last
-    // time would otherwise greet the next change with the diff instead
-    // of the plain-language span.
+    // the panel, opening one closes the other, and pressing the one
+    // already open closes it too (both collapsed, same as the plain
+    // <details> this replaced started out). Plain toggle buttons
+    // (aria-pressed), not a full ARIA tabs pattern - there is no
+    // keyboard roving-tabindex navigation here, and claiming role="tab"
+    // without it would be worse than claiming nothing. Reset on every
+    // open: the dialog element can outlive several openings (_render
+    // never runs while a dialog is open), and a tab left open from the
+    // last time would otherwise greet the next change already expanded.
     const pendingTab = dialog.querySelector("[data-pending-tab]");
     const pendingBody = dialog.querySelector("[data-pending-body]");
     const technicalBody = dialog.querySelector("[data-technical-body]");
@@ -2857,9 +2857,13 @@ class DashboardHistoryPanel extends HTMLElement {
       pendingBody.hidden = which !== "pending";
       technicalBody.hidden = which !== "technical";
     };
-    selectTab("pending");
-    pendingTab.addEventListener("click", () => selectTab("pending"));
-    technicalDetails.addEventListener("click", () => selectTab("technical"));
+    selectTab("none");
+    pendingTab.addEventListener("click", () =>
+      selectTab(pendingTab.getAttribute("aria-pressed") === "true" ? "none" : "pending"),
+    );
+    technicalDetails.addEventListener("click", () =>
+      selectTab(technicalDetails.getAttribute("aria-pressed") === "true" ? "none" : "technical"),
+    );
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
     buttons.forEach((button) => {

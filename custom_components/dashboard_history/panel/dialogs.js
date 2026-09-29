@@ -146,7 +146,7 @@ export const DIALOGS = `
           <span class="switcher-label">Included</span>
           <div class="switcher-tabs">
             <button type="button" class="switcher-tab" data-pending-tab
-                    aria-pressed="true" aria-controls="version-pending-body">
+                    aria-pressed="false" aria-controls="version-pending-body">
               <span data-pending-summary></span>
             </button>
             <button type="button" class="switcher-tab" data-technical hidden
@@ -155,7 +155,7 @@ export const DIALOGS = `
             </button>
           </div>
         </div>
-        <div class="switcher-body" data-pending-body id="version-pending-body"></div>
+        <div class="switcher-body" data-pending-body id="version-pending-body" hidden></div>
         <div class="switcher-body" data-technical-body id="version-technical-body" hidden></div>
       </div>
     </div>

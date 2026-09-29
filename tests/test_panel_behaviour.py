@@ -6113,11 +6113,15 @@ def test_the_version_dialogs_real_markup_has_a_toggle_pair_not_details(
     assert "<details" not in version_dialog
     assert "data-pending-tab" in version_dialog
     assert "data-technical" in version_dialog
-    assert 'aria-pressed="true"' in version_dialog
-    assert 'aria-pressed="false"' in version_dialog
+    switcher_tabs = version_dialog.split('<div class="switcher-tabs">')[1].split(
+        "</div>"
+    )[0]
+    # Both start unpressed - the dialog opens with both bodies
+    # collapsed, matching the reference mockup's resting state.
+    assert switcher_tabs.count('aria-pressed="false"') == 2
 
 
-# -- the two views switch each other off, not open independently -----------
+# -- the two views switch each other off, and either collapses alone -------
 
 _TAB_SWITCH = """
 const changes = [{ revision: "c", message: "3rd card added", versions: [] }];
@@ -6150,14 +6154,27 @@ const state = () => ({
 const opened = state();
 
 technicalTab._on.click();
-const afterTechnical = state();
+const afterOpeningTechnical = state();
+
+// A second press of the same, already-pressed tab collapses it - the
+// whole switcher goes back to the state it opened in, not to some
+// third, always-one-open state.
+technicalTab._on.click();
+const afterClosingTechnical = state();
 
 pendingTab._on.click();
-const afterPending = state();
+const afterOpeningPending = state();
 
-// Left on "technical" on the way out, on purpose - the next open must
-// not remember it.
+pendingTab._on.click();
+const afterClosingPending = state();
+
+// Opening one while the other is already open switches rather than
+// showing both. Left open on the way out, on purpose - the next open
+// must not remember it.
+pendingTab._on.click();
 technicalTab._on.click();
+const afterSwitchingWhileOpen = state();
+
 dialog.close("create");
 await first;
 
@@ -6167,7 +6184,10 @@ const reopened = state();
 dialog.close("create");
 await second;
 
-console.log(JSON.stringify({ opened, afterTechnical, afterPending, reopened }));
+console.log(JSON.stringify({
+  opened, afterOpeningTechnical, afterClosingTechnical,
+  afterOpeningPending, afterClosingPending, afterSwitchingWhileOpen, reopened,
+}));
 """
 
 
@@ -6176,35 +6196,56 @@ def tab_switch(tmp_path_factory):
     return _run_in_node(tmp_path_factory, "tab_switch", _TAB_SWITCH)
 
 
-def test_the_version_dialog_opens_on_the_plain_language_tab(tab_switch):
+def test_the_version_dialog_opens_with_both_views_collapsed(tab_switch):
     assert tab_switch["opened"] == {
-        "pendingPressed": "true",
+        "pendingPressed": "false",
         "technicalPressed": "false",
-        "pendingHidden": False,
+        "pendingHidden": True,
         "technicalHidden": True,
     }
 
 
-def test_the_version_dialogs_two_tabs_show_exactly_one_panel_at_a_time(tab_switch):
-    assert tab_switch["afterTechnical"] == {
+def test_a_pressed_tab_collapses_again_on_a_second_click(tab_switch):
+    assert tab_switch["afterOpeningTechnical"] == {
         "pendingPressed": "false",
         "technicalPressed": "true",
         "pendingHidden": True,
         "technicalHidden": False,
     }
-    assert tab_switch["afterPending"] == {
+    assert tab_switch["afterClosingTechnical"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "false",
+        "pendingHidden": True,
+        "technicalHidden": True,
+    }
+    assert tab_switch["afterOpeningPending"] == {
         "pendingPressed": "true",
         "technicalPressed": "false",
         "pendingHidden": False,
         "technicalHidden": True,
     }
+    assert tab_switch["afterClosingPending"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "false",
+        "pendingHidden": True,
+        "technicalHidden": True,
+    }
+
+
+def test_opening_one_tab_switches_away_from_the_other(tab_switch):
+    assert tab_switch["afterSwitchingWhileOpen"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "true",
+        "pendingHidden": True,
+        "technicalHidden": False,
+    }
 
 
 def test_reopening_the_version_dialog_forgets_the_last_open_tab(tab_switch):
     assert tab_switch["reopened"] == {
-        "pendingPressed": "true",
+        "pendingPressed": "false",
         "technicalPressed": "false",
-        "pendingHidden": False,
+        "pendingHidden": True,
         "technicalHidden": True,
     }
 

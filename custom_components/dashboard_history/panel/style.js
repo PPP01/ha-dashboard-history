@@ -771,9 +771,13 @@ export const STYLE = `
   }
   /* The create-version dialog's own switch between the plain-language
      span and its exact diff (GitHub issue #15, redesigned 2026-09-29):
-     one row, a muted label and two pill-shaped toggle buttons, exactly
-     one of them pressed at a time - unlike the independent
-     details.raw pairs above, which can both be open together. */
+     one row, a muted label and one pill-shaped segmented control - the
+     same flat-track-plus-raised-segment look as .levels and
+     .segmented-control above, not two separate floating buttons.
+     Either segment can be pressed, the other, or neither (a second
+     click on the pressed one collapses both bodies) - unlike the
+     independent details.raw pairs above, which can both be open
+     together, this pair cannot show both bodies at once. */
   .switcher { margin: 8px 0; }
   .switcher-bar {
     display: flex;
@@ -789,23 +793,28 @@ export const STYLE = `
     letter-spacing: .06em;
     text-transform: uppercase;
   }
-  .switcher-tabs { display: flex; gap: 8px; }
+  .switcher-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--sc-bg);
+    border: 1px solid var(--sc-border);
+    border-radius: 999px;
+  }
   .switcher-tab {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 14px;
-    border: 1px solid rgba(98, 114, 128, 0.35);
-    border: 1px solid color-mix(in srgb, var(--divider-color, #dfe3e8) 50%, var(--secondary-text-color, #727272) 50%);
-    border-radius: 18px;
-    background: var(--secondary-background-color, #eceff1);
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
     color: var(--secondary-text-color, #607d8b);
     font: inherit;
     font-size: 13.5px;
     font-weight: 500;
     cursor: pointer;
   }
-  .switcher-tab:hover { background: var(--divider-color, #e7ebee); }
   .switcher-tab .glyph { font-family: monospace; font-size: 12px; }
   .switcher-tab::after {
     content: "\\25BC";
@@ -816,9 +825,9 @@ export const STYLE = `
     transition: transform .15s ease;
   }
   .switcher-tab[aria-pressed="true"] {
-    background: var(--card-background-color, #fff);
-    border-color: var(--primary-text-color, #37474f);
+    background: var(--sc-card-active);
     color: var(--primary-text-color, #37474f);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
   }
   .switcher-tab[aria-pressed="true"]::after { transform: rotate(180deg); }
   @media (max-width: 600px) {
