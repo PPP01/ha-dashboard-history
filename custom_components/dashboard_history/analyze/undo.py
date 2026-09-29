@@ -23,6 +23,7 @@ from .matching import (
 )
 from .model import (
     SectionMatching,
+    SectionSlot,
     Slot,
     UndoPlan,
     UndoStep,
@@ -118,6 +119,117 @@ def _step(
 
 
 
+def _rearranged(key: Any, name: str, after_view: dict, current_view: dict) -> str | None:
+    """Why the sections cannot be proven to stand where the change left them.
+
+    Since the change: nothing arrived, went or moved among the sections,
+    so each stands at the index it had after the change. One of them may
+    have been edited since - its identity is then forced, every other
+    one standing byte for byte in its place. Two edited since could as
+    well have swapped places too, and index is no proof of which is
+    which.
+    """
+    since, gone, came = _pair_view_sections(key, 0, after_view, 0, current_view)
+    if gone or came or _moved(since):
+        return (
+            f'the other sections of the view "{name}" were rearranged since, '
+            f"so there is no telling where these go back"
+        )
+    if sum(1 for pair in since if pair.how in ("settings", "cards")) > 1:
+        return (
+            f'more than one section of the view "{name}" was changed since, '
+            f"so which is which can no longer be proven"
+        )
+    return None
+
+
+def _park_removed_section(
+    ctx: UndoContext,
+    key: Any,
+    current_view: dict,
+    current_index: int,
+    removed: SectionSlot,
+) -> tuple[UndoStep, ...]:
+    """The cards of a removed section, parked in the view's "Imported cards".
+
+    GitHub #39, decision 26 for a whole section: where the section stood
+    can no longer be proven, so its cards go to the end of `cards:` -
+    one step each, the form `apply_undo` already writes for a parked
+    card. Idempotent like the card path: per card, as many copies as
+    the change took from the view and are not back since. Nothing is
+    ever refused here - only added, so a copy too many is the lesser
+    harm, and which of several alike is missing does not matter.
+
+    Reads `ctx.card_now`/`ctx.card_then` here, earlier than the cards
+    planner would - both are cached, and only on this path, so no
+    entry in `_COMPUTED_BEFORE["sections"]` is needed.
+    """
+    cards = removed.section["cards"]
+    marks = [fingerprint(card) for card in cards]
+    missing = {
+        mark: max(0, marks.count(mark) - _card_came_back(ctx, mark, key))
+        for mark in set(marks)
+    }
+    steps: list[UndoStep] = []
+    for position, (card, mark) in enumerate(zip(cards, marks)):
+        if missing[mark] == 0:
+            continue
+        missing[mark] -= 1
+        steps.append(
+            UndoStep(
+                action="insert",
+                kind="card",
+                view_path=current_view.get("path"),
+                view_index=current_index,
+                location=("cards",),
+                index=position,
+                expect=None,
+                payload=copy.deepcopy(card),
+                label=_describe(card),
+                parked=True,
+            )
+        )
+    return tuple(steps)
+
+
+def _card_events_in(ctx: UndoContext, key: Any) -> bool:
+    """Whether the change touched a single card of this view.
+
+    Edited, moved, added or removed - the card matching's own answer,
+    wherever the card sat (a section or `cards:`). The removed section's
+    own cards are not among them: `loose_removed` leaves them out.
+    """
+    matching = ctx.matching
+    moves = (*matching.edited, *matching.moved)
+    return any(key in (old.view_key, new.view_key) for old, new in moves) or any(
+        slot.view_key == key for slot in (*matching.loose_added(), *matching.loose_removed())
+    )
+
+
+def _park_instead(
+    refusal: str,
+    ctx: UndoContext | None,
+    key: Any,
+    current_view: dict,
+    current_index: int,
+    removed: list,
+    mixed: bool,
+) -> tuple[UndoStep, ...] | str:
+    """Park the one removed section's cards where the exact undo refuses.
+
+    Only for a view whose change was that one removal and nothing else:
+    `mixed` says a section moved, was reset or arrived, and a single card
+    of the view changed as well. That last one is asked here, not left
+    to `_sections_meet_cards`: with every removed card back, no section
+    step is planned, the gate has no view to protect and would let a
+    partial undo of the card change through. Only from the undo: without
+    `ctx` there is nothing to count against and the refusal stands.
+    """
+    if ctx is None or mixed or len(removed) != 1 or _card_events_in(ctx, key):
+        return refusal
+    return _park_removed_section(ctx, key, current_view, current_index, removed[0])
+
+
 def _plan_sections(
     key: Any,
     before_view: dict,
@@ -125,7 +237,8 @@ def _plan_sections(
     current_view: dict | None,
     current_index: int,
     change: SectionMatching,
-) -> UndoStep | str | None:
+    ctx: UndoContext | None = None,
+) -> UndoStep | tuple[UndoStep, ...] | str | None:
     """The one step that puts a view's sections back, why it cannot, or None.
 
     Decision 15 for sections (GitHub #31). A section has no address but
@@ -134,6 +247,10 @@ def _plan_sections(
     written in one step. `before`'s order says where each goes; today's
     state is where each one's content comes from. What makes that exact
     is asked first, all of it or nothing.
+
+    In a view whose change was one removed section and nothing else, a
+    rearrangement since parks the section's cards instead of refusing
+    (GitHub #39).
     """
     name = _view_name(after_view, key)
     mine = [pair for pair in change.pairs if pair.old.view_key == key]
@@ -158,22 +275,10 @@ def _plan_sections(
             f"state, so an exact undo cannot write them back"
         )
 
-    # Since the change: nothing arrived, went or moved among the sections,
-    # so each stands at the index it had after the change. One of them may
-    # have been edited since - its identity is then forced, every other
-    # one standing byte for byte in its place. Two edited since could as
-    # well have swapped places too, and index is no proof of which is
-    # which.
-    since, gone, came = _pair_view_sections(key, 0, after_view, 0, current_view)
-    if gone or came or _moved(since):
-        return (
-            f'the other sections of the view "{name}" were rearranged since, '
-            f"so there is no telling where these go back"
-        )
-    if sum(1 for pair in since if pair.how in ("settings", "cards")) > 1:
-        return (
-            f'more than one section of the view "{name}" was changed since, '
-            f"so which is which can no longer be proven"
+    refusal = _rearranged(key, name, after_view, current_view)
+    if refusal is not None:
+        return _park_instead(
+            refusal, ctx, key, current_view, current_index, removed, bool(moved or reset or added)
         )
 
     then_sections = _section_list(after_view)
@@ -370,10 +475,13 @@ def _plan_section_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
             ctx.now_views.get(key),
             ctx.now_index.get(key, -1),
             ctx.matching.sections,
+            ctx,
         )
         if isinstance(planned, str):
             return planned
-        if planned is not None:
+        if isinstance(planned, tuple):
+            steps.extend(planned)
+        elif planned is not None:
             steps.append(planned)
     return tuple(steps)
 

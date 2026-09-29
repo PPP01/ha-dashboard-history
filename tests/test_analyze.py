@@ -2460,3 +2460,268 @@ def test_a_section_swap_in_one_view_leaves_cards_in_another_alone():
     assert plan.blocked is None
     assert restore.apply_undo(after, plan) == before
 
+# -- a removed section is parked, not refused (GitHub #39) -----------------
+
+
+def _parked_state(*sections, cards=None, path="home"):
+    view = _sectioned(*sections, path=path)
+    if cards is not None:
+        view["cards"] = cards
+    return {"views": [view]}
+
+
+def test_a_removed_section_is_parked_when_another_came_since():
+    """The case from the ticket, measured on 2026-09-26 (test-2, view a3)."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [(s.action, s.kind, s.location, s.parked) for s in plan.steps] == [
+        ("insert", "card", ("cards",), True)
+    ]
+    assert plan.steps[0].payload == _md("a")
+    assert plan.parked == (analyze._describe(_md("a")),)
+    assert restore.apply_undo(current, plan) == _parked_state(
+        _sec("b"), _sec("n"), cards=[_md("a")]
+    )
+
+
+def test_a_removed_section_is_parked_when_two_others_swapped_since():
+    before = _parked_state(_sec("a"), _sec("b"), _sec("c"))
+    after = _parked_state(_sec("b"), _sec("c"))
+    current = _parked_state(_sec("c"), _sec("b"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.parked == (analyze._describe(_md("a")),)
+
+
+def test_the_cards_of_a_removed_section_are_parked_in_their_old_order():
+    before = _parked_state(_sec("a1", "a2", "a3"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert [s.payload for s in plan.steps] == [_md("a1"), _md("a2"), _md("a3")]
+    assert restore.apply_undo(current, plan)["views"][0]["cards"] == [
+        _md("a1"), _md("a2"), _md("a3")
+    ]
+
+
+def test_a_removed_section_alone_is_still_put_back_exactly():
+    """Nothing rearranged since: the exact step, no asterisk."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    plan = analyze.plan_undo(before, after, after)
+    assert plan.blocked is None
+    assert [s.kind for s in plan.steps] == ["sections_list"]
+    assert plan.parked == ()
+
+
+def test_a_removed_section_and_a_moved_one_in_one_change_still_refuse():
+    before = _parked_state(_sec("a"), _sec("b"), _sec("c"))
+    after = _parked_state(_sec("c"), _sec("a"))
+    current = _parked_state(_sec("c"), _sec("a"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "rearranged since" in plan.blocked
+
+
+def test_an_added_section_that_was_rearranged_since_still_refuses():
+    """Parking is for the removed direction only (decision 4)."""
+    before = _parked_state(_sec("a"))
+    after = _parked_state(_sec("a"), _sec("n"))
+    current = _parked_state(_sec("a"), _sec("n"), _sec("m"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "rearranged since" in plan.blocked
+
+
+def test_two_removed_sections_still_refuse_although_parking_exists():
+    before = _parked_state(_sec("a"), _sec("b"), _sec("c"))
+    after = _parked_state(_sec("c"))
+    current = _parked_state(_sec("c"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "cannot account for" in plan.blocked
+
+
+def test_a_card_change_in_the_same_view_keeps_the_refusal():
+    """Section removed, and a card of the surviving section deleted in that change.
+
+    Measured against the matching: the survivor pairs as `how="cards"`,
+    the removed one is proven whole. Nothing is parked - "all or nothing"
+    (decision 2, variant A).
+    """
+    before = _parked_state(_sec("a", "x"), _sec("b"))
+    after = _parked_state(_sec("a"))
+    current = _parked_state(_sec("a"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_card_change_is_refused_even_when_the_removed_cards_stand_again():
+    """The hole both reviews of the plan found (Gemini, 2026-09-29).
+
+    Every card of the removed section is back, so parking has nothing to
+    plan, `planned["sections"]` stays empty and `_sections_meet_cards`
+    cannot see a view to protect. Without `_card_events_in` in
+    `_park_instead` this became a partial undo of the card change alone.
+    """
+    before = _parked_state(_sec("a", "x"), _sec("b"))
+    after = _parked_state(_sec("a"))
+    current = _parked_state(_sec("a"), _sec("n"), cards=[_md("b")])
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_removed_section_and_a_reset_one_in_one_change_still_refuse():
+    before = _parked_state(_sec("b", column_span=1), _sec("a"))
+    after = _parked_state(_sec("b", column_span=2))
+    current = _parked_state(_sec("b", column_span=2), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "rearranged since" in plan.blocked
+
+
+def test_a_removed_and_an_added_section_in_one_change_never_reach_parking():
+    """The view's section count is unchanged, so neither is proven whole:
+    both stay unexplained and the early check refuses (`_settle_sections`)."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"), _sec("n"))
+    current = _parked_state(_sec("b"), _sec("n"), _sec("m"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "cannot account for" in plan.blocked
+
+
+def test_two_sections_edited_since_park_the_removed_one():
+    """The second of the two rearrangement refusals, not only the first."""
+    before = _parked_state(_sec("a"), _sec("b"), _sec("c"))
+    after = _parked_state(_sec("b"), _sec("c"))
+    current = _parked_state(_sec("b", "b2"), _sec("c", "c2"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.parked == (analyze._describe(_md("a")),)
+
+
+def test_a_view_whose_cards_is_no_list_refuses_the_parked_undo():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    current["views"][0]["cards"] = {"not": "a list"}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    with pytest.raises(LookupError, match="something other"):
+        restore.apply_undo(current, plan)
+
+
+def test_a_parked_section_goes_after_cards_already_in_the_view():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("z")])
+    plan = analyze.plan_undo(before, after, current)
+    assert restore.apply_undo(current, plan)["views"][0]["cards"] == [_md("z"), _md("a")]
+
+
+def test_a_loose_card_added_in_the_same_change_is_refused_even_when_the_section_is_back():
+    """Opus review W4: the same hole for a card that sits in `cards:`."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"), cards=[_md("z")])
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("z"), _md("a")])
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_pathless_view_parks_a_removed_section_on_undo():
+    """Undo parks in a pathless view the way it does everywhere; only put
+    back does not (status.md, vorhaben L). Two views, so the title keeps
+    the position vouched for."""
+    first = {"path": "a", "cards": [A]}
+    before = {"views": [first, _sectioned(_sec("a"), _sec("b"), path=None, title="Home")]}
+    after = {"views": [first, _sectioned(_sec("b"), path=None, title="Home")]}
+    current = {"views": [first, _sectioned(_sec("b"), _sec("n"), path=None, title="Home")]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [(s.view_path, s.view_index, s.location) for s in plan.steps] == [(None, 1, ("cards",))]
+
+
+def test_a_removed_section_of_a_view_no_longer_in_sections_layout_refuses():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = {"views": [{"path": "home", "type": "masonry", "cards": [_md("b")]}]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+
+
+def test_cards_of_a_removed_section_that_all_stand_again_are_skipped():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("a")])
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.steps == ()
+
+
+def test_only_the_missing_cards_of_a_removed_section_are_parked():
+    before = _parked_state(_sec("a1", "a2"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("a1")])
+    plan = analyze.plan_undo(before, after, current)
+    assert [s.payload for s in plan.steps] == [_md("a2")]
+
+
+def test_two_alike_cards_with_one_back_park_exactly_one():
+    before = _parked_state(_sec("a", "a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("a")])
+    plan = analyze.plan_undo(before, after, current)
+    assert [s.payload for s in plan.steps] == [_md("a")]
+
+
+def test_an_alike_card_in_another_view_does_not_count_as_back():
+    other = {"path": "other", "cards": [_md("a")]}
+    before = {"views": [other, _sectioned(_sec("a"), _sec("b"))]}
+    after = {"views": [other, _sectioned(_sec("b"))]}
+    current = {"views": [other, _sectioned(_sec("b"), _sec("n"))]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [s.payload for s in plan.steps] == [_md("a")]
+
+
+def test_an_alike_card_gone_from_another_section_since_does_not_park_extra():
+    """`back` can be negative: `x` stood in a surviving section and is gone
+    since. The budget then exceeds what the section held, but only cards
+    the section really held are planned - one step, never two."""
+    before = _parked_state(_sec("a"), _sec("b", "a"))
+    after = _parked_state(_sec("b", "a"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [s.payload for s in plan.steps] == [_md("a")]
+
+
+def test_a_second_undo_parks_nothing_again():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    first = analyze.plan_undo(before, after, current)
+    undone = restore.apply_undo(current, first)
+    second = analyze.plan_undo(before, after, undone)
+    assert second.blocked is None
+    assert second.steps == ()
+    assert restore.apply_undo(undone, second) == undone
+
+
+def test_a_view_with_cards_null_gets_a_cards_list_for_the_parked_ones():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"), cards=None)
+    current["views"][0]["cards"] = None
+    plan = analyze.plan_undo(before, after, current)
+    assert restore.apply_undo(current, plan)["views"][0]["cards"] == [_md("a")]
+
+
+def test_the_swallowed_cards_of_a_removed_section_stay_one_section_item():
+    """Only the undo plan works per card; the history keeps one line."""
+    before = _parked_state(_sec("a1", "a2"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    assert [item.kind for item in analyze.find_removed(before, after)] == ["section"]
+    assert analyze.match_cards(before, after).loose_removed() == []
