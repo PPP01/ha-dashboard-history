@@ -288,8 +288,8 @@ def test_an_alike_card_gone_from_another_section_since_does_not_park_extra():
     after = _parked_state(_sec("b", "a"))
     current = _parked_state(_sec("b"), _sec("n"))
     plan = analyze.plan_undo(before, after, current)
-    if plan.blocked is None:
-        assert [s.payload for s in plan.steps] == [_md("a")]
+    assert plan.blocked is None
+    assert [s.payload for s in plan.steps] == [_md("a")]
 
 
 def test_a_second_undo_parks_nothing_again():
