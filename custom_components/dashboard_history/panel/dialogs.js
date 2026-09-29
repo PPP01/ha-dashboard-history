@@ -40,9 +40,9 @@ const FOOTNOTE = `
 const VERSION_FIELDS = `
       <input class="text title" type="text" maxlength="200"
              placeholder="What is this version?">
-      <input class="text desc" type="text"
-             style="margin-top:8px"
-             placeholder="Anything more worth remembering (optional)">`;
+      <textarea class="text desc" rows="1"
+                style="margin-top:8px"
+                placeholder="Anything more worth remembering (optional)"></textarea>`;
 
 export const DIALOGS = `
   <dialog class="confirm">

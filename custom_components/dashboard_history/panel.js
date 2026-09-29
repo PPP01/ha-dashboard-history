@@ -148,6 +148,20 @@ function shortName(name) {
   return name.split("/").pop();
 }
 
+/**
+ * Grows a textarea to fit what has been typed into it, so a longer
+ * note is never hidden behind a scrollbar of its own. Call this only
+ * after the dialog it lives in has been shown (showModal()) - a
+ * closed <dialog> is not laid out, so scrollHeight would still answer
+ * for whatever was last rendered, typically 0. Two dialogs share the
+ * one description field (see the comment over VERSION_FIELDS in
+ * dialogs.js) and both wire this the same way, in the same order.
+ */
+function growTextarea(textarea) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+}
+
 class DashboardHistoryPanel extends HTMLElement {
   constructor() {
     super();
@@ -2556,11 +2570,13 @@ class DashboardHistoryPanel extends HTMLElement {
       shortName(name) +
       (version.automatic ? " — it stays marked as saved automatically." : "");
     const title = dialog.querySelector("input.title");
-    const description = dialog.querySelector("input.desc");
+    const description = dialog.querySelector("textarea.desc");
     title.value = version.title || "";
     description.value = version.description || "";
+    description.addEventListener("input", () => growTextarea(description));
     dialog.returnValue = "";
     dialog.showModal();
+    growTextarea(description);
     title.focus();
     title.select();
     const answer = await this._answerFrom(dialog);
@@ -2869,11 +2885,13 @@ class DashboardHistoryPanel extends HTMLElement {
       );
     });
     const title = dialog.querySelector("input.title");
-    const description = dialog.querySelector("input.desc");
+    const description = dialog.querySelector("textarea.desc");
     title.value = "";
     description.value = "";
+    description.addEventListener("input", () => growTextarea(description));
     dialog.returnValue = "";
     dialog.showModal();
+    growTextarea(description);
     title.focus();
     const answer = await this._answerFrom(dialog);
     if (answer !== "create") return;

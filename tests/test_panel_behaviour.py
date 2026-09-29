@@ -74,6 +74,11 @@ const node = (shared) => {
   const it = {
     textContent: "", innerHTML: "", value: "", checked: false,
     hidden: false, returnValue: "", open: false, dataset: {},
+    // A textarea's own auto-grow (panel.js's growTextarea) reads
+    // scrollHeight and writes style.height; a scenario sets the first
+    // by hand - a real browser computes it - and reads the second
+    // back.
+    style: {}, scrollHeight: 0,
     _seen: shared || {}, _on: {},
     classList: {
       _classes: new Set(),
@@ -3977,7 +3982,7 @@ el.shadowRoot = node();
 const box = el.shadowRoot.querySelector("dialog.retitle");
 const which = box.querySelector("[data-which]");
 const title = box.querySelector("input.title");
-const desc = box.querySelector("input.desc");
+const desc = box.querySelector("textarea.desc");
 
 // A version somebody made: both fields arrive prefilled.
 const editing = el._retitleVersion("dash/v1.0.0");
@@ -4071,6 +4076,150 @@ def test_a_dialog_dismissed_without_saving_writes_nothing(retitling):
 
 def test_a_version_that_is_not_in_the_list_opens_nothing(retitling):
     assert retitling["missing"] is False
+
+
+# -- the shared description field grows with what is typed into it ---------
+
+
+def test_the_shared_description_field_is_really_a_textarea(tmp_path_factory):
+    # The mock's querySelector answers any selector with a phantom node
+    # regardless of what dialogs.js contains - this reads the real
+    # markup instead, the same way Aufgabe 2's toggle-pair test does.
+    html = _dialogs_html(tmp_path_factory)
+    assert '<textarea class="text desc"' in html
+    assert 'maxlength="500"' not in html
+    assert '<input class="text desc"' not in html
+
+
+_CREATE_GROWS = """
+const changes = [{ revision: "c", message: "3rd card added", versions: [] }];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = changes;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = (type) =>
+  type === "next_versions"
+    ? Promise.resolve({ candidates: { patch: "dash/v1.0.1" } })
+    : Promise.resolve({ created: "dash/v1.0.1" });
+
+const versioning = el._createVersion("c");
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.version");
+const description = dialog.querySelector("textarea.desc");
+description.scrollHeight = 84;
+description.value = "A longer note than the one line the field starts at.";
+description._on.input();
+const grownHeight = description.style.height;
+dialog.close("create");
+await versioning;
+console.log(JSON.stringify({ grownHeight }));
+"""
+
+
+@pytest.fixture(scope="session")
+def create_grows(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "create_grows", _CREATE_GROWS)
+
+
+def test_the_create_dialogs_description_grows_with_its_content(create_grows):
+    assert create_grows["grownHeight"] == "84px"
+
+
+_RETITLE_GROWS = """
+const versions = [
+  { name: "dash/v1.0.0", title: "Autumn tidy", description: "the old note",
+    revision: "a", automatic: false },
+];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._versions = versions;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = () => Promise.resolve({ applied: true });
+
+const editing = el._retitleVersion("dash/v1.0.0");
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.retitle");
+const description = dialog.querySelector("textarea.desc");
+description.scrollHeight = 96;
+description.value = "the old note, now with a good deal more to it";
+description._on.input();
+const grownHeight = description.style.height;
+dialog.close("save");
+await editing;
+console.log(JSON.stringify({ grownHeight }));
+"""
+
+
+@pytest.fixture(scope="session")
+def retitle_grows(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "retitle_grows", _RETITLE_GROWS)
+
+
+def test_the_retitle_dialogs_description_also_grows_with_its_content(retitle_grows):
+    # The two dialogs share one description field by design (see the
+    # comment over VERSION_FIELDS in dialogs.js) - wiring the fix into
+    # only one of them would be exactly the drift that comment warns
+    # about.
+    assert retitle_grows["grownHeight"] == "96px"
+
+
+_RETITLE_GROWS_ON_OPEN = """
+const versions = [
+  { name: "dash/v1.0.0", title: "Autumn tidy",
+    description: "A note that already spans more than the one line the field starts collapsed to.",
+    revision: "a", automatic: false },
+];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._versions = versions;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = () => Promise.resolve({ applied: true });
+
+const dialog = el.shadowRoot.querySelector("dialog.retitle");
+const description = dialog.querySelector("textarea.desc");
+// A closed <dialog> is not laid out in a real browser, so scrollHeight
+// answers 0 until showModal() actually renders it. The stand-in cannot
+// compute a real scrollHeight on its own, so this fakes the one fact
+// that matters: it only becomes the real content height once
+// showModal() has run - exactly the ordering growTextarea must match.
+description.scrollHeight = 0;
+const realShowModal = dialog.showModal.bind(dialog);
+dialog.showModal = () => {
+  realShowModal();
+  description.scrollHeight = 130;
+};
+
+const editing = el._retitleVersion("dash/v1.0.0");
+await settle();
+const heightOnOpen = description.style.height;
+dialog.close("save");
+await editing;
+console.log(JSON.stringify({ heightOnOpen }));
+"""
+
+
+@pytest.fixture(scope="session")
+def retitle_grows_on_open(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "retitle_grows_on_open", _RETITLE_GROWS_ON_OPEN
+    )
+
+
+def test_a_prefilled_multiline_description_grows_the_moment_the_dialog_opens(
+    retitle_grows_on_open,
+):
+    # growTextarea must run after dialog.showModal(), not before - a
+    # closed <dialog> answers 0 for scrollHeight in a real browser, and
+    # calling it too early would grow the field to fit nothing at all,
+    # leaving a long prefilled description clipped until the first
+    # keystroke recalculated it.
+    assert retitle_grows_on_open["heightOnOpen"] == "130px"
 
 
 _ROWS = """

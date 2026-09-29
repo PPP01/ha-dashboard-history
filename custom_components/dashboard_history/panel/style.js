@@ -540,7 +540,7 @@ export const STYLE = `
     font-size: 13px;
     font-weight: 400;
   }
-  dialog input.text {
+  dialog input.text, dialog textarea.text {
     width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--divider-color, #e0e0e0);
@@ -549,6 +549,11 @@ export const STYLE = `
     color: inherit;
     font: inherit;
     box-sizing: border-box;
+  }
+  dialog textarea.text {
+    resize: none;
+    overflow: hidden;
+    min-height: 40px;
   }
   .chip {
     display: inline-block;
