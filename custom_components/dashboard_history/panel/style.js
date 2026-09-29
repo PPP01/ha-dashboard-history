@@ -53,18 +53,24 @@ export const STYLE = `
     --sc-border: var(--divider-color, #e2e8f0);
     --sc-text-muted: var(--secondary-text-color, #64748b);
     --sc-text-active: var(--primary-text-color, #0f172a);
-    --sc-card-active: var(--card-background-color, #ffffff);
+    /* Lifted a touch towards white rather than the card colour
+       straight: a real dark theme's --card-background-color
+       (2026-09-29) sits only a handful of hex values from this
+       track's own --sc-bg, so the pressed segment's background swap
+       nearly vanished there, and an added ring around it (tried first)
+       showed up as a stray blue outline the mockup never has - it was
+       only ever meant to cover for dark mode, not a thing to draw in a
+       light one. Mixing towards white instead does that on its own:
+       a light theme's card is already white, so mixing more white
+       into white changes nothing, while a dark theme's card is not,
+       so the same mix visibly lightens it - one formula, no branch
+       for which theme is active and no extra element to hide again. */
+    --sc-card-active: color-mix(in srgb, var(--card-background-color, #fff), white 12%);
     /* Neutral grey rather than white: a lift of the unselected half
        that reads on a pale bar and on a dark one, with no second
        value to keep in step. */
     --sc-hover-bg: rgba(127, 127, 127, 0.16);
     --sc-accent: var(--primary-color, #2563eb);
-    /* The pressed state's extra ring (checked against a real dark
-       theme, see the comment on .switcher-tab[aria-pressed] below) -
-       one token so the three controls that share it stay in step
-       instead of three hand-copied box-shadow layers drifting apart
-       the next time one of them is retuned. */
-    --sc-active-ring: inset 0 0 0 1px color-mix(in srgb, var(--sc-accent) 40%, transparent);
     /* A diff's own padding has to equal this exactly, on both the
        generic pre rule below and .switcher-body pre further down: the
        pre-span bleed trick right after the generic rule cancels that
@@ -907,27 +913,10 @@ export const STYLE = `
     display: inline-block;
     transition: transform .15s ease;
   }
-  /* The inset ring, not just the background swap, is what actually
-     marks the pressed segment - checked against a real Home Assistant
-     dark theme (2026-09-29), where --card-background-color and the
-     track's own --sc-bg sit a handful of hex values apart (#1c1c1c
-     against roughly #191919): a contrast that reads clearly in a light
-     theme (card white against a light-grey track) nearly vanishes once
-     both sides are dark greys of similar depth, and the soft drop
-     shadow beside it is just as invisible dark-on-dark. --sc-accent is
-     the one token that does not move with theme darkness the same way
-     backgrounds do - a theme's own accent hue keeps its chroma against
-     both light and dark surfaces - so the ring is built from that
-     instead, at low enough alpha to stay a quiet detail where the
-     background contrast already works. --sc-active-ring (:host above)
-     holds the ring itself, so the same token goes on every control
-     sharing these tokens (.levels button and .segmented-control__glider
-     below) instead of three hand-copied box-shadow layers. */
   .switcher-tab[aria-pressed="true"] {
     background: var(--sc-card-active);
     color: var(--primary-text-color, #37474f);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
-      var(--sc-active-ring);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
   }
   .switcher-tab[aria-pressed="true"]::after { transform: rotate(180deg); }
   @media (max-width: 600px) {
@@ -1180,8 +1169,7 @@ export const STYLE = `
   }
   .levels button[aria-pressed="true"] {
     background: var(--sc-card-active);
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
-      var(--sc-active-ring);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
   }
   .levels button strong { font-family: monospace; font-size: 15px; }
   .levels button span {
@@ -1217,8 +1205,7 @@ export const STYLE = `
     width: calc((100% - 4px) / 2);
     background-color: var(--sc-card-active);
     border-radius: 6px;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06),
-      var(--sc-active-ring);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
     pointer-events: none;
     z-index: 1;
     transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
