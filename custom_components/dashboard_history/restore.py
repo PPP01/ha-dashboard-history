@@ -293,14 +293,30 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
     return result
 
 
+def _section_parks(config: dict, item: RemovedItem) -> bool:
+    """Whether a removed section is appended as the last section (GitHub #39).
+
+    The same footing as a card: a sections view named by a path, and the
+    gap the section left no longer the only one it fits. Anything else is
+    `reinsert`'s to answer, refusals included. Whether the section is
+    parked already is `park`'s to refuse.
+    """
+    if item.view_path is None or _paths_share(config):
+        return False
+    view = _find_view(config.get("views") or [], item)
+    return view is not None and view.get("type") == "sections" and not _section_gap_holds(view, item)
+
+
 def parks(config: dict, item: RemovedItem) -> bool:
     """Whether putting `item` back goes to "Imported cards" (decision 26).
 
-    Only a card, only in a sections view named by a path, and only when
-    the section it left can no longer be proven to be the one at that
-    index. Everything else is `reinsert`'s to answer - including its
-    refusals.
+    Only a card or a whole removed section (GitHub #39), only in a
+    sections view named by a path, and only when the section it left can
+    no longer be proven to be the one at that index. Everything else is
+    `reinsert`'s to answer - including its refusals.
     """
+    if item.kind == "section":
+        return _section_parks(config, item)
     if item.kind != "card" or item.anchor is None or item.view_path is None:
         return False
     if _paths_share(config):
@@ -344,10 +360,42 @@ def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
     return cards
 
 
+# The same text as `analyze.undo.SECTION_APPENDED`; a test compares them.
+SECTION_APPENDED = " (as the last section)"
+
+
+def parked_label(item: RemovedItem) -> str:
+    """What the dialog calls `item` in its list of what was placed elsewhere.
+
+    A card is named as it is. A section says where it went, because the
+    dialog's sentence names both places and nothing else tells them apart.
+    """
+    return item.label + SECTION_APPENDED if item.kind == "section" else item.label
+
+
 def park(config: dict, item: RemovedItem) -> dict:
-    """Return a new configuration with `item` at the end of "Imported cards"."""
+    """Return a new configuration with `item` placed where nothing is guessed.
+
+    A card goes to the end of "Imported cards" (decision 26). A removed
+    section goes to the end of the view's sections (GitHub #39): as the
+    section it was, and it needs no guard against a second click - the
+    view has its old count of sections again, so `find_removed` no
+    longer offers it.
+    """
     result = copy.deepcopy(config)
-    _park_for(result.get("views") or [], item).append(copy.deepcopy(item.payload))
+    if item.kind != "section":
+        _park_for(result.get("views") or [], item).append(copy.deepcopy(item.payload))
+        return result
+    view = _require_view(result.get("views") or [], item)
+    sections = view.get("sections")
+    if sections is None:
+        sections = view["sections"] = []
+    elif not isinstance(sections, list):
+        raise LookupError(
+            f"the view {item.label} belonged to holds something other "
+            f"than a list under sections:, so nothing is appended there"
+        )
+    sections.append(copy.deepcopy(item.payload))
     return result
 
 

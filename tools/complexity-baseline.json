@@ -10,7 +10,7 @@
   },
   "custom_components/dashboard_history/analyze/undo.py::_plan_sections": {
     "issue": "#41",
-    "C901": 12
+    "C901": 11
   },
   "custom_components/dashboard_history/analyze/explain.py::_explain": {
     "issue": "#37",

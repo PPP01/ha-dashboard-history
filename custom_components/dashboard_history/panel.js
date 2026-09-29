@@ -1997,7 +1997,7 @@ class DashboardHistoryPanel extends HTMLElement {
            nothing to apply.</p>`
       : (intro ? `<p class="lead">${escape(intro)}</p>` : "") +
       (preview.parked?.length
-        ? `<p class="lead parked">These cards cannot go back into their exact section and are made available in "Imported cards" instead — you still have to place them: ${escape(preview.parked.join(", "))}</p>`
+        ? `<p class="lead parked">These cannot go back into their exact place and are made available instead — cards in "Imported cards", sections as the last section of their view — you still have to place them: ${escape(preview.parked.join(", "))}</p>`
         : "") +
       renderPlain(preview.explanation, "What applying this does") +
       `<details class="raw">
@@ -3285,7 +3285,7 @@ class DashboardHistoryPanel extends HTMLElement {
         ${named ? `<span class="named">${escape(named)}</span>` : ""}
       </div>
       ${why ? `<span class="why">${why}</span>` : ""}
-      ${star ? `<span class="why">* Some cards can no longer be put back into their exact section, because the sections of this view were rearranged since. They are placed in the view's "Imported cards" area — shown in edit mode — for you to move.</span>` : ""}`;
+      ${star ? `<span class="why">* Some things can no longer be put back into their exact place, because the sections of this view were rearranged since. Cards are placed in the view's "Imported cards" area — shown in edit mode — and a removed section as the last section of the view, for you to move.</span>` : ""}`;
   }
 
   _renderDetail(change) {

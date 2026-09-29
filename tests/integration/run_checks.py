@@ -2848,6 +2848,156 @@ async def run_section_moves(access: str) -> None:
             await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
 
 
+async def run_section_parking(access: str) -> None:
+    """A removed section is parked when the row changed since (GitHub #39).
+
+    pytest proves the plan and the write; only a running Home Assistant
+    shows that its backend stores and returns the view's `cards:` list
+    unchanged, and that the confirming call reads `expected_parked`.
+    """
+    a = {"type": "markdown", "content": "A"}
+    b = {"type": "markdown", "content": "B"}
+    c = {"type": "markdown", "content": "C"}
+
+    def sections(*blocks):
+        return {
+            "views": [
+                {
+                    "path": "home",
+                    "title": "Home",
+                    "type": "sections",
+                    "sections": [{"type": "grid", "cards": list(block)} for block in blocks],
+                }
+            ]
+        }
+
+    async with Socket(access) as socket:
+
+        async def ready(key: str) -> None:
+            listed = (await socket.call("lovelace/dashboards/list")) or []
+            if not any(entry.get("url_path") == key for entry in listed):
+                await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+                await asyncio.sleep(3)
+
+        async def newest(key: str) -> str:
+            rows = (
+                await socket.call("dashboard_history/history", dashboard=key, limit=1)
+            )["changes"]
+            return rows[0]["revision"] if rows else ""
+
+        async def save(key: str, config: dict) -> list:
+            # `_wait_for_new_state`, not `_wait_until_recorded`: see `save`
+            # in `run_section_moves` - three saves in a row land in the
+            # recorder's debounce otherwise.
+            seen = await newest(key)
+            await socket.call("lovelace/config/save", url_path=key, config=config)
+            return await _wait_for_new_state(socket, key, seen, RECORDING_WAIT)
+
+        async def undo(key: str, revision: str) -> dict:
+            seen = await newest(key)
+            asked = await socket.call(
+                "dashboard_history/undo_change", dashboard=key, revision=revision
+            )
+            if asked.get("available") is True:
+                await socket.call(
+                    "dashboard_history/undo_change",
+                    dashboard=key,
+                    revision=revision,
+                    confirm=True,
+                    expected_parked=asked.get("parked", []),
+                )
+                # The undo is a save of its own; wait for its row.
+                await _wait_for_new_state(socket, key, seen, RECORDING_WAIT)
+            return asked
+
+        async def drop(key: str) -> None:
+            # Named, never by prefix: this instance holds other dh-* boards.
+            listed = (await socket.call("lovelace/dashboards/list")) or []
+            mine = next((e for e in listed if e.get("url_path") == key), None)
+            if mine is not None:
+                await socket.call("lovelace/dashboards/delete", dashboard_id=mine["id"])
+
+        # -- undo -----------------------------------------------------------
+        key = "dh-section-parking"
+        await ready(key)
+        await save(key, sections([a], [b]))
+        removed = await save(key, sections([b]))
+        revision = removed[0]["revision"]
+        await save(key, sections([b], [c]))
+
+        asked = await undo(key, revision)
+        live = await socket.call("lovelace/config", url_path=key)
+        # The section comes back as a real section at the end of the row
+        # (GitHub #39), named by its own title - "section 1", it has no
+        # heading - and where it went.
+        check(
+            "the undo of a removed section is available, parked",
+            asked.get("available") is True and asked.get("parked") == ["section 1 (as the last section)"],
+            asked.get("reason") or f"parked={asked.get('parked')!r}",
+        )
+        check(
+            "the section is the last one, and cards: is untouched",
+            [section["cards"] for section in live["views"][0]["sections"]] == [[b], [c], [a]]
+            and not live["views"][0].get("cards"),
+            f"sections={live['views'][0]['sections']!r}",
+        )
+
+        # The same change once more: the card is there, nothing is added.
+        await undo(key, revision)
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "a second undo of the same change adds nothing",
+            [section["cards"] for section in live["views"][0]["sections"]] == [[b], [c], [a]],
+            f"sections={live['views'][0]['sections']!r}",
+        )
+        await drop(key)
+
+        # -- put back -------------------------------------------------------
+        # A section is only offered as one where today's view is exactly one
+        # shorter than the recorded one; with two sections again (a new one
+        # instead) `find_removed` offers its cards one by one, and those
+        # already park since vorhaben L. A swap of the survivors is what
+        # makes the gap unprovable.
+        key = "dh-section-parking-putback"
+        await ready(key)
+        base = (await save(key, sections([a], [b], [c])))[0]["revision"]
+        await save(key, sections([b], [c]))
+        await save(key, sections([c], [b]))
+
+        gone = await socket.call(
+            "dashboard_history/deleted_since", dashboard=key, revision=base
+        )
+        item = gone["items"][0] if gone.get("items") else {}
+        label = item.get("label", "")
+        check("a lost section is offered as a section", item.get("kind") == "section", f"{item!r}")
+        answer = await socket.call(
+            "dashboard_history/restore_deleted", dashboard=key, revision=base, position=0
+        )
+        written = await socket.call(
+            "dashboard_history/restore_deleted",
+            dashboard=key,
+            revision=base,
+            position=0,
+            confirm=True,
+            # What the dialog showed, as the panel sends it back - the
+            # label with where it went, not the bare one of the item.
+            expected_parked=answer.get("parked", []),
+        )
+        await asyncio.sleep(2)
+        live = await socket.call("lovelace/config", url_path=key)
+        check(
+            "and is put back as the last section",
+            bool(label)
+            and not answer.get("error")
+            and answer.get("parked") == [label + " (as the last section)"]
+            and written.get("applied") is True
+            and [section["cards"] for section in live["views"][0]["sections"]] == [[c], [b], [a]],
+            answer.get("error") or written.get("error")
+            or f"parked={answer.get('parked')!r}, sections={live['views'][0]['sections']!r}",
+        )
+        await drop(key)
+
+
 async def run_missing_grouped_by_view(access: str) -> None:
     """`deleted_since` names each item's view by its title, not its path.
 
@@ -4703,6 +4853,8 @@ if __name__ == "__main__":
     asyncio.run(run_badges(access))
     print("\n  -- Sections als Einheit bewegen und zuruecknehmen --")
     asyncio.run(run_section_moves(access))
+    print("\n  -- Ganze Section parken statt verweigern --")
+    asyncio.run(run_section_parking(access))
     print("\n  -- Gruppiert nach Views, nicht nach Pfaden --")
     asyncio.run(run_missing_grouped_by_view(access))
     print("\n  -- Versionen, die von selbst entstehen --")

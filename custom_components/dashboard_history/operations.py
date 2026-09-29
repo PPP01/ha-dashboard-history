@@ -31,7 +31,7 @@ from .analyze import (
 from . import versions as versioning
 from .const import DOMAIN, EVENT_FORGET_PROGRESS
 from .keys import is_absent, is_live
-from .restore import apply_undo, park, parks, reinsert
+from .restore import apply_undo, park, parked_label, parks, reinsert
 from .snapshot import (
     async_create_dashboard,
     async_get_all_meta,
@@ -44,13 +44,14 @@ from .yaml_io import dump, load_state
 
 _LOGGER = logging.getLogger(__name__)
 
-# A write that would park cards nobody was shown - the dashboard changed
+# A write that would park cards or sections nobody was shown - the dashboard changed
 # between preview and confirmation, or a service call did not allow it.
 # A button without an asterisk must not park a card (decision 26).
 _UNEXPECTED_PARKING = (
-    "what this would place in \"Imported cards\" no longer matches what "
-    "was shown - either the dashboard changed since the preview, or "
-    "parking was not allowed for this call - so nothing was written"
+    "what this would place elsewhere (in \"Imported cards\", or as the last "
+    "section of a view) no longer matches what was shown - either the "
+    "dashboard changed since the preview, or parking was not allowed for "
+    "this call - so nothing was written"
 )
 
 
@@ -116,7 +117,7 @@ def _reinsertion(text: str, current: dict, position: int, key: str) -> dict:
         "diff": diff,
         "explanation": explanation,
         "live_text": live_text,
-        "parked": [item.label] if parked else [],
+        "parked": [parked_label(item)] if parked else [],
     }
 
 
@@ -961,9 +962,10 @@ async def async_undo_change(
     the call before this one, and showing it twice would cost the same
     two dumps again for a screen already drawn.
 
-    `parked` names the cards this undo can only make available in the
-    view's "Imported cards", not put back into their section (decision
-    26). It is part of the cheap answer on purpose: the row asks on
+    `parked` names what this undo can only make available elsewhere,
+    not put back into its exact place: cards in the view's "Imported
+    cards" (decision 26), a removed section as the last section of its
+    view (GitHub #39). It is part of the cheap answer on purpose: the row asks on
     every expansion, and the asterisk on its button has to be right
     there already. `expected_parked` is what the dialog showed; a
     confirming call whose fresh plan parks differently writes nothing,
