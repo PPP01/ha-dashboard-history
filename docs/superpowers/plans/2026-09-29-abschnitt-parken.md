@@ -137,12 +137,104 @@ def test_two_removed_sections_still_refuse_although_parking_exists():
 
 
 def test_a_card_change_in_the_same_view_keeps_the_refusal():
-    """Section removed, and a card of another section deleted in that change."""
-    before = _parked_state(_sec("a"), _sec("b", "x"))
+    """Section removed, and a card of the surviving section deleted in that change.
+
+    Measured against the matching: the survivor pairs as `how="cards"`,
+    the removed one is proven whole. Nothing is parked - "all or nothing"
+    (decision 2, variant A).
+    """
+    before = _parked_state(_sec("a", "x"), _sec("b"))
+    after = _parked_state(_sec("a"))
+    current = _parked_state(_sec("a"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_card_change_is_refused_even_when_the_removed_cards_stand_again():
+    """The hole both reviews of the plan found (Gemini, 2026-09-29).
+
+    Every card of the removed section is back, so parking has nothing to
+    plan, `planned["sections"]` stays empty and `_sections_meet_cards`
+    cannot see a view to protect. Without `_card_events_in` in
+    `_park_instead` this became a partial undo of the card change alone.
+    """
+    before = _parked_state(_sec("a", "x"), _sec("b"))
+    after = _parked_state(_sec("a"))
+    current = _parked_state(_sec("a"), _sec("n"), cards=[_md("b")])
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_removed_section_and_a_reset_one_in_one_change_still_refuse():
+    before = _parked_state(_sec("b", column_span=1), _sec("a"))
+    after = _parked_state(_sec("b", column_span=2))
+    current = _parked_state(_sec("b", column_span=2), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "rearranged since" in plan.blocked
+
+
+def test_a_removed_and_an_added_section_in_one_change_never_reach_parking():
+    """The view's section count is unchanged, so neither is proven whole:
+    both stay unexplained and the early check refuses (`_settle_sections`)."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"), _sec("n"))
+    current = _parked_state(_sec("b"), _sec("n"), _sec("m"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None and "cannot account for" in plan.blocked
+
+
+def test_two_sections_edited_since_park_the_removed_one():
+    """The second of the two rearrangement refusals, not only the first."""
+    before = _parked_state(_sec("a"), _sec("b"), _sec("c"))
+    after = _parked_state(_sec("b"), _sec("c"))
+    current = _parked_state(_sec("b", "b2"), _sec("c", "c2"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert plan.parked == (analyze._describe(_md("a")),)
+
+
+def test_a_view_whose_cards_is_no_list_refuses_the_parked_undo():
+    before = _parked_state(_sec("a"), _sec("b"))
     after = _parked_state(_sec("b"))
     current = _parked_state(_sec("b"), _sec("n"))
+    current["views"][0]["cards"] = {"not": "a list"}
     plan = analyze.plan_undo(before, after, current)
-    assert plan.blocked == analyze._SECTIONS_AND_CARDS_REFUSAL
+    assert plan.blocked is None
+    with pytest.raises(LookupError, match="something other"):
+        restore.apply_undo(current, plan)
+
+
+def test_a_parked_section_goes_after_cards_already_in_the_view():
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("z")])
+    plan = analyze.plan_undo(before, after, current)
+    assert restore.apply_undo(current, plan)["views"][0]["cards"] == [_md("z"), _md("a")]
+
+
+def test_a_loose_card_added_in_the_same_change_is_refused_even_when_the_section_is_back():
+    """Opus review W4: the same hole for a card that sits in `cards:`."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"), cards=[_md("z")])
+    current = _parked_state(_sec("b"), _sec("n"), cards=[_md("z"), _md("a")])
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_pathless_view_parks_a_removed_section_on_undo():
+    """Undo parks in a pathless view the way it does everywhere; only put
+    back does not (status.md, vorhaben L). Two views, so the title keeps
+    the position vouched for."""
+    first = {"path": "a", "cards": [A]}
+    before = {"views": [first, _sectioned(_sec("a"), _sec("b"), path=None, title="Home")]}
+    after = {"views": [first, _sectioned(_sec("b"), path=None, title="Home")]}
+    current = {"views": [first, _sectioned(_sec("b"), _sec("n"), path=None, title="Home")]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is None
+    assert [(s.view_path, s.view_index, s.location) for s in plan.steps] == [(None, 1, ("cards",))]
 
 
 def test_a_removed_section_of_a_view_no_longer_in_sections_layout_refuses():
@@ -188,6 +280,18 @@ def test_an_alike_card_in_another_view_does_not_count_as_back():
     assert [s.payload for s in plan.steps] == [_md("a")]
 
 
+def test_an_alike_card_gone_from_another_section_since_does_not_park_extra():
+    """`back` can be negative: `x` stood in a surviving section and is gone
+    since. The budget then exceeds what the section held, but only cards
+    the section really held are planned - one step, never two."""
+    before = _parked_state(_sec("a"), _sec("b", "a"))
+    after = _parked_state(_sec("b", "a"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    plan = analyze.plan_undo(before, after, current)
+    if plan.blocked is None:
+        assert [s.payload for s in plan.steps] == [_md("a")]
+
+
 def test_a_second_undo_parks_nothing_again():
     before = _parked_state(_sec("a"), _sec("b"))
     after = _parked_state(_sec("b"))
@@ -219,8 +323,8 @@ def test_the_swallowed_cards_of_a_removed_section_stay_one_section_item():
 
 - [ ] **Schritt 2: Tests laufen lassen, Fehlschlag prüfen**
 
-Run: `python3 -m pytest tests/test_analyze.py -k "removed_section or parks_nothing or alike_card or cards_null or swallowed or all_stand_again or only_the_missing" -v`
-Erwartet: die Parkfälle FAIL (`plan.blocked` ist ein Text mit »rearranged since«); `test_a_removed_section_alone_is_still_put_back_exactly`, `..._still_refuse`, `test_an_added_section_...`, `test_two_removed_...`, `test_a_card_change_...`, `test_..._masonry`-Fall und `test_the_swallowed_...` sind schon grün (Regression). Schlägt einer der **Verweigerungs**tests schon jetzt aus einem anderen Grund fehl, weil die Beispieldaten die Matching-Regeln anders treffen als gedacht (z. B. `test_a_removed_section_and_a_moved_one_...`), das Beispiel anpassen, bis es die *Absicht* trifft (entfernte Section + verschobene Section in **einer** Änderung, dann seither umgeordnet), und die Anpassung im Commit-Body erwähnen.
+Run: `python3 -m pytest tests/test_analyze.py -q 2>&1 | tail -30` (die ganze Datei – ein `-k`-Filter würde Verweigerungstests still auslassen).
+Erwartet FAIL (Parkfälle, `plan.blocked` ist ein Text mit »rearranged since«): `test_a_removed_section_is_parked_when_another_came_since`, `..._when_two_others_swapped_since`, `test_the_cards_of_a_removed_section_are_parked_in_their_old_order`, `test_only_the_missing_cards_...`, `test_two_alike_cards_...`, `test_an_alike_card_in_another_view_...`, `test_a_second_undo_parks_nothing_again`, `test_a_view_with_cards_null_...`, `test_two_sections_edited_since_park_the_removed_one`, `test_a_view_whose_cards_is_no_list_...`, `test_a_parked_section_goes_after_cards_...`, `test_cards_of_a_removed_section_that_all_stand_again_are_skipped`. Alle übrigen neuen Tests (Verweigerungen, `test_a_removed_section_alone_is_still_put_back_exactly`, `test_the_swallowed_...`) sind schon **grün**: sie sichern ab, dass der Umbau nichts aufweicht. Ist einer davon rot, stimmen die Beispieldaten nicht mit dem Matching überein – nicht den Test passend biegen, sondern mit `analyze.match_cards(before, after).sections` (`removed`, `pairs`, `rest_old`) nachsehen, was das Matching erkennt.
 
 - [ ] **Schritt 3: Umsetzung**
 
@@ -272,6 +376,10 @@ def _park_removed_section(
     the change took from the view and are not back since. Nothing is
     ever refused here - only added, so a copy too many is the lesser
     harm, and which of several alike is missing does not matter.
+
+    Reads `ctx.card_now`/`ctx.card_then` here, earlier than the cards
+    planner would - both are cached, and only on this path, so no
+    entry in `_COMPUTED_BEFORE["sections"]` is needed.
     """
     cards = removed.section["cards"]
     marks = [fingerprint(card) for card in cards]
@@ -301,6 +409,20 @@ def _park_removed_section(
     return tuple(steps)
 
 
+def _card_events_in(ctx: UndoContext, key: Any) -> bool:
+    """Whether the change touched a single card of this view.
+
+    Edited, moved, added or removed - the card matching's own answer,
+    wherever the card sat (a section or `cards:`). The removed section's
+    own cards are not among them: `loose_removed` leaves them out.
+    """
+    matching = ctx.matching
+    moves = (*matching.edited, *matching.moved)
+    return any(key in (old.view_key, new.view_key) for old, new in moves) or any(
+        slot.view_key == key for slot in (*matching.loose_added(), *matching.loose_removed())
+    )
+
+
 def _park_instead(
     refusal: str,
     ctx: UndoContext | None,
@@ -312,11 +434,15 @@ def _park_instead(
 ) -> tuple[UndoStep, ...] | str:
     """Park the one removed section's cards where the exact undo refuses.
 
-    Only for a view whose change was that one removal and nothing else
-    (`mixed` says otherwise), and only from the undo: without `ctx` there
-    is nothing to count against and the refusal stands.
+    Only for a view whose change was that one removal and nothing else:
+    `mixed` says a section moved, was reset or arrived, and a single card
+    of the view changed as well. That last one is asked here, not left
+    to `_sections_meet_cards`: with every removed card back, no section
+    step is planned, the gate has no view to protect and would let a
+    partial undo of the card change through. Only from the undo: without
+    `ctx` there is nothing to count against and the refusal stands.
     """
-    if ctx is None or mixed or len(removed) != 1:
+    if ctx is None or mixed or len(removed) != 1 or _card_events_in(ctx, key):
         return refusal
     return _park_removed_section(ctx, key, current_view, current_index, removed[0])
 ```
@@ -355,6 +481,13 @@ Den Rest der Funktion (ab `then_sections = …`) **nicht** anfassen. Rückgabety
             steps.append(planned)
 ```
 
+- [ ] **Schritt 3a: Regression der Darstellung einer entfernten Section**
+
+Die Spec verlangt, dass `summarize`, `_explain` und `change_message` eine entfernte Section weiter als *eine* Section melden. Dafür gibt es schon Tests, die dieser Umbau nicht anfasst; sie müssen im Lauf grün bleiben und werden hier ausdrücklich mit ausgeführt:
+
+Run: `python3 -m pytest tests/test_analyze.py -q -k "deleted_section or a_removed or section_is_one_line or offered_as_one_item" 2>&1 | tail -5`
+Erwartet: grün. Findet der Filter weniger als die Tests `test_a_deleted_section_is_offered_as_one_item` und `test_a_deleted_section_is_one_line_named_by_its_heading`, mit `grep -n "def test.*section" tests/test_analyze.py` die richtigen Namen nachschlagen. Kein neuer Test nötig, solange `undo.py` und `restore.py` die einzigen geänderten Module bleiben.
+
 - [ ] **Schritt 4: Tests laufen lassen, Erfolg prüfen**
 
 Run: `python3 -m pytest tests/test_analyze.py -v -q 2>&1 | tail -15`
@@ -375,7 +508,13 @@ Erwartet: Verträge erfüllt, `0 failed`.
 
 ```bash
 git add custom_components/dashboard_history/analyze/undo.py tools/complexity-baseline.json tests/test_analyze.py
-git commit -m "Park a removed section's cards on undo (#39)" -m "<Body, 72 Zeichen: warum – Section entfernt, danach Nachbarn umgeordnet; bisher verweigert obwohl jede Karte bekannt ist; Parken statt Verweigern wie bei einzelnen Karten (Entscheidung 26); nur die Umordnungs-Verweigerung wird ersetzt; Baseline im selben Commit gesenkt.>" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Park a removed section's cards on undo (#39)" -m "A section removed and a neighbour changed afterwards was refused,
+although every card of it is known. Cards that cannot be proven a
+place already park in Imported cards (decision 26); a whole section
+now does the same, one step per card, skipping those already back.
+
+Only the two rearrangement refusals are replaced. Everything else
+still refuses, and the complexity baseline is lowered in this commit." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -421,6 +560,22 @@ def test_a_section_parks_into_the_view_cards_as_one_block_in_order():
     assert result["views"][0]["sections"] == today["views"][0]["sections"]
 
 
+def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_parks():
+    """Opus review W2: how the item is really reached.
+
+    The item comes from `find_removed(recorded, today)`, and a section is
+    only proven whole there when today's view is exactly one shorter -
+    a swap of the survivors is what makes the gap unprovable.
+    """
+    old = _sections({"cards": [A]}, {"cards": [B]}, {"cards": [C]})
+    today = _sections({"cards": [C]}, {"cards": [B]})
+    item = next(i for i in analyze.find_removed(old, today) if i.kind == "section")
+    assert restore.parks(today, item) is True
+    parked = restore.park(today, item)
+    assert parked["views"][0]["cards"] == [A]
+    assert [i for i in analyze.find_removed(old, parked) if i.kind == "section"] == []
+
+
 def test_parking_a_section_leaves_the_input_alone():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     item = _removed_section(old, _sections({"cards": [C]}))
@@ -444,6 +599,15 @@ def test_parking_a_section_appends_after_cards_already_there():
     today = _sections({"cards": [C]}, {"cards": []})
     today["views"][0]["cards"] = [C]
     assert restore.park(today, item)["views"][0]["cards"] == [C, A, B]
+
+
+def test_parking_a_section_into_a_cards_that_is_no_list_refuses():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    today["views"][0]["cards"] = {"not": "a list"}
+    with pytest.raises(LookupError, match="something other"):
+        restore.park(today, item)
 
 
 def test_a_section_never_parks_outside_a_sections_view():
@@ -485,7 +649,7 @@ Falls `copy`/`dataclasses` in der Datei noch nicht importiert sind, oben ergänz
 - [ ] **Schritt 2: Tests laufen lassen**
 
 Run: `python3 -m pytest tests/test_restore.py -v -q 2>&1 | tail -20`
-Erwartet: die `parks`/`park`-Tests FAIL (`parks` liefert `False`, `park` hängt die Section selbst an); die Negativ-Tests und `..._is_not_offered_back` sind grün. **Ist `test_a_section_whose_cards_stand_again_is_not_offered_back` rot, anhalten** und den Nutzer informieren: die Annahme in Abschnitt 4 der Spec ist falsch und die Spec muss geändert werden, bevor weiter gebaut wird.
+Erwartet: die Tests `..._neighbours_changed_parks`, `..._one_block_in_order`, `..._creates_cards_when_null`, `..._appends_after_cards_already_there` und `test_a_section_lost_beside_a_swap_...` FAIL (`parks` liefert `False`, `park` hängt die Section selbst an); `test_parking_a_section_leaves_the_input_alone` und `..._no_list_refuses` sind schon grün; die Negativ-Tests und `..._is_not_offered_back` sind grün. **Ist `test_a_section_whose_cards_stand_again_is_not_offered_back` rot, anhalten** und den Nutzer informieren: die Annahme in Abschnitt 4 der Spec ist falsch und die Spec muss geändert werden, bevor weiter gebaut wird.
 
 - [ ] **Schritt 3: Umsetzung**
 
@@ -529,10 +693,9 @@ def park(config: dict, item: RemovedItem) -> dict:
     if item.kind != "section":
         cards.append(copy.deepcopy(item.payload))
         return result
-    parked = item.payload.get("cards") if isinstance(item.payload, dict) else None
-    if not isinstance(parked, list) or not parked:
-        raise LookupError(f"the section {item.label} holds no cards to park")
-    cards.extend(copy.deepcopy(parked))
+    # `find_removed` offers only a section whose cards it proved gone, so
+    # the list is there and not empty.
+    cards.extend(copy.deepcopy(item.payload["cards"]))
     return result
 ```
 
@@ -545,7 +708,10 @@ Erwartet: `0 failed`, Sperrklinke grün (`parks` und `park` bleiben unter dem Li
 
 ```bash
 git add custom_components/dashboard_history/restore.py tests/test_restore.py
-git commit -m "Park a removed section on put back (#39)" -m "<Body: warum – Put back verweigerte, sobald die Nachbarn der Section sich geändert hatten; Karten kommen wie beim Undo in »Imported cards«; restore.py zählt nichts, weil find_removed die Section nicht anbietet, wenn ihre Karten stehen (Test belegt es).>" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Park a removed section on put back (#39)" -m "Put back refused a removed section as soon as its neighbours had
+changed. Its cards now go to the end of the view's cards list, as
+they do on undo. restore.py counts nothing: find_removed does not
+offer a section whose cards already stand, and a test pins that." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -561,6 +727,8 @@ Panel und `operations.py` brauchen **keinen** Code: `tests/test_panel_behaviour.
 
 - [ ] **Schritt 1: Prüfbank prüfen**
 
+**Der Live-Lauf ist ein Maintainer-Check, kein Teil der reproduzierbaren Abnahme:** Er braucht die Docker-Instanz samt Token außerhalb des Repos. Wer sie nicht hat, überspringt die Schritte 1 bis 3, schreibt die Probe (Schritt 2) trotzdem und nennt im Bericht ausdrücklich, dass der Lauf nicht stattfand. Pflicht sind pytest, Sperrklinke und `lint-imports` (Schritt 5).
+
 Aus `CLAUDE.md`: `run_checks.py` erodiert seine Bank und braucht ein Ziel-Dashboard mit zwei Karten. Vorher die Wegwerf-Instanz starten (`docker compose -f docker/compose.yaml up -d`), `python3 tests/integration/run_checks.py` **einmal ohne Änderung** laufen lassen und festhalten, welche Abschnitte schon vorher rot sind, damit sie nicht dieser Änderung zugeschrieben werden. Nie während eines HA-Neustarts pollen; nie nach Präfix löschen.
 
 - [ ] **Schritt 2: Probe schreiben**
@@ -575,9 +743,9 @@ async def run_section_parking(access: str) -> None:
     shows that its backend stores and returns the view's `cards:` list
     unchanged, and that the confirming call reads `expected_parked`.
     """
-    a = {"type": "markdown", "content": "# A"}
-    b = {"type": "markdown", "content": "# B"}
-    c = {"type": "markdown", "content": "# C"}
+    a = {"type": "markdown", "content": "A"}
+    b = {"type": "markdown", "content": "B"}
+    c = {"type": "markdown", "content": "C"}
 
     def sections(*blocks):
         return {
@@ -599,9 +767,36 @@ async def run_section_parking(access: str) -> None:
                 await socket.call("lovelace/dashboards/create", url_path=key, title=key)
                 await asyncio.sleep(3)
 
+        async def newest(key: str) -> str:
+            rows = (
+                await socket.call("dashboard_history/history", dashboard=key, limit=1)
+            )["changes"]
+            return rows[0]["revision"] if rows else ""
+
         async def save(key: str, config: dict) -> list:
+            # `_wait_for_new_state`, not `_wait_until_recorded`: see `save`
+            # in `run_section_moves` - three saves in a row land in the
+            # recorder's debounce otherwise.
+            seen = await newest(key)
             await socket.call("lovelace/config/save", url_path=key, config=config)
-            return await _wait_until_recorded(socket, key)
+            return await _wait_for_new_state(socket, key, seen, RECORDING_WAIT)
+
+        async def undo(key: str, revision: str) -> dict:
+            seen = await newest(key)
+            asked = await socket.call(
+                "dashboard_history/undo_change", dashboard=key, revision=revision
+            )
+            if asked.get("available") is True:
+                await socket.call(
+                    "dashboard_history/undo_change",
+                    dashboard=key,
+                    revision=revision,
+                    confirm=True,
+                    expected_parked=asked.get("parked", []),
+                )
+                # The undo is a save of its own; wait for its row.
+                await _wait_for_new_state(socket, key, seen, RECORDING_WAIT)
+            return asked
 
         async def drop(key: str) -> None:
             # Named, never by prefix: this instance holds other dh-* boards.
@@ -618,23 +813,15 @@ async def run_section_parking(access: str) -> None:
         revision = removed[0]["revision"]
         await save(key, sections([b], [c]))
 
-        asked = await socket.call(
-            "dashboard_history/undo_change", dashboard=key, revision=revision
-        )
+        asked = await undo(key, revision)
+        live = await socket.call("lovelace/config", url_path=key)
+        # The label is read, not guessed: `_describe` drops a markdown
+        # heading mark, so the card "A" is "markdown: A".
         check(
             "the undo of a removed section is available, parked",
-            asked.get("available") is True and asked.get("parked") == ["markdown: # A"],
+            asked.get("available") is True and asked.get("parked") == ["markdown: A"],
             asked.get("reason") or f"parked={asked.get('parked')!r}",
         )
-        await socket.call(
-            "dashboard_history/undo_change",
-            dashboard=key,
-            revision=revision,
-            confirm=True,
-            expected_parked=["markdown: # A"],
-        )
-        await asyncio.sleep(2)
-        live = await socket.call("lovelace/config", url_path=key)
         check(
             "the card sits in cards: and the sections are untouched",
             live["views"][0].get("cards") == [a] and len(live["views"][0]["sections"]) == 2,
@@ -642,18 +829,7 @@ async def run_section_parking(access: str) -> None:
         )
 
         # The same change once more: the card is there, nothing is added.
-        again = await socket.call(
-            "dashboard_history/undo_change", dashboard=key, revision=revision
-        )
-        if again.get("available") is True:
-            await socket.call(
-                "dashboard_history/undo_change",
-                dashboard=key,
-                revision=revision,
-                confirm=True,
-                expected_parked=again.get("parked", []),
-            )
-            await asyncio.sleep(2)
+        await undo(key, revision)
         live = await socket.call("lovelace/config", url_path=key)
         check(
             "a second undo of the same change adds nothing",
@@ -663,16 +839,23 @@ async def run_section_parking(access: str) -> None:
         await drop(key)
 
         # -- put back -------------------------------------------------------
+        # A section is only offered as one where today's view is exactly one
+        # shorter than the recorded one; with two sections again (a new one
+        # instead) `find_removed` offers its cards one by one, and those
+        # already park since vorhaben L. A swap of the survivors is what
+        # makes the gap unprovable.
         key = "dh-section-parking-putback"
         await ready(key)
-        base = (await save(key, sections([a], [b])))[0]["revision"]
-        await save(key, sections([b]))
+        base = (await save(key, sections([a], [b], [c])))[0]["revision"]
         await save(key, sections([b], [c]))
+        await save(key, sections([c], [b]))
 
         gone = await socket.call(
             "dashboard_history/deleted_since", dashboard=key, revision=base
         )
-        label = gone["items"][0]["label"] if gone.get("items") else ""
+        item = gone["items"][0] if gone.get("items") else {}
+        label = item.get("label", "")
+        check("a lost section is offered as a section", item.get("kind") == "section", f"{item!r}")
         answer = await socket.call(
             "dashboard_history/restore_deleted", dashboard=key, revision=base, position=0
         )
@@ -687,7 +870,7 @@ async def run_section_parking(access: str) -> None:
         await asyncio.sleep(2)
         live = await socket.call("lovelace/config", url_path=key)
         check(
-            "a removed section is put back as parked cards",
+            "and is put back as parked cards",
             bool(label)
             and not answer.get("error")
             and answer.get("parked") == [label]
@@ -699,7 +882,7 @@ async def run_section_parking(access: str) -> None:
         await drop(key)
 ```
 
-Die Hilfsfunktionen sind dem Muster von `run_parking` und dem `restore_deleted`-Block bei Zeile ~2270–2320 nachgebaut; die genauen Signaturen dort gegenlesen, bevor die Probe läuft (`Socket`, `_wait_until_recorded`, `check`). Den Aufruf im Hauptablauf ergänzen:
+Die Hilfsfunktionen sind dem Muster von `run_parking` und dem `restore_deleted`-Block bei Zeile ~2270–2320 nachgebaut; die genauen Signaturen dort gegenlesen, bevor die Probe läuft (`Socket`, `_wait_for_new_state`, `RECORDING_WAIT`, `check`). Den Aufruf im Hauptablauf ergänzen:
 
 ```python
     print("\n  -- Ganze Section parken statt verweigern --")
@@ -713,7 +896,11 @@ Erwartet: der neue Abschnitt komplett `ok`. Andere Abschnitte, die schon in Schr
 
 - [ ] **Schritt 4: Journal**
 
-`docs/superpowers/status.md` lesen; einen Eintrag wie bei L und O ergänzen (Deutsch, Umlaute, Guillemets): Vorhaben-Zeile in der Tabelle (»Ganze entfernte Section parken – Issue #39«, Spec/Plan verlinken, Datum der Umsetzung) und ein kurzer Absatz »Umgesetzt am …«: was geparkt wird (nur die eine entfernte Section, keine gemischten Änderungen), Überspringen statt Verweigern, was verweigert bleibt (»hinzugekommen«, mehrere Sections, Kartenänderungen), dass `apply_undo` unverändert blieb. In der Spec nur die Kopfzeile »Stand« um »umgesetzt am …« ergänzen.
+`docs/superpowers/status.md` lesen; einen Eintrag wie bei L und O ergänzen (Deutsch, Umlaute, Guillemets): Vorhaben-Zeile in der Tabelle (»Ganze entfernte Section parken – Issue #39«, Spec/Plan verlinken, Datum der Umsetzung) und ein kurzer Absatz »Umgesetzt am …«: was geparkt wird (nur die eine entfernte Section, keine gemischten Änderungen), Überspringen statt Verweigern, was verweigert bleibt (»hinzugekommen«, mehrere Sections, Kartenänderungen), dass `apply_undo` unverändert blieb. In der Spec die Kopfzeile »Stand« um »umgesetzt am …« ergänzen und drei Nachträge (Ergebnis der Plan-Reviews vom 2026-09-29, Review-Datei `docs/superpowers/reviews/2026-09-29-abschnitt-parken-plan.md`):
+
+1. **Ausgangslage, Satz »Zwei Wege sind betroffen, und beide verweigern heute«:** Für Put back stimmt das nur teilweise. Kam nach der Entfernung eine Section *hinzu* (der Fall aus dem Ticket), hat die Ansicht wieder gleich viele Sections, `_settle_sections` erkennt keine entfernte Section, und `find_removed` bietet die Karten einzeln an – die parkt Put back schon seit Vorhaben L. Neu ist bei Put back der schmalere Fall »Nettoverlust von einer Section **und** umgeordnete oder bearbeitete Nachbarn« (Beispiel: `[a],[b],[c]` → `[c],[b]`). Den Satz entsprechend berichtigen, und im Journal (`status.md`) ehrlich so nennen.
+2. **Randfalltabelle und Testplan:** Die Verweigerung bei einer Kartenänderung in derselben Ansicht kommt jetzt aus `_park_instead` (jedes Kartenereignis der Ansicht laut Kartenabgleich, `_card_events_in`) mit dem Text »rearranged since«, nicht mehr aus `_sections_meet_cards`; das Tor bleibt als zweite Sicherung. Die beiden Zeilen (»… durch `_sections_meet_cards`«) anpassen.
+3. **Abschnitt 1, Punkt 4:** einen Satz nachtragen: »Zusätzlich verweigert `_park_instead` selbst, wenn die Änderung in derselben Ansicht irgendeine einzelne Karte berührt hat (bearbeitet, verschoben, hinzugefügt, entfernt – auch in `cards:`); sonst bliebe das Tor `_sections_meet_cards` blind, sobald alle Karten der entfernten Section schon zurück sind und kein Section-Schritt entsteht (Plan-Review 2026-09-29).«
 
 - [ ] **Schritt 5: Abnahme**
 
@@ -724,7 +911,9 @@ Erwartet: `0 failed`, Sperrklinke und Verträge grün. Zusätzlich `git status -
 
 ```bash
 git add tests/integration/run_checks.py docs/superpowers/status.md docs/superpowers/specs/2026-09-29-abschnitt-parken-design.md docs/superpowers/plans/2026-09-29-abschnitt-parken.md
-git commit -m "Check parking a removed section end to end (#39)" -m "<Body: warum – die Probe erreicht, was pytest strukturell nicht erreicht (WebSocket, echtes HA); Journal nachgetragen.>" -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+git commit -m "Check parking a removed section end to end (#39)" -m "The check reaches what pytest structurally cannot: the WebSocket
+commands and a real Home Assistant storing the cards list. The
+journal records what was done and what still refuses." -m "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 Das Ticket schließt der Nutzer nach eigener Prüfung; kein `Fix`-Vokabular im Commit, kein Push, kein Tag ohne ausdrückliches Go.
@@ -738,5 +927,5 @@ Das Ticket schließt der Nutzer nach eigener Prüfung; kein `Fix`-Vokabular im C
 - **Abschnitt 3 (Schritte, Überspringen, Komplexität):** Aufgabe 1 – Schrittform, Reihenfolge, `max(0, deleted − back)`, Baseline im selben Commit.
 - **Abschnitt 4 (Put back):** Aufgabe 2, samt Annahmetest.
 - **Abschnitt 5 (Etiketten):** Undo-Etiketten sind Kartenbeschreibungen (Test `plan.parked`); Put-back-Etikett kommt unverändert aus `find_removed` → `operations`.
-- **Testplan:** pytest (Aufgaben 1 und 2), Panel (vorhandener Test, kein neuer nötig), Instanz (Aufgabe 3), reale Bank: **bewusst nicht** ergänzt – die vorhandenen Tests gegen die reale Bank laufen im Gesamtlauf mit; ein eigener Fall braucht eine Ansicht mit mehreren Sections, die sich nicht zusichern lässt. Ergibt sich beim Umsetzen eine, ergänzen; sonst im Abschlussbericht nennen.
+- **Testplan:** pytest (Aufgaben 1 und 2), Panel (vorhandener Test, kein neuer nötig), Instanz (Aufgabe 3), reale Bank: **bewusst nicht** ergänzt (beide Reviews vom 2026-09-29 haben es als Lücke gemeldet; die Spec verlangt den Fall nur »sofern sich dort eine Ansicht findet«, und das Vorhandensein lässt sich nicht zusichern) – die vorhandenen Tests gegen die reale Bank laufen im Gesamtlauf mit; ein eigener Fall braucht eine Ansicht mit mehreren Sections, die sich nicht zusichern lässt. Ergibt sich beim Umsetzen eine, ergänzen; sonst im Abschlussbericht nennen.
 - **Typkonsistenz:** `_plan_sections(..., ctx=None)`, `_rearranged`, `_park_removed_section`, `_park_instead`, `_section_parks` heißen in allen Aufgaben gleich.
