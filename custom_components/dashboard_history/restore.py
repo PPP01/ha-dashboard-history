@@ -293,14 +293,31 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
     return result
 
 
+def _section_parks(config: dict, item: RemovedItem) -> bool:
+    """Whether a removed section goes to "Imported cards" (GitHub #39).
+
+    The same footing as a card: a sections view named by a path, and the
+    gap the section left no longer the only one it fits. Anything else is
+    `reinsert`'s to answer, refusals included. Whether the section's cards
+    already stand is not asked here: `find_removed` does not offer a
+    section then.
+    """
+    if item.view_path is None or _paths_share(config):
+        return False
+    view = _find_view(config.get("views") or [], item)
+    return view is not None and view.get("type") == "sections" and not _section_gap_holds(view, item)
+
+
 def parks(config: dict, item: RemovedItem) -> bool:
     """Whether putting `item` back goes to "Imported cards" (decision 26).
 
-    Only a card, only in a sections view named by a path, and only when
-    the section it left can no longer be proven to be the one at that
-    index. Everything else is `reinsert`'s to answer - including its
-    refusals.
+    Only a card or a whole removed section (GitHub #39), only in a
+    sections view named by a path, and only when the section it left can
+    no longer be proven to be the one at that index. Everything else is
+    `reinsert`'s to answer - including its refusals.
     """
+    if item.kind == "section":
+        return _section_parks(config, item)
     if item.kind != "card" or item.anchor is None or item.view_path is None:
         return False
     if _paths_share(config):
@@ -345,9 +362,20 @@ def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
 
 
 def park(config: dict, item: RemovedItem) -> dict:
-    """Return a new configuration with `item` at the end of "Imported cards"."""
+    """Return a new configuration with `item` at the end of "Imported cards".
+
+    A removed section brings its cards, as one block and in order
+    (GitHub #39); its own settings do not come along, since there is no
+    section to hold them.
+    """
     result = copy.deepcopy(config)
-    _park_for(result.get("views") or [], item).append(copy.deepcopy(item.payload))
+    cards = _park_for(result.get("views") or [], item)
+    if item.kind != "section":
+        cards.append(copy.deepcopy(item.payload))
+        return result
+    # `find_removed` offers only a section whose cards it proved gone, so
+    # the list is there and not empty.
+    cards.extend(copy.deepcopy(item.payload["cards"]))
     return result
 
 

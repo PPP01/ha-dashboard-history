@@ -1,5 +1,8 @@
 """Tests for putting removed items back."""
 
+import copy
+import dataclasses
+
 import analyze
 import pytest
 import restore
@@ -582,7 +585,7 @@ def test_nothing_parks_outside_a_sections_view_with_a_path():
     assert restore.parks({"views": [{"type": "sections", "sections": [{"column_span": 2, "cards": []}, {"cards": [A]}]}]}, pathless) is False
 
 
-def test_a_section_item_never_parks():
+def test_a_section_that_fits_its_gap_does_not_park():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     new = _sections({"cards": [C]})
     item = analyze.find_removed(old, new)[0]
@@ -832,3 +835,111 @@ def test_a_neighbour_with_1_beside_a_card_with_true_is_no_double():
     )
     item = next(i for i in analyze.find_removed(old, new) if i.payload == A)
     assert restore.parks(new, item) is False
+
+# -- a removed section parks when its gap cannot be proven (GitHub #39) ---
+
+
+def _removed_section(old, new):
+    return next(i for i in analyze.find_removed(old, new) if i.kind == "section")
+
+
+def test_a_section_whose_neighbours_changed_parks():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    new = _sections({"cards": [C]})
+    item = _removed_section(old, new)
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    assert restore.parks(today, item) is True
+
+
+def test_a_section_parks_into_the_view_cards_as_one_block_in_order():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    new = _sections({"cards": [C]})
+    item = _removed_section(old, new)
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    result = restore.park(today, item)
+    assert result["views"][0]["cards"] == [A, B]
+    assert result["views"][0]["sections"] == today["views"][0]["sections"]
+
+
+def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_parks():
+    """Opus review W2: how the item is really reached.
+
+    The item comes from `find_removed(recorded, today)`, and a section is
+    only proven whole there when today's view is exactly one shorter -
+    a swap of the survivors is what makes the gap unprovable.
+    """
+    old = _sections({"cards": [A]}, {"cards": [B]}, {"cards": [C]})
+    today = _sections({"cards": [C]}, {"cards": [B]})
+    item = next(i for i in analyze.find_removed(old, today) if i.kind == "section")
+    assert restore.parks(today, item) is True
+    parked = restore.park(today, item)
+    assert parked["views"][0]["cards"] == [A]
+    assert [i for i in analyze.find_removed(old, parked) if i.kind == "section"] == []
+
+
+def test_parking_a_section_leaves_the_input_alone():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    snapshot = copy.deepcopy(today)
+    restore.park(today, item)
+    assert today == snapshot
+
+
+def test_parking_a_section_creates_cards_when_null():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    today["views"][0]["cards"] = None
+    assert restore.park(today, item)["views"][0]["cards"] == [A, B]
+
+
+def test_parking_a_section_appends_after_cards_already_there():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": []})
+    today["views"][0]["cards"] = [C]
+    assert restore.park(today, item)["views"][0]["cards"] == [C, A, B]
+
+
+def test_parking_a_section_into_a_cards_that_is_no_list_refuses():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    today["views"][0]["cards"] = {"not": "a list"}
+    with pytest.raises(LookupError, match="something other"):
+        restore.park(today, item)
+
+
+def test_a_section_never_parks_outside_a_sections_view():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    assert restore.parks(_config([C]), item) is False
+
+
+def test_a_section_of_a_pathless_view_does_not_park():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    pathless = dataclasses.replace(item, view_path=None)
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    assert restore.parks(today, pathless) is False
+
+
+def test_a_section_does_not_park_when_two_views_share_a_path():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    today = _sections({"cards": [C]}, {"cards": [A]})
+    today["views"].append(copy.deepcopy(today["views"][0]))
+    assert restore.parks(today, item) is False
+
+
+def test_a_section_whose_cards_stand_again_is_not_offered_back():
+    """The assumption behind `restore` not counting cards (spec #39, section 4).
+
+    If this fails, the spec is amended - `restore.py` still does not
+    import `analyze`.
+    """
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    new = _sections({"cards": [C]})
+    new["views"][0]["cards"] = [A, B]
+    assert [i for i in analyze.find_removed(old, new) if i.kind == "section"] == []
