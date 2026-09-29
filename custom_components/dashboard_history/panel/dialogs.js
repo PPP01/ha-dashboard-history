@@ -34,10 +34,13 @@ const FOOTNOTE = `
 // a contract with `panel.js` and with two test harnesses, and a
 // `maxlength` that drifted would let one dialog accept a title the
 // other refuses, against the same store.
+// The description carries none (decided 2026-09-29): neither the
+// service schemas nor the git commit message it ends up in enforce a
+// length, so 500 was never anything but an arbitrary UI number.
 const VERSION_FIELDS = `
       <input class="text title" type="text" maxlength="200"
              placeholder="What is this version?">
-      <input class="text desc" type="text" maxlength="500"
+      <input class="text desc" type="text"
              style="margin-top:8px"
              placeholder="Anything more worth remembering (optional)">`;
 
