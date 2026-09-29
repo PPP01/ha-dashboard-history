@@ -20,6 +20,7 @@ from conftest import PACKAGE
 
 PANEL = PACKAGE / "panel.js"
 RENDER = PACKAGE / "panel" / "render.js"
+DIALOGS_FILE = PACKAGE / "panel" / "dialogs.js"
 
 # The stand-in for the browser, and the two helpers every scenario uses:
 # `settle` lets pending promises run, `answer` settles one held call the
@@ -5920,6 +5921,143 @@ def test_render_diff_handles_a_trailing_blank_line(tmp_path_factory):
 
 def test_render_diff_still_says_no_difference_for_an_empty_diff(tmp_path_factory):
     assert _render_diff(tmp_path_factory, "") == '<p class="muted">No difference.</p>'
+
+
+# -- the version dialog's real markup is a toggle pair, not <details> ------
+
+
+def _dialogs_html(tmp_path_factory):
+    """The real DIALOGS markup, parsed by nothing but Node's own import.
+
+    The flat DOM stand-in the rest of this file uses (`node()`, in
+    `_PRELUDE`) answers every selector with a fresh phantom node
+    regardless of what dialogs.js actually contains - proof that a
+    markup change really landed has to come from reading dialogs.js
+    itself, not from asking the stand-in.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the panel's logic cannot be run here")
+    harness = tmp_path_factory.mktemp("dialogs") / "dialogs_html.mjs"
+    harness.write_text(
+        "import { DIALOGS } from %s;\n"
+        "process.stdout.write(JSON.stringify({ html: DIALOGS }));\n"
+        % json.dumps(DIALOGS_FILE.as_uri()),
+        encoding="utf-8",
+    )
+    run = subprocess.run(
+        [node, str(harness)], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout.strip().splitlines()[-1])["html"]
+
+
+def _version_dialog_html(tmp_path_factory):
+    html = _dialogs_html(tmp_path_factory)
+    return html.split('<dialog class="version">')[1].split("</dialog>")[0]
+
+
+def test_the_version_dialogs_real_markup_has_a_toggle_pair_not_details(
+    tmp_path_factory,
+):
+    version_dialog = _version_dialog_html(tmp_path_factory)
+    assert "<details" not in version_dialog
+    assert "data-pending-tab" in version_dialog
+    assert "data-technical" in version_dialog
+    assert 'aria-pressed="true"' in version_dialog
+    assert 'aria-pressed="false"' in version_dialog
+
+
+# -- the two views switch each other off, not open independently -----------
+
+_TAB_SWITCH = """
+const changes = [{ revision: "c", message: "3rd card added", versions: [] }];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = changes;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = (type) =>
+  type === "next_versions"
+    ? Promise.resolve({ candidates: { patch: "dash/v1.0.1", current: "dash/v1.0.0" } })
+    : type === "compare"
+      ? Promise.resolve({ diff: "@@ -1 +1 @@\\n-old\\n+new\\n" })
+      : Promise.resolve({ created: "dash/v1.0.1" });
+
+const first = el._createVersion("c");
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.version");
+const pendingTab = dialog.querySelector("[data-pending-tab]");
+const technicalTab = dialog.querySelector("[data-technical]");
+const pendingBody = dialog.querySelector("[data-pending-body]");
+const technicalBody = dialog.querySelector("[data-technical-body]");
+const state = () => ({
+  pendingPressed: pendingTab.getAttribute("aria-pressed"),
+  technicalPressed: technicalTab.getAttribute("aria-pressed"),
+  pendingHidden: pendingBody.hidden,
+  technicalHidden: technicalBody.hidden,
+});
+const opened = state();
+
+technicalTab._on.click();
+const afterTechnical = state();
+
+pendingTab._on.click();
+const afterPending = state();
+
+// Left on "technical" on the way out, on purpose - the next open must
+// not remember it.
+technicalTab._on.click();
+dialog.close("create");
+await first;
+
+const second = el._createVersion("c");
+await settle();
+const reopened = state();
+dialog.close("create");
+await second;
+
+console.log(JSON.stringify({ opened, afterTechnical, afterPending, reopened }));
+"""
+
+
+@pytest.fixture(scope="session")
+def tab_switch(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "tab_switch", _TAB_SWITCH)
+
+
+def test_the_version_dialog_opens_on_the_plain_language_tab(tab_switch):
+    assert tab_switch["opened"] == {
+        "pendingPressed": "true",
+        "technicalPressed": "false",
+        "pendingHidden": False,
+        "technicalHidden": True,
+    }
+
+
+def test_the_version_dialogs_two_tabs_show_exactly_one_panel_at_a_time(tab_switch):
+    assert tab_switch["afterTechnical"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "true",
+        "pendingHidden": True,
+        "technicalHidden": False,
+    }
+    assert tab_switch["afterPending"] == {
+        "pendingPressed": "true",
+        "technicalPressed": "false",
+        "pendingHidden": False,
+        "technicalHidden": True,
+    }
+
+
+def test_reopening_the_version_dialog_forgets_the_last_open_tab(tab_switch):
+    assert tab_switch["reopened"] == {
+        "pendingPressed": "true",
+        "technicalPressed": "false",
+        "pendingHidden": False,
+        "technicalHidden": True,
+    }
 
 
 # -- the create-version dialog offers the diff behind the pending span -----

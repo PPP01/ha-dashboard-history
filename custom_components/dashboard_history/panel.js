@@ -2818,6 +2818,32 @@ class DashboardHistoryPanel extends HTMLElement {
         })
         .catch(() => {});
     }
+    // The two views of the same pending span switch each other off -
+    // unlike the independent <details class="raw"> pairs elsewhere in
+    // the panel, only one of "changes" and "Technical details" is ever
+    // on screen at once. Plain toggle buttons (aria-pressed), not a
+    // full ARIA tabs pattern - there is no keyboard roving-tabindex
+    // navigation here, and claiming role="tab" without it would be
+    // worse than claiming nothing. Reset on every open: the dialog
+    // element can outlive several openings (_render never runs while a
+    // dialog is open), and a tab left on "technical" from the last
+    // time would otherwise greet the next change with the diff instead
+    // of the plain-language span.
+    const pendingTab = dialog.querySelector("[data-pending-tab]");
+    const pendingBody = dialog.querySelector("[data-pending-body]");
+    const technicalBody = dialog.querySelector("[data-technical-body]");
+    const selectTab = (which) => {
+      pendingTab.setAttribute("aria-pressed", String(which === "pending"));
+      technicalDetails.setAttribute(
+        "aria-pressed",
+        String(which === "technical"),
+      );
+      pendingBody.hidden = which !== "pending";
+      technicalBody.hidden = which !== "technical";
+    };
+    selectTab("pending");
+    pendingTab.addEventListener("click", () => selectTab("pending"));
+    technicalDetails.addEventListener("click", () => selectTab("technical"));
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
     buttons.forEach((button) => {

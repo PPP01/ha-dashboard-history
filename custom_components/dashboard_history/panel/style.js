@@ -764,6 +764,64 @@ export const STYLE = `
     background: rgba(224, 224, 224, 0.45);
     background: color-mix(in srgb, var(--divider-color, #e0e0e0) 45%, transparent);
   }
+  /* The create-version dialog's own switch between the plain-language
+     span and its exact diff (GitHub issue #15, redesigned 2026-09-29):
+     one row, a muted label and two pill-shaped toggle buttons, exactly
+     one of them pressed at a time - unlike the independent
+     details.raw pairs above, which can both be open together. */
+  .switcher { margin: 8px 0; }
+  .switcher-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .switcher-label {
+    color: var(--secondary-text-color, #727272);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .switcher-tabs { display: flex; gap: 8px; }
+  .switcher-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border: 1px solid var(--divider-color, #dfe3e8);
+    border-radius: 18px;
+    background: var(--primary-background-color, #f5f5f5);
+    color: var(--secondary-text-color, #607d8b);
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .switcher-tab:hover { background: var(--divider-color, #e7ebee); }
+  .switcher-tab .glyph { font-family: monospace; font-size: 12px; }
+  .switcher-tab::after {
+    content: "\\25BC";
+    margin-left: 2px;
+    font-size: 10px;
+    opacity: .7;
+    display: inline-block;
+    transition: transform .15s ease;
+  }
+  .switcher-tab[aria-pressed="true"] {
+    background: var(--card-background-color, #fff);
+    border-color: var(--primary-text-color, #37474f);
+    color: var(--primary-text-color, #37474f);
+  }
+  .switcher-tab[aria-pressed="true"]::after { transform: rotate(180deg); }
+  @media (max-width: 600px) {
+    .switcher-bar {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+  }
   details.ver { margin-bottom: 12px; }
   /* Centred, and deliberately not on the baseline like .vhead further
      down, whose comment argues the other way for the same pairing of a

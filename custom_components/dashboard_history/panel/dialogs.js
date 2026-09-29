@@ -125,14 +125,23 @@ export const DIALOGS = `
     <div class="body" style="padding:0 16px 8px">
       <p class="muted" style="font-size:13px" data-scope></p>
       <p class="carries" data-carries hidden></p>
-      <details class="raw" data-pending hidden>
-        <summary data-pending-summary></summary>
-        <div data-pending-body></div>
-      </details>
-      <details class="raw" data-technical hidden>
-        <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
-        <div data-technical-body></div>
-      </details>
+      <div class="switcher" data-pending hidden>
+        <div class="switcher-bar">
+          <span class="switcher-label">Included</span>
+          <div class="switcher-tabs">
+            <button type="button" class="switcher-tab" data-pending-tab
+                    aria-pressed="true" aria-controls="version-pending-body">
+              <span data-pending-summary></span>
+            </button>
+            <button type="button" class="switcher-tab" data-technical hidden
+                    aria-pressed="false" aria-controls="version-technical-body">
+              <span class="glyph">&lt;/&gt;</span> Technical details
+            </button>
+          </div>
+        </div>
+        <div class="switcher-body" data-pending-body id="version-pending-body"></div>
+        <div class="switcher-body" data-technical-body id="version-technical-body" hidden></div>
+      </div>
       <div class="levels">
         <button type="button" data-level="patch" aria-pressed="true">
           <strong></strong><span>Patch</span>
