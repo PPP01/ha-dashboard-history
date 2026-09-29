@@ -116,8 +116,10 @@ restore_deleted:
       required: false
       default: false
       description: >-
-        Allow cards whose section can no longer be proven to be placed
-        in the view's "Imported cards" area instead of refusing.
+        Allow what cannot go back into its exact place to be placed
+        elsewhere instead of refusing: cards whose section can no longer
+        be proven go to the view's "Imported cards" area, a removed
+        section is appended as the last section of its view.
       selector:
         boolean:
 
@@ -174,8 +176,9 @@ undo_change:
     offered when it can be shown what it writes: the cards the change
     produced must still be in the dashboard, unchanged and only once.
     Where a card's section in a sections view cannot be proven any more,
-    it can only be placed in the view's "Imported cards" area - that
-    needs allow_parking, otherwise the call refuses. Without confirm it
+    it can only be placed in the view's "Imported cards" area, and a
+    removed section only as the last section of its view - that needs
+    allow_parking, otherwise the call refuses. Without confirm it
     answers with a preview and writes nothing.
   fields:
     dashboard:
@@ -208,8 +211,10 @@ undo_change:
       required: false
       default: false
       description: >-
-        Allow cards whose section can no longer be proven to be placed
-        in the view's "Imported cards" area instead of refusing.
+        Allow what cannot go back into its exact place to be placed
+        elsewhere instead of refusing: cards whose section can no longer
+        be proven go to the view's "Imported cards" area, a removed
+        section is appended as the last section of its view.
       selector:
         boolean:
 

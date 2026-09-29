@@ -150,6 +150,11 @@ def _rearranged(key: Any, name: str, after_view: dict, current_view: dict) -> st
 SECTION_APPENDED = " (as the last section)"
 
 
+def _cards_mark(section: Any) -> str:
+    """What a section holds, without how it is set."""
+    return fingerprint(section.get("cards") if isinstance(section, dict) else section)
+
+
 def _park_removed_section(
     ctx: UndoContext,
     key: Any,
@@ -167,15 +172,18 @@ def _park_removed_section(
     against the sections of today, and marked `parked` so the button
     carries its asterisk.
 
-    Idempotent like the card path: more byte-identical sections in the
-    view today than the change left means this part is undone either
-    way (an earlier undo, or somebody's hand). Nothing is refused here
-    - only added.
+    Idempotent like the card path: more sections holding these very
+    cards in the view today than the change left means this part is
+    undone either way (an earlier undo, or somebody's hand). Counted by
+    the cards, not the whole section: the settings of a section put back
+    are as likely to be changed afterwards as anything (Astra review of
+    the implementation, 2026-09-29 - a widened section was appended a
+    second time). Nothing is refused here - only added.
     """
     now = _section_list(current_view)
-    mark = fingerprint(removed.section)
-    stayed = [fingerprint(section) for section in _section_list(ctx.new_views[key])]
-    if [fingerprint(section) for section in now].count(mark) > stayed.count(mark):
+    mark = _cards_mark(removed.section)
+    stayed = [_cards_mark(section) for section in _section_list(ctx.new_views[key])]
+    if [_cards_mark(section) for section in now].count(mark) > stayed.count(mark):
         return ()
     return (
         UndoStep(

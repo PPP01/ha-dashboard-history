@@ -910,8 +910,12 @@ def test_parking_a_section_leaves_the_input_alone():
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": [A]})
     snapshot = copy.deepcopy(today)
-    restore.park(today, item)
+    payload = copy.deepcopy(item.payload)
+    result = restore.park(today, item)
     assert today == snapshot
+    # The result shares nothing with the item either.
+    result["views"][0]["sections"][-1]["cards"].append({"type": "x"})
+    assert item.payload == payload
 
 
 def test_appending_a_section_creates_sections_when_null():

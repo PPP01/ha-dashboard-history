@@ -962,9 +962,10 @@ async def async_undo_change(
     the call before this one, and showing it twice would cost the same
     two dumps again for a screen already drawn.
 
-    `parked` names the cards this undo can only make available in the
-    view's "Imported cards", not put back into their section (decision
-    26). It is part of the cheap answer on purpose: the row asks on
+    `parked` names what this undo can only make available elsewhere,
+    not put back into its exact place: cards in the view's "Imported
+    cards" (decision 26), a removed section as the last section of its
+    view (GitHub #39). It is part of the cheap answer on purpose: the row asks on
     every expansion, and the asterisk on its button has to be right
     there already. `expected_parked` is what the dialog showed; a
     confirming call whose fresh plan parks differently writes nothing,

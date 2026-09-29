@@ -2583,6 +2583,31 @@ def test_a_card_change_is_refused_even_when_the_removed_cards_stand_again():
     assert plan.steps == ()
 
 
+def test_a_card_moved_between_sections_in_the_same_change_is_refused_when_the_section_stands_again():
+    """Gemini review of the implementation: `matching.moved` is part of
+    `_card_events_in`, and only this shape reaches it - the removed
+    section stands again, so the sections step is empty and the gate is
+    blind."""
+    before = _parked_state(_sec("b", "x"), _sec("c"), _sec("a"))
+    after = _parked_state(_sec("b"), _sec("c", "x"))
+    current = _parked_state(_sec("b"), _sec("c", "x"), _sec("n"), _sec("a"))
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
+def test_a_card_edited_in_the_same_change_is_refused_when_the_section_stands_again():
+    """The same for `matching.edited`: a tile renamed, the section back."""
+    def held(*cards):
+        return {"type": "grid", "cards": list(cards)}
+    before = {"views": [_sectioned(held(BETT), _sec("a"))]}
+    after = {"views": [_sectioned(held(BETTLAMPE))]}
+    current = {"views": [_sectioned(held(BETTLAMPE), _sec("n"), _sec("a"))]}
+    plan = analyze.plan_undo(before, after, current)
+    assert plan.blocked is not None
+    assert plan.steps == ()
+
+
 def test_a_removed_section_and_a_reset_one_in_one_change_still_refuse():
     before = _parked_state(_sec("b", column_span=1), _sec("a"))
     after = _parked_state(_sec("b", column_span=2))
@@ -2697,6 +2722,33 @@ def test_an_alike_section_in_another_view_does_not_count_as_back():
     assert plan.blocked is None
     assert [s.view_path for s in plan.steps] == ["home"]
     assert restore.apply_undo(current, plan)["views"][1]["sections"][-1] == _sec("a")
+
+
+def test_a_second_undo_after_a_setting_of_the_appended_section_changed_adds_nothing():
+    """Astra review of the implementation: only `column_span` was changed
+    by hand, and the original was appended a second time."""
+    before = _parked_state(_sec("a"), _sec("b"))
+    after = _parked_state(_sec("b"))
+    current = _parked_state(_sec("b"), _sec("n"))
+    undone = restore.apply_undo(current, analyze.plan_undo(before, after, current))
+    undone["views"][0]["sections"][-1]["column_span"] = 2
+    again = analyze.plan_undo(before, after, undone)
+    assert again.blocked is None
+    assert again.steps == ()
+
+
+def test_an_undo_after_a_put_back_and_a_setting_change_adds_nothing():
+    """The same through the other route: put back appends, somebody
+    widens the section, and the undo of the original change must see it."""
+    before = _parked_state(_sec("a"), _sec("b"), _sec("c"))
+    after = _parked_state(_sec("b"), _sec("c"))
+    today = _parked_state(_sec("c"), _sec("b"))
+    item = next(i for i in analyze.find_removed(before, today) if i.kind == "section")
+    appended = restore.park(today, item)
+    appended["views"][0]["sections"][-1]["column_span"] = 2
+    plan = analyze.plan_undo(before, after, appended)
+    assert plan.blocked is None
+    assert plan.steps == ()
 
 
 def test_a_second_undo_parks_nothing_again():

@@ -294,7 +294,7 @@ def reinsert(config: dict, item: RemovedItem) -> dict:
 
 
 def _section_parks(config: dict, item: RemovedItem) -> bool:
-    """Whether a removed section goes to "Imported cards" (GitHub #39).
+    """Whether a removed section is appended as the last section (GitHub #39).
 
     The same footing as a card: a sections view named by a path, and the
     gap the section left no longer the only one it fits. Anything else is
