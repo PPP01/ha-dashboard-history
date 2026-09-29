@@ -1,6 +1,6 @@
 # Ganze entfernte Section parken statt verweigern (GitHub #39)
 
-Stand: 2026-09-29, überarbeitet nach dem Terra- und dem Gemini-Review desselben Tages. Baut auf Entscheidung 26 (Parken, #30, Vorhaben L) und auf »Sections als Einheit« (#31, Vorhaben O, `specs/2026-09-25-sections-als-einheit-design.md`) auf.
+Stand: 2026-09-29, überarbeitet nach dem Terra- und dem Gemini-Review desselben Tages, umgesetzt am 2026-09-29. Baut auf Entscheidung 26 (Parken, #30, Vorhaben L) und auf »Sections als Einheit« (#31, Vorhaben O, `specs/2026-09-25-sections-als-einheit-design.md`) auf.
 
 ## Ausgangslage
 
@@ -10,10 +10,10 @@ Gemessen am 2026-09-26 an `test-2`, Ansicht `a3`: Section entfernt, danach eine 
 
 Für einzelne Karten löst Entscheidung 26 dasselbe Problem längst: Lässt sich ihre Section nicht mehr beweisen, wird die Karte ans Ende der `cards:`-Liste der Ansicht geparkt (HAs »Imported cards«), und der Knopf trägt ein Sternchen. Für eine ganze Section gibt es diesen Ausweg nicht.
 
-Zwei Wege sind betroffen, und beide verweigern heute:
+Zwei Wege sind betroffen, wenn auch in unterschiedlicher Breite (für Put back gilt die Verweigerung nur bei Nettoverlust von einer Section und umgeordneten oder bearbeiteten Nachbarn, etwa `[a],[b],[c]` → `[c],[b]`; kam nach der Entfernung eine Section hinzu, hatte die Ansicht wieder gleich viele Sections, `_settle_sections` erkannte keine entfernte Section und `find_removed` bot die Karten einzeln an, die Put back schon seit Vorhaben L parkt):
 
 - **Undo** (`plan_undo` → `_plan_sections` → `apply_undo`): plant einen `UndoStep` mit `kind="sections_list"`.
-- **»Put back«** (`operations.async_restore_deleted` → `_reinsertion` → `restore.parks`/`park`/`reinsert`): `parks()` verneint `kind="section"`, `reinsert` verweigert über `_section_gap_holds`.
+- **»Put back«** (`operations.async_restore_deleted` → `_reinsertion` → `restore.parks`/`park`/`reinsert`): `parks()` verneinte `kind="section"`, `reinsert` verweigerte über `_section_gap_holds`.
 
 ## Ziel
 
@@ -38,7 +38,7 @@ Der Parkweg greift im Undo genau dann, wenn alle Bedingungen zutreffen:
 1. Die Ansicht hat in dieser Änderung **ausschließlich eine entfernte Section**: `removed` enthält genau eine, `moved`, `reset` und `added` sind leer.
 2. Der exakte Weg würde an der Umordnung scheitern: `gone or came or _moved(since)` (Verweigerung 1) oder mehr als eine Section seither bearbeitet (Verweigerung 2). Bei reiner Entfernung sind das die einzigen beiden Verweigerungen *nach* den frühen Prüfungen von `_plan_sections`, denn die Schleife über die Indizes (»changed again after this«) läuft nur über `added`, `moved` und `reset` und ist hier leer.
 3. Die frühen Prüfungen von `_plan_sections` sind bestanden und bleiben unverändert: keine Section in `rest_old`/`rest_new` dieser Ansicht (`undo.py:144`), die Ansicht ist noch auf dem Dashboard (Zeile 151), und `sections` ist in `before` und heute eine Liste (Zeile 153). Der Parkweg sitzt **hinter** diesen Prüfungen, an der Stelle der beiden Umordnungs-Verweigerungen (Zeile 167 ff.), und erbt sie damit. Dass die Ansicht heute noch `type: sections` hat, sichert die Prüfung auf `_VIEW_TYPE_REFUSAL` in `plan_undo` davor.
-4. Die Änderung hat in dieser Ansicht **keine einzelne Kartenänderung** (bearbeitet, verschoben, entfernt, hinzugefügt). Die geparkten Schritte werden in den Behälter `planned["sections"]` gelegt; damit greift das vorhandene Tor `_sections_meet_cards` (`undo.py:734`) unverändert und verweigert mit `_SECTIONS_AND_CARDS_REFUSAL`, sobald derselbe Plan in derselben Ansicht auch Kartenschritte enthält. Kein neuer Code dafür; die Meldung spricht von »sections moved«, was hier nur ungefähr stimmt und bewusst so bleibt.
+4. Die Änderung hat in dieser Ansicht **keine einzelne Kartenänderung** (bearbeitet, verschoben, entfernt, hinzugefügt). Die geparkten Schritte werden in den Behälter `planned["sections"]` gelegt; damit greift das vorhandene Tor `_sections_meet_cards` (`undo.py:734`) unverändert und verweigert mit `_SECTIONS_AND_CARDS_REFUSAL`, sobald derselbe Plan in derselben Ansicht auch Kartenschritte enthält. Kein neuer Code dafür; die Meldung spricht von »sections moved«, was hier nur ungefähr stimmt und bewusst so bleibt. Zusätzlich verweigert `_park_instead` selbst, wenn die Änderung in derselben Ansicht irgendeine einzelne Karte berührt hat (bearbeitet, verschoben, hinzugefügt, entfernt – auch in `cards:`); sonst bliebe das Tor `_sections_meet_cards` blind, sobald alle Karten der entfernten Section schon zurück sind und kein Section-Schritt entsteht (Plan-Review 2026-09-29).
 
 Hält der exakte Beweis, ändert sich nichts: derselbe `sections_list`-Schritt wie heute, ohne Sternchen. **Der Parkweg ersetzt nie eine andere Verweigerung** – er springt nur an die Stelle der beiden Umordnungs-Verweigerungen.
 
@@ -91,7 +91,7 @@ Die bestehenden Paneltexte (»These cards cannot go back into their exact sectio
 | Section entfernt, danach zwei Sections getauscht | geparkt |
 | Section entfernt, sonst nichts geändert | exakt, ohne Sternchen (wie heute) |
 | Section entfernt **und** eine andere in derselben Änderung verschoben oder bearbeitet | Verweigerung |
-| Section entfernt **und** eine Karte in einer anderen Section derselben Ansicht geändert | Verweigerung durch `_sections_meet_cards` |
+| Section entfernt **und** eine Karte in einer anderen Section derselben Ansicht geändert | Verweigerung durch `_park_instead` (`_card_events_in`, Text »rearranged since«; `_sections_meet_cards` als zweite Sicherung) |
 | Karten der entfernten Section stehen heute schon (von Hand neu angelegt, oder zweites Undo) | diese Karten werden übersprungen; sind alle da, bleibt der Plan für die Ansicht leer |
 | Ansicht hat `cards: null` oder keine `cards:` | wird angelegt |
 | `cards:` ist etwas anderes als eine Liste | Verweigerung mit dem Text von `_park_for` |
@@ -102,7 +102,7 @@ Die bestehenden Paneltexte (»These cards cannot go back into their exact sectio
 
 **pytest** (`tests/test_analyze.py`, `tests/test_restore.py`; `operations.py` ist nicht importierbar):
 
-- Planer: eine entfernte Section + Umordnung (hinzugefügt / vertauscht) → geparkte Schritte in alter Reihenfolge, Etiketten sind Kartenbeschreibungen, `plan.parked` hat je Karte einen Eintrag; reine Entfernung ohne Umordnung → weiter `sections_list`; Entfernung + Verschiebung/Bearbeitung/Hinzufügung → Verweigerung; Entfernung + Kartenänderung in einer anderen Section derselben Ansicht → `_SECTIONS_AND_CARDS_REFUSAL`; Ansicht nicht mehr `sections` → Verweigerung; zwei entfernte Sections → Verweigerung (`rest_old`); die Verweigerung für `added` bleibt Wort für Wort.
+- Planer: eine entfernte Section + Umordnung (hinzugefügt / vertauscht) → geparkte Schritte in alter Reihenfolge, Etiketten sind Kartenbeschreibungen, `plan.parked` hat je Karte einen Eintrag; reine Entfernung ohne Umordnung → weiter `sections_list`; Entfernung + Verschiebung/Bearbeitung/Hinzufügung → Verweigerung; Entfernung + Kartenänderung in einer anderen Section derselben Ansicht → Verweigerung (durch `_park_instead`, `_sections_meet_cards` als Sicherung); Ansicht nicht mehr `sections` → Verweigerung; zwei entfernte Sections → Verweigerung (`rest_old`); die Verweigerung für `added` bleibt Wort für Wort.
 - Überspringen: alle Karten schon in der Ansicht → leerer Plan; ein Teil vorhanden → nur die fehlenden geparkt; gleiche Karten mehrfach in der Section (`deleted` = 2) und eine heute vorhanden → eine geparkt; eine gleiche Karte in einer *anderen* Ansicht zählt nicht; wiederholtes Undo derselben Änderung hängt nichts ein zweites Mal an.
 - Regression der bewusst verschluckten Karten (`loose_removed`): `find_removed`, `loose_removed`, `summarize`, `_explain` und `change_message` liefern mit einer entfernten Section weiter *eine* Section, nicht mehrere Kartenereignisse; nur der neue Undo-Plan erzeugt Karten einzeln.
 - `apply_undo` mit einem solchen Plan: legt `cards:` an (fehlt / `null`), hängt in Reihenfolge an, eine gewöhnliche Einsetzung in dieselbe Liste bleibt davor.

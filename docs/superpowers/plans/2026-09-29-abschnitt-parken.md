@@ -49,7 +49,7 @@ Eingaben, die die Spec nahelegt, die aber leicht durchrutschen; jede hat unten e
   - `_park_removed_section(ctx, key, current_view, current_index, removed) -> tuple[UndoStep, ...]`.
   - `_park_instead(refusal, ctx, key, current_view, current_index, removed, mixed) -> tuple[UndoStep, ...] | str`.
 
-- [ ] **Schritt 1: Failing Tests schreiben**
+- [x] **Schritt 1: Failing Tests schreiben**
 
 An `tests/test_analyze.py` anhängen:
 
@@ -321,12 +321,12 @@ def test_the_swallowed_cards_of_a_removed_section_stay_one_section_item():
     assert analyze.match_cards(before, after).loose_removed() == []
 ```
 
-- [ ] **Schritt 2: Tests laufen lassen, Fehlschlag prüfen**
+- [x] **Schritt 2: Tests laufen lassen, Fehlschlag prüfen**
 
 Run: `python3 -m pytest tests/test_analyze.py -q 2>&1 | tail -30` (die ganze Datei – ein `-k`-Filter würde Verweigerungstests still auslassen).
 Erwartet FAIL (Parkfälle, `plan.blocked` ist ein Text mit »rearranged since«): `test_a_removed_section_is_parked_when_another_came_since`, `..._when_two_others_swapped_since`, `test_the_cards_of_a_removed_section_are_parked_in_their_old_order`, `test_only_the_missing_cards_...`, `test_two_alike_cards_...`, `test_an_alike_card_in_another_view_...`, `test_a_second_undo_parks_nothing_again`, `test_a_view_with_cards_null_...`, `test_two_sections_edited_since_park_the_removed_one`, `test_a_view_whose_cards_is_no_list_...`, `test_a_parked_section_goes_after_cards_...`, `test_cards_of_a_removed_section_that_all_stand_again_are_skipped`. Alle übrigen neuen Tests (Verweigerungen, `test_a_removed_section_alone_is_still_put_back_exactly`, `test_the_swallowed_...`) sind schon **grün**: sie sichern ab, dass der Umbau nichts aufweicht. Ist einer davon rot, stimmen die Beispieldaten nicht mit dem Matching überein – nicht den Test passend biegen, sondern mit `analyze.match_cards(before, after).sections` (`removed`, `pairs`, `rest_old`) nachsehen, was das Matching erkennt.
 
-- [ ] **Schritt 3: Umsetzung**
+- [x] **Schritt 3: Umsetzung**
 
 In `custom_components/dashboard_history/analyze/undo.py`:
 
@@ -481,30 +481,30 @@ Den Rest der Funktion (ab `then_sections = …`) **nicht** anfassen. Rückgabety
             steps.append(planned)
 ```
 
-- [ ] **Schritt 3a: Regression der Darstellung einer entfernten Section**
+- [x] **Schritt 3a: Regression der Darstellung einer entfernten Section**
 
 Die Spec verlangt, dass `summarize`, `_explain` und `change_message` eine entfernte Section weiter als *eine* Section melden. Dafür gibt es schon Tests, die dieser Umbau nicht anfasst; sie müssen im Lauf grün bleiben und werden hier ausdrücklich mit ausgeführt:
 
 Run: `python3 -m pytest tests/test_analyze.py -q -k "deleted_section or a_removed or section_is_one_line or offered_as_one_item" 2>&1 | tail -5`
 Erwartet: grün. Findet der Filter weniger als die Tests `test_a_deleted_section_is_offered_as_one_item` und `test_a_deleted_section_is_one_line_named_by_its_heading`, mit `grep -n "def test.*section" tests/test_analyze.py` die richtigen Namen nachschlagen. Kein neuer Test nötig, solange `undo.py` und `restore.py` die einzigen geänderten Module bleiben.
 
-- [ ] **Schritt 4: Tests laufen lassen, Erfolg prüfen**
+- [x] **Schritt 4: Tests laufen lassen, Erfolg prüfen**
 
 Run: `python3 -m pytest tests/test_analyze.py -v -q 2>&1 | tail -15`
 Erwartet: alle grün, die vorhandenen Section-Tests (`_section_plan` ruft `_plan_sections` **ohne** `ctx`) unverändert. `0 failed` zählt, nicht die Gesamtzahl (schwankt mit der echten Bank).
 
-- [ ] **Schritt 5: Sperrklinke, Baseline senken**
+- [x] **Schritt 5: Sperrklinke, Baseline senken**
 
 Run: `python3 tools/complexity_ratchet.py`
 Erwartet: Meldung, dass `undo.py::_plan_sections` **gesunken** ist (Baseline zu hoch). `_rearranged`, `_park_removed_section`, `_park_instead` liegen unter dem Limit 10 und brauchen keinen Eintrag. Meldet die Sperrklinke eine der neuen Funktionen als zu komplex, sie weiter zerlegen statt einzutragen.
 Dann `tools/complexity-baseline.json` anpassen: den in der Meldung genannten neuen Wert für `_plan_sections` eintragen (steht er unter dem Limit, den ganzen Eintrag entfernen) und `python3 tools/complexity_ratchet.py` erneut laufen lassen → grün. Wert nach der Messung setzen, nicht vorhersagen.
 
-- [ ] **Schritt 6: Kern-Regeln und Gesamtlauf**
+- [x] **Schritt 6: Kern-Regeln und Gesamtlauf**
 
 Run: `lint-imports && python3 -m pytest tests/ -q 2>&1 | tail -5`
 Erwartet: Verträge erfüllt, `0 failed`.
 
-- [ ] **Schritt 7: Commit**
+- [x] **Schritt 7: Commit**
 
 ```bash
 git add custom_components/dashboard_history/analyze/undo.py tools/complexity-baseline.json tests/test_analyze.py
@@ -530,7 +530,7 @@ still refuses, and the complexity baseline is lowered in this commit." -m "Co-Au
 - Verbraucht: `_find_view`, `_paths_share`, `_section_gap_holds`, `_park_for`.
 - Erzeugt: `parks(config, item) -> bool` (jetzt auch `True` für eine Section) und `park(config, item) -> dict` (hängt bei einer Section alle Karten aus `item.payload["cards"]` als Block an).
 
-- [ ] **Schritt 1: Failing Tests schreiben**
+- [x] **Schritt 1: Failing Tests schreiben**
 
 In `tests/test_restore.py` den Test `test_a_section_item_never_parks` **umbenennen** in `test_a_section_that_fits_its_gap_does_not_park` (Inhalt unverändert; er bleibt grün, weil die Lücke hält) und anhängen:
 
@@ -646,12 +646,12 @@ def test_a_section_whose_cards_stand_again_is_not_offered_back():
 
 Falls `copy`/`dataclasses` in der Datei noch nicht importiert sind, oben ergänzen (`import copy`, `import dataclasses`). Prüfen, dass `RemovedItem` ein (frozen) Dataclass ist (`dataclasses.replace` braucht das); sonst `RemovedItem(...)` von Hand neu bauen.
 
-- [ ] **Schritt 2: Tests laufen lassen**
+- [x] **Schritt 2: Tests laufen lassen**
 
 Run: `python3 -m pytest tests/test_restore.py -v -q 2>&1 | tail -20`
 Erwartet: die Tests `..._neighbours_changed_parks`, `..._one_block_in_order`, `..._creates_cards_when_null`, `..._appends_after_cards_already_there` und `test_a_section_lost_beside_a_swap_...` FAIL (`parks` liefert `False`, `park` hängt die Section selbst an); `test_parking_a_section_leaves_the_input_alone` und `..._no_list_refuses` sind schon grün; die Negativ-Tests und `..._is_not_offered_back` sind grün. **Ist `test_a_section_whose_cards_stand_again_is_not_offered_back` rot, anhalten** und den Nutzer informieren: die Annahme in Abschnitt 4 der Spec ist falsch und die Spec muss geändert werden, bevor weiter gebaut wird.
 
-- [ ] **Schritt 3: Umsetzung**
+- [x] **Schritt 3: Umsetzung**
 
 In `restore.py`, vor `parks` eine kleine Hilfsfunktion, `parks` und `park` erweitern:
 
@@ -699,12 +699,12 @@ def park(config: dict, item: RemovedItem) -> dict:
     return result
 ```
 
-- [ ] **Schritt 4: Tests, Sperrklinke, Import-Verträge**
+- [x] **Schritt 4: Tests, Sperrklinke, Import-Verträge**
 
 Run: `python3 -m pytest tests/ -q 2>&1 | tail -5 && python3 tools/complexity_ratchet.py && lint-imports`
 Erwartet: `0 failed`, Sperrklinke grün (`parks` und `park` bleiben unter dem Limit; steigt trotzdem etwas, die Funktion weiter zerlegen), `lint-imports` grün (`restore.py` importiert `analyze` weiter nicht).
 
-- [ ] **Schritt 5: Commit**
+- [x] **Schritt 5: Commit**
 
 ```bash
 git add custom_components/dashboard_history/restore.py tests/test_restore.py
@@ -725,13 +725,13 @@ offer a section whose cards already stand, and a test pins that." -m "Co-Authore
 
 Panel und `operations.py` brauchen **keinen** Code: `tests/test_panel_behaviour.py` (`test_a_parking_undo_carries_an_asterisk_and_says_why`, Zeile ~8112) deckt Sternchen und Hinweistext für einen `parked`-Plan schon ab, und das Panel liest keine Bedeutung aus dem Etikett.
 
-- [ ] **Schritt 1: Prüfbank prüfen**
+- [x] **Schritt 1: Prüfbank prüfen**
 
 **Der Live-Lauf ist ein Maintainer-Check, kein Teil der reproduzierbaren Abnahme:** Er braucht die Docker-Instanz samt Token außerhalb des Repos. Wer sie nicht hat, überspringt die Schritte 1 bis 3, schreibt die Probe (Schritt 2) trotzdem und nennt im Bericht ausdrücklich, dass der Lauf nicht stattfand. Pflicht sind pytest, Sperrklinke und `lint-imports` (Schritt 5).
 
 Aus `CLAUDE.md`: `run_checks.py` erodiert seine Bank und braucht ein Ziel-Dashboard mit zwei Karten. Vorher die Wegwerf-Instanz starten (`docker compose -f docker/compose.yaml up -d`), `python3 tests/integration/run_checks.py` **einmal ohne Änderung** laufen lassen und festhalten, welche Abschnitte schon vorher rot sind, damit sie nicht dieser Änderung zugeschrieben werden. Nie während eines HA-Neustarts pollen; nie nach Präfix löschen.
 
-- [ ] **Schritt 2: Probe schreiben**
+- [x] **Schritt 2: Probe schreiben**
 
 Nach dem Muster von `run_section_moves` (eigenes Dashboard `dh-section-parking`, am Ende **namentlich** löschen):
 
@@ -889,12 +889,12 @@ Die Hilfsfunktionen sind dem Muster von `run_parking` und dem `restore_deleted`-
     asyncio.run(run_section_parking(access))
 ```
 
-- [ ] **Schritt 3: Probe laufen lassen**
+- [x] **Schritt 3: Probe laufen lassen**
 
 Run: `python3 tests/integration/run_checks.py`
 Erwartet: der neue Abschnitt komplett `ok`. Andere Abschnitte, die schon in Schritt 1 rot waren, bleiben so und werden im Bericht getrennt genannt. Schlägt ein neuer Check fehl, ist das ein Befund über den Code (nicht die Probe anpassen, bis sie passt): Ursache suchen, in der zuständigen Aufgabe beheben.
 
-- [ ] **Schritt 4: Journal**
+- [x] **Schritt 4: Journal**
 
 `docs/superpowers/status.md` lesen; einen Eintrag wie bei L und O ergänzen (Deutsch, Umlaute, Guillemets): Vorhaben-Zeile in der Tabelle (»Ganze entfernte Section parken – Issue #39«, Spec/Plan verlinken, Datum der Umsetzung) und ein kurzer Absatz »Umgesetzt am …«: was geparkt wird (nur die eine entfernte Section, keine gemischten Änderungen), Überspringen statt Verweigern, was verweigert bleibt (»hinzugekommen«, mehrere Sections, Kartenänderungen), dass `apply_undo` unverändert blieb. In der Spec die Kopfzeile »Stand« um »umgesetzt am …« ergänzen und drei Nachträge (Ergebnis der Plan-Reviews vom 2026-09-29, Review-Datei `docs/superpowers/reviews/2026-09-29-abschnitt-parken-plan.md`):
 
@@ -902,12 +902,12 @@ Erwartet: der neue Abschnitt komplett `ok`. Andere Abschnitte, die schon in Schr
 2. **Randfalltabelle und Testplan:** Die Verweigerung bei einer Kartenänderung in derselben Ansicht kommt jetzt aus `_park_instead` (jedes Kartenereignis der Ansicht laut Kartenabgleich, `_card_events_in`) mit dem Text »rearranged since«, nicht mehr aus `_sections_meet_cards`; das Tor bleibt als zweite Sicherung. Die beiden Zeilen (»… durch `_sections_meet_cards`«) anpassen.
 3. **Abschnitt 1, Punkt 4:** einen Satz nachtragen: »Zusätzlich verweigert `_park_instead` selbst, wenn die Änderung in derselben Ansicht irgendeine einzelne Karte berührt hat (bearbeitet, verschoben, hinzugefügt, entfernt – auch in `cards:`); sonst bliebe das Tor `_sections_meet_cards` blind, sobald alle Karten der entfernten Section schon zurück sind und kein Section-Schritt entsteht (Plan-Review 2026-09-29).«
 
-- [ ] **Schritt 5: Abnahme**
+- [x] **Schritt 5: Abnahme**
 
 Run: `python3 -m pytest tests/ -v 2>&1 | tail -8; python3 tools/complexity_ratchet.py; lint-imports`
 Erwartet: `0 failed`, Sperrklinke und Verträge grün. Zusätzlich `git status --short`: nur die vorgesehenen Dateien, `CLAUDE.md` weiterhin uncommittet.
 
-- [ ] **Schritt 6: Commit**
+- [x] **Schritt 6: Commit**
 
 ```bash
 git add tests/integration/run_checks.py docs/superpowers/status.md docs/superpowers/specs/2026-09-29-abschnitt-parken-design.md docs/superpowers/plans/2026-09-29-abschnitt-parken.md
