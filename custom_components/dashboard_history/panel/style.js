@@ -795,9 +795,10 @@ export const STYLE = `
     align-items: center;
     gap: 8px;
     padding: 7px 14px;
-    border: 1px solid var(--divider-color, #dfe3e8);
+    border: 1px solid rgba(98, 114, 128, 0.35);
+    border: 1px solid color-mix(in srgb, var(--divider-color, #dfe3e8) 50%, var(--secondary-text-color, #727272) 50%);
     border-radius: 18px;
-    background: var(--primary-background-color, #f5f5f5);
+    background: var(--secondary-background-color, #eceff1);
     color: var(--secondary-text-color, #607d8b);
     font: inherit;
     font-size: 13.5px;
