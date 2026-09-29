@@ -55,6 +55,17 @@ The seven Home-Assistant-free modules run without a live installation. `tests/co
 
 Some cases check against **real** dashboards — that's the difference between four made-up cards and a few hundred grown ones. Where they live isn't in the repository: either in `DASHBOARD_HISTORY_REAL_STORAGE` or in the untracked file `tests/.real-storage`, which `conftest.py` reads. Without either, those cases skip **visibly** (`140 passed, 3 skipped`) instead of quietly passing through.
 
+## Reviews
+
+- Reviews are read-only: they never change code. A plan is simulated only in a scratch copy, which is cleaned up afterwards (Docker images included).
+- Verify every claim against the actual code, and reproduce a finding empirically wherever that is possible.
+- Each review is saved as a **new** file next to the plan it examines, in `docs/superpowers/reviews/`, named like the existing ones (`2026-09-05-vorhaben-h.md`, or `abschluss-server-review.md` inside an initiative's folder). An existing review file is never overwritten.
+- Findings are classified *Kritisch* / *Wichtig* / *Hinweis* (the journal is German, see "Language") and the review ends with a verdict, e.g. *umsetzbar nach Korrekturen*.
+
+## Planning
+
+Plans that someone else will implement (another model, a contributor) must be reproducible from the **committed** state alone: no dependence on uncommitted local changes, and no step that only works on the author's machine.
+
 ## Trying it on a real installation
 
 Installed via HACS as a custom repository: *HACS → Custom repositories* → `https://github.com/PPP01/ha-dashboard-history`, category Integration. That way the integration lands in `custom_components/` the same way any user eventually will — not through a shortcut only the developer has.
@@ -95,6 +106,11 @@ into the container.
 ⚠️ **An installation something depends on is not a test rig.** Two rules from that, both learned the expensive way: **never poll during an HA restart** — HA's IP-ban system locks out the developer's own access otherwise — and **no test may delete by prefix**, only by its own, exactly named key. What went wrong once, from that, is in the addendum from 2026-09-01 in `docs/superpowers/plans/2026-08-31-eigene-texte-und-klartext.md`.
 
 Environment: HA 2026.8.3, container Python 3.14.6, development machine Python 3.12.3.
+
+## Home Assistant
+
+- Verify a fix against real entity and device queries, not against what the code suggests should happen. What turns out to be a trap for others goes into `.claude/lessons.md`.
+- The panel module is loaded as `panel.js?v=<fingerprint>` (`panel.py`), so a released change reaches the browser without a hand-kept number. When a JS change seems to have no effect, suspect a stale container or browser cache **before** debugging the code, and recompute the fingerprint locally to rule the code out.
 
 ## Git
 
