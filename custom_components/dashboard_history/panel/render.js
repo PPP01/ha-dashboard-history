@@ -13,7 +13,15 @@ export const escape = (value) =>
       ],
   );
 
-/** A unified diff, coloured the way people expect to read one. */
+/**
+ * A unified diff, coloured the way people expect to read one.
+ *
+ * Every line becomes its own block-level span (style.js relies on
+ * this for the full-row background behind a "+"/"-"/"@@" line), and
+ * there is no separating "\n" text node left between them - a block
+ * sitting next to a literal newline renders as an extra blank line in
+ * a real browser, a known trap of block-in-inline layout.
+ */
 export const renderDiff = (diff) => {
   if (!diff) return '<p class="muted">No difference.</p>';
   const body = diff
@@ -26,11 +34,9 @@ export const renderDiff = (diff) => {
           : line.startsWith("@@")
             ? "at"
             : "";
-      return cls
-        ? `<span class="${cls}">${escape(line)}</span>`
-        : escape(line);
+      return `<span${cls ? ` class="${cls}"` : ""}>${escape(line)}</span>`;
     })
-    .join("\n");
+    .join("");
   return `<pre>${body}</pre>`;
 };
 

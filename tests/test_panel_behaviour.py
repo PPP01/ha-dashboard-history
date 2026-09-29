@@ -19,6 +19,7 @@ import pytest
 from conftest import PACKAGE
 
 PANEL = PACKAGE / "panel.js"
+RENDER = PACKAGE / "panel" / "render.js"
 
 # The stand-in for the browser, and the two helpers every scenario uses:
 # `settle` lets pending promises run, `answer` settles one held call the
@@ -5843,6 +5844,82 @@ def test_the_version_dialog_uses_singular_wording_for_one_change(pending_changes
     one = pending_changes["one"]
     assert one["hidden"] is False
     assert one["summary"] == "1 pending change"
+
+
+# -- renderDiff's own markup, isolated from the rest of the panel ----------
+
+
+def _render_diff(tmp_path_factory, diff_text):
+    """Call the real renderDiff() directly, without the rest of panel.js.
+
+    render.js is one of the "pure functions" modules - no element, no
+    state, no calls of its own - so it needs none of panel.js's DOM
+    stand-in to exercise on its own.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the panel's logic cannot be run here")
+    harness = tmp_path_factory.mktemp("render") / "render_diff.mjs"
+    harness.write_text(
+        "import { renderDiff } from %s;\n"
+        "process.stdout.write(JSON.stringify({ html: renderDiff(%s) }));\n"
+        % (json.dumps(RENDER.as_uri()), json.dumps(diff_text)),
+        encoding="utf-8",
+    )
+    run = subprocess.run(
+        [node, str(harness)], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout.strip().splitlines()[-1])["html"]
+
+
+def test_render_diff_wraps_every_line_in_its_own_block_span(tmp_path_factory):
+    # Full-row backgrounds on "+"/"-"/"@@" lines need `display:block` on
+    # their spans (style.js), and a block span sitting next to a raw
+    # "\n" text node renders as a stray blank line in a real browser -
+    # every line, classified or not, gets its own span and nothing else
+    # is left over to cause that.
+    #
+    # No trailing "\n" on this input, on purpose: a real unified diff
+    # always ends in one, and split("\n") turns that into a trailing
+    # empty line needing its own <span></span> - but that concern
+    # belongs entirely to test_render_diff_handles_a_trailing_blank_line
+    # below. Mixing it into this one would test two things in one
+    # assertion and made this exact mistake once already: an assert
+    # that didn't count the trailing span its own input implied.
+    html = _render_diff(
+        tmp_path_factory,
+        "--- before\n+++ after\n@@ -1 +1 @@\n context\n-old\n+new",
+    )
+    assert html == (
+        "<pre>"
+        '<span class="del">--- before</span>'
+        '<span class="add">+++ after</span>'
+        '<span class="at">@@ -1 +1 @@</span>'
+        "<span> context</span>"
+        '<span class="del">-old</span>'
+        '<span class="add">+new</span>'
+        "</pre>"
+    )
+
+
+def test_render_diff_handles_a_trailing_blank_line(tmp_path_factory):
+    # A unified diff ends in "\n", so split("\n") always leaves one
+    # trailing empty string - it needs a span like any other line, or
+    # it would be the one line the block-span rule above misses.
+    html = _render_diff(tmp_path_factory, "@@ -1 +1 @@\n-old\n+new\n")
+    assert html == (
+        "<pre>"
+        '<span class="at">@@ -1 +1 @@</span>'
+        '<span class="del">-old</span>'
+        '<span class="add">+new</span>'
+        "<span></span>"
+        "</pre>"
+    )
+
+
+def test_render_diff_still_says_no_difference_for_an_empty_diff(tmp_path_factory):
+    assert _render_diff(tmp_path_factory, "") == '<p class="muted">No difference.</p>'
 
 
 # -- the create-version dialog offers the diff behind the pending span -----

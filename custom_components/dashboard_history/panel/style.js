@@ -466,12 +466,15 @@ export const STYLE = `
   pre {
     margin: 0;
     padding: 12px;
+    border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: 4px;
-    background: var(--secondary-background-color, #fafafa);
+    background: var(--primary-background-color, #f5f5f5);
     font-size: 12px;
     line-height: 1.5;
     white-space: pre;
     overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
   }
   /* One rule for every pen: the one on a change, the one on a version
      row in the simple mode, the one on a section head in the advanced
@@ -736,9 +739,31 @@ export const STYLE = `
     max-height: 400px;
     overflow: auto;
   }
-  pre .add { color: var(--success-color, #0f9d58); }
-  pre .del { color: var(--error-color, #db4437); }
-  pre .at { color: var(--secondary-text-color, #727272); }
+  /* Every line of a diff is its own block-level span (render.js) so a
+     full-row tint can sit behind it - the bleed to pre's own edge is
+     padding plus a negative margin the size of pre's own padding, the
+     standard trick for a highlight that reaches a scrollable box's
+     border. */
+  pre span {
+    display: block;
+    margin: 0 -12px;
+    padding: 0 12px;
+  }
+  pre .add {
+    color: var(--success-color, #0f9d58);
+    background: rgba(15, 157, 88, 0.1);
+    background: color-mix(in srgb, var(--success-color, #0f9d58) 10%, transparent);
+  }
+  pre .del {
+    color: var(--error-color, #db4437);
+    background: rgba(219, 68, 55, 0.1);
+    background: color-mix(in srgb, var(--error-color, #db4437) 10%, transparent);
+  }
+  pre .at {
+    color: var(--secondary-text-color, #727272);
+    background: rgba(224, 224, 224, 0.45);
+    background: color-mix(in srgb, var(--divider-color, #e0e0e0) 45%, transparent);
+  }
   details.ver { margin-bottom: 12px; }
   /* Centred, and deliberately not on the baseline like .vhead further
      down, whose comment argues the other way for the same pairing of a
