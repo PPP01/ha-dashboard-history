@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-29-abschnitt-parken-design.md` (Commit `5a3f8b5`). Die Spec ist verbindlich; bei Widerspruch gilt sie, nicht dieser Plan.
 
-> **Nachtrag vom 2026-09-29 (nach dem Ausprobieren):** Die hier beschriebene Umsetzung parkt die Karten einer Section **einzeln**. Das wurde nach dem Test auf `test-sections` als unbrauchbar erkannt und umgebaut: Die ganze Section kommt als *eine* Grid-Karte in `cards:` (Spec, Entscheidung 8). Die Aufgaben 1 und 2 und die Zählung `max(0, deleted − back)` sind in diesem Punkt überholt; maßgeblich sind Spec und Code. Der Rest (Sperre bei Kartenereignissen, Doppel-Schutz, Reihenfolge der Prüfungen) gilt weiter.
+> **Nachtrag vom 2026-09-29 (nach dem Ausprobieren):** Die hier beschriebene Umsetzung parkt die Karten einer Section **einzeln** in »Imported cards«. Das wurde nach dem Test auf `test-sections` zweimal geändert: erst die ganze Section als eine Grid-Karte dorthin (Commit `6fd8e72`, Spec Entscheidung 8), dann – auf Anregung des Nutzers – die Section als **echte Section ans Ende der `sections:`-Liste** (Entscheidung 9, `sections_list`-Schritt, `SECTION_APPENDED`, `restore.parked_label`, verallgemeinerter Paneltext). Die Aufgaben 1 und 2 und die Zählung `max(0, deleted − back)` sind in diesem Punkt überholt; maßgeblich sind Spec und Code. Der Rest (Sperre bei Kartenereignissen, Reihenfolge der Prüfungen, Zerlegung von `_plan_sections`) gilt weiter.
 
 ## Global Constraints
 

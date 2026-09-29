@@ -17,15 +17,15 @@ Zwei Wege sind betroffen, wenn auch in unterschiedlicher Breite (für Put back g
 
 ## Ziel
 
-Ist die Section bekannt, aber ihr Platz in der Reihe seither nicht mehr beweisbar, kommt sie **als Ganzes** in »Imported cards« zurück, statt dass die Rücknahme verweigert: als *eine* Karte in `cards:` der Ansicht, denn `{type: grid, cards: [...]}` ist eine Section und zugleich eine gültige Grid-Karte. Dasselbe Verhalten für beide Wege, dasselbe Sternchen, dieselbe Form der Auskunft `parked` (eine Liste von Texten: der Titel der Section, siehe Abschnitt 5). *(Geändert am 2026-09-29 nach dem Ausprobieren: Die erste Umsetzung parkte Karte für Karte; bei einer Section mit vielen Karten wären alle einzeln in eine neue Section zu ziehen gewesen – Entscheidung 8.)*
+Ist die Section bekannt, aber ihr Platz in der Reihe seither nicht mehr beweisbar, kommt sie **als echte Section ans Ende der `sections:`-Liste der Ansicht**, statt dass die Rücknahme verweigert. Ans Ende anzuhängen ist eindeutig (es überschreibt nichts und rät keinen Index), die Section behält alle Einstellungen und ihre Karten in Reihenfolge, und ein Zug im Editor schiebt sie an die richtige Stelle. Dasselbe Verhalten für beide Wege, dasselbe Sternchen, dieselbe Form der Auskunft `parked` (eine Liste von Texten: der Titel der Section mit dem Zusatz »(as the last section)«, siehe Abschnitt 5). *(Geändert am 2026-09-29 nach dem Ausprobieren, zweimal: erst Karte für Karte in »Imported cards« – unbrauchbar bei vielen Karten –, dann als eine Grid-Karte dorthin – immer noch eine Karte statt einer Section. Entscheidungen 8 und 9.)*
 
 ## Nicht-Ziele
 
 - **Die Richtung »Section hinzugekommen« bleibt hart verweigert.** Sie zurückzunehmen hieße Karten *entfernen*; wenn die Reihe sich geändert hat, lässt sich nicht beweisen, welche heutigen Karten genau die der Änderung sind (Entscheidung 4, »verweigert, nie geraten«). Ein Parken gibt es dort nicht. Praktisch abgedeckt: Eine Section, die niemand mehr will, löscht man in der Oberfläche direkt. *(Festgelegt im Kommentar zu #39 nach Diskussion.)*
 - **Keine gemischten Änderungen.** Hat dieselbe Änderung in derselben Ansicht *auch* eine Section verschoben, bearbeitet oder hinzugefügt, *oder* eine einzelne Karte geändert, bleibt es bei der Verweigerung. Mehrere Wirkungen in einem Schritt sind über die Oberfläche kaum herstellbar (nur per Raw-Editor oder externem Edit), und wer sie sauber ausführt, erzeugt einzelne Schritte. *(Entschieden am 2026-09-29, Variante A: kein Teil-Undo, »alles oder nichts« bleibt.)*
 - **Genau eine entfernte Section je Ansicht.** `_settle_sections` erkennt eine entfernte Section nur dort, wo die Ansicht genau eine Section verloren hat (`old_counts - new_counts == 1`) und genau eine Kandidatin passt. Wurden mehrere entfernt, bleiben alle in `rest_old` und werden von der frühen Rest-Verweigerung abgewiesen. Das bleibt so; das Erweitern des Matchings ist ein eigenes Vorhaben.
-- **Kein Zielwechsel.** Ein frei wählbares Dashboard oder eine Ansicht ist #40; dieses Vorhaben liefert dafür das Bauteil (eine Section als eine Grid-Karte parken).
-- **Aus der geparkten Karte wird keine echte Section.** Wer sie in eine neue Section zieht, hat eine Grid-Karte in einer Section (mit eigenem Spaltenraster); ein exakter Weg bleibt allein der `sections_list`-Schritt, wo der Platz beweisbar ist. Die Einstellungen der Section (`column_span` u. Ä.) bleiben in der geparkten Karte erhalten, HA wertet sie dort aber nicht aus.
+- **Kein Zielwechsel.** Ein frei wählbares Dashboard oder eine Ansicht ist #40; dieses Vorhaben liefert dafür das Bauteil (eine Section ans Ende der Sections einer Ansicht anhängen).
+- **Der Platz in der Reihe ist nicht wiederhergestellt.** Die Section steht am Ende, nicht dort, wo sie war; das zeigt das Sternchen. Ein exakter Weg bleibt der `sections_list`-Schritt, wo der Platz beweisbar ist. Für Karten einzeln bleibt »Imported cards« (Entscheidung 26).
 - **Kein Umbau von `apply_undo`.** Siehe unten: nicht nötig.
 - **Kein Umbau von `analyze/removed.py`, `matching.py` und dem Panel.** Etiketten und Paneltexte bleiben, wie sie sind (Abschnitt 5).
 
@@ -51,62 +51,62 @@ Hält der exakte Beweis, ändert sich nichts: derselbe `sections_list`-Schritt w
 | Die Änderung hat in derselben Ansicht auch verschobene, bearbeitete oder hinzugekommene Sections oder Kartenänderungen | Verweigerung, wie heute |
 | Karten der Section stehen heute schon in der Ansicht (von Hand neu angelegt, oder ein früheres Undo derselben Änderung) | **keine Verweigerung, sondern Überspringen** (Abschnitt 3) |
 
-### 3. Undo: ein geparkter Schritt für die ganze Section, `apply_undo` bleibt
+### 3. Undo: die Section ans Ende der Sections anhängen, `apply_undo` bleibt
 
-Der Planer erzeugt **keinen** `sections_list`-Schritt für diese Ansicht, sondern **einen** Schritt für die entfernte Section: `action="insert"`, `kind="card"`, `parked=True`, `location=("cards",)`, `payload` die Section als Karte (`{"type": "grid", **section}`; hat die Section kein `type`, wird `grid` ergänzt), `label` der Section-Titel (`_section_title`, wie bei Put back). Genau diese Form kennt `apply_undo` seit Vorhaben L (`for step in (s for s in inserts if s.parked)` → `_park_for(...).append(...)`): Es legt `cards:` an, wenn sie fehlt oder `null` ist, und hängt an. **`apply_undo` ändert sich nicht.**
+Der Planer erzeugt für diese Ansicht **einen** Schritt vom Typ `sections_list` (den `apply_undo` seit #31 kennt): `action="set"`, `expect` die Sections von heute, `payload` die Sections von heute **plus** die entfernte Section am Ende, `parked=True` (das Sternchen und die Auskunft laufen über dieselbe Eigenschaft wie bei Karten), `label` der Section-Titel (`_section_title`) mit dem Zusatz »(as the last section)«. `apply_undo` prüft wie bisher, dass die Sections noch die geplanten sind, und schreibt die Liste. Der Schritt liegt im Behälter `planned["sections"]`; das Tor `_sections_meet_cards` greift wie zuvor. **`apply_undo` ändert sich nicht.**
 
-**Überspringen statt verweigern (Entscheidung vom 2026-09-29).** Der Kartenweg ist idempotent; der Parkweg hält dieselbe Eigenschaft, sonst würde ein zweites Undo derselben Änderung die Section erneut anhängen. Steht in der Ansicht heute schon eine bytegleiche Karte wie die zu parkende (Fingerabdruck gleich, gezählt **in dieser Ansicht**, `_card_came_back` heute mehr als im Stand nach der Änderung), ist dieser Teil der Änderung so oder so rückgängig: Der Plan für die Ansicht bleibt leer, es wird nichts verweigert. Einzeln nachgebaute Karten der Section zählen **nicht** als Rückkehr der Section. Eine gleiche Karte in einer anderen Ansicht zählt nicht (#35).
+**Überspringen statt verweigern (Entscheidung vom 2026-09-29).** Der Kartenweg ist idempotent; der Anhängweg hält dieselbe Eigenschaft, sonst würde ein zweites Undo derselben Änderung die Section erneut anhängen. Stehen in der Ansicht heute mehr bytegleiche Sections als im Stand nach der Änderung (Fingerabdruck der Section; also schon angehängt, von Hand nachgebaut oder zurückgeschoben), ist dieser Teil der Änderung so oder so rückgängig: Der Plan für die Ansicht bleibt leer, es wird nichts verweigert. Einzeln nachgebaute Karten zählen **nicht** als Rückkehr der Section.
 
-Die Section stammt vollständig aus dem Stand *vor* der Änderung (`before_view`). Ein Beweis über den heutigen Stand darüber hinaus ist nicht nötig, weil nur hinzugefügt wird; deshalb entfällt die Prüfung »geändert seither«, die den exakten Weg trägt.
+Die Section stammt vollständig aus dem Stand *vor* der Änderung (`before_view`). Ein Beweis über den heutigen Stand darüber hinaus ist nicht nötig, weil nur hinzugefügt wird; deshalb entfällt die Prüfung »geändert seither«, die den exakten Weg trägt. Ist `sections` heute keine Liste, verweigert schon die frühe Prüfung von `_plan_sections`.
 
 Komplexität: `_plan_sections` steht in der Baseline (`tools/complexity-baseline.json`, C901 12). Die Umordnungs-Prüfung wird in eine Hilfsfunktion herausgezogen und der Parkweg in eine zweite. Dadurch **sinkt** die Komplexität von `_plan_sections`, und die Sperrklinke verlangt, die Baseline **im selben Commit** zu senken (oder den Eintrag zu entfernen, fällt der Wert unter das Limit); neue Hilfsfunktionen über dem Limit brauchen einen eigenen Eintrag. Die Baseline wird nach der Messung gesetzt, nicht vorhergesagt; `python3 tools/complexity_ratchet.py` ist Teil der Abnahme.
 
 ### 4. »Put back«: `parks()`/`park()` nehmen `kind="section"`
 
 - `restore.parks(config, item)` liefert für `kind="section"` `True`, wenn die Ansicht per Pfad gefunden wird, `type: sections` hat und `_section_gap_holds` nicht hält. Andernfalls antwortet weiter `reinsert`, einschließlich seiner Verweigerungen.
-- `restore.park(config, item)` hängt für eine Section **die ganze Section als eine Grid-Karte** an `cards:` der Ansicht an (`{"type": "grid", **payload}`, dieselbe Form wie beim Undo).
+- `restore.park(config, item)` hängt für eine Section **die Section selbst** (`item.payload`, unverändert) ans Ende von `sections:` der Ansicht an; ist `sections` `null`, wird die Liste angelegt, ist es etwas anderes als eine Liste, verweigert `park()` mit einem `LookupError`, statt Daten zu überschreiben. Karten parken weiter in `cards:`.
 - `operations._reinsertion` meldet `parked: [item.label]` (das Etikett der Section, wie `find_removed` es erzeugt) in Vorschau und Antwort; `async_restore_deleted` vergleicht wie bei #30 `expected_parked` vor dem Schreiben. Das Protokoll ist unverändert.
-- **Kein Zählen in `restore.py`, aber Doppel-Schutz.** Da die Karten der Section danach in der geparkten Grid-Karte *verschachtelt* stehen, sieht `find_removed` sie nicht mehr als Karten der Ansicht und bietet die Section weiter an. `park()` verweigert deshalb mit einem `LookupError` (»already sits in this view's Imported cards«), wenn eine bytegleiche Karte schon in `cards:` steht; `_reinsertion` gibt das als `error` zurück. Ein Vergleich mit `==` auf den Daten, kein Import von `analyze`.
+- **Kein Doppel-Schutz nötig.** Nach dem Anhängen hat die Ansicht wieder so viele Sections wie im Stand von damals, und die Karten der Section stehen als Karten der Ansicht da; `find_removed` bietet die Section deshalb nicht mehr an. Der Plan belegt das mit einem Test (`find_removed(alt, heute)` nach dem Parken). Kein Vergleich, kein Zählen und kein Import von `analyze` in `restore.py`.
 
 ### 5. Wörter
 
 Die Etiketten bleiben, wie sie heute erzeugt werden:
 
-- **Undo:** `plan.parked` listet das Etikett des geparkten Schritts (`UndoPlan.parked`, `model.py:404`), also den Titel der Section (`_section_title`), wie bei Put back.
-- **Put back:** `parked` enthält das eine Etikett der Section (`_section_title`).
+- **Undo:** `plan.parked` listet das Etikett des Schritts (`UndoPlan.parked`, `model.py:404`): den Titel der Section (`_section_title`) mit dem Zusatz »(as the last section)«.
+- **Put back:** `parked` enthält dasselbe Etikett (`restore.parked_label(item)`; für eine Karte unverändert das Kartenetikett). Der Zusatz steht als Konstante an zwei Stellen, in `analyze` und in `restore` (beide Module kennen einander zur Laufzeit nicht); ein Test vergleicht sie.
 
-Die bestehenden Paneltexte (»These cards cannot go back into their exact section … you still have to place them: …«, Hinweiszeile mit Sternchen) bleiben unverändert; sie nennen bei beiden Wegen den Namen der Section. Das Panel liest keine Bedeutung aus dem Etikett (`operations.py:238`) und braucht kein neues Feld. Der Knopf trägt das Sternchen wie bei #30; `equals_state_before` ist bei einem parkenden Undo von selbst `False`.
+Der Paneltext ist verallgemeinert, weil ein Plan Karten (»Imported cards«) und Sections (am Ende angehängt) nennen kann – etwa in zwei Ansichten einer Änderung: »These cannot go back into their exact place and are made available instead – cards in "Imported cards", sections as the last section of their view – you still have to place them: …«. Ebenso die Hinweiszeile unter dem Knopf mit dem Sternchen. Kein neues Feld im Protokoll: Was ein Eintrag ist, sagt sein Etikett. Das Panel liest sonst keine Bedeutung aus dem Etikett (`operations.py:238`). `equals_state_before` ist bei einem parkenden Undo von selbst `False`.
 
 ## Fehler- und Randfälle
 
 | Fall | Verhalten |
 |---|---|
-| Section entfernt, danach andere Section in derselben Ansicht hinzugefügt (Fall aus dem Ticket) | die Section als eine Grid-Karte in `cards:` geparkt, Sternchen |
+| Section entfernt, danach andere Section in derselben Ansicht hinzugefügt (Fall aus dem Ticket) | die Section als echte Section ans Ende der Sections angehängt, Sternchen |
 | Section entfernt, danach zwei Sections getauscht | geparkt |
 | Section entfernt, sonst nichts geändert | exakt, ohne Sternchen (wie heute) |
 | Section entfernt **und** eine andere in derselben Änderung verschoben oder bearbeitet | Verweigerung |
 | Section entfernt **und** eine Karte in einer anderen Section derselben Ansicht geändert | Verweigerung durch `_park_instead` (`_card_events_in`, Text »rearranged since«; `_sections_meet_cards` als zweite Sicherung) |
-| Dieselbe Section steht heute schon als bytegleiche Karte in der Ansicht (zweites Undo, oder von Hand) | Undo: übersprungen, der Plan für die Ansicht bleibt leer; Put back: Verweigerung mit Text (»already sits …«) |
-| Ansicht hat `cards: null` oder keine `cards:` | wird angelegt |
-| `cards:` ist etwas anderes als eine Liste | Verweigerung mit dem Text von `_park_for` |
+| Dieselbe Section steht heute schon als bytegleiche Section mehr in der Ansicht als nach der Änderung (zweites Undo, oder von Hand) | Undo: übersprungen, der Plan für die Ansicht bleibt leer; Put back: die Section wird nicht mehr angeboten |
+| Ansicht hat `cards:` mit anderem Inhalt oder gar keine | ohne Belang: die Section geht nach `sections:`, `cards:` bleibt unberührt |
+| `sections:` ist heute keine Liste | Verweigerung (frühe Prüfung / `LookupError` in `park()`) |
 | Zwischen Vorschau und Bestätigen speichert jemand | neu gerechnet; weicht `parked` von `expected_parked` ab, wird nichts geschrieben (wie bei #30) |
-| HA stellt die Anzeige »Imported cards« eines Tages ein | nichts geht verloren, die Section steht in der Konfiguration; dafür steht das Sternchen |
+| HA ändert etwas an der Anzeige von Sections | nichts geht verloren, die Section ist eine ganz normale Section der Konfiguration |
 
 ## Test-Plan
 
 **pytest** (`tests/test_analyze.py`, `tests/test_restore.py`; `operations.py` ist nicht importierbar):
 
-- Planer: eine entfernte Section + Umordnung (hinzugefügt / vertauscht) → **ein** geparkter Schritt mit der ganzen Section als Grid-Karte (auch mit `column_span`, auch ohne `type`), `plan.parked` hat den Section-Titel; reine Entfernung ohne Umordnung → weiter `sections_list`; Entfernung + Verschiebung/Bearbeitung/Hinzufügung → Verweigerung; Entfernung + Kartenänderung in einer anderen Section derselben Ansicht → Verweigerung (durch `_park_instead`, `_sections_meet_cards` als Sicherung); Ansicht nicht mehr `sections` → Verweigerung; zwei entfernte Sections → Verweigerung (`rest_old`); die Verweigerung für `added` bleibt Wort für Wort.
-- Überspringen: dieselbe Section schon als Karte in der Ansicht → leerer Plan; nur einzelne Karten der Section stehen in der Ansicht → trotzdem geparkt; eine gleiche Karte in einer *anderen* Ansicht zählt nicht; wiederholtes Undo derselben Änderung hängt nichts ein zweites Mal an.
+- Planer: eine entfernte Section + Umordnung (hinzugefügt / vertauscht) → **ein** `sections_list`-Schritt, der die Section ans Ende hängt (Einstellungen und Kartenreihenfolge bleiben, Etikett mit Zusatz), `plan.parked` hat ihn; reine Entfernung ohne Umordnung → weiter der exakte `sections_list`-Schritt ohne Sternchen; Entfernung + Verschiebung/Bearbeitung/Hinzufügung → Verweigerung; Entfernung + Kartenänderung in derselben Ansicht → Verweigerung (durch `_park_instead`, `_sections_meet_cards` als Sicherung); Ansicht nicht mehr `sections` → Verweigerung; zwei entfernte Sections → Verweigerung (`rest_old`); die Verweigerung für `added` bleibt Wort für Wort.
+- Überspringen: dieselbe Section schon einmal mehr in der Ansicht → leerer Plan; nur einzelne Karten der Section stehen in der Ansicht → trotzdem angehängt; eine gleiche Section in einer *anderen* Ansicht zählt nicht; wiederholtes Undo derselben Änderung hängt nichts ein zweites Mal an.
 - Regression der bewusst verschluckten Karten (`loose_removed`): `find_removed`, `loose_removed`, `summarize`, `_explain` und `change_message` liefern mit einer entfernten Section weiter *eine* Section, nicht mehrere Kartenereignisse.
 - `apply_undo` mit einem solchen Plan: legt `cards:` an (fehlt / `null`), hängt in Reihenfolge an, eine gewöhnliche Einsetzung in dieselbe Liste bleibt davor.
-- `parks`/`park` mit `kind="section"`: `True`/`False` je Bedingung aus Abschnitt 4, die Section als eine Grid-Karte (Einstellungen bleiben), Eingabe bleibt unverändert (deepcopy), zweites Parken derselben Section wird verweigert.
+- `parks`/`park` mit `kind="section"`: `True`/`False` je Bedingung aus Abschnitt 4, die Section ans Ende von `sections:` (Einstellungen bleiben), `sections: null` wird angelegt, `sections` als Nicht-Liste wird verweigert, Eingabe bleibt unverändert (deepcopy), `find_removed(alt, heute)` bietet die angehängte Section nicht mehr an, `parked_label` und der Zusatz stimmen mit `analyze` überein.
 - Bestehende Tests zu `reinsert` und `_section_gap_holds` bleiben unverändert grün; sie prüfen das Werkzeug, nicht die Politik.
 - Ein Fall gegen die **reale** Bank (überspringt sichtbar ohne `DASHBOARD_HISTORY_REAL_STORAGE`), sofern sich dort eine Ansicht mit mehreren Sections findet.
 
-**Panel** (`tests/test_panel_behaviour.py`): Sternchen und Hinweis bei einem Plan mit geparkten Schritten (der Text selbst bleibt).
+**Panel** (`tests/test_panel_behaviour.py`): Sternchen und der verallgemeinerte Hinweis (beide Wörter, »Imported cards« und »last section«) bei einem Plan mit geparkten Einträgen.
 
-**Laufende Instanz** (`tests/integration/run_checks.py`, Wegwerf-Instanz): Ansicht mit mehreren Sections, eine entfernen, eine andere hinzufügen, Undo und »Put back« je einmal; nach dem Bestätigen liegt die Section als eine Grid-Karte in `cards:`, ein erneutes Laden über die API liefert sie unverändert; ein zweites Undo derselben Änderung hängt nichts an. Hinweis aus dem Journal: das Skript erodiert seine Prüfbank und braucht ein Ziel-Dashboard mit zwei Karten – vorher prüfen, ob der Abschnitt davor rot ist, bevor er als Ergebnis dieser Änderung gelesen wird.
+**Laufende Instanz** (`tests/integration/run_checks.py`, Wegwerf-Instanz): Ansicht mit mehreren Sections, eine entfernen, eine andere hinzufügen, Undo und »Put back« je einmal; nach dem Bestätigen steht die Section als letzte in `sections:`, `cards:` bleibt unberührt, ein erneutes Laden über die API liefert es unverändert; ein zweites Undo derselben Änderung hängt nichts an. Hinweis aus dem Journal: das Skript erodiert seine Prüfbank und braucht ein Ziel-Dashboard mit zwei Karten – vorher prüfen, ob der Abschnitt davor rot ist, bevor er als Ergebnis dieser Änderung gelesen wird.
 
 **Abnahme:** `python3 -m pytest tests/ -v`, `python3 tools/complexity_ratchet.py` (Baseline im selben Commit angepasst), `lint-imports`.
 
@@ -117,6 +117,7 @@ Die bestehenden Paneltexte (»These cards cannot go back into their exact sectio
 3. **Beide Wege** – Undo und »Put back« – verhalten sich gleich.
 4. **Der Parkweg springt nur an die Stelle der Umordnungs-Verweigerung** und erbt alle frühen Prüfungen; hält der exakte Beweis, bleibt der exakte Schritt.
 5. **`apply_undo` bleibt unverändert**; die Neuerung liegt im Planer und in `parks`/`park`. Die früher erwogene Vorarbeit aus #43 (`apply_undo` zerlegen) entfällt damit.
-6. **Überspringen, nie verweigern (Variante B):** Steht die Section schon als bytegleiche Karte in der Ansicht, wird sie beim Undo nicht erneut geparkt. Die früher erwogene Verweigerung bei einer bytegleichen Section entfällt. Gleiche Eigenschaft wie der Kartenweg (idempotent). Bei Put back verweigert `park()`, weil dort die Section weiter angeboten wird.
-7. **Etiketten und Paneltexte bleiben** (Section-Titel bei beiden Wegen); kein Eingriff in `removed.py` und im Panel.
-8. **Die ganze Section als eine Grid-Karte parken, nicht Karte für Karte (2026-09-29, nach dem Ausprobieren auf `test-sections`):** Karte für Karte hieß bei einer großen Section, alle Karten einzeln in eine neue Section zu ziehen. Eine Section ist bereits eine gültige Grid-Karte; als eine Karte geparkt, ist es ein Zug oder ein Raw-Edit. Das ersetzt die erste Umsetzung (je Karte ein Schritt, `max(0, deleted − back)`); die Zählung entfällt.
+6. **Überspringen, nie verweigern (Variante B):** Steht die Section schon einmal mehr in der Ansicht, wird sie beim Undo nicht erneut angehängt. Gleiche Eigenschaft wie der Kartenweg (idempotent). Bei Put back braucht es keinen eigenen Schutz, weil die angehängte Section nicht mehr angeboten wird.
+7. **Etikett und Paneltext (geändert durch Entscheidung 9):** Section-Titel mit dem Zusatz »(as the last section)« bei beiden Wegen; der Paneltext ist verallgemeinert, kein neues Feld im Protokoll; kein Eingriff in `removed.py`.
+8. **Nicht Karte für Karte (2026-09-29, nach dem Ausprobieren auf `test-sections`):** Karte für Karte hieß bei einer großen Section, alle Karten einzeln in eine neue Section zu ziehen. Zwischenstand: die Section als eine Grid-Karte nach `cards:`. *(Durch Entscheidung 9 ersetzt; im Verlauf `6fd8e72`.)*
+9. **Die Section als echte Section ans Ende der Sections anhängen (2026-09-29, auf Anregung des Nutzers):** Die Grid-Karte war immer noch eine Karte, die man in eine Section ziehen musste, und eine Grid-Karte in einer Section ist nicht dasselbe wie die Section (eigenes Spaltenraster). Ans Ende anzuhängen ist eindeutig und liefert die Section mit allen Einstellungen; ein Zug schiebt sie an ihren Platz. Umsetzung als `sections_list`-Schritt, den `apply_undo` schon kennt. Ein Knopf per JS in HAs Editor kommt nicht in Frage: HAs Oberfläche wird nicht manipuliert (Projektregel).

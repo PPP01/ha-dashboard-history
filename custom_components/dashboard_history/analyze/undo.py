@@ -143,6 +143,13 @@ def _rearranged(key: Any, name: str, after_view: dict, current_view: dict) -> st
     return None
 
 
+# The two spellings of "placed elsewhere" (GitHub #39): a parked card says
+# where it went by name-less convention (the view's "Imported cards"); a
+# section says so in its label. `restore.SECTION_APPENDED` is the same
+# text - the two modules do not import each other at run time.
+SECTION_APPENDED = " (as the last section)"
+
+
 def _park_removed_section(
     ctx: UndoContext,
     key: Any,
@@ -150,35 +157,37 @@ def _park_removed_section(
     current_index: int,
     removed: SectionSlot,
 ) -> tuple[UndoStep, ...]:
-    """The removed section, parked whole in the view's "Imported cards".
+    """The removed section, appended as the last section of the view.
 
-    GitHub #39, decision 26 for a whole section: where the section stood
-    can no longer be proven, so it goes to the end of `cards:` as one
-    card. A section is `{type: grid, cards: [...]}` - a grid card as it
-    stands - so nothing of it is lost and it is one drag away from being
-    a section again, however many cards it held. Idempotent like the
-    card path: a byte-identical card already in the view (parked by an
-    earlier undo, or placed by hand) means this part is undone either
-    way. Nothing is ever refused here - only added.
+    GitHub #39: where the section stood can no longer be proven, so it
+    goes where nothing has to be guessed - to the end of the row. It
+    comes back as the section it was, settings and cards in order; one
+    drag in the editor puts it where it belongs. The step is the
+    `sections_list` step `apply_undo` already writes (#31), planned
+    against the sections of today, and marked `parked` so the button
+    carries its asterisk.
 
-    Reads `ctx.card_now`/`ctx.card_then` here, earlier than the cards
-    planner would - both are cached, and only on this path, so no
-    entry in `_COMPUTED_BEFORE["sections"]` is needed.
+    Idempotent like the card path: more byte-identical sections in the
+    view today than the change left means this part is undone either
+    way (an earlier undo, or somebody's hand). Nothing is refused here
+    - only added.
     """
-    card = {"type": "grid", **removed.section}
-    if _card_came_back(ctx, fingerprint(card), key) > 0:
+    now = _section_list(current_view)
+    mark = fingerprint(removed.section)
+    stayed = [fingerprint(section) for section in _section_list(ctx.new_views[key])]
+    if [fingerprint(section) for section in now].count(mark) > stayed.count(mark):
         return ()
     return (
         UndoStep(
-            action="insert",
-            kind="card",
+            action="set",
+            kind="sections_list",
             view_path=current_view.get("path"),
             view_index=current_index,
-            location=("cards",),
-            index=removed.index,
-            expect=None,
-            payload=copy.deepcopy(card),
-            label=_section_title(removed.section, removed.index),
+            location=(),
+            index=0,
+            expect=copy.deepcopy(now),
+            payload=[*copy.deepcopy(now), copy.deepcopy(removed.section)],
+            label=_section_title(removed.section, removed.index) + SECTION_APPENDED,
             parked=True,
         ),
     )

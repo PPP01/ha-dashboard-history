@@ -360,21 +360,42 @@ def _park_for(views: list, item: RemovedItem | UndoStep) -> list:
     return cards
 
 
-def park(config: dict, item: RemovedItem) -> dict:
-    """Return a new configuration with `item` at the end of "Imported cards".
+# The same text as `analyze.undo.SECTION_APPENDED`; a test compares them.
+SECTION_APPENDED = " (as the last section)"
 
-    A removed section goes in whole, as the one grid card it already is
-    (GitHub #39): however many cards it held, they come back together
-    and can be dragged into a section at once. A section already parked
-    there is refused instead of parked a second time - `find_removed`
-    keeps offering it, since its cards are no longer top-level ones.
+
+def parked_label(item: RemovedItem) -> str:
+    """What the dialog calls `item` in its list of what was placed elsewhere.
+
+    A card is named as it is. A section says where it went, because the
+    dialog's sentence names both places and nothing else tells them apart.
+    """
+    return item.label + SECTION_APPENDED if item.kind == "section" else item.label
+
+
+def park(config: dict, item: RemovedItem) -> dict:
+    """Return a new configuration with `item` placed where nothing is guessed.
+
+    A card goes to the end of "Imported cards" (decision 26). A removed
+    section goes to the end of the view's sections (GitHub #39): as the
+    section it was, and it needs no guard against a second click - the
+    view has its old count of sections again, so `find_removed` no
+    longer offers it.
     """
     result = copy.deepcopy(config)
-    cards = _park_for(result.get("views") or [], item)
-    card = {"type": "grid", **item.payload} if item.kind == "section" else item.payload
-    if item.kind == "section" and card in cards:
-        raise LookupError(f"the section {item.label} already sits in this view's Imported cards")
-    cards.append(copy.deepcopy(card))
+    if item.kind != "section":
+        _park_for(result.get("views") or [], item).append(copy.deepcopy(item.payload))
+        return result
+    view = _require_view(result.get("views") or [], item)
+    sections = view.get("sections")
+    if sections is None:
+        sections = view["sections"] = []
+    elif not isinstance(sections, list):
+        raise LookupError(
+            f"the view {item.label} belonged to holds something other "
+            f"than a list under sections:, so nothing is appended there"
+        )
+    sections.append(copy.deepcopy(item.payload))
     return result
 
 

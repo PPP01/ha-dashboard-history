@@ -851,26 +851,27 @@ def test_a_section_whose_neighbours_changed_parks():
     assert restore.parks(today, item) is True
 
 
-def test_a_section_parks_into_the_view_cards_as_one_grid_card():
+def test_a_section_is_appended_as_the_last_section():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     new = _sections({"cards": [C]})
     item = _removed_section(old, new)
     today = _sections({"cards": [C]}, {"cards": [A]})
     result = restore.park(today, item)
-    assert result["views"][0]["cards"] == [{"type": "grid", "cards": [A, B]}]
-    assert result["views"][0]["sections"] == today["views"][0]["sections"]
+    assert result["views"][0]["sections"] == [
+        {"cards": [C]}, {"cards": [A]}, {"cards": [A, B]}
+    ]
+    assert "cards" not in result["views"][0]
 
 
-def test_a_section_keeps_its_own_settings_when_parked():
-    old = _sections({"type": "grid", "column_span": 2, "cards": [A, B]}, {"cards": [C]})
+def test_a_section_keeps_its_own_settings_when_appended():
+    big = {"type": "grid", "column_span": 2, "cards": [A, B]}
+    old = _sections(big, {"cards": [C]})
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": [A]})
-    assert restore.park(today, item)["views"][0]["cards"] == [
-        {"type": "grid", "column_span": 2, "cards": [A, B]}
-    ]
+    assert restore.park(today, item)["views"][0]["sections"][-1] == big
 
 
-def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_parks():
+def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_appended():
     """Opus review W2: how the item is really reached.
 
     The item comes from `find_removed(recorded, today)`, and a section is
@@ -881,20 +882,27 @@ def test_a_section_lost_beside_a_swap_is_offered_as_a_section_and_parks():
     today = _sections({"cards": [C]}, {"cards": [B]})
     item = next(i for i in analyze.find_removed(old, today) if i.kind == "section")
     assert restore.parks(today, item) is True
-    parked = restore.park(today, item)
-    assert parked["views"][0]["cards"] == [{"type": "grid", "cards": [A]}]
+    appended = restore.park(today, item)
+    assert appended["views"][0]["sections"][-1] == {"cards": [A]}
 
 
-def test_a_section_already_parked_is_refused_the_second_time():
-    """Its cards are nested in the parked grid card now, so `find_removed`
-    keeps offering it; the second click must not add a second copy."""
+def test_an_appended_section_is_not_offered_again():
+    """No guard against a second click is needed: the view has its old
+    number of sections again and the cards stand as the view's own."""
     old = _sections({"cards": [A]}, {"cards": [B]}, {"cards": [C]})
     today = _sections({"cards": [C]}, {"cards": [B]})
     item = next(i for i in analyze.find_removed(old, today) if i.kind == "section")
-    parked = restore.park(today, item)
-    again = next(i for i in analyze.find_removed(old, parked) if i.kind == "section")
-    with pytest.raises(LookupError, match="already sits"):
-        restore.park(parked, again)
+    appended = restore.park(today, item)
+    assert [i for i in analyze.find_removed(old, appended) if i.kind == "section"] == []
+
+
+def test_the_label_of_a_parked_section_names_where_it_went_and_matches_analyze():
+    old = _sections({"cards": [A, B]}, {"cards": [C]})
+    item = _removed_section(old, _sections({"cards": [C]}))
+    assert restore.SECTION_APPENDED == analyze.undo.SECTION_APPENDED
+    assert restore.parked_label(item) == item.label + " (as the last section)"
+    card = analyze.find_removed(_config([A, B]), _config([A]))[0]
+    assert restore.parked_label(card) == card.label
 
 
 def test_parking_a_section_leaves_the_input_alone():
@@ -906,27 +914,27 @@ def test_parking_a_section_leaves_the_input_alone():
     assert today == snapshot
 
 
-def test_parking_a_section_creates_cards_when_null():
+def test_appending_a_section_creates_sections_when_null():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": [A]})
-    today["views"][0]["cards"] = None
-    assert restore.park(today, item)["views"][0]["cards"] == [{"type": "grid", "cards": [A, B]}]
+    today["views"][0]["sections"] = None
+    assert restore.park(today, item)["views"][0]["sections"] == [{"cards": [A, B]}]
 
 
-def test_parking_a_section_appends_after_cards_already_there():
+def test_appending_a_section_leaves_the_cards_list_of_the_view_alone():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": []})
     today["views"][0]["cards"] = [C]
-    assert restore.park(today, item)["views"][0]["cards"] == [C, {"type": "grid", "cards": [A, B]}]
+    assert restore.park(today, item)["views"][0]["cards"] == [C]
 
 
-def test_parking_a_section_into_a_cards_that_is_no_list_refuses():
+def test_appending_a_section_into_sections_that_is_no_list_refuses():
     old = _sections({"cards": [A, B]}, {"cards": [C]})
     item = _removed_section(old, _sections({"cards": [C]}))
     today = _sections({"cards": [C]}, {"cards": [A]})
-    today["views"][0]["cards"] = {"not": "a list"}
+    today["views"][0]["sections"] = {"not": "a list"}
     with pytest.raises(LookupError, match="something other"):
         restore.park(today, item)
 

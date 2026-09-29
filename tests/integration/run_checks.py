@@ -2859,8 +2859,6 @@ async def run_section_parking(access: str) -> None:
     b = {"type": "markdown", "content": "B"}
     c = {"type": "markdown", "content": "C"}
 
-    grid_a = {"type": "grid", "cards": [a]}
-
     def sections(*blocks):
         return {
             "views": [
@@ -2929,17 +2927,19 @@ async def run_section_parking(access: str) -> None:
 
         asked = await undo(key, revision)
         live = await socket.call("lovelace/config", url_path=key)
-        # The whole section goes in as one grid card (GitHub #39), named
-        # by the section's own title: "section 1", as it has no heading.
+        # The section comes back as a real section at the end of the row
+        # (GitHub #39), named by its own title - "section 1", it has no
+        # heading - and where it went.
         check(
             "the undo of a removed section is available, parked",
-            asked.get("available") is True and asked.get("parked") == ["section 1"],
+            asked.get("available") is True and asked.get("parked") == ["section 1 (as the last section)"],
             asked.get("reason") or f"parked={asked.get('parked')!r}",
         )
         check(
-            "the card sits in cards: and the sections are untouched",
-            live["views"][0].get("cards") == [grid_a] and len(live["views"][0]["sections"]) == 2,
-            f"cards={live['views'][0].get('cards')!r}",
+            "the section is the last one, and cards: is untouched",
+            [section["cards"] for section in live["views"][0]["sections"]] == [[b], [c], [a]]
+            and not live["views"][0].get("cards"),
+            f"sections={live['views'][0]['sections']!r}",
         )
 
         # The same change once more: the card is there, nothing is added.
@@ -2947,8 +2947,8 @@ async def run_section_parking(access: str) -> None:
         live = await socket.call("lovelace/config", url_path=key)
         check(
             "a second undo of the same change adds nothing",
-            live["views"][0].get("cards") == [grid_a],
-            f"cards={live['views'][0].get('cards')!r}",
+            [section["cards"] for section in live["views"][0]["sections"]] == [[b], [c], [a]],
+            f"sections={live['views'][0]['sections']!r}",
         )
         await drop(key)
 
@@ -2979,19 +2979,21 @@ async def run_section_parking(access: str) -> None:
             revision=base,
             position=0,
             confirm=True,
-            expected_parked=[label],
+            # What the dialog showed, as the panel sends it back - the
+            # label with where it went, not the bare one of the item.
+            expected_parked=answer.get("parked", []),
         )
         await asyncio.sleep(2)
         live = await socket.call("lovelace/config", url_path=key)
         check(
-            "and is put back as parked cards",
+            "and is put back as the last section",
             bool(label)
             and not answer.get("error")
-            and answer.get("parked") == [label]
+            and answer.get("parked") == [label + " (as the last section)"]
             and written.get("applied") is True
-            and live["views"][0].get("cards") == [grid_a],
+            and [section["cards"] for section in live["views"][0]["sections"]] == [[c], [b], [a]],
             answer.get("error") or written.get("error")
-            or f"parked={answer.get('parked')!r}, cards={live['views'][0].get('cards')!r}",
+            or f"parked={answer.get('parked')!r}, sections={live['views'][0]['sections']!r}",
         )
         await drop(key)
 

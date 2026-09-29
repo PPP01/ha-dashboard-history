@@ -8114,6 +8114,7 @@ def test_a_parking_undo_carries_an_asterisk_and_says_why(parked_action_bar):
     # an exact undo where the cards only become available.
     assert "Undo this change*</button>" in parked_action_bar["starred"]
     assert "Imported cards" in parked_action_bar["starred"]
+    assert "last section" in parked_action_bar["starred"]
 
 
 def test_an_exact_undo_has_no_asterisk(parked_action_bar):
@@ -8159,6 +8160,7 @@ def test_the_dialog_lists_every_parked_card_in_home_assistants_words(parked_dial
     assert '"Imported cards"' in body or "&quot;Imported cards&quot;" in body
     assert "tile: Bett" in body
     assert body.index("Puts this change back") < body.index("Imported cards")
+    assert "last section" in body
 
 
 def test_the_confirmation_sends_back_what_the_dialog_showed(parked_dialog):
