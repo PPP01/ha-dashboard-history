@@ -369,6 +369,7 @@ def _as_dict(explanation) -> dict:
                         "what": entry.what,
                         "label": entry.label,
                         "text": entry.text,
+                        "details": list(entry.details),
                     }
                     for entry in group.entries
                 ],

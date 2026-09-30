@@ -90,6 +90,8 @@ class Entry:
     what: str  # "card", "view", "badge", "setting", "section" or "section_setting"
     label: str
     text: str  # the finished sentence, ready to show
+    # Sub-lines under the sentence: what else about a card changed.
+    details: tuple[str, ...] = ()
 
 
 
@@ -193,6 +195,11 @@ def _inner_card(card: dict) -> dict | None:
 
 
 
+# The fields that name a card by its own text, most stable first.
+TEXT_FIELDS = ("title", "name", "heading")
+
+
+
 def _weak_key(card: Any, depth: int = 0):
     """A content-based identity, good enough to recognise an edited card.
 
@@ -210,7 +217,7 @@ def _weak_key(card: Any, depth: int = 0):
     if not isinstance(card, dict):
         return None
     kind = card.get("type")
-    for field in ("entity", "title", "name", "heading"):
+    for field in ("entity", *TEXT_FIELDS):
         if card.get(field):
             return (kind, field, str(card[field]))
     entity = _first_entity(card)

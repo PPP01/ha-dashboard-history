@@ -20,6 +20,7 @@ from .model import (
     _section_list,
     _translated,
     _views_by_key,
+    TEXT_FIELDS,
     _weak_key,
     badge_containers,
     card_containers,
@@ -141,6 +142,56 @@ def match_sections(old: dict, new: dict) -> SectionMatching:
 
 
 
+def _text_key(slot: Slot) -> str | None:
+    """The type of a card that is named by its own text, else None."""
+    key = _weak_key(slot.card)
+    if key is None or key[1] not in TEXT_FIELDS:
+        return None
+    return key[0]
+
+
+
+def _renamed(
+    old_open: list[Slot],
+    new_open: list[Slot],
+    taken_old: set[int],
+    taken_new: set[int],
+    translate: dict,
+) -> list[tuple[int, int]]:
+    """Pair the cards whose only name is their text, and whose text changed.
+
+    Such a card's weak key IS the text, so editing the text is the one
+    edit pass 3 cannot see: a heading renamed from "Blau" to "History"
+    read as one deleted and one added, with whatever else was edited
+    along with it. Paired here, and only when nothing is left to guess
+    between: exactly one such card of that type on each side of a list.
+    Two of them and which is which is not knowable, and stays a deletion
+    plus an addition - restoring is additive, never a guessed pairing.
+
+    Claims what it pairs in `taken_old`/`taken_new`.
+    """
+    old_by: dict[tuple, list[int]] = {}
+    new_by: dict[tuple, list[int]] = {}
+    # The taken check comes first: passes 1-3 have claimed nearly every
+    # card by now, and `_weak_key` is not free.
+    for i, slot in enumerate(old_open):
+        if i not in taken_old and (kind := _text_key(slot)) is not None:
+            old_by.setdefault((_translated(slot, translate), kind), []).append(i)
+    for j, slot in enumerate(new_open):
+        if j not in taken_new and (kind := _text_key(slot)) is not None:
+            new_by.setdefault((_place(slot), kind), []).append(j)
+    pairs = [
+        (olds[0], new_by[group][0])
+        for group, olds in old_by.items()
+        if len(olds) == 1 and len(new_by.get(group, ())) == 1
+    ]
+    for i, j in pairs:
+        taken_old.add(i)
+        taken_new.add(j)
+    return pairs
+
+
+
 def _match_slots(old: dict, new: dict, containers, translate: dict) -> Matching:
     """The four card passes of `match_cards`, old places followed through `translate`."""
     old_keys = {key for key, _ in _views_by_key(old)}
@@ -211,6 +262,7 @@ def _match_slots(old: dict, new: dict, containers, translate: dict) -> Matching:
     for _score, i, j in sorted(candidates, key=lambda c: (-c[0], c[1], c[2])):
         if i not in taken_old and j not in taken_new:
             claim(edited, i, j)
+    edited.extend(_renamed(old_open, new_open, taken_old, taken_new, translate))
 
     return Matching(
         removed=[slot for i, slot in enumerate(old_open) if i not in taken_old],

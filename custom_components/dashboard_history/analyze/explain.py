@@ -29,6 +29,7 @@ from .model import (
     _shorten,
     _view_name,
     _views_by_key,
+    _weak_key,
     same_config,
 )
 
@@ -93,6 +94,12 @@ _PAST = {
     ("card", "edited"): "{label} was changed",
     ("card", "moved"): "{label} was moved",
     ("card", "moved_to"): "{label} was moved to {where}",
+    ("card", "renamed"): '{lead} "{old}" was changed to "{new}"',
+    ("field", "added"): "{label} was set to {new}",
+    ("field", "added_bare"): "{label} was set",
+    ("field", "removed"): "{label} was removed",
+    ("field", "edited"): "{label} changed from {old} to {new}",
+    ("field", "edited_bare"): "{label} was changed",
     ("view", "removed"): 'the whole view "{label}" was deleted',
     ("view", "added"): 'the whole view "{label}" was added',
     ("view", "type_changed"): 'the view "{label}" was converted from {old_type} to {new_type}',
@@ -119,6 +126,12 @@ _FUTURE = {
     ("card", "edited"): "{label} goes back to how it was",
     ("card", "moved"): "{label} moves back to where it was",
     ("card", "moved_to"): "{label} moves back to {where}",
+    ("card", "renamed"): '{lead} goes back to "{new}"',
+    ("field", "added"): "{label} comes back as {new}",
+    ("field", "added_bare"): "{label} comes back",
+    ("field", "removed"): "{label} will be removed",
+    ("field", "edited"): "{label} goes back to {new}",
+    ("field", "edited_bare"): "{label} goes back to how it was",
     ("view", "removed"): 'the whole view "{label}" will be deleted',
     ("view", "added"): 'the whole view "{label}" comes back',
     ("view", "type_changed"): 'the view "{label}" changes layout from {old_type} to {new_type}',
@@ -170,32 +183,83 @@ def _value_text(value: Any) -> str | None:
 
 
 
+def _change_words(words: dict, what: str, old: Any, new: Any) -> tuple[str, str, dict]:
+    """(kind, template key, values) for a value going from `old` to `new`.
+
+    Either side may be `_ABSENT`. Shared by settings and by the fields
+    of an edited card, which say the same things in different words.
+    """
+    if new is _ABSENT:
+        return "removed", "removed", {}
+    if old is _ABSENT:
+        text = _value_text(new)
+        return ("added", "added", {"new": text}) if text is not None else ("added", "added_bare", {})
+    old_text, new_text = _value_text(old), _value_text(new)
+    # Whether `old` has to be there too depends on the wording this
+    # tense uses, not on which table this happens to be - the same
+    # reason `_explain` takes `reassure` instead of asking `words is
+    # _FUTURE`. The future tense's own template never mentions
+    # {old}, so a missing one there is nothing to fall back from.
+    if new_text is not None and (old_text is not None or "{old}" not in words[(what, "edited")]):
+        return "edited", "edited", {"old": old_text, "new": new_text}
+    return "edited", "edited_bare", {}
+
+
+
 def _setting_entry(words: dict, change: SettingChange) -> Entry:
     label = ".".join(str(key) for key in change.path)
-    if change.new is _ABSENT:
-        kind, key, values = "removed", "removed", {}
-    elif change.old is _ABSENT:
-        new = _value_text(change.new)
-        kind = "added"
-        key, values = ("added", {"new": new}) if new is not None else ("added_bare", {})
-    else:
-        old, new = _value_text(change.old), _value_text(change.new)
-        kind = "edited"
-        # Whether `old` has to be there too depends on the wording this
-        # tense uses, not on which table this happens to be - the same
-        # reason `_explain` takes `reassure` instead of asking `words is
-        # _FUTURE`. The future tense's own template never mentions
-        # {old}, so a missing one there is nothing to fall back from.
-        if new is not None and (old is not None or "{old}" not in words[("setting", "edited")]):
-            key, values = "edited", {"old": old, "new": new}
-        else:
-            key, values = "edited_bare", {}
+    kind, key, values = _change_words(words, "setting", change.old, change.new)
     return Entry(
         kind=kind,
         what="setting",
         label=label,
         text=words[("setting", key)].format(label=label, **values),
     )
+
+
+
+# The most sub-lines an edited card gets before the rest is counted.
+_DETAIL_LIMIT = 6
+
+
+
+def _card_details(words: dict, old: Any, new: Any, skip: str | None = None) -> tuple[str, ...]:
+    """What else changed on a card, one line per top-level field.
+
+    Nested values are named and not spelled out: the diff below the
+    sentence shows them exactly (decision 11).
+    """
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return ()
+    lines = []
+    for name in (*old, *(name for name in new if name not in old)):
+        if name == skip:
+            continue
+        was, now = old.get(name, _ABSENT), new.get(name, _ABSENT)
+        if was == now:
+            continue
+        _, key, values = _change_words(words, "field", was, now)
+        lines.append(words[("field", key)].format(label=name, **values))
+    if len(lines) > _DETAIL_LIMIT:
+        return (*lines[:_DETAIL_LIMIT], f"and {len(lines) - _DETAIL_LIMIT} more")
+    return tuple(lines)
+
+
+
+def _edited_entry(words: dict, was: Slot, now: Slot) -> Entry:
+    """An edited card: one sentence, and a sub-line for what changed."""
+    label = _describe(now.card)
+    text, skip = words[("card", "edited")].format(label=label), None
+    before, after = _weak_key(was.card), _weak_key(now.card)
+    if before is not None and after is not None and before != after:
+        # Named by its text, and the text is what changed.
+        kind, skip, old = before
+        text = words[("card", "renamed")].format(
+            lead=kind if skip == kind else f"{kind} {skip}",
+            old=_shorten(old),
+            new=_shorten(after[2]),
+        )
+    return Entry("edited", "card", label, text, _card_details(words, was.card, now.card, skip))
 
 
 
@@ -332,8 +396,8 @@ def _explain(old: dict, new: dict, words: dict, reassure: bool) -> Explanation:
         add(slot.view_key, _entry(words, "removed", "card", _describe(slot.card)))
     for slot in matching.loose_added():
         add(slot.view_key, _entry(words, "added", "card", _describe(slot.card)))
-    for _was, now in matching.edited:
-        add(now.view_key, _entry(words, "edited", "card", _describe(now.card)))
+    for was, now in matching.edited:
+        add(now.view_key, _edited_entry(words, was, now))
     for was, now in matching.moved:
         label = _describe(was.card)
         if matching.same_place(was, now):

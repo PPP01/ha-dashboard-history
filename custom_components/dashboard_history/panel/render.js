@@ -34,6 +34,12 @@ export const renderDiff = (diff) => {
   return `<pre>${body}</pre>`;
 };
 
+/** The sub-lines under an entry: what else about the card changed. */
+const renderDetails = (lines) =>
+  lines?.length
+    ? `<ul class="details">${lines.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>`
+    : "";
+
 /**
  * The same difference in words. It sits above the diff, not instead of
  * it: the diff is the exact account, and it stays.
@@ -49,7 +55,7 @@ export const renderPlain = (explanation, heading) => {
           ${group.entries
             .map(
               (entry) =>
-                `<li class="${escape(entry.kind)}">${escape(entry.text)}</li>`,
+                `<li class="${escape(entry.kind)}">${escape(entry.text)}${renderDetails(entry.details)}</li>`,
             )
             .join("")}
           ${group.more ? `<li class="muted">and ${escape(group.more)} more</li>` : ""}
