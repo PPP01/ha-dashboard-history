@@ -57,15 +57,18 @@ below; this is the one place that states them together.
      throughout: `_resolve` loads the object it has just found without
      a guard, `_read_from` loads the blob without one, and building the
      index walks without one. While a `forget` prunes, any of them can
-     still raise `KeyError` or `MissingCommitError`. Decision 24 does
-     not cover them.
+     still fail. Decision 24 does not cover them; what they promise is
+     that such a failure is a `ForgetRaceError` (a `KeyError` saying a
+     `forget` is running) whenever the checkpoint still exists, not a
+     bare sha (`_naming_a_forget_race`, issue #44, option c).
 
    Pinned: that the reads do not wait, by
    `test_list_changes_does_not_wait_for_forget` and
    `test_measure_does_not_wait_for_forget`; the retry, by
    `test_list_changes_retries_a_read_that_raced_forget`. The best-effort
-   group is pinned by nothing, on purpose - best effort is all it
-   promises; its unguarded loads are issue #44.
+   group is pinned only in how it fails, by
+   `test_a_best_effort_read_names_the_forget_that_broke_it`; its
+   unguarded loads stay open (issue #44).
 4. **The caches belong to the instance, not to the path.** `_index` and
    `_survey` are filled by readers without the lock and dropped by
    `forget` and `repair_pending_forget` under it. Both are keyed by
@@ -80,8 +83,9 @@ below; this is the one place that states them together.
    decision 21) - `repair_pending_forget` is the one lock holder whose
    whole job is to act on the checkpoint instead, and it is deliberately
    not behind that same refusal. The reads with a retry distrust their
-   answer while it exists too (decision 24). The other reads do not
-   look at it. Pinned by
+   answer while it exists too (decision 24). The other reads look at
+   it only once they have failed, to name the cause
+   (`_naming_a_forget_race`, issue #44). Pinned by
    `test_writes_refuse_while_a_forget_checkpoint_is_pending`,
    `test_repair_finishes_an_interrupted_forget` and
    `test_list_changes_retries_when_a_checkpoint_is_present_even_if_head_is_stable`.
@@ -89,6 +93,7 @@ below; this is the one place that states them together.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -564,6 +569,50 @@ class GenerationReadError(Exception):
     During repair, this preserves the checkpoint so an interrupted rewrite
     is not lost, and can complete once the generation counter is restored.
     """
+
+
+class ForgetRaceError(KeyError):
+    """A read failed because a `forget` was pruning while it ran.
+
+    A `KeyError` on purpose: `_retrying_a_forget_race` and every caller
+    that already catches the raw `KeyError` keep behaving exactly as
+    before. Only the text differs - a bare sha told nobody that a
+    `forget` was the reason, and sent people looking for a fault in
+    their dashboard. See issue #44.
+    """
+
+    def __str__(self) -> str:
+        return (
+            "a forget is rewriting the history right now; "
+            "try again in a few seconds"
+        )
+
+
+def _naming_a_forget_race(read):
+    """Make a best-effort read say so when a `forget` broke it.
+
+    Not a retry and not a guard: the read still fails, and still fails
+    with a `KeyError`. It only replaces the bare sha with a message that
+    names the cause, and only when the checkpoint file proves a `forget`
+    is running - any other `KeyError` passes through untouched.
+    Answering empty instead would be wrong for `read_at`, where `None`
+    already means "the dashboard did not exist". A read that returns
+    normally is not checked. The checkpoint is gone once the `forget`
+    finishes, so a failure that is only noticed afterwards keeps its
+    raw text; that gap is accepted. Decision made in #44 (option c);
+    a retry (option a) can be added later if the error is ever seen.
+    """
+
+    @functools.wraps(read)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return read(self, *args, **kwargs)
+        except (KeyError, MissingCommitError) as err:
+            if isinstance(err, ForgetRaceError) or not self.forget_in_progress():
+                raise
+            raise ForgetRaceError(*err.args) from err
+
+    return wrapper
 
 
 class HistoryStore:
@@ -2884,6 +2933,7 @@ class HistoryStore:
             return build()
         return self._retrying_a_forget_race(repo, build)
 
+    @_naming_a_forget_race
     def descriptions(self) -> dict[str, str]:
         """Every description, by revision.
 
@@ -2899,6 +2949,7 @@ class HistoryStore:
             for sha, text in porcelain.notes_list(str(self.path))
         }
 
+    @_naming_a_forget_race
     def previous_change(self, key: str, revision: str) -> str | None:
         """The state of one dashboard just before one of its changes.
 
@@ -2954,6 +3005,7 @@ class HistoryStore:
             return found[1]
         return None
 
+    @_naming_a_forget_race
     def resolve(self, revision: str) -> str | None:
         """Turn a revision into a full commit hash, or None if unknown.
 
@@ -3022,6 +3074,7 @@ class HistoryStore:
             return None
         return _as_text(obj.id)
 
+    @_naming_a_forget_race
     def read_at(self, key: str, revision: str) -> str | None:
         """The text of one dashboard at one revision, or None if absent.
 
@@ -3032,6 +3085,7 @@ class HistoryStore:
         """
         return self._read(f"{key}.yaml", revision)
 
+    @_naming_a_forget_race
     def read_meta_at(self, key: str, revision: str) -> str | None:
         """What a dashboard *was* at a revision: title, icon, visibility."""
         return self._read(f"meta/{key}.yaml", revision)
@@ -3081,6 +3135,7 @@ class HistoryStore:
             return None
         return blob_id
 
+    @_naming_a_forget_race
     def matching_revisions(
         self, key: str, revisions: Iterable[str], text: str
     ) -> set[str]:
@@ -3120,6 +3175,7 @@ class HistoryStore:
                 same.add(revision)
         return same
 
+    @_naming_a_forget_race
     def same_state(self, key: str, one: str, other: str) -> bool:
         """Whether two revisions hold exactly the same state of a dashboard.
 
@@ -3154,6 +3210,7 @@ class HistoryStore:
         first = self._blob_at(repo, path, one)
         return first is not None and first == self._blob_at(repo, path, other)
 
+    @_naming_a_forget_race
     def commit_times(self, revisions: Iterable[str]) -> dict[str, int]:
         """When each of these revisions was recorded, by the name asked for.
 
@@ -3192,6 +3249,7 @@ class HistoryStore:
                 continue
         return found
 
+    @_naming_a_forget_race
     def commit_order(self, revisions: Iterable[str]) -> dict[str, int]:
         """Where each of these revisions sits in the repository's own
         commit order. Lower is newer.
@@ -3225,6 +3283,7 @@ class HistoryStore:
                 found[revision] = index.order[resolved]
         return found
 
+    @_naming_a_forget_race
     def list_dashboards(self) -> list[str]:
         """Every dashboard the history currently tracks."""
         repo = self._repo()
@@ -3246,6 +3305,7 @@ class HistoryStore:
             if entry.path.endswith(b".yaml")
         )
 
+    @_naming_a_forget_race
     def list_all_dashboards(self) -> list[str]:
         """Every dashboard the history has ever held, deleted ones included.
 
@@ -3260,6 +3320,7 @@ class HistoryStore:
         index = self._revision_index(repo)
         return sorted(index.names) if index is not None else []
 
+    @_naming_a_forget_race
     def survey(self) -> Survey:
         """Every dashboard ever, which are live, and what each is called.
 
@@ -3330,6 +3391,7 @@ class HistoryStore:
         self._survey = (head, found)
         return found
 
+    @_naming_a_forget_race
     def measure(self) -> Measurement:
         """Everything the sensors show and the report carries, in one pass.
 
@@ -3337,8 +3399,10 @@ class HistoryStore:
         `list_changes`, `survey`, `read_at` - runs without it, and a
         measurement that waits for a running `forget` would block a
         sensor for fifteen seconds. What it can catch instead is a
-        half-rewritten history, and every step below survives that by
-        skipping rather than raising.
+        half-rewritten history. Most steps below survive that by
+        skipping, but building the index does not: that raises, and
+        while a `forget` is running it arrives as `ForgetRaceError`
+        (issue #44).
         """
         repo = self._repo()
         sizes = self._measure_disk(repo)

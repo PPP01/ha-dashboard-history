@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from . import report
 from .const import DATA_REPORT_SECRET, DOMAIN, MEASURE_INTERVAL
-from .store import HistoryStore, Measurement
+from .store import ForgetRaceError, HistoryStore, Measurement
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ class MeasurementCoordinator(DataUpdateCoordinator[Measurement]):
         """
         try:
             found = await self.hass.async_add_executor_job(self._store.measure)
-        except OSError as error:
+        except (OSError, ForgetRaceError) as error:
             raise UpdateFailed(f"could not measure the history: {error}") from error
         self.measured_at = time.time()
         return found

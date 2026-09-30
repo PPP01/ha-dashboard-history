@@ -14,6 +14,7 @@ import dulwich.refs
 from dulwich.errors import MissingCommitError
 import store as store_module
 from store import (
+    ForgetRaceError,
     GenerationReadError,
     HistoryStore,
     RevisionIndex,
@@ -4270,3 +4271,58 @@ def test_repair_pending_forget_also_protects_a_staged_but_uncommitted_blob(
     assert new_head is not None
     assert store.read_at("b", new_head) == "b: 1\n"
 
+
+
+def test_a_best_effort_read_names_the_forget_that_broke_it(store, monkeypatch):
+    """A read outside decision 24 that hits a pruned object while a
+    `forget` is running fails with `ForgetRaceError` - still a
+    `KeyError`, but saying why. Without the checkpoint it stays the
+    plain error it always was: a `KeyError` from anything else must not
+    be blamed on a `forget`. See issue #44.
+
+    The pruned blob is simulated with an id that was never stored; the
+    real race needs thread concurrency and was never reproduced.
+    """
+    store.write_snapshot("home", "a: 1\n", "first")
+    monkeypatch.setattr(
+        HistoryStore, "_blob_at", classmethod(lambda cls, repo, path, rev: b"0" * 40)
+    )
+
+    with pytest.raises(KeyError) as plain:
+        store.read_at("home", "HEAD")
+    assert not isinstance(plain.value, ForgetRaceError)
+
+    store._checkpoint_path().write_text("{}")
+    with pytest.raises(ForgetRaceError, match="forget is rewriting"):
+        store.read_at("home", "HEAD")
+
+
+def test_a_missing_commit_during_a_forget_is_named_too(store, monkeypatch):
+    store.write_snapshot("home", "a: 1\n", "first")
+
+    def pruned(repo, revision):
+        raise MissingCommitError(b"0" * 40)
+
+    monkeypatch.setattr(HistoryStore, "_resolve", staticmethod(pruned))
+
+    with pytest.raises(MissingCommitError):
+        store.resolve("HEAD")
+
+    store._checkpoint_path().write_text("{}")
+    with pytest.raises(ForgetRaceError):
+        store.resolve("HEAD")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "descriptions", "previous_change", "resolve", "read_at",
+        "read_meta_at", "matching_revisions", "same_state",
+        "commit_times", "commit_order", "list_dashboards",
+        "list_all_dashboards", "survey", "measure",
+    ],
+)
+def test_every_best_effort_reader_names_a_forget_race(name):
+    """The thirteen readers of issue #44 all carry the decorator, so
+    dropping it from one of them turns red here."""
+    assert hasattr(getattr(HistoryStore, name), "__wrapped__")
