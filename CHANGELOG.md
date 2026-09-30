@@ -1,5 +1,60 @@
 # Changelog
 
+## v0.10.0
+
+A removed section can now be taken back even when its place in the row
+is gone, the history says what changed on an edited card instead of
+calling a renamed heading a deletion, and the "Create a version" dialog
+is redone. No change to the Home Assistant version floor — still
+**2024.11 or newer**.
+
+### A removed section comes back as a section
+
+- Undoing the removal of a whole section, or putting it back, used to be
+  refused when other sections had been rearranged since and its place in
+  the row could no longer be proven. It now returns as a real section at
+  the end of the view's `sections:` list, with its settings and cards;
+  the button carries an asterisk to say its place is missing, and one
+  drag in the editor moves it where it belongs. Only a plain removal of
+  exactly one section is handled this way; mixed changes are still
+  refused.
+
+### Edited cards say what changed
+
+- A card whose only name is its text (a heading, or a card with only a
+  `title` or `name`) used to read as one card deleted and one added when
+  that text was edited — "1 removed, 1 added" for a single edit, and a
+  Put back offered for a card that was not missing. It is now one edited
+  card: `heading "Blau" was changed to "History"`, counted as "1 edited".
+  This is only done when exactly one such card of that type is left on
+  each side of a list; with two, nothing is guessed.
+- Every edited card now lists what else changed on it, as lines under
+  the sentence: `icon changed from "mdi:a" to "mdi:b"`, `tap_action was
+  set`. Plain values show old and new; nested ones show only their name
+  (the diff below has the rest); at most six lines, then a count.
+
+### Comparing with the current state
+
+- Every version has a compare icon beside the pen and the bin, and the
+  "Current state" pick sits in the head of the "Right now" box, so a
+  version can be compared with the live dashboard without opening the
+  compare mode or scrolling past unnamed changes (#34).
+
+### The "Create a version" dialog
+
+- The two separate expanders are one switcher between the list of
+  pending changes and the technical details, and every diff line is
+  tinted across its whole width.
+- The description field grows with what is typed, in both the create and
+  the rename dialog, and the arbitrary limit of 500 characters is gone —
+  nothing in the storage ever imposed it.
+
+### Under the hood
+
+- `analyze` is now a package (`model`, `matching`, `explain`, `removed`,
+  `undo`), with an import contract and a complexity ratchet checked in
+  CI. `HistoryStore`'s locking rules are written down and tested.
+
 ## v0.9.0
 
 Targeted undo now reaches nearly everything a dashboard save can
