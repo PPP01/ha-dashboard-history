@@ -3894,13 +3894,17 @@ def test_a_new_change_costs_the_change_and_not_the_history(tmp_path):
     cheaper. What arrived since the last one is what has to be read.
 
     A ceiling rather than a comparison between two sizes, because what
-    a read costs absolutely is not steady: dulwich packs loose objects
-    as it goes, and the same repository answers in 22 reads or in 61
-    depending on when that happened. What does not move is the order of
-    magnitude. Measured on 2026-09-07 behind 240 other commits: 43 reads
-    carrying the index forward against 970 rebuilding it, and the same
-    at 60 commits was 51 against 250. The ceiling sits between the two
-    with room for the packing to breathe.
+    carrying the index forward costs moves with the clock. dulwich
+    stamps commits in whole seconds, and its walker steps over every
+    excluded commit made in the same second as HEAD before it stops -
+    so the same repository answers in 22 reads when every commit had a
+    second of its own and in 194 when all 121 shared one. A fast CI
+    runner makes about a hundred commits a second and gets there; a
+    slower machine never does (issue #46). Packing plays no part: gc
+    starts at 6700 loose objects, this test makes fewer than 400.
+
+    Rebuilding the index behind the same 120 commits costs 494. The
+    ceiling sits above the worst the clock can do and well below that.
     """
     history = HistoryStore(tmp_path / "h")
     history.ensure()
@@ -3914,10 +3918,11 @@ def test_a_new_change_costs_the_change_and_not_the_history(tmp_path):
         changes = history.list_changes("small")
 
     assert [c.message for c in changes] == ["small second", "small first"]
-    assert seen["objects"] < 150, (
+    assert seen["objects"] < 300, (
         f"reading after one save cost {seen['objects']} objects behind 120 "
-        "other commits: the index was thrown away and built again, so the "
-        "save paid for the whole history"
+        "other commits, more than carrying the index forward can cost even "
+        "with every commit in one second: the index was most likely built "
+        "again, so the save paid for the whole history"
     )
 
 
@@ -3961,7 +3966,8 @@ def test_a_new_change_does_not_make_the_survey_walk_again(tmp_path):
     already did.
 
     A ceiling for the same reason as the test above: the number moves
-    with packing, its order of magnitude does not.
+    with how many commits shared a second with HEAD, 21 to 192 here,
+    and its order of magnitude does not.
     """
     history = HistoryStore(tmp_path / "h")
     history.ensure()
@@ -3975,9 +3981,11 @@ def test_a_new_change_does_not_make_the_survey_walk_again(tmp_path):
 
     assert "small" in found.names
     assert "small" in found.live
-    assert seen["objects"] < 150, (
+    assert seen["objects"] < 300, (
         f"the survey cost {seen['objects']} objects after one save behind "
-        "120 other commits: it walked the whole history again"
+        "120 other commits, more than carrying the index forward can cost "
+        "even with every commit in one second: it most likely walked the "
+        "whole history again"
     )
 
 
