@@ -618,7 +618,7 @@ def _plan_card_steps(ctx: UndoContext) -> str | tuple[UndoStep, ...]:
         if here is None:
             return why
         placed.append((None, _step(here, "remove", new_slot.card, None, label)))
-        placed.append(_put_back(ctx, old_slot, label))
+        placed.append(_put_back(ctx, old_slot, _describe(old_slot.card)))
 
     for new_slot in matching.loose_added():
         label = _describe(new_slot.card)

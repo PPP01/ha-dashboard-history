@@ -2898,14 +2898,193 @@ def test_a_renamed_heading_can_be_taken_back():
     assert restore.apply_undo(_config([A, new]), plan) == _config([A, old])
 
 
-# ---- a rename inside a section nothing paired is not a rename
+# ------------------------------------ a tile whose entity was swapped (#45)
+_FEATURES = [{"type": "cover-open-close"}]
+
+
+def _tile(entity, **rest):
+    return {"type": "tile", "entity": entity, "name": "Wohnzimmer", "features": _FEATURES, **rest}
+
+
+def test_a_tile_with_another_entity_and_everything_else_alike_is_one_edit():
+    before, after = _config([A, _tile("cover.old")]), _config([A, _tile("cover.new")])
+    s = analyze.summarize(before, after)
+    assert (s.edited, s.removed, s.added) == (1, 0, 0)
+    assert analyze.find_removed(before, after) == []
+
+
+def test_a_swapped_entity_is_named_as_a_line_under_the_tile():
+    (entry,) = _entries(_config([_tile("cover.old")]), _config([_tile("cover.new")]))
+    assert entry.kind == "edited"
+    assert entry.text == "tile: Wohnzimmer was changed"
+    assert entry.details == ('entity changed from "cover.old" to "cover.new"',)
+
+
+def test_a_swapped_entity_reads_as_going_back_in_a_restore_preview():
+    (entry,) = _entries(
+        _config([_tile("cover.new")]), _config([_tile("cover.old")]), analyze.explain_effect
+    )
+    assert entry.text == "tile: Wohnzimmer goes back to how it was"
+    assert entry.details == ('entity goes back to "cover.old"',)
+
+
+def test_a_tile_of_only_type_and_entity_is_not_a_swap():
+    """Nothing but the entity to go by: two different tiles, not one edited."""
+    s = analyze.summarize(_config([A]), _config([B]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_a_tile_whose_name_changed_along_with_the_entity_is_not_a_swap():
+    before = _config([_tile("cover.old")])
+    after = _config([_tile("cover.new", name="Esszimmer")])
+    s = analyze.summarize(before, after)
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_a_tile_whose_entity_changed_and_gained_a_field_is_not_a_swap():
+    s = analyze.summarize(_config([_tile("cover.old")]), _config([_tile("cover.new", icon="mdi:a")]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_two_swapped_tiles_in_one_list_are_not_guessed():
+    before = _config([_tile("cover.a"), _tile("cover.b")])
+    after = _config([_tile("cover.x"), _tile("cover.y")])
+    s = analyze.summarize(before, after)
+    assert (s.edited, s.removed, s.added) == (0, 2, 2)
+
+
+def test_another_card_type_with_the_same_fields_is_not_a_swap():
+    old = _tile("cover.old")
+    new = dict(_tile("cover.new"), type="button")
+    s = analyze.summarize(_config([old]), _config([new]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_a_tile_swapped_into_another_section_is_not_a_swap():
+    before = {"views": [{"path": "a", "type": "sections", "sections": [
+        {"cards": [_tile("cover.old")]}, {"cards": [A]}]}]}
+    after = {"views": [{"path": "a", "type": "sections", "sections": [
+        {"cards": [A]}, {"cards": [A, _tile("cover.new")]}]}]}
+    assert analyze.summarize(before, after).edited == 0
+
+
+def test_a_swapped_tile_can_be_taken_back():
+    old, new = _tile("cover.old"), _tile("cover.new")
+    plan = analyze.plan_undo(_config([A, old]), _config([A, new]), _config([A, new]))
+    assert plan.blocked is None
+    assert restore.apply_undo(_config([A, new]), plan) == _config([A, old])
+
+
+# ---- review of the entity swap: what must NOT be paired, and the edges (#45)
+def _bad(entity, **rest):
+    return {"type": "entity", "entity": entity, "icon": "mdi:a", "color": "red", **rest}
+
+
+def test_a_shared_layout_field_alone_is_no_evidence_of_one_tile():
+    """A default like grid_options sits on nearly every tile in a sections view."""
+    old = {"type": "tile", "entity": "light.lamp", "grid_options": {"columns": 6}}
+    new = {"type": "tile", "entity": "light.other", "grid_options": {"columns": 6}}
+    s = analyze.summarize(_config([old]), _config([new]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+    assert len(analyze.find_removed(_config([old]), _config([new]))) == 1
+
+
+def test_a_shared_colour_or_icon_alone_is_no_evidence_either():
+    old = {"type": "tile", "entity": "light.a", "color": "blue", "icon": "mdi:a"}
+    new = {"type": "tile", "entity": "light.b", "color": "blue", "icon": "mdi:a"}
+    s = analyze.summarize(_config([old]), _config([new]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_the_name_has_to_be_there_and_not_empty():
+    old = {"type": "tile", "entity": "light.a", "name": "", "color": "blue"}
+    new = {"type": "tile", "entity": "light.b", "name": "", "color": "blue"}
+    assert analyze.summarize(_config([old]), _config([new])).edited == 0
+
+
+def test_a_named_tile_moving_to_another_kind_of_device_is_not_a_swap():
+    s = analyze.summarize(_config([_tile("cover.a")]), _config([_tile("light.a")]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_a_title_serves_as_the_name_of_a_card():
+    old = {"type": "gauge", "entity": "sensor.a", "title": "Power", "max": 10}
+    new = dict(old, entity="sensor.b")
+    assert analyze.summarize(_config([old]), _config([new])).edited == 1
+
+
+def test_a_swapped_entity_on_a_badge_is_left_alone():
+    """Badges have no detail lines to say what changed; not paired here."""
+    before = {"views": [{"path": "a", "cards": [], "badges": [_bad("sensor.old", name="Temp")]}]}
+    after = {"views": [{"path": "a", "cards": [], "badges": [_bad("sensor.new", name="Temp")]}]}
+    s = analyze.summarize(before, after)
+    assert (s.badges, s.edited) == (2, 0)
+
+
+def test_a_card_with_keys_of_mixed_types_does_not_break_the_pairing():
+    """YAML allows `1: x` beside `name: y`; sorting those keys raises."""
+    old = {"type": "tile", "entity": "light.a", "name": "N", 1: "x"}
+    new = {"type": "tile", "entity": "light.b", "name": "N", 1: "x"}
+    assert analyze.summarize(_config([old]), _config([new])).edited == 1
+
+
+def test_the_undo_step_that_puts_the_old_tile_back_names_that_tile():
+    old = {"type": "tile", "entity": "cover.old", "name": "Wohnzimmer", "features": _FEATURES}
+    new = dict(old, entity="cover.new")
+    plan = analyze.plan_undo(_config([old]), _config([new]), _config([new]))
+    assert [(step.action, step.label) for step in plan.steps] == [
+        ("remove", "tile: Wohnzimmer"),
+        ("insert", "tile: Wohnzimmer"),
+    ]
+    nameless = {"type": "tile", "entity": "cover.old", "name": "", "color": "blue"}
+    plan = analyze.plan_undo(_config([nameless]), _config([dict(nameless, entity="cover.new")]),
+                             _config([dict(nameless, entity="cover.new")]))
+    assert [step.label for step in plan.steps] == ["tile: cover.new", "tile: cover.old"]
+
+
+# ---- second review: sections nothing paired, and what is accepted (#45)
 def _sections(*sections):
     return {"views": [{"path": "a", "type": "sections", "sections": list(sections)}]}
 
 
-def test_a_rename_inside_a_section_nothing_paired_is_not_a_rename():
+def test_a_swap_inside_a_section_nothing_paired_is_not_a_swap():
     """Same index is no proof of the same section once none was recognised."""
+    old = _sections({"type": "grid", "title": "one", "cards": [_tile("cover.old")]})
+    new = _sections({"type": "grid", "title": "two", "cards": [_tile("cover.new")]})
+    assert analyze.match_sections(old, new).pairs == ()
+    assert analyze.summarize(old, new).edited == 0
+
+
+def test_a_rename_inside_a_section_nothing_paired_is_not_a_rename():
     old = _sections({"type": "grid", "title": "one", "cards": [{"type": "heading", "heading": "Blau"}]})
     new = _sections({"type": "grid", "title": "two", "cards": [{"type": "heading", "heading": "Rot"}]})
     assert analyze.match_sections(old, new).pairs == ()
     assert analyze.summarize(old, new).edited == 0
+
+
+def test_a_swap_inside_a_paired_section_still_counts():
+    old = _sections({"type": "grid", "cards": [{"type": "heading", "heading": "Rollos"}, _tile("cover.old")]})
+    new = _sections({"type": "grid", "cards": [{"type": "heading", "heading": "Rollos"}, _tile("cover.new")]})
+    assert analyze.summarize(old, new).edited == 1
+
+
+def test_two_differently_named_tiles_are_each_swapped_on_their_own_evidence():
+    before = _config([_tile("cover.a", name="A"), _tile("cover.b", name="B")])
+    after = _config([_tile("cover.x", name="A"), _tile("cover.y", name="B")])
+    s = analyze.summarize(before, after)
+    assert (s.edited, s.removed, s.added) == (2, 0, 0)
+
+
+def test_a_deleted_named_tile_beside_an_alike_new_one_is_accepted_as_a_swap():
+    """The accepted limit: the two states cannot be told apart from a swap.
+
+    What the user keeps is the line naming both entities, and an undo of
+    exactly this change that puts the old tile back.
+    """
+    old, new = _tile("cover.deleted"), _tile("cover.added")
+    before, after = _config([old]), _config([new])
+    assert analyze.summarize(before, after).edited == 1
+    (entry,) = _entries(before, after)
+    assert 'entity changed from "cover.deleted" to "cover.added"' in entry.details
+    plan = analyze.plan_undo(before, after, after)
+    assert restore.apply_undo(after, plan) == before

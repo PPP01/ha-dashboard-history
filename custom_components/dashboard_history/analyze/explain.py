@@ -29,6 +29,7 @@ from .model import (
     _shorten,
     _view_name,
     _views_by_key,
+    TEXT_FIELDS,
     _weak_key,
     same_config,
 )
@@ -251,7 +252,7 @@ def _edited_entry(words: dict, was: Slot, now: Slot) -> Entry:
     label = _describe(now.card)
     text, skip = words[("card", "edited")].format(label=label), None
     before, after = _weak_key(was.card), _weak_key(now.card)
-    if before is not None and after is not None and before != after:
+    if before is not None and after is not None and before != after and before[1] in TEXT_FIELDS:
         # Named by its text, and the text is what changed.
         kind, skip, old = before
         text = words[("card", "renamed")].format(

@@ -142,6 +142,25 @@ def match_sections(old: dict, new: dict) -> SectionMatching:
 
 
 
+def _claim_unique(
+    old_by: dict[tuple, list[int]],
+    new_by: dict[tuple, list[int]],
+    taken_old: set[int],
+    taken_new: set[int],
+) -> list[tuple[int, int]]:
+    """Pair the groups that have exactly one card on each side, and claim them."""
+    pairs = [
+        (olds[0], new_by[group][0])
+        for group, olds in old_by.items()
+        if len(olds) == 1 and len(new_by.get(group, ())) == 1
+    ]
+    for i, j in pairs:
+        taken_old.add(i)
+        taken_new.add(j)
+    return pairs
+
+
+
 def _text_key(slot: Slot) -> str | None:
     """The type of a card that is named by its own text, else None."""
     key = _weak_key(slot.card)
@@ -168,10 +187,6 @@ def _renamed(
     Two of them and which is which is not knowable, and stays a deletion
     plus an addition - restoring is additive, never a guessed pairing.
 
-    A card of a section nothing paired is left alone: its list is only
-    "the same" by index, which proves nothing once the section itself
-    could not be recognised.
-
     Claims what it pairs in `taken_old`/`taken_new`.
     """
     old_by: dict[tuple, list[int]] = {}
@@ -184,14 +199,86 @@ def _renamed(
     for j, slot in enumerate(new_open):
         if j not in taken_new and (kind := _text_key(slot)) is not None:
             new_by.setdefault((_place(slot), kind), []).append(j)
-    pairs = [
-        (olds[0], new_by[group][0])
-        for group, olds in old_by.items()
-        if len(olds) == 1 and len(new_by.get(group, ())) == 1
-    ]
-    for i, j in pairs:
-        taken_old.add(i)
-        taken_new.add(j)
+    return _claim_unique(old_by, new_by, taken_old, taken_new)
+
+
+
+def _entity_sibling(slot: Slot) -> tuple | None:
+    """(type, kind of device, the rest of the card) of a named entity card.
+
+    Only a card whose weak key is its `entity`, and only when it carries a
+    name of its own (`name` or `title`): a colour, an icon or a layout
+    default sits on nearly every card of a sections view and proves
+    nothing, whereas the name is what somebody looking at the dashboard
+    knows the card by. The rest - everything except the entity - is the
+    evidence, and the kind of device (the part of the entity before the
+    dot) has to stay the same.
+    """
+    key = _weak_key(slot.card)
+    if key is None or key[1] != "entity":
+        return None
+    rest = {name: value for name, value in slot.card.items() if name != "entity"}
+    if not any(isinstance(rest.get(name), str) and rest[name].strip() for name in ("name", "title")):
+        return None
+    return key[0], key[2].partition(".")[0], fingerprint(rest)
+
+
+
+def _swapped(
+    old_open: list[Slot],
+    new_open: list[Slot],
+    taken_old: set[int],
+    taken_new: set[int],
+    translate: dict,
+) -> list[tuple[int, int]]:
+    """Pair the cards whose entity was swapped and nothing else changed (#45).
+
+    Weaker evidence than a renamed text: an entity IS the identity of a
+    tile, and deleting one tile while adding another is ordinarily two
+    things. So the card has to carry a name that stayed, the kind of
+    device has to stay, every other field has to be identical, and
+    exactly one card with that very content (name included) has to be
+    left on each side of a list. Any card with an entity and a name
+    qualifies, not tiles alone. Anything else stays a deletion plus an
+    addition.
+
+    What this cannot tell apart: one card deleted and an unrelated one
+    added with the same name and the same settings looks exactly like an
+    entity swap. That is accepted; the line under the sentence names
+    both entities, and undoing the change puts the old card back.
+
+    A card of a section nothing paired is left alone, as in `_renamed`.
+
+    Claims what it pairs in `taken_old`/`taken_new`.
+    """
+    old_by: dict[tuple, list[int]] = {}
+    new_by: dict[tuple, list[int]] = {}
+    for i, slot in enumerate(old_open):
+        if i not in taken_old and not _unpaired(slot, translate) and (rest := _entity_sibling(slot)) is not None:
+            old_by.setdefault((_translated(slot, translate), rest), []).append(i)
+    for j, slot in enumerate(new_open):
+        if j not in taken_new and (rest := _entity_sibling(slot)) is not None:
+            new_by.setdefault((_place(slot), rest), []).append(j)
+    return _claim_unique(old_by, new_by, taken_old, taken_new)
+
+
+
+def _paired_by_content(
+    old_open: list[Slot],
+    new_open: list[Slot],
+    taken_old: set[int],
+    taken_new: set[int],
+    translate: dict,
+    cards: bool,
+) -> list[tuple[int, int]]:
+    """What the passes on the card's own key leave: renamed, then swapped.
+
+    The swap is for cards only: an edited badge carries no detail lines,
+    so a swapped entity there would say "was changed" and nothing else.
+    """
+    pairs = _renamed(old_open, new_open, taken_old, taken_new, translate)
+    if cards:
+        pairs += _swapped(old_open, new_open, taken_old, taken_new, translate)
     return pairs
 
 
@@ -266,7 +353,11 @@ def _match_slots(old: dict, new: dict, containers, translate: dict) -> Matching:
     for _score, i, j in sorted(candidates, key=lambda c: (-c[0], c[1], c[2])):
         if i not in taken_old and j not in taken_new:
             claim(edited, i, j)
-    edited.extend(_renamed(old_open, new_open, taken_old, taken_new, translate))
+    edited.extend(
+        _paired_by_content(
+            old_open, new_open, taken_old, taken_new, translate, containers is card_containers
+        )
+    )
 
     return Matching(
         removed=[slot for i, slot in enumerate(old_open) if i not in taken_old],
