@@ -58,9 +58,9 @@ below; this is the one place that states them together.
      a guard, `_read_from` loads the blob without one, and building the
      index walks without one. While a `forget` prunes, any of them can
      still fail. Decision 24 does not cover them; what they promise is
-     that such a failure is a `ForgetRaceError` (a `KeyError` saying a
-     `forget` is running) whenever the checkpoint still exists, not a
-     bare sha (`_naming_a_forget_race`, issue #44, option c).
+     that such a failure is a `ForgetRaceError` (a `KeyError` pointing
+     at an unfinished `forget`) whenever the checkpoint still exists,
+     not a bare sha (`_naming_a_forget_race`, issue #44, option c).
 
    Pinned: that the reads do not wait, by
    `test_list_changes_does_not_wait_for_forget` and
@@ -572,29 +572,36 @@ class GenerationReadError(Exception):
 
 
 class ForgetRaceError(KeyError):
-    """A read failed because a `forget` was pruning while it ran.
+    """A read failed while a `forget` was unfinished.
 
-    A `KeyError` on purpose: `_retrying_a_forget_race` and every caller
-    that already catches the raw `KeyError` keep behaving exactly as
-    before. Only the text differs - a bare sha told nobody that a
-    `forget` was the reason, and sent people looking for a fault in
-    their dashboard. See issue #44.
+    "Unfinished" is all the checkpoint file proves: a `forget` may be
+    pruning right now, or an earlier one was interrupted and waits for
+    `repair_pending_forget`, which runs when the integration starts. The
+    text claims neither cause as certain. A `KeyError` on purpose:
+    `_retrying_a_forget_race` and every caller that already catches the
+    raw `KeyError` keep behaving exactly as before. Only the text
+    differs - a bare sha sent people looking for a fault in their
+    dashboard. See issue #44.
     """
 
     def __str__(self) -> str:
         return (
-            "a forget is rewriting the history right now; "
-            "try again in a few seconds"
+            "the history has an unfinished forget, which may be why this "
+            "read failed; try again in a few seconds, and if it keeps "
+            "failing, restart Home Assistant so the forget is finished"
         )
 
 
 def _naming_a_forget_race(read):
-    """Make a best-effort read say so when a `forget` broke it.
+    """Make a best-effort read point at an unfinished `forget`.
 
     Not a retry and not a guard: the read still fails, and still fails
     with a `KeyError`. It only replaces the bare sha with a message that
-    names the cause, and only when the checkpoint file proves a `forget`
-    is running - any other `KeyError` passes through untouched.
+    names a likely cause, and only while the checkpoint file exists.
+    That proves an unfinished `forget`, not that it caused this
+    failure - a stale checkpoint after a crash would label an unrelated
+    `KeyError` too, which is why the text says "may". Any other
+    `KeyError` passes through untouched.
     Answering empty instead would be wrong for `read_at`, where `None`
     already means "the dashboard did not exist". A read that returns
     normally is not checked. The checkpoint is gone once the `forget`

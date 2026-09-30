@@ -4293,7 +4293,7 @@ def test_a_best_effort_read_names_the_forget_that_broke_it(store, monkeypatch):
     assert not isinstance(plain.value, ForgetRaceError)
 
     store._checkpoint_path().write_text("{}")
-    with pytest.raises(ForgetRaceError, match="forget is rewriting"):
+    with pytest.raises(ForgetRaceError, match="unfinished forget"):
         store.read_at("home", "HEAD")
 
 
