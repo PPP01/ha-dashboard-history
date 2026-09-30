@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.10.2
+
+The panel no longer takes three times as long as it has to when it is
+opened right after Home Assistant starts, and says why it is waiting.
+No change to the Home Assistant version floor — still **2024.11 or
+newer**.
+
+### Fixed
+
+- Opening the panel while the integration was still working through its
+  start made two threads each read the whole history to build the same
+  index, and they slow each other down: on a history of 11,919 commits
+  one read takes 12.6 s, two at the same time took 42 s. The second now
+  waits for the first and uses its result (13 s in the same measurement).
+- While that index is being built, the list on the left says "Warming up"
+  and that this happens after every start, instead of an unexplained
+  "Reading the history…". It is built once per start; a long history
+  still needs its seconds, but they are now explained.
+- A read that fails because a `forget` was interrupted names that as a
+  possible cause instead of showing a bare commit hash (#44).
+
+### Added
+
+- One line in the log, at info level, per start: `Built the revision
+  index: N commits, M dashboards in X s`. It tells a slow start from a
+  slow anything else.
+- A `dashboard_history/status` WebSocket command (administrators only)
+  that answers `{"warming_up": true | false}`; the panel uses it.
+
 ## v0.10.1
 
 An edited card whose entity was swapped is now one edit, and a text
