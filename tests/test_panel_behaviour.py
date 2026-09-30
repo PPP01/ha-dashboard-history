@@ -3474,7 +3474,8 @@ el._versions = [
     revision: "c", same_as_now: false, timestamp: 0, annotated: true },
   // Its commit is below the loaded window, so there is nothing under
   // this one to open - the usual case on a dashboard with hundreds.
-  { name: "dash/v0.9.0", title: "Older still", description: "",
+  { name: "dash/v0.9.0", title: "Older still",
+    description: "first line\\nsecond line",
     revision: "z", same_as_now: false, timestamp: 1757100000,
     annotated: true },
 ];
@@ -3534,6 +3535,11 @@ const filtered = el._renderMain();
 
 console.log(JSON.stringify({
   plain: {
+    // The words are the person's own, so their breaks must survive.
+    // Matched with the text after the tag: the class alone would also
+    // pass for an empty paragraph.
+    describedKeepsLineBreaks:
+      plain.includes("class=\\"why typed\\">first line\\nsecond line"),
     standing: plain.includes("in the state of v1.2.0"),
     rows: count(plain, "class=\\"vrow\\""),
     twoChanges: plain.includes("The newest 2 changes in this version"),
@@ -3760,6 +3766,10 @@ def test_the_fold_counts_only_what_it_can_show(simple_mode):
     # this mode has no "load older" that could ever make it right.
     assert simple_mode["plain"]["twoChanges"] is True
     assert simple_mode["plain"]["oneChange"] is True
+
+
+def test_a_description_keeps_its_line_breaks_in_the_simple_mode(simple_mode):
+    assert simple_mode["plain"]["describedKeepsLineBreaks"] is True
 
 
 def test_every_version_offers_a_way_to_rename_itself(simple_mode):
@@ -4488,6 +4498,7 @@ def test_a_versions_own_badge_and_note_show_in_the_advanced_head_too(row_parts):
     assert row_parts["noAutoBadgeByDefault"] is False
     assert row_parts["describedShowsIt"] is True
     assert row_parts["undescribedShowsNothing"] is False
+    assert row_parts["describedKeepsLineBreaks"] is True
 
 
 def test_a_version_made_by_hand_gets_no_pen(row_parts):
@@ -7130,6 +7141,8 @@ console.log(JSON.stringify({
   // and became `why` - and this assertion went on passing, because
   // nothing in this dialog says `muted` any more. A negative matcher
   // tied to a class the code no longer emits is always true.
+  describedKeepsLineBreaksInTheDialog:
+    first.body.includes('<span class="why typed"><strong>Description:'),
   wordlessHasNoDescriptionParagraph: !wordless.body.includes('class="why typed"'),
   wordlessHasNoDescriptionLabel: !wordless.body.includes("Description:"),
 }));
@@ -7177,6 +7190,7 @@ def test_the_dialog_says_the_number_comes_free_where_it_does(removing):
     # would pass the positive half alone.
     assert removing["saysTheNumberComesFree"] is True
     assert removing["hidesTheNumberSentence"] is True
+    assert removing["describedKeepsLineBreaksInTheDialog"] is True
     # And it spells the number out. "That number is free again" made a
     # reader look up which number that was, on the row they had just
     # left; the bullet names `v1.0.2` instead.
