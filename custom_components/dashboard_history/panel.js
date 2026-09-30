@@ -65,7 +65,7 @@ const DETAILS_KEPT = PAGE;
 // and the shadow root attached, but `set hass` never fired once in
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
-let escape, renderDiff, renderPlain, when, joinNames;
+let escape, renderDiff, renderPlain, when, whenRange, joinNames;
 let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton;
 let DIALOGS;
 let renderSimple, steps, spanOf;
@@ -80,7 +80,7 @@ const partsReady = Promise.all([
   import(`./panel/sidebar.js${PARTS}`),
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
-  ({ escape, renderDiff, renderPlain, when, joinNames } = render);
+  ({ escape, renderDiff, renderPlain, when, whenRange, joinNames } = render);
   ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple, steps, spanOf } = simple);
@@ -146,6 +146,20 @@ function today() {
  */
 function shortName(name) {
   return name.split("/").pop();
+}
+
+/**
+ * Grows a textarea to fit what has been typed into it, so a longer
+ * note is never hidden behind a scrollbar of its own. Call this only
+ * after the dialog it lives in has been shown (showModal()) - a
+ * closed <dialog> is not laid out, so scrollHeight would still answer
+ * for whatever was last rendered, typically 0. Two dialogs share the
+ * one description field (see the comment over VERSION_FIELDS in
+ * dialogs.js) and both wire this the same way, in the same order.
+ */
+function growTextarea(textarea) {
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
 }
 
 class DashboardHistoryPanel extends HTMLElement {
@@ -2556,11 +2570,13 @@ class DashboardHistoryPanel extends HTMLElement {
       shortName(name) +
       (version.automatic ? " — it stays marked as saved automatically." : "");
     const title = dialog.querySelector("input.title");
-    const description = dialog.querySelector("input.desc");
+    const description = dialog.querySelector("textarea.desc");
     title.value = version.title || "";
     description.value = version.description || "";
+    description.addEventListener("input", () => growTextarea(description));
     dialog.returnValue = "";
     dialog.showModal();
+    growTextarea(description);
     title.focus();
     title.select();
     const answer = await this._answerFrom(dialog);
@@ -2790,6 +2806,17 @@ class DashboardHistoryPanel extends HTMLElement {
       dialog.querySelector("[data-pending-summary]").textContent =
         pending.length === 1 ? "1 pending change" : `${pending.length} pending changes`;
       dialog.querySelector("[data-pending-body]").innerHTML = steps(pending);
+      // The count again, in the label's own words rather than the tab's -
+      // "changes" here, not "pending changes", because this line already
+      // sits under a heading that says "Included" and doesn't need the
+      // word twice - plus the span the count covers, which the tab alone
+      // never said at all. The endpoints, not a scan for them: `pending`
+      // is `spanOf`'s own walk from the newest change downward, so its
+      // first entry is already the newest timestamp and its last the
+      // oldest.
+      dialog.querySelector("[data-pending-range]").textContent =
+        `${pending.length === 1 ? "1 change" : `${pending.length} changes`} · ` +
+        whenRange(pending[pending.length - 1].timestamp, pending[0].timestamp);
     }
     // The same span, as an exact diff rather than words. Fetched without
     // `_guard`: `_guard` re-renders, which would replace this very
@@ -2818,8 +2845,46 @@ class DashboardHistoryPanel extends HTMLElement {
         })
         .catch(() => {});
     }
+    // The two views of the same pending span switch each other off -
+    // unlike the independent <details class="raw"> pairs elsewhere in
+    // the panel, opening one closes the other, and pressing the one
+    // already open closes it too (both collapsed, same as the plain
+    // <details> this replaced started out). Plain toggle buttons
+    // (aria-pressed), not a full ARIA tabs pattern - there is no
+    // keyboard roving-tabindex navigation here, and claiming role="tab"
+    // without it would be worse than claiming nothing. Reset on every
+    // open: the dialog element can outlive several openings (_render
+    // never runs while a dialog is open), and a tab left open from the
+    // last time would otherwise greet the next change already expanded.
+    const pendingTab = dialog.querySelector("[data-pending-tab]");
+    const pendingBody = dialog.querySelector("[data-pending-body]");
+    const technicalBody = dialog.querySelector("[data-technical-body]");
+    const selectTab = (which) => {
+      pendingTab.setAttribute("aria-pressed", String(which === "pending"));
+      technicalDetails.setAttribute(
+        "aria-pressed",
+        String(which === "technical"),
+      );
+      pendingBody.hidden = which !== "pending";
+      technicalBody.hidden = which !== "technical";
+    };
+    selectTab("none");
+    pendingTab.addEventListener("click", () =>
+      selectTab(pendingTab.getAttribute("aria-pressed") === "true" ? "none" : "pending"),
+    );
+    technicalDetails.addEventListener("click", () =>
+      selectTab(technicalDetails.getAttribute("aria-pressed") === "true" ? "none" : "technical"),
+    );
     let level = "patch";
     const buttons = [...dialog.querySelectorAll(".levels button")];
+    const creates = dialog.querySelector("[data-creates]");
+    // Said once here and kept current below, rather than worked out
+    // again at submit time: the number on the pressed button is exactly
+    // what `create_version` is about to be asked to make, so this is the
+    // one place that can say it ahead of the click without guessing.
+    const updateCreates = () => {
+      creates.textContent = candidates[level] ? `Creates ${candidates[level]}` : "";
+    };
     buttons.forEach((button) => {
       const which = button.dataset.level;
       button.querySelector("strong").textContent = shortName(
@@ -2827,6 +2892,7 @@ class DashboardHistoryPanel extends HTMLElement {
       );
       button.setAttribute("aria-pressed", String(which === level));
     });
+    updateCreates();
     // One listener on the group rather than three on the buttons. Not
     // because they would pile up - _guard re-renders before this line, so
     // the dialog is a fresh element every time - but because relying on
@@ -2841,13 +2907,16 @@ class DashboardHistoryPanel extends HTMLElement {
           String(other.dataset.level === level),
         ),
       );
+      updateCreates();
     });
     const title = dialog.querySelector("input.title");
-    const description = dialog.querySelector("input.desc");
+    const description = dialog.querySelector("textarea.desc");
     title.value = "";
     description.value = "";
+    description.addEventListener("input", () => growTextarea(description));
     dialog.returnValue = "";
     dialog.showModal();
+    growTextarea(description);
     title.focus();
     const answer = await this._answerFrom(dialog);
     if (answer !== "create") return;

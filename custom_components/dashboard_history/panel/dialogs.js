@@ -34,12 +34,16 @@ const FOOTNOTE = `
 // a contract with `panel.js` and with two test harnesses, and a
 // `maxlength` that drifted would let one dialog accept a title the
 // other refuses, against the same store.
+//
+// The description carries none (decided 2026-09-29): neither the
+// service schemas nor the git commit message it ends up in enforce a
+// length, so 500 was never anything but an arbitrary UI number.
 const VERSION_FIELDS = `
       <input class="text title" type="text" maxlength="200"
              placeholder="What is this version?">
-      <input class="text desc" type="text" maxlength="500"
-             style="margin-top:8px"
-             placeholder="Anything more worth remembering (optional)">`;
+      <textarea class="text desc" rows="1"
+                style="margin-top:8px"
+                placeholder="Anything more worth remembering (optional)"></textarea>`;
 
 export const DIALOGS = `
   <dialog class="confirm">
@@ -125,14 +129,6 @@ export const DIALOGS = `
     <div class="body" style="padding:0 16px 8px">
       <p class="muted" style="font-size:13px" data-scope></p>
       <p class="carries" data-carries hidden></p>
-      <details class="raw" data-pending hidden>
-        <summary data-pending-summary></summary>
-        <div data-pending-body></div>
-      </details>
-      <details class="raw" data-technical hidden>
-        <summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>
-        <div data-technical-body></div>
-      </details>
       <div class="levels">
         <button type="button" data-level="patch" aria-pressed="true">
           <strong></strong><span>Patch</span>
@@ -145,8 +141,29 @@ export const DIALOGS = `
         </button>
       </div>
       ${VERSION_FIELDS}
+      <div class="switcher" data-pending hidden>
+        <div class="switcher-bar">
+          <div class="switcher-heading">
+            <span class="switcher-label">Included</span>
+            <p class="switcher-range muted" data-pending-range></p>
+          </div>
+          <div class="switcher-tabs">
+            <button type="button" class="switcher-tab" data-pending-tab
+                    aria-pressed="false" aria-controls="version-pending-body">
+              <span data-pending-summary></span>
+            </button>
+            <button type="button" class="switcher-tab" data-technical hidden
+                    aria-pressed="false" aria-controls="version-technical-body">
+              <span class="glyph">&lt;/&gt;</span> Technical details
+            </button>
+          </div>
+        </div>
+        <div class="switcher-body" data-pending-body id="version-pending-body" hidden></div>
+        <div class="switcher-body" data-technical-body id="version-technical-body" hidden></div>
+      </div>
     </div>
     <div class="actions">
+      <span class="note muted" data-creates style="margin-right:auto"></span>
       <button class="act ghost" value="cancel">Cancel</button>
       <button class="act" value="create">Create</button>
     </div>

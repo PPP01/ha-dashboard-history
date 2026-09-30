@@ -19,6 +19,8 @@ import pytest
 from conftest import PACKAGE
 
 PANEL = PACKAGE / "panel.js"
+RENDER = PACKAGE / "panel" / "render.js"
+DIALOGS_FILE = PACKAGE / "panel" / "dialogs.js"
 
 # The stand-in for the browser, and the two helpers every scenario uses:
 # `settle` lets pending promises run, `answer` settles one held call the
@@ -72,6 +74,11 @@ const node = (shared) => {
   const it = {
     textContent: "", innerHTML: "", value: "", checked: false,
     hidden: false, returnValue: "", open: false, dataset: {},
+    // A textarea's own auto-grow (panel.js's growTextarea) reads
+    // scrollHeight and writes style.height; a scenario sets the first
+    // by hand - a real browser computes it - and reads the second
+    // back.
+    style: {}, scrollHeight: 0,
     _seen: shared || {}, _on: {},
     classList: {
       _classes: new Set(),
@@ -3975,7 +3982,7 @@ el.shadowRoot = node();
 const box = el.shadowRoot.querySelector("dialog.retitle");
 const which = box.querySelector("[data-which]");
 const title = box.querySelector("input.title");
-const desc = box.querySelector("input.desc");
+const desc = box.querySelector("textarea.desc");
 
 // A version somebody made: both fields arrive prefilled.
 const editing = el._retitleVersion("dash/v1.0.0");
@@ -4069,6 +4076,150 @@ def test_a_dialog_dismissed_without_saving_writes_nothing(retitling):
 
 def test_a_version_that_is_not_in_the_list_opens_nothing(retitling):
     assert retitling["missing"] is False
+
+
+# -- the shared description field grows with what is typed into it ---------
+
+
+def test_the_shared_description_field_is_really_a_textarea(tmp_path_factory):
+    # The mock's querySelector answers any selector with a phantom node
+    # regardless of what dialogs.js contains - this reads the real
+    # markup instead, the same way Aufgabe 2's toggle-pair test does.
+    html = _dialogs_html(tmp_path_factory)
+    assert '<textarea class="text desc"' in html
+    assert 'maxlength="500"' not in html
+    assert '<input class="text desc"' not in html
+
+
+_CREATE_GROWS = """
+const changes = [{ revision: "c", message: "3rd card added", versions: [] }];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = changes;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = (type) =>
+  type === "next_versions"
+    ? Promise.resolve({ candidates: { patch: "dash/v1.0.1" } })
+    : Promise.resolve({ created: "dash/v1.0.1" });
+
+const versioning = el._createVersion("c");
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.version");
+const description = dialog.querySelector("textarea.desc");
+description.scrollHeight = 84;
+description.value = "A longer note than the one line the field starts at.";
+description._on.input();
+const grownHeight = description.style.height;
+dialog.close("create");
+await versioning;
+console.log(JSON.stringify({ grownHeight }));
+"""
+
+
+@pytest.fixture(scope="session")
+def create_grows(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "create_grows", _CREATE_GROWS)
+
+
+def test_the_create_dialogs_description_grows_with_its_content(create_grows):
+    assert create_grows["grownHeight"] == "84px"
+
+
+_RETITLE_GROWS = """
+const versions = [
+  { name: "dash/v1.0.0", title: "Autumn tidy", description: "the old note",
+    revision: "a", automatic: false },
+];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._versions = versions;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = () => Promise.resolve({ applied: true });
+
+const editing = el._retitleVersion("dash/v1.0.0");
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.retitle");
+const description = dialog.querySelector("textarea.desc");
+description.scrollHeight = 96;
+description.value = "the old note, now with a good deal more to it";
+description._on.input();
+const grownHeight = description.style.height;
+dialog.close("save");
+await editing;
+console.log(JSON.stringify({ grownHeight }));
+"""
+
+
+@pytest.fixture(scope="session")
+def retitle_grows(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "retitle_grows", _RETITLE_GROWS)
+
+
+def test_the_retitle_dialogs_description_also_grows_with_its_content(retitle_grows):
+    # The two dialogs share one description field by design (see the
+    # comment over VERSION_FIELDS in dialogs.js) - wiring the fix into
+    # only one of them would be exactly the drift that comment warns
+    # about.
+    assert retitle_grows["grownHeight"] == "96px"
+
+
+_RETITLE_GROWS_ON_OPEN = """
+const versions = [
+  { name: "dash/v1.0.0", title: "Autumn tidy",
+    description: "A note that already spans more than the one line the field starts collapsed to.",
+    revision: "a", automatic: false },
+];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._versions = versions;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = () => Promise.resolve({ applied: true });
+
+const dialog = el.shadowRoot.querySelector("dialog.retitle");
+const description = dialog.querySelector("textarea.desc");
+// A closed <dialog> is not laid out in a real browser, so scrollHeight
+// answers 0 until showModal() actually renders it. The stand-in cannot
+// compute a real scrollHeight on its own, so this fakes the one fact
+// that matters: it only becomes the real content height once
+// showModal() has run - exactly the ordering growTextarea must match.
+description.scrollHeight = 0;
+const realShowModal = dialog.showModal.bind(dialog);
+dialog.showModal = () => {
+  realShowModal();
+  description.scrollHeight = 130;
+};
+
+const editing = el._retitleVersion("dash/v1.0.0");
+await settle();
+const heightOnOpen = description.style.height;
+dialog.close("save");
+await editing;
+console.log(JSON.stringify({ heightOnOpen }));
+"""
+
+
+@pytest.fixture(scope="session")
+def retitle_grows_on_open(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "retitle_grows_on_open", _RETITLE_GROWS_ON_OPEN
+    )
+
+
+def test_a_prefilled_multiline_description_grows_the_moment_the_dialog_opens(
+    retitle_grows_on_open,
+):
+    # growTextarea must run after dialog.showModal(), not before - a
+    # closed <dialog> answers 0 for scrollHeight in a real browser, and
+    # calling it too early would grow the field to fit nothing at all,
+    # leaving a long prefilled description clipped until the first
+    # keystroke recalculated it.
+    assert retitle_grows_on_open["heightOnOpen"] == "130px"
 
 
 _ROWS = """
@@ -5843,6 +5994,279 @@ def test_the_version_dialog_uses_singular_wording_for_one_change(pending_changes
     one = pending_changes["one"]
     assert one["hidden"] is False
     assert one["summary"] == "1 pending change"
+
+
+# -- renderDiff's own markup, isolated from the rest of the panel ----------
+
+
+def _render_diff(tmp_path_factory, diff_text):
+    """Call the real renderDiff() directly, without the rest of panel.js.
+
+    render.js is one of the "pure functions" modules - no element, no
+    state, no calls of its own - so it needs none of panel.js's DOM
+    stand-in to exercise on its own.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the panel's logic cannot be run here")
+    harness = tmp_path_factory.mktemp("render") / "render_diff.mjs"
+    harness.write_text(
+        "import { renderDiff } from %s;\n"
+        "process.stdout.write(JSON.stringify({ html: renderDiff(%s) }));\n"
+        % (json.dumps(RENDER.as_uri()), json.dumps(diff_text)),
+        encoding="utf-8",
+    )
+    run = subprocess.run(
+        [node, str(harness)], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout.strip().splitlines()[-1])["html"]
+
+
+def test_render_diff_wraps_every_line_in_its_own_block_span(tmp_path_factory):
+    # Full-row backgrounds on "+"/"-"/"@@" lines need `display:block` on
+    # their spans (style.js), and a block span sitting next to a raw
+    # "\n" text node renders as a stray blank line in a real browser -
+    # every line, classified or not, gets its own span and nothing else
+    # is left over to cause that.
+    #
+    # No trailing "\n" on this input, on purpose: a real unified diff
+    # always ends in one, and split("\n") turns that into a trailing
+    # empty line needing its own <span></span> - but that concern
+    # belongs entirely to test_render_diff_handles_a_trailing_blank_line
+    # below. Mixing it into this one would test two things in one
+    # assertion and made this exact mistake once already: an assert
+    # that didn't count the trailing span its own input implied.
+    html = _render_diff(
+        tmp_path_factory,
+        "--- before\n+++ after\n@@ -1 +1 @@\n context\n-old\n+new",
+    )
+    assert html == (
+        "<pre>"
+        '<span class="hdr-del">--- before</span>'
+        '<span class="hdr-add">+++ after</span>'
+        '<span class="at">@@ -1 +1 @@</span>'
+        "<span> context</span>"
+        '<span class="del">-old</span>'
+        '<span class="add">+new</span>'
+        "</pre>"
+    )
+
+
+def test_render_diff_gives_the_file_markers_their_own_class(tmp_path_factory):
+    # "---"/"+++" name the file the diff is about, not a line that
+    # changed - and both start with a single "-" or "+" too, the same
+    # prefix a real removed or added line starts with. Classed the same
+    # as "del"/"add", style.js's full-row background gave the file's own
+    # name the same weight as an actual change (shipped 2026-09-29, caught
+    # comparing the create-version dialog against its mockup pixel for
+    # pixel - the mockup colours these two lines' text and nothing else).
+    html = _render_diff(tmp_path_factory, "--- before\n+++ after\n-old\n+new")
+    assert html == (
+        "<pre>"
+        '<span class="hdr-del">--- before</span>'
+        '<span class="hdr-add">+++ after</span>'
+        '<span class="del">-old</span>'
+        '<span class="add">+new</span>'
+        "</pre>"
+    )
+
+
+def test_render_diff_handles_a_trailing_blank_line(tmp_path_factory):
+    # A unified diff ends in "\n", so split("\n") always leaves one
+    # trailing empty string - it needs a span like any other line, or
+    # it would be the one line the block-span rule above misses.
+    html = _render_diff(tmp_path_factory, "@@ -1 +1 @@\n-old\n+new\n")
+    assert html == (
+        "<pre>"
+        '<span class="at">@@ -1 +1 @@</span>'
+        '<span class="del">-old</span>'
+        '<span class="add">+new</span>'
+        "<span></span>"
+        "</pre>"
+    )
+
+
+def test_render_diff_still_says_no_difference_for_an_empty_diff(tmp_path_factory):
+    assert _render_diff(tmp_path_factory, "") == '<p class="muted">No difference.</p>'
+
+
+# -- the version dialog's real markup is a toggle pair, not <details> ------
+
+
+def _dialogs_html(tmp_path_factory):
+    """The real DIALOGS markup, parsed by nothing but Node's own import.
+
+    The flat DOM stand-in the rest of this file uses (`node()`, in
+    `_PRELUDE`) answers every selector with a fresh phantom node
+    regardless of what dialogs.js actually contains - proof that a
+    markup change really landed has to come from reading dialogs.js
+    itself, not from asking the stand-in.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed; the panel's logic cannot be run here")
+    harness = tmp_path_factory.mktemp("dialogs") / "dialogs_html.mjs"
+    harness.write_text(
+        "import { DIALOGS } from %s;\n"
+        "process.stdout.write(JSON.stringify({ html: DIALOGS }));\n"
+        % json.dumps(DIALOGS_FILE.as_uri()),
+        encoding="utf-8",
+    )
+    run = subprocess.run(
+        [node, str(harness)], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout.strip().splitlines()[-1])["html"]
+
+
+def _version_dialog_html(tmp_path_factory):
+    html = _dialogs_html(tmp_path_factory)
+    return html.split('<dialog class="version">')[1].split("</dialog>")[0]
+
+
+def test_the_version_dialogs_real_markup_has_a_toggle_pair_not_details(
+    tmp_path_factory,
+):
+    version_dialog = _version_dialog_html(tmp_path_factory)
+    assert "<details" not in version_dialog
+    assert "data-pending-tab" in version_dialog
+    assert "data-technical" in version_dialog
+    switcher_tabs = version_dialog.split('<div class="switcher-tabs">')[1].split(
+        "</div>"
+    )[0]
+    # Both start unpressed - the dialog opens with both bodies
+    # collapsed, matching the reference mockup's resting state.
+    assert switcher_tabs.count('aria-pressed="false"') == 2
+
+
+# -- the two views switch each other off, and either collapses alone -------
+
+_TAB_SWITCH = """
+const changes = [{ revision: "c", message: "3rd card added", versions: [] }];
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._changes = changes;
+el.shadowRoot = node();
+el._reloadAfterWrite = async () => null;
+el._call = (type) =>
+  type === "next_versions"
+    ? Promise.resolve({ candidates: { patch: "dash/v1.0.1", current: "dash/v1.0.0" } })
+    : type === "compare"
+      ? Promise.resolve({ diff: "@@ -1 +1 @@\\n-old\\n+new\\n" })
+      : Promise.resolve({ created: "dash/v1.0.1" });
+
+const first = el._createVersion("c");
+await settle();
+const dialog = el.shadowRoot.querySelector("dialog.version");
+const pendingTab = dialog.querySelector("[data-pending-tab]");
+const technicalTab = dialog.querySelector("[data-technical]");
+const pendingBody = dialog.querySelector("[data-pending-body]");
+const technicalBody = dialog.querySelector("[data-technical-body]");
+const state = () => ({
+  pendingPressed: pendingTab.getAttribute("aria-pressed"),
+  technicalPressed: technicalTab.getAttribute("aria-pressed"),
+  pendingHidden: pendingBody.hidden,
+  technicalHidden: technicalBody.hidden,
+});
+const opened = state();
+
+technicalTab._on.click();
+const afterOpeningTechnical = state();
+
+// A second press of the same, already-pressed tab collapses it - the
+// whole switcher goes back to the state it opened in, not to some
+// third, always-one-open state.
+technicalTab._on.click();
+const afterClosingTechnical = state();
+
+pendingTab._on.click();
+const afterOpeningPending = state();
+
+pendingTab._on.click();
+const afterClosingPending = state();
+
+// Opening one while the other is already open switches rather than
+// showing both. Left open on the way out, on purpose - the next open
+// must not remember it.
+pendingTab._on.click();
+technicalTab._on.click();
+const afterSwitchingWhileOpen = state();
+
+dialog.close("create");
+await first;
+
+const second = el._createVersion("c");
+await settle();
+const reopened = state();
+dialog.close("create");
+await second;
+
+console.log(JSON.stringify({
+  opened, afterOpeningTechnical, afterClosingTechnical,
+  afterOpeningPending, afterClosingPending, afterSwitchingWhileOpen, reopened,
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def tab_switch(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "tab_switch", _TAB_SWITCH)
+
+
+def test_the_version_dialog_opens_with_both_views_collapsed(tab_switch):
+    assert tab_switch["opened"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "false",
+        "pendingHidden": True,
+        "technicalHidden": True,
+    }
+
+
+def test_a_pressed_tab_collapses_again_on_a_second_click(tab_switch):
+    assert tab_switch["afterOpeningTechnical"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "true",
+        "pendingHidden": True,
+        "technicalHidden": False,
+    }
+    assert tab_switch["afterClosingTechnical"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "false",
+        "pendingHidden": True,
+        "technicalHidden": True,
+    }
+    assert tab_switch["afterOpeningPending"] == {
+        "pendingPressed": "true",
+        "technicalPressed": "false",
+        "pendingHidden": False,
+        "technicalHidden": True,
+    }
+    assert tab_switch["afterClosingPending"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "false",
+        "pendingHidden": True,
+        "technicalHidden": True,
+    }
+
+
+def test_opening_one_tab_switches_away_from_the_other(tab_switch):
+    assert tab_switch["afterSwitchingWhileOpen"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "true",
+        "pendingHidden": True,
+        "technicalHidden": False,
+    }
+
+
+def test_reopening_the_version_dialog_forgets_the_last_open_tab(tab_switch):
+    assert tab_switch["reopened"] == {
+        "pendingPressed": "false",
+        "technicalPressed": "false",
+        "pendingHidden": True,
+        "technicalHidden": True,
+    }
 
 
 # -- the create-version dialog offers the diff behind the pending span -----

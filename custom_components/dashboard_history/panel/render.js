@@ -13,24 +13,40 @@ export const escape = (value) =>
       ],
   );
 
-/** A unified diff, coloured the way people expect to read one. */
+/**
+ * A unified diff, coloured the way people expect to read one.
+ *
+ * Every line becomes its own block-level span (style.js relies on
+ * this for the full-row background behind a "+"/"-"/"@@" line), and
+ * there is no separating "\n" text node left between them - a block
+ * sitting next to a literal newline renders as an extra blank line in
+ * a real browser, a known trap of block-in-inline layout.
+ */
+// Longest prefix first: unified diff spells its file markers "---"/"+++",
+// which both start with a single "-"/"+" too, the same prefix a real
+// removed or added line starts with. Checked in this order, so the
+// file's own name gets its own class instead of the same full-row block
+// a changed line gets - reading as one more change in the list rather
+// than as the header sitting above all of them.
+const DIFF_LINE_CLASSES = [
+  ["+++", "hdr-add"],
+  ["---", "hdr-del"],
+  ["+", "add"],
+  ["-", "del"],
+  ["@@", "at"],
+];
+
 export const renderDiff = (diff) => {
   if (!diff) return '<p class="muted">No difference.</p>';
   const body = diff
     .split("\n")
     .map((line) => {
-      const cls = line.startsWith("+")
-        ? "add"
-        : line.startsWith("-")
-          ? "del"
-          : line.startsWith("@@")
-            ? "at"
-            : "";
-      return cls
-        ? `<span class="${cls}">${escape(line)}</span>`
-        : escape(line);
+      const cls =
+        (DIFF_LINE_CLASSES.find(([prefix]) => line.startsWith(prefix)) ||
+          [])[1] || "";
+      return `<span${cls ? ` class="${cls}"` : ""}>${escape(line)}</span>`;
     })
-    .join("\n");
+    .join("");
   return `<pre>${body}</pre>`;
 };
 
@@ -81,8 +97,33 @@ export const joinNames = (names) =>
     ? names.join("")
     : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 
+// The one spelling of "how long/short a date and a time are", so
+// `whenRange` below can borrow half of it for its same-day case without
+// a second, silently driftable copy of "medium"/"short".
+const WHEN_STYLE = { dateStyle: "medium", timeStyle: "short" };
+
 export const when = (timestamp) =>
-  new Date(timestamp * 1000).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+  new Date(timestamp * 1000).toLocaleString(undefined, WHEN_STYLE);
+
+/**
+ * A span of time as one line: one date and two times where both ends
+ * fall on the same day, `when(from) – when(to)` where they do not - the
+ * create-version dialog's own pending span usually opens and closes
+ * within minutes of each other, and repeating the date on both sides of
+ * the dash reads as a stutter where it never changed.
+ */
+export const whenRange = (fromTimestamp, toTimestamp) => {
+  const from = new Date(fromTimestamp * 1000);
+  const to = new Date(toTimestamp * 1000);
+  const sameDay =
+    from.getFullYear() === to.getFullYear() &&
+    from.getMonth() === to.getMonth() &&
+    from.getDate() === to.getDate();
+  if (!sameDay) return `${when(fromTimestamp)} – ${when(toTimestamp)}`;
+  const date = from.toLocaleDateString(undefined, {
+    dateStyle: WHEN_STYLE.dateStyle,
   });
+  const time = (value) =>
+    value.toLocaleTimeString(undefined, { timeStyle: WHEN_STYLE.timeStyle });
+  return `${date}, ${time(from)} – ${time(to)}`;
+};

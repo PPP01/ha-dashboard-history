@@ -39,16 +39,46 @@ export const STYLE = `
        controls in this panel stay one thing. The fallbacks are the
        light values it had before, so a Home Assistant that sets none
        of these looks exactly as it did. */
-    --sc-bg: var(--secondary-background-color, #f1f5f9);
+    /* Halfway between the two backgrounds Home Assistant sets, not
+       either one straight: on a real installation (2026-09-29)
+       --primary-background-color reads as too pale a track for a
+       raised pill to sit on, and --secondary-background-color a shade
+       too dark for a control this quiet. color-mix keeps it theme-aware
+       rather than pinning a colour neither variable actually holds. */
+    --sc-bg: color-mix(
+      in srgb,
+      var(--primary-background-color, #f5f5f5),
+      var(--secondary-background-color, #e5e5e5)
+    );
     --sc-border: var(--divider-color, #e2e8f0);
     --sc-text-muted: var(--secondary-text-color, #64748b);
     --sc-text-active: var(--primary-text-color, #0f172a);
-    --sc-card-active: var(--card-background-color, #ffffff);
+    /* Lifted a touch towards white rather than the card colour
+       straight: a real dark theme's --card-background-color
+       (2026-09-29) sits only a handful of hex values from this
+       track's own --sc-bg, so the pressed segment's background swap
+       nearly vanished there, and an added ring around it (tried first)
+       showed up as a stray blue outline the mockup never has - it was
+       only ever meant to cover for dark mode, not a thing to draw in a
+       light one. Mixing towards white instead does that on its own:
+       a light theme's card is already white, so mixing more white
+       into white changes nothing, while a dark theme's card is not,
+       so the same mix visibly lightens it - one formula, no branch
+       for which theme is active and no extra element to hide again. */
+    --sc-card-active: color-mix(in srgb, var(--card-background-color, #fff), white 12%);
     /* Neutral grey rather than white: a lift of the unselected half
        that reads on a pale bar and on a dark one, with no second
        value to keep in step. */
     --sc-hover-bg: rgba(127, 127, 127, 0.16);
     --sc-accent: var(--primary-color, #2563eb);
+    /* A diff's own padding has to equal this exactly, on both the
+       generic pre rule below and .switcher-body pre further down: the
+       pre-span bleed trick right after the generic rule cancels that
+       padding with a matching negative margin, so a mismatch does not
+       error, it just leaves a sliver of the container's own background
+       unlit at the edge. One token instead of the same number spelled
+       out in three places that have to stay in step by convention alone. */
+    --pre-pad: 12px;
   }
   .bar {
     display: flex;
@@ -465,13 +495,16 @@ export const STYLE = `
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; padding: 16px; }
   pre {
     margin: 0;
-    padding: 12px;
+    padding: var(--pre-pad);
+    border: 1px solid var(--divider-color, #e0e0e0);
     border-radius: 4px;
-    background: var(--secondary-background-color, #fafafa);
+    background: var(--primary-background-color, #f5f5f5);
     font-size: 12px;
     line-height: 1.5;
     white-space: pre;
     overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
   }
   /* One rule for every pen: the one on a change, the one on a version
      row in the simple mode, the one on a section head in the advanced
@@ -537,7 +570,7 @@ export const STYLE = `
     font-size: 13px;
     font-weight: 400;
   }
-  dialog input.text {
+  dialog input.text, dialog textarea.text {
     width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--divider-color, #e0e0e0);
@@ -546,6 +579,11 @@ export const STYLE = `
     color: inherit;
     font: inherit;
     box-sizing: border-box;
+  }
+  dialog textarea.text {
+    resize: none;
+    overflow: hidden;
+    min-height: 40px;
   }
   .chip {
     display: inline-block;
@@ -736,9 +774,158 @@ export const STYLE = `
     max-height: 400px;
     overflow: auto;
   }
-  pre .add { color: var(--success-color, #0f9d58); }
-  pre .del { color: var(--error-color, #db4437); }
-  pre .at { color: var(--secondary-text-color, #727272); }
+  /* Every line of a diff is its own block-level span (render.js) so a
+     full-row tint can sit behind it - the bleed to pre's own edge is
+     padding plus a negative margin the size of pre's own padding, the
+     standard trick for a highlight that reaches a scrollable box's
+     border. */
+  pre span {
+    display: block;
+    margin: 0 calc(-1 * var(--pre-pad));
+    padding: 0 var(--pre-pad);
+  }
+  pre .add {
+    color: var(--success-color, #0f9d58);
+    background: rgba(15, 157, 88, 0.1);
+    background: color-mix(in srgb, var(--success-color, #0f9d58) 10%, transparent);
+  }
+  pre .del {
+    color: var(--error-color, #db4437);
+    background: rgba(219, 68, 55, 0.1);
+    background: color-mix(in srgb, var(--error-color, #db4437) 10%, transparent);
+  }
+  pre .at {
+    color: var(--secondary-text-color, #727272);
+    background: rgba(224, 224, 224, 0.45);
+    background: color-mix(in srgb, var(--divider-color, #e0e0e0) 45%, transparent);
+  }
+  /* The "---"/"+++" file markers: coloured the same as a real add or
+     del line so the sign still reads at a glance, but with no block of
+     their own - they name the file the diff is about, not a line that
+     changed, and a full-row tint the same weight as an actual change
+     read as one more change in the list rather than as the header
+     sitting above all of them. */
+  pre .hdr-add { color: var(--success-color, #0f9d58); }
+  pre .hdr-del { color: var(--error-color, #db4437); }
+  /* The create-version dialog's own switch between the plain-language
+     span and its exact diff (GitHub issue #15, redesigned 2026-09-29):
+     one row, a muted label and one pill-shaped segmented control - the
+     same flat-track-plus-raised-segment look as .levels and
+     .segmented-control above, not two separate floating buttons.
+     Either segment can be pressed, the other, or neither (a second
+     click on the pressed one collapses both bodies) - unlike the
+     independent details.raw pairs above, which can both be open
+     together, this pair cannot show both bodies at once. */
+  .switcher { margin: 20px 0; }
+  .switcher-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .switcher-heading { display: flex; flex-direction: column; gap: 2px; }
+  .switcher-label {
+    color: var(--secondary-text-color, #727272);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+  .switcher-range { margin: 0; font-size: 12.5px; }
+  /* The span's content itself, revealed under whichever tab is pressed:
+     a bordered, rounded card so the pill it hangs from reads as the lid
+     of a box rather than a label floating over bare dialog background -
+     the live version had neither a border nor a background here before
+     2026-09-29 and the diff's <pre> (render.js) supplied its own
+     instead, leaving a gap of plain dialog background above its first
+     line. Reset to flush against this card's own padding now that the
+     card carries the border and the background both. */
+  .switcher-body {
+    margin-top: 8px;
+    padding: 8px 14px;
+    border: 1px solid var(--sc-border);
+    border-radius: 8px;
+    background: var(--card-background-color, #fff);
+    max-height: 260px;
+    overflow: auto;
+  }
+  /* The diff keeps its own padding rather than inheriting the card's,
+     and at exactly --pre-pad (:host above, the same value the generic
+     pre rule below uses): the shared pre-span rule bleeds a line's
+     colour into that padding by the same amount, on the assumption
+     that the padding it is cancelling is the pre's own - true for
+     every other pre in this file, and only true here once the card
+     stops supplying it instead. Get this wrong and the colour stops a
+     few pixels short of the border on every line, which is what
+     shipped on 2026-09-29 before somebody compared it against the
+     mockup pixel for pixel.
+
+     max-height and overflow reset for the second reason this pre is
+     not the generic one: the generic rule also caps it at 400px with
+     its own scrollbar, nested inside the card's, which already caps
+     and scrolls at 260px - two scrollbars for one span of text where a
+     person expects one. */
+  .switcher-body:has(pre) { padding: 0; }
+  .switcher-body pre {
+    margin: 0;
+    padding: var(--pre-pad);
+    border: 0;
+    /* The same base every other diff in this panel sits on (the
+       generic pre rule above) - not "none": leaving it transparent
+       showed the card's white through every unclassed context line and
+       through this padding, which is exactly the white the mockup has
+       nowhere in its diff area. */
+    background: var(--primary-background-color, #f5f5f5);
+    max-height: none;
+    overflow: visible;
+  }
+  .switcher-body .step { margin-top: 10px; }
+  .switcher-body .step:first-child { margin-top: 0; }
+  .switcher-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--sc-bg);
+    border: 1px solid var(--sc-border);
+    border-radius: 999px;
+  }
+  .switcher-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--secondary-text-color, #607d8b);
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .switcher-tab .glyph { font-family: monospace; font-size: 12px; }
+  .switcher-tab::after {
+    content: "\\25BC";
+    margin-left: 2px;
+    font-size: 10px;
+    opacity: .7;
+    display: inline-block;
+    transition: transform .15s ease;
+  }
+  .switcher-tab[aria-pressed="true"] {
+    background: var(--sc-card-active);
+    color: var(--primary-text-color, #37474f);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
+  }
+  .switcher-tab[aria-pressed="true"]::after { transform: rotate(180deg); }
+  @media (max-width: 600px) {
+    .switcher-bar {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+  }
   details.ver { margin-bottom: 12px; }
   /* Centred, and deliberately not on the baseline like .vhead further
      down, whose comment argues the other way for the same pairing of a
@@ -950,23 +1137,39 @@ export const STYLE = `
   }
   .entry::before { left: -16px; width: 16px; height: 2px; }
   .entry::after { left: -21px; width: 8px; height: 8px; border-radius: 50%; }
-  .levels { display: flex; gap: 8px; margin: 12px 0; }
+  /* The same flat-track-plus-raised-pill look as .segmented-control
+     below, and the same tokens (--sc-bg/--sc-border/--sc-card-active) -
+     two segmented controls in one panel reading as one design rather
+     than two, redesigned 2026-09-29 to match the create-version
+     dialog's reference mockup. Still three plain buttons driven by
+     aria-pressed from _createVersion, not a radio group - unlike
+     .segmented-control, three options rather than two suit a button
+     group's simpler semantics better than a two-cell glider grid. */
+  .levels {
+    display: flex;
+    gap: 2px;
+    margin: 16px 0;
+    padding: 2px;
+    background: var(--sc-bg);
+    border: 1px solid var(--sc-border);
+    border-radius: 8px;
+  }
   .levels button {
     flex: 1 1 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
     padding: 10px;
-    border: 1px solid var(--divider-color, #e0e0e0);
-    border-radius: 4px;
+    border: 0;
+    border-radius: 6px;
     background: none;
     color: inherit;
     font: inherit;
     cursor: pointer;
   }
   .levels button[aria-pressed="true"] {
-    border-color: var(--primary-color, #03a9f4);
-    box-shadow: inset 0 0 0 1px var(--primary-color, #03a9f4);
+    background: var(--sc-card-active);
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.06);
   }
   .levels button strong { font-family: monospace; font-size: 15px; }
   .levels button span {
