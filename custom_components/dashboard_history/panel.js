@@ -30,6 +30,10 @@ const EVENT_FORGETTING = "dashboard_history_forget_progress";
 // phase reports every 25 versions, which on the test bench is 0.4 s.
 const SILENCE_BEFORE_DOUBT = 60_000;
 
+// How soon, and how often, a panel still waiting for its first answer asks
+// the server whether it is warming up. See `_watchWarmup`.
+const WARMUP_POLL_MS = 2_000;
+
 // The parts are fetched with this module's own query string, so a new
 // release busts them together with the entry point. panel.py digests
 // every file into that query for exactly this reason: a plain import
@@ -235,6 +239,9 @@ class DashboardHistoryPanel extends HTMLElement {
     // somebody reloads during one: the answer waits behind the rewrite,
     // and the page meanwhile claimed nothing had ever been recorded.
     this._dashboards = null;
+    // Whether the server says it is building the index it answers from -
+    // see `_pollWarmup`. Only ever true while `_dashboards` is null.
+    this._warming = false;
     this._changes = [];
     // Where the next page starts, or null when there is nothing older.
     // A commit and not a count: save something while somebody is
@@ -1260,6 +1267,9 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   async _loadDashboards() {
+    // Only the first load can be a cold one; a reload after a forget or
+    // a recorded change has its list on screen already.
+    if (this._dashboards === null) this._watchWarmup();
     const [result] = await Promise.all([
       this._guard(() => this._call("dashboards")),
       this._loadSidebar(),
@@ -1288,6 +1298,39 @@ class DashboardHistoryPanel extends HTMLElement {
       this._pane = "list";
       await this._select(first.key);
     }
+  }
+
+  /**
+   * Tell somebody who opens the panel right after a start why it waits.
+   *
+   * The first answer needs an index of the whole history, which the
+   * server builds once per start and which takes seconds to a minute on
+   * a long history (measured: 12.6 s for 11919 commits). Until then the
+   * list says "Reading the history" and nothing else, which reads as a
+   * hang. `status` is answered on the event loop, not in an executor,
+   * so it is not itself stuck behind the build.
+   *
+   * Not through `_guard`: it would light the busy indicator for a
+   * question nobody asked. Stops when the list is there or the load
+   * failed - the failure is shown by the load itself.
+   */
+  _watchWarmup() {
+    this._warmupTimer = setTimeout(() => this._pollWarmup(), WARMUP_POLL_MS);
+    // Never the reason a process stays alive (Node runs this in tests).
+    this._warmupTimer?.unref?.();
+  }
+
+  async _pollWarmup() {
+    if (this._dashboards !== null || this._error) return;
+    try {
+      const answer = await this._call("status");
+      this._warming = Boolean(answer?.warming_up);
+    } catch {
+      // The load reports its own failure; this is only a hint.
+    }
+    if (this._dashboards !== null) return;
+    this._render();
+    this._watchWarmup();
   }
 
   /**
@@ -3226,8 +3269,14 @@ class DashboardHistoryPanel extends HTMLElement {
    * whose order it is and why the browser has to work it out.
    */
   _renderSide() {
-    if (this._dashboards === null)
+    if (this._dashboards === null) {
+      if (this._warming)
+        return (
+          '<p class="empty muted">Warming up \u2013 the history is indexed ' +
+          "after every start. This can take a minute.</p>"
+        );
       return '<p class="empty muted">Reading the history\u2026</p>';
+    }
     if (!this._dashboards.length)
       return '<p class="empty muted">Nothing recorded yet.</p>';
     const { sidebar, apart, dead } = this._orderedDashboards();

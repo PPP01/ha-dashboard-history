@@ -435,6 +435,15 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
     return {"dashboards": dashboards}
 
 
+async def async_status(hass: HomeAssistant, store: HistoryStore) -> dict:
+    """Whether the store is still warming up, for the panel to say so.
+
+    Answered on the event loop and not in an executor: the question is
+    asked while the executor is busy building what it is about.
+    """
+    return {"warming_up": store.index_warming()}
+
+
 def _changes_and_generation(
     store: HistoryStore,
     key: str,

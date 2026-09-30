@@ -99,6 +99,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
@@ -645,6 +646,17 @@ class HistoryStore:
         # sits in the one order the walk hands them back. See
         # `_revision_index` for why this exists at all.
         self._index: RevisionIndex | None = None
+        # Guards building `_index`, and nothing else: `_revision_index`
+        # is reached without `self._lock` by every read, so two readers
+        # arriving at a cold index each walked the whole history. Two
+        # pure-Python walks fight over the GIL - measured on the test
+        # bench, 12.6 s for one and 42 s for two at once. Re-entrant,
+        # because a build can be overtaken by a `forget` in the same
+        # thread (see the test that does exactly that).
+        self._index_gate = threading.RLock()
+        # True while the index is being built from nothing. Read by the
+        # panel, without a lock, to say "warming up" instead of nothing.
+        self._index_warming = False
 
     # -- writing -------------------------------------------------------
 
@@ -2679,13 +2691,44 @@ class HistoryStore:
         cached = self._index
         if cached is not None and cached.head == head:
             return cached
-        found = None
-        if cached is not None:
-            found = self._extended_index(repo, cached, head)
-        if found is None:
+        with self._index_gate:
+            # Again, under the gate: whoever held it may have built
+            # exactly what this caller came for.
+            cached = self._index
+            if cached is not None and cached.head == head:
+                return cached
+            found = None
+            if cached is not None:
+                found = self._extended_index(repo, cached, head)
+            if found is None:
+                found = self._timed_build(repo, head)
+            self._index = found
+            return found
+
+    def _timed_build(self, repo: Repo, head: str) -> RevisionIndex:
+        """The full build, said aloud and flagged while it runs.
+
+        Once per start on an installation nobody has rewritten, and it is
+        the slowest thing the panel waits for: the line is what tells a
+        slow start from a slow anything else.
+        """
+        self._index_warming = True
+        started = time.monotonic()
+        try:
             found = self._built_index(repo, head)
-        self._index = found
+        finally:
+            self._index_warming = False
+        _LOGGER.info(
+            "Built the revision index: %d commits, %d dashboards in %.1f s",
+            len(found.order),
+            len(found.by_key),
+            time.monotonic() - started,
+        )
         return found
+
+    def index_warming(self) -> bool:
+        """Whether the revision index is being built from nothing right now."""
+        return self._index_warming
 
     @staticmethod
     def _built_index(repo: Repo, head: str) -> RevisionIndex:

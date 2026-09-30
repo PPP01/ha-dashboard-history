@@ -56,6 +56,7 @@ def _command(
 
 
 _COMMANDS = (
+    _command(f"{DOMAIN}/status", {}, operations.async_status, lambda msg: {}),
     _command(
         f"{DOMAIN}/dashboards", {}, operations.async_dashboards, lambda msg: {}
     ),

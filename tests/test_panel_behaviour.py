@@ -8688,3 +8688,64 @@ def test_the_detail_lines_of_an_entry_hang_under_it_as_a_nested_list(plain_detai
     assert "&lt;b&gt;" in html and "<b>" not in html
     # An entry without details gets no empty list.
     assert html.count('class="details"') == 1
+
+
+# -- a panel opened during the server's warm-up says so ---------------------
+#
+# The first answer waits for an index the server builds once per start; a
+# list that says only "Reading the history" for a minute looks like a hang.
+
+_HARNESS_WARMUP = """
+const el = new Panel();
+const renders = [];
+el._render = () => renders.push(el._renderSide());
+const asked = [];
+let warming = false;
+el._call = (type) => {
+  asked.push(type);
+  return Promise.resolve({ warming_up: warming });
+};
+
+// The server is not warming up: the plain wording stays.
+await el._pollWarmup();
+const quiet = el._renderSide();
+
+// Now it is.
+warming = true;
+await el._pollWarmup();
+const warmingUp = el._renderSide();
+
+// The list arrives: no more questions, and the list replaces the notice.
+el._dashboards = [];
+const before = asked.length;
+await el._pollWarmup();
+const after = asked.length;
+
+// A failed load is shown by the load; the hint does not keep asking.
+const failed = new Panel();
+failed._render = () => {};
+failed._call = () => { throw new Error("must not ask"); };
+failed._error = "boom";
+await failed._pollWarmup();
+
+console.log(JSON.stringify({
+  quiet, warmingUp, askedStatus: asked.every((t) => t === "status"),
+  stoppedAsking: before === after, hintDoesNotThrow: true,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def warmup_outcome(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "warmup", _HARNESS_WARMUP)
+
+
+def test_the_list_says_warming_up_only_while_the_server_does(warmup_outcome):
+    assert "Reading the history" in warmup_outcome["quiet"]
+    assert "Warming up" in warmup_outcome["warmingUp"]
+    assert warmup_outcome["askedStatus"] is True
+
+
+def test_the_hint_stops_asking_once_there_is_a_list_or_an_error(warmup_outcome):
+    assert warmup_outcome["stoppedAsking"] is True
+    assert warmup_outcome["hintDoesNotThrow"] is True

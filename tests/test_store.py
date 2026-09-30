@@ -4326,3 +4326,92 @@ def test_every_best_effort_reader_names_a_forget_race(name):
     """The thirteen readers of issue #44 all carry the decorator, so
     dropping it from one of them turns red here."""
     assert hasattr(getattr(HistoryStore, name), "__wrapped__")
+
+
+def _slow_first_build(store, monkeypatch):
+    """Hold the first index build open, and say when a second one starts.
+
+    Returns `(entered, second_started, release, builds)`: `entered` is
+    set when the first build is under way, `second_started` if a second
+    build begins while the first is still held, `release` lets the held
+    one go on, `builds` counts every call.
+    """
+    real = store._built_index
+    entered = threading.Event()
+    second_started = threading.Event()
+    release = threading.Event()
+    builds = []
+
+    def held(repo, head):
+        builds.append(head)
+        if len(builds) == 1:
+            entered.set()
+            assert release.wait(10)
+        else:
+            second_started.set()
+        return real(repo, head)
+
+    monkeypatch.setattr(store, "_built_index", held)
+    return entered, second_started, release, builds
+
+
+def test_a_cold_index_is_built_once_however_many_ask_at_once(store, monkeypatch):
+    """Two readers arriving at a cold index share one walk.
+
+    The panel's survey and the opening pass both need the index within
+    the first seconds after a start. Unguarded, each walked the whole
+    history on its own, and two pure-Python walks fight over the GIL:
+    measured on the test bench (11919 commits), 12.6 s alone, 42 s for
+    two at once, 13 s with one guard around the build.
+    """
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("other", "b: 1\n", "other first")
+    entered, second_started, release, builds = _slow_first_build(store, monkeypatch)
+
+    first = threading.Thread(target=store.survey, daemon=True)
+    second = threading.Thread(
+        target=lambda: store.list_changes("home", limit=1), daemon=True
+    )
+    first.start()
+    assert entered.wait(10)
+    second.start()
+    # The only bounded wait in the passing case: long enough for an
+    # unguarded second build to start, short enough not to be felt.
+    assert not second_started.wait(0.3), "a second walk started beside the first"
+    release.set()
+    first.join(10)
+    second.join(10)
+    assert not first.is_alive() and not second.is_alive()
+    assert len(builds) == 1
+
+
+def test_the_store_says_when_its_index_is_being_built(store, monkeypatch):
+    """The panel asks, to tell a slow start from a slow anything else."""
+    store.write_snapshot("home", "a: 1\n", "home first")
+    entered, _second, release, _builds = _slow_first_build(store, monkeypatch)
+
+    assert store.index_warming() is False
+    reader = threading.Thread(target=store.survey, daemon=True)
+    reader.start()
+    assert entered.wait(10)
+    assert store.index_warming() is True
+    release.set()
+    reader.join(10)
+    assert store.index_warming() is False
+
+
+def test_building_the_index_is_logged_with_its_size_and_time(store, caplog):
+    """One line per start, so a slow one can be told from the log."""
+    import logging
+
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.write_snapshot("home", "a: 2\n", "home second")
+    with caplog.at_level(logging.INFO):
+        store.survey()
+    lines = [r.getMessage() for r in caplog.records if "revision index" in r.getMessage()]
+    assert len(lines) == 1
+    assert "2 commits" in lines[0]
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        store.survey()  # cached: nothing to say
+    assert not [r for r in caplog.records if "revision index" in r.getMessage()]
