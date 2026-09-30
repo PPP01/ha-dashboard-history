@@ -2896,3 +2896,16 @@ def test_a_renamed_heading_can_be_taken_back():
     plan = analyze.plan_undo(_config([A, old]), _config([A, new]), _config([A, new]))
     assert plan.blocked is None
     assert restore.apply_undo(_config([A, new]), plan) == _config([A, old])
+
+
+# ---- a rename inside a section nothing paired is not a rename
+def _sections(*sections):
+    return {"views": [{"path": "a", "type": "sections", "sections": list(sections)}]}
+
+
+def test_a_rename_inside_a_section_nothing_paired_is_not_a_rename():
+    """Same index is no proof of the same section once none was recognised."""
+    old = _sections({"type": "grid", "title": "one", "cards": [{"type": "heading", "heading": "Blau"}]})
+    new = _sections({"type": "grid", "title": "two", "cards": [{"type": "heading", "heading": "Rot"}]})
+    assert analyze.match_sections(old, new).pairs == ()
+    assert analyze.summarize(old, new).edited == 0

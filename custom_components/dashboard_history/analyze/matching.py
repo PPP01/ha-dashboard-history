@@ -168,6 +168,10 @@ def _renamed(
     Two of them and which is which is not knowable, and stays a deletion
     plus an addition - restoring is additive, never a guessed pairing.
 
+    A card of a section nothing paired is left alone: its list is only
+    "the same" by index, which proves nothing once the section itself
+    could not be recognised.
+
     Claims what it pairs in `taken_old`/`taken_new`.
     """
     old_by: dict[tuple, list[int]] = {}
@@ -175,7 +179,7 @@ def _renamed(
     # The taken check comes first: passes 1-3 have claimed nearly every
     # card by now, and `_weak_key` is not free.
     for i, slot in enumerate(old_open):
-        if i not in taken_old and (kind := _text_key(slot)) is not None:
+        if i not in taken_old and not _unpaired(slot, translate) and (kind := _text_key(slot)) is not None:
             old_by.setdefault((_translated(slot, translate), kind), []).append(i)
     for j, slot in enumerate(new_open):
         if j not in taken_new and (kind := _text_key(slot)) is not None:
