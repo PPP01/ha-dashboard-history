@@ -4378,7 +4378,10 @@ console.log(JSON.stringify({
   autoBadge: auto.includes("saved automatically"),
   noAutoBadgeByDefault: head(false, 2).includes("saved automatically"),
   describedShowsIt: described.includes("Why it was made"),
-  undescribedShowsNothing: undescribed.includes('class="why"'),
+  undescribedShowsNothing: undescribed.includes('class="why typed"'),
+  // The class that keeps the typed line breaks, on the paragraph that
+  // holds the words (CSS side: test_panel_assets.py).
+  describedKeepsLineBreaks: described.includes('class="why typed"'),
   penOnAHandMadeTag: rows.pen({ name: "dash/by-hand", title: "", annotated: false }),
   penOnATitlelessAnnotatedTag: rows.pen({
     name: "dash/odd", title: "", annotated: true,
@@ -7127,7 +7130,7 @@ console.log(JSON.stringify({
   // and became `why` - and this assertion went on passing, because
   // nothing in this dialog says `muted` any more. A negative matcher
   // tied to a class the code no longer emits is always true.
-  wordlessHasNoDescriptionParagraph: !wordless.body.includes('class="why"'),
+  wordlessHasNoDescriptionParagraph: !wordless.body.includes('class="why typed"'),
   wordlessHasNoDescriptionLabel: !wordless.body.includes("Description:"),
 }));
 """

@@ -169,7 +169,7 @@ export function versionHead({
         ${pen(version)}
         ${bin(version)}
       </span>
-      ${version.description ? `<p class="why">${escape(version.description)}</p>` : ""}
+      ${version.description ? `<p class="why typed">${escape(version.description)}</p>` : ""}
     </summary>`;
 }
 

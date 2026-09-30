@@ -49,6 +49,19 @@ def test_the_style_is_one_unbroken_template_literal():
     assert style.count("`") == 2
 
 
+def test_typed_descriptions_keep_their_line_breaks():
+    """`.typed` carries `white-space: pre-line`, and `.why` does not.
+
+    A description is typed into a textarea, so its newlines are the
+    author's. `.why` also holds fixed hints whose source breaks are
+    only wrapping; giving it `pre-line` would split those mid-sentence.
+    """
+    style = (PANEL / "panel" / "style.js").read_text(encoding="utf-8")
+    assert re.search(r"\.typed\s*\{\s*white-space:\s*pre-line", style)
+    why = re.search(r"\n  \.why\s*\{[^}]*\}", style).group(0)
+    assert "white-space" not in why
+
+
 def test_no_substitution_hides_in_the_stylesheet():
     """`${` inside the stylesheet would be evaluated, not printed.
 

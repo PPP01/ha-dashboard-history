@@ -2736,7 +2736,7 @@ class DashboardHistoryPanel extends HTMLElement {
     const alsoGoes = goes.length > 1 ? ", which cannot be written back" : "";
     dialog.querySelector(".body").innerHTML = `
       <p class="who"><strong>${head}</strong>${facts.description
-        ? `<span class="why"><strong>Description:</strong> ${
+        ? `<span class="why typed"><strong>Description:</strong> ${
              escape(facts.description)}</span>`
         : ""
       }</p>

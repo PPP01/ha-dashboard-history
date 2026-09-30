@@ -682,6 +682,10 @@ export const STYLE = `
     color: var(--secondary-text-color, #727272);
     font-size: 13px;
   }
+  /* Words a person typed into a description: the line breaks they
+     wrote are shown. Not on .why itself, which also carries fixed
+     hints whose breaks are only the source being wrapped. */
+  .typed { white-space: pre-line; }
   /* The line a removal dialog opens with: which version this is, and
      underneath it in the muted voice the words somebody gave it. They
      belong to what the version *is*, so they sit in the identity block

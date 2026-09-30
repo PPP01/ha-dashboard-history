@@ -192,7 +192,7 @@ const vhead = (version, back) => {
           </span>
           ${
             version.description
-              ? `<p class="why">${escape(version.description)}</p>`
+              ? `<p class="why typed">${escape(version.description)}</p>`
               : ""
           }`;
 };
