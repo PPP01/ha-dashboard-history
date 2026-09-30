@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.10.1
+
+An edited card whose entity was swapped is now one edit, and a text
+rename no longer pairs cards in a section the history could not
+recognise. No change to the Home Assistant version floor — still
+**2024.11 or newer**.
+
+### A swapped entity is one edit (#45)
+
+- A tile whose `entity` was changed used to read as one card deleted
+  and one added — "1 removed, 1 added", with a Put back offered for a
+  card that was not missing. It is now one edited card, and the line
+  under it names both entities: `entity changed from "cover.old" to
+  "cover.new"`.
+- This takes more than a shared style, because deleting one card and
+  adding another is ordinarily two things. The card needs a `name` or
+  `title` that stayed, the same kind of device (`cover` stays `cover`),
+  and every other field identical, and exactly one such card must be
+  left on each side of a list. A colour, an icon or a layout default in
+  common is not enough. Badges are left out.
+- One case cannot be told apart from a swap: a named card deleted while
+  an unrelated one with the same name and settings is added in the same
+  save. It counts as one edit; the line names both entities and undoing
+  that change puts the old card back.
+- The other cards whose identifying field changes (`entities` cards,
+  `markdown`, wrappers, a tile whose entity *and* name both changed) are
+  decided one by one and are still open in #45.
+
+### Fixed
+
+- The v0.10.0 pairing of a card whose text changed trusted the position
+  of the section it sat in, even when no pairing had recognised the
+  section. A heading deleted with its section and an unrelated heading
+  in a new section at the same position read as one rename, and the
+  deletion was never offered back. Such cards stay a deletion plus an
+  addition.
+- The undo step that puts an edited card back is named after the old
+  card, not the one it replaces.
+
 ## v0.10.0
 
 A removed section can now be taken back even when its place in the row
