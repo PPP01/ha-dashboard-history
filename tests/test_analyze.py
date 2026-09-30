@@ -2780,3 +2780,119 @@ def test_the_swallowed_cards_of_a_removed_section_stay_one_section_item():
     after = _parked_state(_sec("b"))
     assert [item.kind for item in analyze.find_removed(before, after)] == ["section"]
     assert analyze.match_cards(before, after).loose_removed() == []
+
+
+# ------------------------------------- a renamed card is one edit (with detail)
+def _entries(before, after, explain=None):
+    explain = explain or analyze.explain_change
+    return [e for g in explain(before, after).groups for e in g.entries]
+
+
+def test_a_heading_whose_text_changed_is_one_edited_card():
+    old = {"type": "heading", "heading": "Blau", "icon": "mdi:abugida-thai"}
+    new = {"type": "heading", "heading": "History", "icon": "mdi:history", "heading_style": "title"}
+    s = analyze.summarize(_config([A, old]), _config([A, new]))
+    assert (s.edited, s.removed, s.added) == (1, 0, 0)
+    assert analyze.find_removed(_config([A, old]), _config([A, new])) == []
+
+
+def test_a_renamed_card_says_what_it_was_renamed_to_and_lists_the_rest():
+    old = {"type": "heading", "heading": "Blau", "icon": "mdi:abugida-thai"}
+    new = {"type": "heading", "heading": "History", "icon": "mdi:history", "heading_style": "title"}
+    (entry,) = _entries(_config([A, old]), _config([A, new]))
+    assert entry.kind == "edited"
+    assert entry.text == 'heading "Blau" was changed to "History"'
+    assert entry.details == (
+        'icon changed from "mdi:abugida-thai" to "mdi:history"',
+        'heading_style was set to "title"',
+    )
+
+
+def test_a_rename_alone_has_no_detail_lines():
+    old = {"type": "heading", "heading": "Blau"}
+    new = {"type": "heading", "heading": "History"}
+    (entry,) = _entries(_config([old]), _config([new]))
+    assert entry.text == 'heading "Blau" was changed to "History"'
+    assert entry.details == ()
+
+
+def test_a_title_rename_names_the_field_and_the_card_type():
+    old = {"type": "entities", "title": "Alt", "entities": ["sensor.a"]}
+    new = {"type": "entities", "title": "Neu", "entities": ["sensor.a"]}
+    (entry,) = _entries(_config([old]), _config([new]))
+    assert entry.text == 'entities title "Alt" was changed to "Neu"'
+
+
+def test_nested_values_are_named_but_not_spelled_out():
+    old = {"type": "heading", "heading": "History"}
+    new = {
+        "type": "heading",
+        "heading": "History Section",
+        "tap_action": {"action": "navigate", "navigation_path": "/light"},
+        "visibility": [{"condition": "user", "users": ["x"]}],
+    }
+    (entry,) = _entries(_config([old]), _config([new]))
+    assert entry.details == ("tap_action was set", "visibility was set")
+
+
+def test_a_card_changed_only_in_an_icon_says_which_field():
+    old = {"type": "heading", "heading": "History Section", "icon": "mdi:history"}
+    new = {"type": "heading", "heading": "History Section", "icon": "mdi:hiking"}
+    (entry,) = _entries(_config([old]), _config([new]))
+    assert entry.text == "heading: History Section was changed"
+    assert entry.details == ('icon changed from "mdi:history" to "mdi:hiking"',)
+
+
+def test_a_removed_field_and_a_changed_block_are_listed():
+    old = {"type": "tile", "entity": "light.a", "icon": "mdi:a", "tap_action": {"action": "toggle"}}
+    new = {"type": "tile", "entity": "light.a", "tap_action": {"action": "more-info"}}
+    (entry,) = _entries(_config([old]), _config([new]))
+    assert entry.details == ("icon was removed", "tap_action was changed")
+
+
+def test_the_detail_lines_are_capped_and_say_how_many_are_left():
+    old = {"type": "tile", "entity": "light.a"}
+    new = {"type": "tile", "entity": "light.a", **{f"f{i}": i for i in range(9)}}
+    (entry,) = _entries(_config([old]), _config([new]))
+    assert len(entry.details) == 7
+    assert entry.details[-1] == "and 3 more"
+
+
+def test_a_restore_preview_words_the_details_in_the_future():
+    current = {"type": "heading", "heading": "History", "icon": "mdi:history"}
+    target = {"type": "heading", "heading": "Blau", "icon": "mdi:abugida-thai"}
+    (entry,) = _entries(_config([current]), _config([target]), analyze.explain_effect)
+    assert entry.text == 'heading goes back to "Blau"'
+    assert entry.details == ('icon goes back to "mdi:abugida-thai"',)
+
+
+def test_two_renamed_headings_in_one_place_are_not_guessed():
+    """Which new heading is which old one is not something to guess."""
+    one, two = {"type": "heading", "heading": "Eins"}, {"type": "heading", "heading": "Zwei"}
+    new_one, new_two = {"type": "heading", "heading": "1"}, {"type": "heading", "heading": "2"}
+    s = analyze.summarize(_config([one, two]), _config([new_one, new_two]))
+    assert (s.edited, s.removed, s.added) == (0, 2, 2)
+
+
+def test_a_different_card_type_at_the_same_place_is_not_a_rename():
+    old = {"type": "heading", "heading": "Blau"}
+    new = {"type": "entities", "title": "Blau2", "entities": ["sensor.a"]}
+    s = analyze.summarize(_config([old]), _config([new]))
+    assert (s.edited, s.removed, s.added) == (0, 1, 1)
+
+
+def test_a_renamed_card_in_another_section_is_not_a_rename():
+    old = {"views": [{"path": "a", "type": "sections", "sections": [
+        {"cards": [{"type": "heading", "heading": "Blau"}]}, {"cards": [A]}]}]}
+    new = {"views": [{"path": "a", "type": "sections", "sections": [
+        {"cards": [A]}, {"cards": [A, {"type": "heading", "heading": "Rot"}]}]}]}
+    s = analyze.summarize(old, new)
+    assert s.edited == 0
+
+
+def test_a_renamed_heading_can_be_taken_back():
+    old = {"type": "heading", "heading": "Blau", "icon": "mdi:abugida-thai"}
+    new = {"type": "heading", "heading": "History", "icon": "mdi:history"}
+    plan = analyze.plan_undo(_config([A, old]), _config([A, new]), _config([A, new]))
+    assert plan.blocked is None
+    assert restore.apply_undo(_config([A, new]), plan) == _config([A, old])

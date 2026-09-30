@@ -8232,3 +8232,35 @@ def test_a_dashboard_group_is_not_headed_as_a_view(plain_dashboard_group):
     assert "On the dashboard itself" in html
     assert "In the view dashboard" not in html
     assert "In the view Home" in html
+
+
+_PLAIN_DETAILS = """
+const render = await import(new URL("./panel/render.js", %(url)s).href);
+const html = render.renderPlain({
+  groups: [
+    { scope: "view", view: "Home", more: 0,
+      entries: [
+        { kind: "edited", details: ["icon changed from \\"a\\" to \\"<b>\\""],
+          text: "heading \\"Blau\\" was changed to \\"History\\"" },
+        { kind: "added", text: "tile: light.b was added" },
+      ] },
+  ],
+  note: "",
+}, "What changed");
+console.log(JSON.stringify({ html }));
+"""
+
+
+@pytest.fixture(scope="session")
+def plain_details(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "plain_details", _PLAIN_DETAILS)
+
+
+def test_the_detail_lines_of_an_entry_hang_under_it_as_a_nested_list(plain_details):
+    html = plain_details["html"]
+    assert re.search(r"was changed to[^<]*</li>|was changed to[^<]*<ul", html)
+    assert '<ul class="details"><li>icon changed from' in html
+    # Escaped like every other text the panel shows.
+    assert "&lt;b&gt;" in html and "<b>" not in html
+    # An entry without details gets no empty list.
+    assert html.count('class="details"') == 1
