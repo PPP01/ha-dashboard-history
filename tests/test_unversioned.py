@@ -165,3 +165,18 @@ def test_the_listing_never_mixes_names_and_counts_of_two_generations(store):
     survey, counts = store.dashboard_listing()
     assert survey.names == ["home"]
     assert counts == {"home": 0}
+
+
+def test_an_unfinished_forget_costs_the_listing_its_counts_not_its_names(store):
+    # The counts are a decoration on the list. While a `forget` is
+    # unfinished - or its checkpoint was left behind by a crash - the
+    # retry cannot trust any attempt and gives up; the list of
+    # dashboards must still load, only without the counts.
+    store.write_snapshot("home", "a: 1\n", "first")
+    store._checkpoint_path().write_text("{}")
+    assert store.forget_in_progress()
+    with pytest.raises(RuntimeError):
+        store.unversioned_counts()
+    survey, counts = store.dashboard_listing()
+    assert survey.names == ["home"]
+    assert counts == {}

@@ -3544,13 +3544,24 @@ class HistoryStore:
         after, or the other way round, and no error anywhere. Decision
         24. One attempt reads both, and `_retrying_a_forget_race` reads
         both again if HEAD moved or a `forget` was still unfinished.
+
+        The counts are a decoration on the list, the names are the list.
+        Where no attempt can be trusted - a `forget` still running, or
+        a checkpoint a crash left behind - the retry gives up with a
+        `RuntimeError`, and then the list answers as it did before the
+        counts existed: the names, with none of them. A stripe that
+        does not show is a smaller loss than a list that does not load.
         """
         repo = self._repo()
         if repo is None:
             return Survey([], set(), {}), {}
-        return self._retrying_a_forget_race(
-            repo, lambda: (self.survey(), self._count_unversioned(repo))
-        )
+        try:
+            return self._retrying_a_forget_race(
+                repo, lambda: (self.survey(), self._count_unversioned(repo))
+            )
+        except RuntimeError:
+            _LOGGER.debug("No counts for the list: a forget is unfinished")
+            return self.survey(), {}
 
     @_naming_a_forget_race
     def measure(self) -> Measurement:
