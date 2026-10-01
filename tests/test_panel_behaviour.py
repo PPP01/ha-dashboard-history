@@ -9131,11 +9131,10 @@ const carried = {
   body: confirmBox().querySelector(".body").innerHTML,
   apply: confirmBox().querySelector('.actions button[value="apply"]').textContent,
   cancel: confirmBox().querySelector('.actions button[value="cancel"]').textContent,
-  fetchedBefore: sent.length,
 };
 confirmBox().close("cancel");
 await settle();
-carried.fetchedAfterNo = sent.length;
+carried.wroteAfterNo = sent.includes("create_version");
 carried.versionDialogOpen = versionBox().open;
 
 // 2. Dismissed with Escape: the dialog keeps an empty return value,
@@ -9144,7 +9143,7 @@ flow = begin("a");
 await settle();
 confirmBox().close();
 await settle();
-const escaped = { fetched: sent.length, versionDialogOpen: versionBox().open };
+const escaped = { wrote: sent.includes("create_version"), versionDialogOpen: versionBox().open };
 
 // 3. "Yes": on to the numbers and the create dialog, as before.
 flow = begin("a");
@@ -9202,7 +9201,6 @@ await settle();
 const foundHit = {
   asked: confirmBox().open,
   body: confirmBox().querySelector(".body").innerHTML,
-  fetched: sent.length,
 };
 confirmBox().close("apply");
 await settle();
@@ -9268,20 +9266,20 @@ def test_a_state_that_carries_a_version_is_asked_about_before_the_dialog(
     assert "This state already carries v1.0.0." in carried["body"]
     assert carried["apply"] == "Save anyway"
     assert carried["cancel"] == "Cancel"
-    # Nothing was fetched while the question stood: the numbers are only
-    # worked out for somebody who has said yes.
-    assert carried["fetchedBefore"] == 0
 
 
-def test_answering_no_ends_it_before_anything_is_fetched_or_drawn(
+def test_answering_no_ends_it_before_the_dialog_and_before_any_write(
     another_version_asked,
 ):
-    assert another_version_asked["carried"]["fetchedAfterNo"] == 0
+    # The numbers are fetched while the question stands (see the handover
+    # tests below), which reads and writes nothing; what "no" has to stop
+    # is the dialog and a version being made.
+    assert another_version_asked["carried"]["wroteAfterNo"] is False
     assert another_version_asked["carried"]["versionDialogOpen"] is False
 
 
 def test_dismissing_the_question_counts_as_no(another_version_asked):
-    assert another_version_asked["escaped"]["fetched"] == 0
+    assert another_version_asked["escaped"]["wrote"] is False
     assert another_version_asked["escaped"]["versionDialogOpen"] is False
 
 
@@ -9310,7 +9308,6 @@ def test_a_search_hit_that_carries_a_version_asks_as_well(another_version_asked)
     hit = another_version_asked["foundHit"]
     assert hit["asked"] is True
     assert "already carries v1.0.0" in hit["body"]
-    assert hit["fetched"] == 0
     assert hit["fetchedAfterYes"] == "next_versions"
     assert hit["versionDialogOpen"] is True
 
@@ -9336,3 +9333,123 @@ def test_the_override_helper_keeps_its_own_wording_for_other_callers(
         "cancel": "Cancel",
     }
     assert another_version_asked["defaultAnswer"] is True
+
+
+# -- the question hands over to the dialog without a gap --------------------
+# GitHub issue #51, found on the screen: after "Save anyway" the page went
+# blank for about half a second before the version dialog opened. `_guard`
+# draws the whole panel twice around the fetch of the numbers, and the
+# confirmation had already closed, so the plain page showed through. The
+# numbers are now asked for while the question stands; a render is held
+# while a dialog is open, so nothing is drawn, and the answer is usually
+# there by the time somebody clicks.
+
+_ANOTHER_VERSION_HANDOVER = """
+const el = new Panel();
+let renders = 0;
+el._render = () => { renders += 1; };
+el._selected = "dash";
+el._mode = "advanced";
+const CANDIDATES = { candidates: {
+  patch: "dash/v1.0.1", minor: "dash/v1.1.0", major: "dash/v2.0.0",
+  current: "dash/v1.0.0",
+} };
+let sent = [];
+let failNext = false;
+el._call = async (type) => {
+  sent.push(type);
+  if (type === "next_versions" && failNext) {
+    failNext = false;
+    throw new Error("boom");
+  }
+  return type === "next_versions" ? CANDIDATES : {};
+};
+const confirmBox = () => el.shadowRoot.querySelector("dialog.confirm");
+const versionBox = () => el.shadowRoot.querySelector("dialog.version");
+const fetches = () => sent.filter((type) => type === "next_versions").length;
+el._versions = [{ name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "a" }];
+el._matching = [];
+el._changes = [{ revision: "a", message: "1 card added", timestamp: 1,
+  versions: [{ name: "dash/v1.0.0" }], same_as_now: true }];
+const begin = () => {
+  el.shadowRoot = node();
+  sent = [];
+  renders = 0;
+  el._error = null;
+  return el._createVersion("a");
+};
+
+// 1. "Yes": the numbers were asked for while the question stood, once,
+// and the page was not drawn between the answer and the dialog.
+let flow = begin();
+await settle();
+const whileAsked = { fetches: fetches(), versionOpen: versionBox().open };
+confirmBox().close("apply");
+await settle();
+const yes = {
+  whileAsked,
+  fetches: fetches(),
+  renders,
+  versionOpen: versionBox().open,
+};
+versionBox().close("cancel");
+await settle();
+
+// 2. "No" after a fetch that failed meanwhile: nobody asked for the
+// numbers, so nobody is told they failed.
+failNext = true;
+flow = begin();
+await settle();
+confirmBox().close("cancel");
+await settle();
+const declined = { error: el._error, versionOpen: versionBox().open };
+
+// 3. "Yes" after a fetch that failed meanwhile: the guarded fetch of
+// old runs instead, and the dialog opens on its answer.
+failNext = true;
+flow = begin();
+await settle();
+confirmBox().close("apply");
+await settle();
+const fallback = { fetches: fetches(), versionOpen: versionBox().open };
+versionBox().close("cancel");
+await settle();
+
+console.log(JSON.stringify({ yes, declined, fallback }));
+"""
+
+
+@pytest.fixture(scope="session")
+def another_version_handover(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "another_version_handover", _ANOTHER_VERSION_HANDOVER
+    )
+
+
+def test_the_numbers_are_fetched_while_the_question_is_open(another_version_handover):
+    yes = another_version_handover["yes"]
+    assert yes["whileAsked"]["fetches"] == 1
+    # Still the question and not yet the dialog.
+    assert yes["whileAsked"]["versionOpen"] is False
+    # Not asked for a second time after the answer.
+    assert yes["fetches"] == 1
+
+
+def test_answering_yes_does_not_redraw_the_page_before_the_dialog(
+    another_version_handover,
+):
+    yes = another_version_handover["yes"]
+    assert yes["renders"] == 0
+    assert yes["versionOpen"] is True
+
+
+def test_a_declined_question_leaves_no_error_from_the_early_fetch(
+    another_version_handover,
+):
+    assert another_version_handover["declined"]["error"] is None
+    assert another_version_handover["declined"]["versionOpen"] is False
+
+
+def test_a_failed_early_fetch_falls_back_to_the_guarded_one(another_version_handover):
+    assert another_version_handover["fallback"]["fetches"] == 2
+    assert another_version_handover["fallback"]["versionOpen"] is True

@@ -2819,10 +2819,25 @@ class DashboardHistoryPanel extends HTMLElement {
   async _createVersion(revision) {
     const change = this._changeAt(revision);
     if (!change) return;
-    // Asked before anything is fetched or drawn: a "no" costs nothing,
-    // and a modal question leaves the selection where it was, so the
-    // dashboard captured below is still the one that was asked about.
+    // Asked before anything is drawn: a "no" costs nothing, and a modal
+    // question leaves the selection where it was, so the dashboard
+    // captured below is still the one that was asked about.
+    //
+    // The numbers are asked for while the question stands (GitHub #51).
+    // `_guard` draws the whole panel on both sides of its request, and
+    // after "Save anyway" the confirmation is already gone: the plain
+    // page showed through for as long as the request took, about half a
+    // second, between two dialogs. A render is held while a dialog is
+    // open, so here nothing is drawn, and by the time somebody has read
+    // the question the answer is usually in. Outside `_guard` on purpose:
+    // nobody who says "no" is told that numbers they never asked for
+    // could not be fetched - a failure here just means the fetch is
+    // done again below, the way it always was.
     const named = this._alreadyNamed(change);
+    const askedEarly = this._selected;
+    const early = named
+      ? this._call("next_versions", { dashboard: askedEarly }).catch(() => null)
+      : null;
     if (named && !(await this._askAnother(named))) return;
     // Fetched before the dialog is touched: _guard re-renders, and a
     // re-render replaces the dialog element along with everything else.
@@ -2833,10 +2848,12 @@ class DashboardHistoryPanel extends HTMLElement {
     // one was selected by the time somebody pressed Create.
     const asked = this._selected;
     const mine = this._claim("write");
-    const offered = await this._guard(
-      () => this._call("next_versions", { dashboard: asked }),
-      mine,
-    );
+    const offered =
+      (early && asked === askedEarly && (await early)) ||
+      (await this._guard(
+        () => this._call("next_versions", { dashboard: asked }),
+        mine,
+      ));
     if (!mine() || !offered) return;
     const candidates = offered.candidates || {};
     const dialog = this.shadowRoot.querySelector("dialog.version");

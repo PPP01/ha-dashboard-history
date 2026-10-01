@@ -538,3 +538,13 @@ Closes #51.
 - **Typkonsistenz:** `_askAnother(named)` und `_confirmOverride(dialog, message, { title, apply, cancel })` sind je einmal definiert; die Namen der Parameter stimmen mit den Aufrufen überein (`title`, `apply`, `cancel`).
 - **Review Focus:** Zeilen 1 bis 5 und 7 haben je einen Test; Zeile 6 ist eine Gegenlesung (Aufgabe 1, Schritt 1).
 - **Reproduzierbarkeit:** Der Plan nutzt nur committete Dateien, Funktionsnamen und Standardbefehle. Der Browser-Teil ist als optionale lokale Abnahme markiert. Code und Tests wurden vorab in einer Scratch-Kopie von `main@1e486b6` ausgeführt (siehe »Ausgangslage«).
+
+## Nachtrag vom 2026-10-01: Übergang nach »Save anyway«
+
+Beim Ausprobieren am Bildschirm fiel auf: Nach »Save anyway« wurde die Seite etwa eine halbe Sekunde leer, bevor der Versionsdialog erschien. Ursache war nicht der Dialog, sondern `_guard` in `_createVersion`: Es rendert das ganze Panel vor und nach dem Abruf der Nummern, und die Bestätigung war da schon zu, sodass die nackte Seite durchschien. Vor der Rückfrage fiel das kaum auf, weil dort kein Dialog vorher zuging.
+
+**Entscheidung:** Die Nummern (`next_versions`) werden abgerufen, **während die Frage offen ist**. Solange ein Dialog offen ist, stellt `_render` zurück, also wird in der Zeit nichts gezeichnet, und nach dem Klick ist die Antwort meist da. Der Abruf läuft bewusst außerhalb von `_guard`: Wer »Nein« sagt, bekommt keine Fehlermeldung zu Nummern, die er nie wollte. Schlägt der Vorabruf fehl, läuft danach der alte, bewachte Abruf wie bisher.
+
+**Folge für den Plan:** Der Satz in Aufgabe 1 (Test `carried`): »Nichts wurde abgerufen, solange die Frage stand« gilt nicht mehr. Vier Tests der ersten Fassung hielten genau das fest und sichern jetzt, was sie eigentlich sichern sollten: bei »Nein« öffnet sich kein Versionsdialog und es wird nichts geschrieben. Neu sind vier Tests (`test_the_numbers_are_fetched_while_the_question_is_open`, `test_answering_yes_does_not_redraw_the_page_before_the_dialog`, `test_a_declined_question_leaves_no_error_from_the_early_fetch`, `test_a_failed_early_fetch_falls_back_to_the_guarded_one`).
+
+**Offen, am Bildschirm zu prüfen:** Zwischen dem Schließen der Frage und dem Öffnen des Versionsdialogs kann der Browser noch einen Frame zeichnen (das `close`-Ereignis ist eine eigene Aufgabe). Falls das sichtbar bleibt, wäre ein kurzes Einblenden des Versionsdialogs per CSS der nächste Schritt, nicht mehr Logik.
