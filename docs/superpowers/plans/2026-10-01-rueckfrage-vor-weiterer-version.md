@@ -4,7 +4,9 @@
 
 **Goal:** Wer eine Version für einen Stand anlegen will, den schon eine Version trägt oder dem eine Version gleicht, wird vor dem Versionsdialog einmal gefragt, ob er wirklich noch einen Namen für denselben Stand will; bei »nein« endet der Vorgang dort (GitHub Issue #51, folgt auf #50, verknüpft mit #14).
 
-**Architecture:** Eine Stelle, eine Bedingung. `_createVersion(revision)` in `panel.js` ist der gemeinsame Einstieg für »Save this as another version« und »Version up to here«; dort fragt ein neuer Aufruf `_askAnother(named)` vor allem anderen, wenn `_alreadyNamed(change)` einen Satz liefert. Die Rückfrage benutzt den vorhandenen Bestätigungsdialog über `_confirmOverride`, der Titel und Beschriftungen als Parameter bekommt (Standardwerte unverändert für die zwei bestehenden Aufrufer). Rein Panel und Doku, kein Server-, Service- oder Speicher-Code.
+**Architecture:** Eine Stelle, eine Bedingung. `_createVersion(revision)` in `panel.js` ist der gemeinsame Einstieg für »Save this as another version« und »Version up to here«; dort fragt ein neuer Aufruf `_askAnother(named)` vor allem anderen, wenn `_alreadyNamed(change)` einen Satz liefert. Die Rückfrage benutzt den vorhandenen Bestätigungsdialog über `_confirmOverride`, der Titel und Beschriftungen als Parameter bekommt (Standardwerte unverändert für die zwei bestehenden Aufrufer, die auf `dialog.confirm` und `dialog.replace` arbeiten). Rein Panel und Doku, kein Server-, Service- oder Speicher-Code.
+
+**Review-Stand:** Dieser Plan wurde am 2026-10-01 von zwei unabhängigen Läufen geprüft (Codex Terra und Gemini, Runde 1; `reviews/2026-10-01-rueckfrage-vor-weiterer-version-review-1-terra.md` und `-gemini.md`). Beide meldeten unabhängig dieselben zwei Testlücken, beide sind in dieser Fassung geschlossen: der Ja-Test bestand schon ohne Umsetzung und belegte die Frage nicht (er prüft jetzt, dass sie offen war und nach der Antwort zu ist), und Suchtreffer (`_found`) liefen nicht durch die Tests (neuer Fall). Gemini fand außerdem eine Ungenauigkeit: Der zweite Aufrufer von `_confirmOverride` benutzt `dialog.replace`, nicht `dialog.confirm`; Text und Gegenlesung sind angepasst. Keine kritischen oder hohen Befunde; Astra war nicht nötig.
 
 **Tech Stack:** Plain Custom Element ohne Build-Schritt (`panel.js`), pytest mit Node-Stand-in für Panel-Logik (`tests/test_panel_behaviour.py`).
 
@@ -14,7 +16,7 @@
 
 - **Basis ist `main` ab `1e486b6`** (Stand nach #50). Branch: `issue-51-ask-before-another-version`, von `main`. Die Plan-Datei selbst wird als erster Commit auf diesen Branch gelegt (`[51] Add the plan for #51`), zusammen mit Review-Dateien dazu, falls vorhanden. Danach folgen genau **zwei Umsetzungs-Commits**, einer je Aufgabe; insgesamt also drei Commits auf dem Branch.
 - Die Anker sind **Funktionsnamen**, keine Zeilennummern. Passt ein Anker nicht mehr, hält der Umsetzer an und meldet es.
-- **Geprüft vor dem Schreiben:** Der Code und die Tests dieses Plans wurden in einer Scratch-Kopie von `main@1e486b6` ausgeführt. Ohne die Umsetzung: 6 der neuen Tests FAIL, 3 PASS (sie halten bestehendes Verhalten fest). Mit der Umsetzung: alle 9 PASS, Gesamtsuite `1132 passed, 5 skipped, 0 failed`. Ohne den angepassten Test aus Aufgabe 1, Schritt 4 sind es zwei ERRORs; die Gründe stehen dort.
+- **Geprüft vor dem Schreiben:** Der Code und die Tests dieses Plans wurden in einer Scratch-Kopie von `main@1e486b6` ausgeführt. Ohne die Umsetzung: 8 der neuen Tests FAIL, 2 PASS (sie halten bestehendes Verhalten fest). Mit der Umsetzung: alle 10 PASS, Gesamtsuite `1133 passed, 5 skipped, 0 failed`. Ohne den angepassten Test aus Aufgabe 1, Schritt 4 sind es zwei ERRORs; die Gründe stehen dort.
 
 ## Minimaler Umfang (und was bewusst nicht getan wird)
 
@@ -41,14 +43,15 @@ Bewusst **nicht** getan:
 
 ## Review Focus
 
-Eingaben und Zustände, die der Plan nicht ausdrücklich nennt, aber die jemanden beißen können – jede Zeile hat unten in Aufgabe 1 ihren Test:
+Eingaben und Zustände, die der Plan nicht ausdrücklich nennt, aber die jemanden beißen können – jede Zeile außer 6 hat unten in Aufgabe 1 ihren Test:
 
 1. **Escape statt Knopfdruck:** Der Dialog schließt dann mit leerem `returnValue`; das zählt als »nein«. (Test `test_dismissing_the_question_counts_as_no`)
 2. **Versionsname aus dem Server mit Markup:** Er steht als Text in der Frage, nicht als HTML (`_confirmOverride` escaped). (Test `test_a_version_name_in_the_question_is_text_not_markup`)
 3. **Kein Name, keine Frage:** Ein Stand, den nichts benennt, geht ohne Umweg zum Dialog. (Test `test_a_state_nothing_names_goes_straight_to_the_dialog`)
 4. **»Version up to here« auf einer älteren Zeile mit Version** fragt ebenfalls, weil beide Wege durch `_createVersion` laufen. (Test `test_version_up_to_here_on_an_older_versioned_row_asks_as_well`)
 5. **Andere Aufrufer von `_confirmOverride`** (die zwei »Write anyway«-Rückfragen nach einem nicht aufgezeichneten Stand) behalten Titel und Beschriftungen. (Test `test_the_override_helper_keeps_its_own_wording_for_other_callers`)
-6. **Wiederverwendeter Bestätigungsdialog:** Nach der Rückfrage bleibt `dialog.confirm` in einem Zustand, den jeder andere Aufrufer ohnehin überschreibt (`_confirm` setzt Titel, Body, Fußnote, Apply-Sichtbarkeit und beide Button-Texte selbst; dasselbe gilt schon heute nach den bestehenden Rückfragen). Das wird in Aufgabe 1, Schritt 1 gegengelesen, nicht angenommen.
+6. **Wiederverwendeter Bestätigungsdialog:** Nach der Rückfrage bleibt `dialog.confirm` in einem Zustand, den der einzige andere Nutzer dieses Elements, `_confirm`, ohnehin überschreibt (Titel, Body, Fußnote, Apply-Sichtbarkeit, beide Button-Texte, `.note`, `returnValue`; dasselbe gilt schon heute nach der bestehenden Wiederholung in `_confirm`). `_openReplace` benutzt `dialog.replace` und ist davon nicht berührt. Das wird in Aufgabe 1, Schritt 1 gegengelesen, nicht angenommen.
+7. **Suchtreffer:** Eine Zeile, die der Server bei »Search the whole history« gefunden hat, steht nicht in `this._changes`, sondern in `this._found`; `_changeAt` sucht in beiden. Trägt der Treffer eine Version, fragt `_createVersion` genauso. (Test `test_a_search_hit_that_carries_a_version_asks_as_well`)
 
 ---
 
@@ -56,7 +59,7 @@ Eingaben und Zustände, die der Plan nicht ausdrücklich nennt, aber die jemande
 
 **Files:**
 - Modify: `custom_components/dashboard_history/panel.js` (`_confirmOverride`: Signatur und drei Zeilen; neue Methode `_askAnother` direkt dahinter; `_createVersion`: vier Zeilen am Anfang)
-- Modify (Test): `tests/test_panel_behaviour.py` (neues Szenario `_ANOTHER_VERSION_ASKED` mit Fixture und neun Tests am Ende der Datei; bestehendes Szenario `_PENDING_CHANGES`, in `dialogFor`)
+- Modify (Test): `tests/test_panel_behaviour.py` (neues Szenario `_ANOTHER_VERSION_ASKED` mit Fixture und zehn Tests am Ende der Datei; bestehendes Szenario `_PENDING_CHANGES`, in `dialogFor`)
 
 **Interfaces:**
 - Produces: `_confirmOverride(dialog, message, { title = "Write anyway?", apply = "Write anyway", cancel = "Cancel" } = {})` – Antwort `true` bei »apply«, sonst `false`. `_askAnother(named)` – `named` ist der Satz aus `_alreadyNamed`; Antwort wie oben.
@@ -64,7 +67,7 @@ Eingaben und Zustände, die der Plan nicht ausdrücklich nennt, aber die jemande
 
 - [ ] **Step 1: Ausgangslage lesen und die Wiederverwendung belegen**
 
-Lesen: `_createVersion`, `_alreadyNamed`, `_confirmOverride` und seine zwei Aufrufer (`_confirm` und `_openReplace`, jeweils in der Wiederholung nach `applied?.unrecorded_state`), `_answerFrom`, den Anfang von `_confirm`. Belegen, nicht annehmen: `_confirm` setzt `dialog.querySelector("h2").textContent`, `.body`, die Fußnote (`_sayFootnote`), `applyButton.hidden`, `applyButton.textContent` (`applyLabel`) und `button[value="cancel"]`.textContent selbst. Trifft eines davon nicht zu, anhalten und melden.
+Lesen: `_createVersion`, `_alreadyNamed`, `_confirmOverride` und seine zwei Aufrufer (`_confirm` und `_openReplace`, jeweils in der Wiederholung nach `applied?.unrecorded_state`), `_answerFrom`, den Anfang von `_confirm`. Belegen, nicht annehmen: `_confirm` ist der einzige Nutzer von `dialog.confirm` neben `_askAnother` (der zweite Aufruf von `_confirmOverride`, in `_openReplace`, nimmt `dialog.replace`), und es setzt `dialog.querySelector("h2").textContent`, `.body`, die Fußnote (`_sayFootnote`), `applyButton.hidden`, `applyButton.textContent` (`applyLabel`), `button[value="cancel"]`.textContent, `.note` und `returnValue` selbst. Trifft eines davon nicht zu, anhalten und melden.
 
 Run: `grep -n "_confirmOverride" custom_components/dashboard_history/panel.js`
 Expected: genau drei Treffer – die Definition und zwei Aufrufe (`retryDialog`). Weicht die Zahl ab: anhalten.
@@ -137,9 +140,15 @@ const escaped = { fetched: sent.length, versionDialogOpen: versionBox().open };
 // 3. "Yes": on to the numbers and the create dialog, as before.
 flow = begin("a");
 await settle();
+const yesAsked = confirmBox().open;
 confirmBox().close("apply");
 await settle();
-const yes = { first: sent[0], versionDialogOpen: versionBox().open };
+const yes = {
+  asked: yesAsked,
+  closed: confirmBox().open === false,
+  first: sent[0],
+  versionDialogOpen: versionBox().open,
+};
 versionBox().close("cancel");
 await settle();
 
@@ -173,6 +182,26 @@ const olderRow = {
 };
 confirmBox().close("cancel");
 await settle();
+
+// 5b. A hit the server found is not among the loaded changes: it lives
+// in `_found`, and `_changeAt` looks there too.
+el._changes = [{ revision: "n", message: "newest", timestamp: 3, versions: [], same_as_now: false }];
+el._found = [{ revision: "s", message: "found", timestamp: 1,
+  versions: [{ name: "dash/v1.0.0" }], same_as_now: false }];
+flow = begin("s");
+await settle();
+const foundHit = {
+  asked: confirmBox().open,
+  body: confirmBox().querySelector(".body").innerHTML,
+  fetched: sent.length,
+};
+confirmBox().close("apply");
+await settle();
+foundHit.fetchedAfterYes = sent[0];
+foundHit.versionDialogOpen = versionBox().open;
+versionBox().close("cancel");
+await settle();
+el._found = null;
 
 // 6. Nothing names this state: no question, straight to the numbers.
 el._changes = [{ revision: "c", message: "3 cards removed", timestamp: 4,
@@ -209,7 +238,7 @@ confirmBox().close("apply");
 const defaultAnswer = await plain;
 
 console.log(JSON.stringify({
-  carried, escaped, yes, alike, olderRow, unnamed, hostile, defaults, defaultAnswer,
+  carried, escaped, yes, alike, olderRow, foundHit, unnamed, hostile, defaults, defaultAnswer,
 }));
 """
 
@@ -248,6 +277,10 @@ def test_dismissing_the_question_counts_as_no(another_version_asked):
 
 
 def test_answering_yes_goes_on_to_the_create_dialog_as_before(another_version_asked):
+    # The question stood, and answering it closed it - not only "the
+    # dialog opened", which is also what happens without the question.
+    assert another_version_asked["yes"]["asked"] is True
+    assert another_version_asked["yes"]["closed"] is True
     assert another_version_asked["yes"]["first"] == "next_versions"
     assert another_version_asked["yes"]["versionDialogOpen"] is True
 
@@ -262,6 +295,15 @@ def test_version_up_to_here_on_an_older_versioned_row_asks_as_well(
 ):
     assert another_version_asked["olderRow"]["asked"] is True
     assert "already carries v1.0.0" in another_version_asked["olderRow"]["body"]
+
+
+def test_a_search_hit_that_carries_a_version_asks_as_well(another_version_asked):
+    hit = another_version_asked["foundHit"]
+    assert hit["asked"] is True
+    assert "already carries v1.0.0" in hit["body"]
+    assert hit["fetched"] == 0
+    assert hit["fetchedAfterYes"] == "next_versions"
+    assert hit["versionDialogOpen"] is True
 
 
 def test_a_state_nothing_names_goes_straight_to_the_dialog(another_version_asked):
@@ -291,8 +333,8 @@ Hinweis zu den Szenarien: Sie warten nach jeder Antwort mit `await settle()` sta
 
 - [ ] **Step 3: Tests laufen lassen, Fehlschlag prüfen**
 
-Run: `python3 -m pytest tests/test_panel_behaviour.py -q -p no:cacheprovider -k "asked_about or answering or dismissing or equal_to_a_version or version_up_to_here_on or nothing_names or in_the_question or override_helper"`
-Expected: `6 failed, 3 passed`. FAIL: `…asked_about_before_the_dialog`, `…answering_no_ends_it…`, `…dismissing_the_question…`, `…equal_to_a_version…`, `…version_up_to_here_on_an_older…`, `…in_the_question_is_text…`. PASS (halten bestehendes Verhalten fest): `…answering_yes…`, `…nothing_names…`, `…override_helper…`. Weicht das ab: anhalten und die Ursache klären, nicht den Test anpassen.
+Run: `python3 -m pytest tests/test_panel_behaviour.py -q -p no:cacheprovider -k "asked_about or answering or dismissing or equal_to_a_version or version_up_to_here_on or nothing_names or in_the_question or override_helper or search_hit"`
+Expected: `8 failed, 2 passed`. FAIL: `…asked_about_before_the_dialog`, `…answering_no_ends_it…`, `…dismissing_the_question…`, `…answering_yes…`, `…equal_to_a_version…`, `…version_up_to_here_on_an_older…`, `…search_hit…`, `…in_the_question_is_text…`. PASS (halten bestehendes Verhalten fest): `…nothing_names…`, `…override_helper…`. Weicht das ab: anhalten und die Ursache klären, nicht den Test anpassen.
 
 - [ ] **Step 4: Umsetzung in `panel.js`**
 
@@ -394,11 +436,11 @@ Grund: `dialogFor("a")` benennt die getaggte Änderung; vor dem Versionsdialog s
 
 - [ ] **Step 5: Tests laufen lassen**
 
-Run: `python3 -m pytest tests/test_panel_behaviour.py -q -p no:cacheprovider -k "asked_about or answering or dismissing or equal_to_a_version or version_up_to_here_on or nothing_names or in_the_question or override_helper"`
-Expected: `9 passed`.
+Run: `python3 -m pytest tests/test_panel_behaviour.py -q -p no:cacheprovider -k "asked_about or answering or dismissing or equal_to_a_version or version_up_to_here_on or nothing_names or in_the_question or override_helper or search_hit"`
+Expected: `10 passed`.
 
 Run: `python3 -m pytest tests/ -q -p no:cacheprovider`
-Expected: `0 failed`. Die Zahl der passed/skipped schwankt mit den echten Dashboards; nur »0 failed« zählt. Zur Orientierung: auf einem Stand ohne `tests/.real-storage` ergab dieselbe Änderung `1132 passed, 5 skipped`.
+Expected: `0 failed`. Die Zahl der passed/skipped schwankt mit den echten Dashboards; nur »0 failed« zählt. Zur Orientierung: auf einem Stand ohne `tests/.real-storage` ergab dieselbe Änderung `1133 passed, 5 skipped`.
 
 Run: `python3 tools/complexity_ratchet.py` und `lint-imports` (laut CLAUDE.md in einem Virtualenv außerhalb des Repos). Expected: beide grün.
 
@@ -494,5 +536,5 @@ Closes #51.
 - **Abdeckung des Issues #51:** Rückfrage vor dem Dialog, Ja/Nein → Aufgabe 1; alle Stellen, an denen »another« steht, und »Version up to here« → durch den gemeinsamen Einstieg `_createVersion` abgedeckt und durch Tests für beide Sätze und die ältere Zeile belegt; Wortlaut neutral (»Save another version?« / »Save anyway« / »Cancel«); Hinweis im Dialog bleibt unberührt; kein Serveränderung → Umfang; Banner → ausdrücklich nicht gelöst und benannt.
 - **Platzhalter-Suche:** keine offenen Stellen. Das einzige Gegenlesen mit Abbruchbedingung steht in Aufgabe 1, Schritt 1.
 - **Typkonsistenz:** `_askAnother(named)` und `_confirmOverride(dialog, message, { title, apply, cancel })` sind je einmal definiert; die Namen der Parameter stimmen mit den Aufrufen überein (`title`, `apply`, `cancel`).
-- **Review Focus:** Zeilen 1 bis 5 haben je einen Test; Zeile 6 ist eine Gegenlesung (Aufgabe 1, Schritt 1).
+- **Review Focus:** Zeilen 1 bis 5 und 7 haben je einen Test; Zeile 6 ist eine Gegenlesung (Aufgabe 1, Schritt 1).
 - **Reproduzierbarkeit:** Der Plan nutzt nur committete Dateien, Funktionsnamen und Standardbefehle. Der Browser-Teil ist als optionale lokale Abnahme markiert. Code und Tests wurden vorab in einer Scratch-Kopie von `main@1e486b6` ausgeführt (siehe »Ausgangslage«).
