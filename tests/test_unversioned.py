@@ -180,3 +180,64 @@ def test_an_unfinished_forget_costs_the_listing_its_counts_not_its_names(store):
     survey, counts = store.dashboard_listing()
     assert survey.names == ["home"]
     assert counts == {}
+
+
+def test_a_state_that_is_a_versions_content_again_is_not_unversioned(store):
+    # A card moved out and home again: three recorded states, the newest
+    # byte-identical to the one the version sits on. The panel's "Right
+    # now" card says "same state as v1.0.0" here, and so must the list.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.write_snapshot("home", "a: 2\n", "moved out")
+    store.write_snapshot("home", "a: 1\n", "moved home")
+    assert store.unversioned_counts() == {"home": 0}
+
+
+def test_going_back_to_an_older_version_is_not_unversioned(store):
+    # Equal to *any* of the versions counts, not only the newest one:
+    # the "Right now" card lists every version holding the state.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    second = store.write_snapshot("home", "a: 2\n", "second")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.create_version("home/v1.0.1", "Second", "", second)
+    store.write_snapshot("home", "a: 1\n", "went back")
+    assert store.unversioned_counts() == {"home": 0}
+
+
+def test_a_state_no_version_holds_is_still_counted(store):
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.write_snapshot("home", "a: 2\n", "second")
+    store.write_snapshot("home", "a: 3\n", "third")
+    assert store.unversioned_counts() == {"home": 2}
+
+
+def test_another_dashboards_version_with_the_same_text_does_not_count(store):
+    # Two dashboards holding identical text: the version belongs to the
+    # one it is named for, so the other is still unversioned.
+    store.write_snapshot("home", "a: 1\n", "first")
+    other = store.write_snapshot("other", "a: 1\n", "first")
+    store.create_version("other/v1.0.0", "First", "", other)
+    assert store.unversioned_counts() == {"home": 1, "other": 0}
+
+
+def test_a_state_read_once_is_not_read_again(store, monkeypatch):
+    # Reading what a path holds at a revision is a tree lookup apiece,
+    # and the answer never changes. A second call asks for none.
+    first = store.write_snapshot("home", "a: 1\n", "first")
+    store.create_version("home/v1.0.0", "First", "", first)
+    store.write_snapshot("home", "a: 2\n", "second")
+    asked = []
+    original = HistoryStore._blob_at
+
+    def counting(repo, path, revision):
+        asked.append((path, revision))
+        return original(repo, path, revision)
+
+    monkeypatch.setattr(store, "_blob_at", counting)
+    assert store.unversioned_counts() == {"home": 1}
+    # The spy is live: the first call did have to read.
+    assert asked
+    asked.clear()
+    assert store.unversioned_counts() == {"home": 1}
+    assert asked == []

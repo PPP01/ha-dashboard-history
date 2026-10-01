@@ -655,6 +655,12 @@ class HistoryStore:
         # every recorded change. Replaced as a whole, never mutated, so
         # two executor threads at worst both rebuild it.
         self._tag_targets: dict[bytes, str] = {}
+        # What `<key>.yaml` held at a revision, as a blob id, keyed by
+        # `(revision, key)`. A commit never changes, so neither does the
+        # answer; it is replaced as a whole on every count, keeping only
+        # what that count asked for, so a rewritten history cannot leave
+        # old revisions behind. See `_holds_a_versions_state`.
+        self._state_blobs: dict[tuple[str, str], bytes] = {}
         # Which commits touched which dashboard, and where each commit
         # sits in the one order the walk hands them back. See
         # `_revision_index` for why this exists at all.
@@ -3499,19 +3505,64 @@ class HistoryStore:
         at the new ones: nothing matches, and every change counts. Only
         ever called from inside `_retrying_a_forget_race`, which is what
         notices and reads both again.
+
+        A change count above zero is then taken back to zero where the
+        newest state holds exactly what one of the dashboard's versions
+        holds: the "Right now" card says "same state as v1.0.0" there,
+        and a list that still marked it would contradict the card.
         """
         index = self._revision_index(repo)
         if index is None:
             return {}
         marked = self._marked_revisions(repo)
+        used: dict[tuple[str, str], bytes] = {}
         counts: dict[str, int] = {}
         for key, revisions in index.by_key.items():
             carrying = marked.get(key, set())
-            counts[key] = next(
+            behind = next(
                 (at for at, revision in enumerate(revisions) if revision in carrying),
                 len(revisions),
             )
+            if behind and carrying:
+                if self._holds_a_versions_state(repo, key, revisions[0], carrying, used):
+                    behind = 0
+            counts[key] = behind
+        self._state_blobs = used
         return counts
+
+    def _holds_a_versions_state(
+        self,
+        repo: Repo,
+        key: str,
+        newest: str,
+        carrying: set[str],
+        used: dict[tuple[str, str], bytes],
+    ) -> bool:
+        """Whether the newest state is byte-identical to a version's state.
+
+        By blob id, like `matching_revisions`: git names a blob by its
+        bytes, so equal ids are equal files, and a tree lookup replaces
+        reading two dashboards. Only this dashboard's own versions are
+        compared - a version of another dashboard holding the same text
+        does not make this one versioned.
+
+        What was looked up goes into `used`, which the caller keeps for
+        the next count. A blob id that could not be found is not kept: it
+        is the answer of a revision that is gone, and asking again is
+        cheap.
+        """
+        path = f"{key}.yaml"
+
+        def blob(revision: str) -> bytes | None:
+            found = self._state_blobs.get((revision, key))
+            if found is None:
+                found = self._blob_at(repo, path, revision)
+            if found is not None:
+                used[(revision, key)] = found
+            return found
+
+        current = blob(newest)
+        return current is not None and any(blob(rev) == current for rev in carrying)
 
     def unversioned_counts(self) -> dict[str, int]:
         """How many changes each dashboard holds that no version carries.
@@ -3519,9 +3570,11 @@ class HistoryStore:
         The position of the newest version-bearing change in the
         dashboard's own revisions, which the index keeps newest first -
         so 0 means the newest change carries a version, and a dashboard
-        with no version at all counts every change it has. The question
-        the panel's "Right now" card asks, answered for all dashboards
-        at once.
+        with no version at all counts every change it has. Also 0 where
+        the newest state is byte-identical to one of the dashboard's
+        versions, however many changes lie between: the question the
+        panel's "Right now" card asks, answered for all dashboards at
+        once.
 
         Not cached by HEAD, unlike `survey`: a new or removed version
         does not move HEAD. The revisions come from the index, which is

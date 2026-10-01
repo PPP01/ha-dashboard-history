@@ -409,7 +409,7 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
     A deleted dashboard is listed too, and marked as such. That is not a
     courtesy: it is the one somebody opens this tool to find. Each entry
     reports how many changes it holds since the newest version
-    (`unversioned`).
+    (`unversioned`), or 0 where its state is the same as a version's.
     """
     # One call for the names and the counts: two would leave a gap for a
     # `forget` to run through (decision 24). Not part of `survey` alone,
