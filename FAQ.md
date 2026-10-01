@@ -183,11 +183,12 @@ on them explain themselves.
 offer is gone once the dashboard stands on a version: the box already
 names it, and a button that saved the same state again was an offer you
 had to walk back. Switch to the **advanced** view instead — the "Right
-now" box there says **Save this as another version**. It costs nothing
-and it loses nothing: the old version stays exactly where it is, still
-pointing at its state. Two versions on one state is allowed and normal —
-after going back to an older state, a fresh name for it is often
-precisely what you want.
+now" box there says **Save this as another version**. The panel asks
+once whether you really want another name for the same state; say yes
+and the usual dialog follows. It costs nothing and it loses nothing: the
+old version stays exactly where it is, still pointing at its state. Two
+versions on one state is allowed and normal — after going back to an
+older state, a fresh name for it is often precisely what you want.
 
 This works because versions group and never squash. Nothing is
 overwritten and nothing is thrown away, so an extra name is never the

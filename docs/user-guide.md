@@ -51,7 +51,7 @@ Advanced view exposes every single recorded change:
 - Version headers divide the changes into logical sections.
 - Every row shows the automatic change summary (e.g. *"living-room: 1 removed"*), the timestamp, and the short commit hash.
 - Click any row to expand its details and access the action bar.
-- The **Right now** box carries **Save this as a version** while the dashboard has changed since the last version, and **Save this as another version** while it stands on one — the simple view only has the first.
+- The **Right now** box carries **Save this as a version** while the dashboard has changed since the last version, and **Save this as another version** while it stands on one — the simple view only has the first. The second asks once whether you really want another name for the same state before the dialog opens.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/05-history-overview-dark.png">
