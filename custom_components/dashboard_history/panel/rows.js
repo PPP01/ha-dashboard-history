@@ -229,6 +229,21 @@ export function undoButton(version) {
 }
 
 /**
+ * The button that names the state the dashboard holds right now as a
+ * version. Exported beside `undoButton` for the same reason: every
+ * place that offers it draws one control, not three that drift.
+ *
+ * `another` is for a state that is already named. The first press on a
+ * state nothing holds is a decision about a name; on a state a version
+ * holds, it is a second name for the same content, and the word says
+ * so before the dialog has to (GitHub #50).
+ */
+export function saveButton({ another = false } = {}) {
+  return `<button class="act ghost" data-version="now"
+               >Save this as ${another ? "another" : "a"} version</button>`;
+}
+
+/**
  * One change, as a row.
  *
  * The word "state" in both chips is load-bearing, and it was missing.

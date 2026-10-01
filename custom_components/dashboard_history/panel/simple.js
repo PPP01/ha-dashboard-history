@@ -28,7 +28,7 @@ const { escape, when } = await import(`./render.js${PARTS}`);
 // it, both drawn the same way wherever a version is shown; undoButton
 // is the way back to the last version, offered here and in the
 // advanced mode's own right-now box on the same condition.
-const { nowChip, pen, bin, undoButton } = await import(`./rows.js${PARTS}`);
+const { nowChip, pen, bin, undoButton, saveButton } = await import(`./rows.js${PARTS}`);
 
 // The way over to the other mode. Offered in both of this mode's
 // states - with versions and without - and written once, because two
@@ -249,7 +249,7 @@ export function renderSimple({
       // mode with no versions yet would have neither a way to make one
       // nor a visible way to the other mode.
       `<p class="empty muted">This dashboard has no versions yet.</p>
-         <button class="act ghost" data-version="now">Save this as a version</button>
+         ${saveButton()}
          ${HINT}`;
 
   // The one place you are standing, said in the only vocabulary this
@@ -350,6 +350,12 @@ export function renderSimple({
     ? `The dashboard is in the state of ${number(standingOn)}${standingOn.title ? ` — ${escape(standingOn.title)}` : ""}.`
     : "The dashboard has changed since the last version was saved.";
   const says = merged ? vhead(standingOn, "") : `<p>${standing}</p>`;
+  // Settled (blue): the block already names the version that holds this
+  // state, so there is nothing to save and nothing to undo. The way to a
+  // second version is the advanced mode (GitHub #50).
+  const acts = standingOn
+    ? ""
+    : `<span class="acts">${saveButton()}${undo}</span>`;
   // What the block says with itself shut. The chip is the advanced
   // mode's - the same function, not the same words typed again - and
   // unlike there it needs no proof: a crowned row has to earn "current
@@ -358,10 +364,7 @@ export function renderSimple({
   // `standingOn` is the same fact the box's own ring is coloured by.
   const nowHead = `<p class="heading">Right now ${nowChip(Boolean(standingOn))}</p>
       ${says}
-      <span class="acts">
-        <button class="act ghost" data-version="now">Save this as a version</button>
-        ${undo}
-      </span>`;
+      ${acts}`;
   // Under the version's own name where the box holds that version's
   // changes, and under the bare word otherwise. Where it is a version's
   // name it is the key the advanced mode folds that same span under, so

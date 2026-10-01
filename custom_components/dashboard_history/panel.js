@@ -70,7 +70,7 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, whenRange, joinNames;
-let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton;
+let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton;
 let DIALOGS;
 let renderSimple, steps, spanOf;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -85,7 +85,7 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, whenRange, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple, steps, spanOf } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);

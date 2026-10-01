@@ -3664,7 +3664,6 @@ def test_the_merged_block_keeps_what_the_row_could_do(simple_mode):
     # entirely, against the promise that any version can be renamed.
     assert simple_mode["plain"]["boxPen"] is True
     assert simple_mode["plain"]["boxBin"] is True
-    assert simple_mode["plain"]["boxSave"] is True
 
 
 def test_the_merged_block_says_where_you_are_only_once(simple_mode):
@@ -3955,6 +3954,89 @@ def test_the_opened_current_state_survives_a_render(simple_now):
 
 def test_the_drifted_current_state_still_carries_the_badge(simple_now):
     assert simple_now["drifted"]["badge"] == 1
+
+
+
+_SIMPLE_SAVE_BUTTON = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "simple";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+const marked = { revision: "c", message: "3 cards removed",
+                 versions: [{ name: "dash/v1.2.0" }], timestamp: 3 };
+const since = { revision: "a", message: "1 card added", versions: [], timestamp: 4 };
+const version = (name, same, revision) => ({
+  name, title: name, description: "", revision, same_as_now: same, timestamp: 1,
+});
+
+// Settled, standing on the newest version: no button.
+el._versions = [version("dash/v1.2.0", true, "c")];
+el._changes = [marked];
+const settledOnNewest = el._renderMain();
+
+// Settled, standing on an OLDER version's state (what going back leaves):
+// newer versions are drawn above it, the block is not merged - and still
+// settled, so still no button.
+el._versions = [version("dash/v1.2.0", false, "c"), version("dash/v1.0.0", true, "e")];
+el._changes = [since, marked];
+const settledOnOlder = el._renderMain();
+
+// Unsettled: nothing holds the state. The button stays, plain wording.
+el._versions = [version("dash/v1.2.0", false, "c")];
+el._changes = [since, marked];
+const unsettled = el._renderMain();
+
+// No version at all: the button is the only way to make the first one.
+el._versions = [];
+el._changes = [since];
+const none = el._renderMain();
+
+console.log(JSON.stringify({
+  settledOnNewest: { button: settledOnNewest.includes('data-version="now"') },
+  settledOnOlder: { button: settledOnOlder.includes('data-version="now"') },
+  unsettled: {
+    button: unsettled.includes('data-version="now"'),
+    plain: unsettled.includes(">Save this as a version<"),
+    noAnother: !unsettled.includes("another version"),
+  },
+  none: {
+    button: none.includes('data-version="now"'),
+    plain: none.includes(">Save this as a version<"),
+  },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def simple_save_button(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "simple_save_button", _SIMPLE_SAVE_BUTTON)
+
+
+def test_a_settled_simple_box_offers_no_save_button(simple_save_button):
+    # Issue #50. The box already names the version that holds this state;
+    # a button that saves it again is an offer that has to be walked back
+    # in a dialog. The way to a second version is the advanced mode.
+    assert simple_save_button["settledOnNewest"]["button"] is False
+
+
+def test_a_simple_box_standing_on_an_older_versions_state_offers_no_save_button(
+    simple_save_button,
+):
+    assert simple_save_button["settledOnOlder"]["button"] is False
+
+
+def test_an_unsettled_simple_box_keeps_the_plain_save_button(simple_save_button):
+    assert simple_save_button["unsettled"]["button"] is True
+    assert simple_save_button["unsettled"]["plain"] is True
+    assert simple_save_button["unsettled"]["noAnother"] is True
+
+
+def test_the_simple_mode_without_versions_still_offers_the_first_one(
+    simple_save_button,
+):
+    assert simple_save_button["none"]["button"] is True
+    assert simple_save_button["none"]["plain"] is True
 
 
 # -- rows.js, the other half with no behavioural test ----------------------
