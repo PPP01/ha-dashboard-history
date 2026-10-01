@@ -3213,7 +3213,7 @@ class DashboardHistoryPanel extends HTMLElement {
         } not saved as a version yet</span></span>`
       : "";
     return `
-        <button class="dash${pending ? " untidy" : ""}" data-key="${escape(d.key)}"
+        <button class="dash${d.exists ? "" : " deleted"}${pending ? " untidy" : ""}" data-key="${escape(d.key)}"
                 aria-current="${d.key === this._selected}">
           <span>${escape(d.title)}${d.exists ? "" : '<span class="gone">deleted</span>'}${chip}</span>
           <span class="key">${escape(d.key)}</span>

@@ -396,6 +396,11 @@ export const STYLE = `
     text-align: left;
     cursor: pointer;
   }
+  /* A live dashboard always has a stripe: blue where its current state
+     is one a version holds, orange (below) where it is not. Not
+     written on the base rule above, because that would reach the
+     deleted dashboards as well, and those are not clean, only gone. */
+  .dash:not(.deleted) { box-shadow: inset 3px 0 0 var(--primary-color, #03a9f4); }
   .dash:hover { background: var(--secondary-background-color, #fafafa); }
   .dash[aria-current="true"] {
     background: var(--secondary-background-color, #fafafa);

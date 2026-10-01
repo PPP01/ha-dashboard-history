@@ -215,3 +215,22 @@ def test_the_orange_stripe_is_the_colour_the_current_state_wears():
     rule = STYLE_TEXT[STYLE_TEXT.index(".dash.untidy"):]
     rule = rule[: rule.index("}")]
     assert "inset 3px 0 0 var(--accent-color, #ff9800)" in rule
+
+
+def _rule(selector):
+    """The declarations of the first rule that opens with this selector."""
+    start = STYLE_TEXT.index(selector + " {")
+    return STYLE_TEXT[start : STYLE_TEXT.index("}", start)]
+
+
+def test_the_base_rule_leaves_the_stripe_to_the_live_dashboards():
+    # A stripe on `.dash` itself would reach the deleted dashboards too,
+    # which are not clean, only gone.
+    assert "box-shadow" not in _rule("  .dash")
+
+
+def test_a_live_dashboard_is_blue_unless_the_orange_rule_says_otherwise():
+    blue = STYLE_TEXT.index(".dash:not(.deleted) {")
+    orange = STYLE_TEXT.index(".dash.untidy {")
+    assert blue < orange
+    assert "inset 3px 0 0 var(--primary-color, #03a9f4)" in _rule("  .dash:not(.deleted)")

@@ -8787,6 +8787,7 @@ const buttons = markup.split("<button").slice(1).map((part) => {
   return {
     key: /data-key="([^"]+)"/.exec(head)[1],
     untidy: /class="dash[^"]*\\buntidy\\b/.test(head),
+    deleted: /class="dash[^"]*\\bdeleted\\b/.test(head),
     current: /aria-current="true"/.test(head),
     chip: (/<span class="pending"[^>]*>(\\d+)/.exec(part) || [])[1] || null,
     title: (/<span class="pending" title="([^"]*)"/.exec(part) || [])[1] || null,
@@ -8818,6 +8819,13 @@ def test_the_chip_is_read_out_in_words(untidy_side):
     # Without the words a screen reader hears a bare "3" after the title.
     assert untidy_side["many"]["sr"] == " changes not saved as a version yet"
     assert untidy_side["one"]["sr"] == " change not saved as a version yet"
+
+
+def test_only_a_deleted_dashboard_is_told_apart_from_the_live_ones(untidy_side):
+    # The blue stripe of a clean dashboard is for live ones: a deleted
+    # dashboard is behind its own fold and has nothing to be clean of.
+    assert untidy_side["gone"]["deleted"] is True
+    assert [k for k, v in untidy_side.items() if v["deleted"]] == ["gone"]
 
 
 def test_a_clean_dashboard_carries_no_mark(untidy_side):
