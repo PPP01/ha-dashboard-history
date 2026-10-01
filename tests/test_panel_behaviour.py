@@ -8766,3 +8766,78 @@ def test_the_list_says_warming_up_only_while_the_server_does(warmup_outcome):
 def test_the_hint_stops_asking_once_there_is_a_list_or_an_error(warmup_outcome):
     assert warmup_outcome["stoppedAsking"] is True
     assert warmup_outcome["hintDoesNotThrow"] is True
+
+
+# The list marks a dashboard whose newest change no version carries:
+# an orange stripe and the number of changes since the last version.
+_UNTIDY_SIDE = """
+const el = new Panel();
+el._dashboards = [
+  { key: "many", title: "Many", exists: true, unversioned: 3 },
+  { key: "one", title: "One", exists: true, unversioned: 1 },
+  { key: "clean", title: "Clean", exists: true, unversioned: 0 },
+  { key: "old", title: "Old", exists: true },
+  { key: "gone", title: "Gone", exists: false, unversioned: 5 },
+];
+el._selected = "many";
+const markup = el._renderSide();
+// One entry per button, in the order they are drawn.
+const buttons = markup.split("<button").slice(1).map((part) => {
+  const head = part.slice(0, part.indexOf(">"));
+  return {
+    key: /data-key="([^"]+)"/.exec(head)[1],
+    untidy: /class="dash[^"]*\\buntidy\\b/.test(head),
+    current: /aria-current="true"/.test(head),
+    chip: (/<span class="pending"[^>]*>(\\d+)/.exec(part) || [])[1] || null,
+    title: (/<span class="pending" title="([^"]*)"/.exec(part) || [])[1] || null,
+    sr: (/<span class="sr">([^<]*)<\\/span>/.exec(part) || [])[1] ?? null,
+  };
+});
+console.log(JSON.stringify(Object.fromEntries(buttons.map((b) => [b.key, b]))));
+"""
+
+
+@pytest.fixture(scope="session")
+def untidy_side(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "untidy_side", _UNTIDY_SIDE)
+
+
+def test_a_dashboard_with_unversioned_changes_carries_the_mark(untidy_side):
+    assert untidy_side["many"]["untidy"] is True
+    assert untidy_side["many"]["chip"] == "3"
+
+
+def test_the_chip_says_what_the_number_counts(untidy_side):
+    assert untidy_side["many"]["title"] == "3 changes not saved as a version yet"
+    assert untidy_side["one"]["title"] == "1 change not saved as a version yet"
+
+
+def test_the_chip_is_read_out_in_words(untidy_side):
+    # The visible number is the chip's own text, the hidden words follow
+    # it: read together they say "3 changes not saved as a version yet".
+    # Without the words a screen reader hears a bare "3" after the title.
+    assert untidy_side["many"]["sr"] == " changes not saved as a version yet"
+    assert untidy_side["one"]["sr"] == " change not saved as a version yet"
+
+
+def test_a_clean_dashboard_carries_no_mark(untidy_side):
+    assert untidy_side["clean"]["untidy"] is False
+    assert untidy_side["clean"]["chip"] is None
+
+
+def test_a_dashboard_the_server_gave_no_count_for_carries_no_mark(untidy_side):
+    # An older backend, or a record without the field: no mark and no
+    # error, the same list as before.
+    assert untidy_side["old"]["untidy"] is False
+    assert untidy_side["old"]["chip"] is None
+
+
+def test_a_deleted_dashboard_never_carries_the_mark(untidy_side):
+    assert untidy_side["gone"]["untidy"] is False
+    assert untidy_side["gone"]["chip"] is None
+
+
+def test_the_selected_dashboard_keeps_the_mark(untidy_side):
+    assert untidy_side["many"]["current"] is True
+    assert untidy_side["many"]["untidy"] is True
+    assert untidy_side["one"]["current"] is False

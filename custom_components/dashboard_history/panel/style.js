@@ -401,6 +401,23 @@ export const STYLE = `
     background: var(--secondary-background-color, #fafafa);
     box-shadow: inset 3px 0 0 var(--primary-color, #03a9f4);
   }
+  /* Changes no version carries. Orange, the colour the current-state
+     card and its chip already wear, and it stays orange when the row
+     is selected: the grey background says which one is open, the
+     stripe says which ones are not saved. Written after the selected
+     rule and with the same specificity on purpose - the later one wins,
+     so a selected, unversioned dashboard does not go blue. */
+  .dash.untidy { box-shadow: inset 3px 0 0 var(--accent-color, #ff9800); }
+  .dash .pending {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: var(--accent-color, #ff9800);
+    color: #fff;
+    font-size: 11px;
+    vertical-align: 1px;
+  }
   .dash .key { font-size: 12px; color: var(--secondary-text-color, #727272); }
   .gone {
     display: inline-block;

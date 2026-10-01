@@ -197,3 +197,21 @@ def test_the_two_halves_of_the_search_look_at_the_same_fields():
     ]
     versions = set(re.findall(r"\bv\.(\w+)", versions_body))
     assert versions == {"name", "title", "description"}
+
+
+STYLE_TEXT = (PANEL / "panel" / "style.js").read_text(encoding="utf-8")
+
+
+def test_the_orange_rule_comes_after_the_blue_one():
+    # Both rules have the same specificity, so the one written later
+    # wins. If the orange stripe is written first, a selected, unversioned
+    # dashboard goes blue - the exact thing issue 49 asks not to happen.
+    blue = STYLE_TEXT.index('.dash[aria-current="true"]')
+    orange = STYLE_TEXT.index(".dash.untidy")
+    assert blue < orange
+
+
+def test_the_orange_stripe_is_the_colour_the_current_state_wears():
+    rule = STYLE_TEXT[STYLE_TEXT.index(".dash.untidy"):]
+    rule = rule[: rule.index("}")]
+    assert "inset 3px 0 0 var(--accent-color, #ff9800)" in rule

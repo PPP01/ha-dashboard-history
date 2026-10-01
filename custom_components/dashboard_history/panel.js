@@ -3201,10 +3201,21 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   _renderDashboard(d) {
+    // A deleted dashboard has nothing left to put a version on, so it
+    // is never marked, whatever the record says. A record without the
+    // count (an older server) reads as zero and is not marked either.
+    const pending = d.exists ? Number(d.unversioned) || 0 : 0;
+    const chip = pending
+      ? `<span class="pending" title="${pending} ${
+          pending === 1 ? "change" : "changes"
+        } not saved as a version yet">${pending}<span class="sr"> ${
+          pending === 1 ? "change" : "changes"
+        } not saved as a version yet</span></span>`
+      : "";
     return `
-        <button class="dash" data-key="${escape(d.key)}"
+        <button class="dash${pending ? " untidy" : ""}" data-key="${escape(d.key)}"
                 aria-current="${d.key === this._selected}">
-          <span>${escape(d.title)}${d.exists ? "" : '<span class="gone">deleted</span>'}</span>
+          <span>${escape(d.title)}${d.exists ? "" : '<span class="gone">deleted</span>'}${chip}</span>
           <span class="key">${escape(d.key)}</span>
         </button>`;
   }
