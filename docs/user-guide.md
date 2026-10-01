@@ -96,10 +96,11 @@ Takes back that single save while leaving all subsequent changes untouched.
 ### 2. Version up to here
 
 Tags the exact state of the dashboard after this change as a named version.
+- On a state that already carries a version, or equals one, the panel first asks once whether you want another name for it; the dialog below follows if you say yes.
 - Opens a dialog offering three semantic versioning buttons: **Patch**, **Minor**, and **Major**.
 - The version numbers are calculated automatically from the highest version that dashboard already possesses (e.g. bumping `v1.1.0` to `v1.1.1`, `v1.2.0`, or `v2.0.0`).
 - Enter an optional title and description.
-- Creating a version writes an annotated git tag; it does not alter dashboard contents and requires no confirmation.
+- Creating a version writes an annotated git tag; it does not alter dashboard contents and needs no preview or confirmation of its own.
 
 ### 3. Replace the whole dashboard
 

@@ -14,7 +14,7 @@
 
 ## Ausgangslage und Basis
 
-- **Basis ist `main` ab `1e486b6`** (Stand nach #50). Branch: `issue-51-ask-before-another-version`, von `main`. Die Plan-Datei selbst wird als erster Commit auf diesen Branch gelegt (`[51] Add the plan for #51`), zusammen mit Review-Dateien dazu, falls vorhanden. Danach folgen genau **zwei Umsetzungs-Commits**, einer je Aufgabe; insgesamt also drei Commits auf dem Branch.
+- **Basis ist `main` ab `1e486b6`** (Stand nach #50). Branch: `issue-51-ask-before-another-version`, von `main`. Die Plan-Datei selbst wird als erster Commit auf diesen Branch gelegt (`[51] Add the plan for #51`), zusammen mit Review-Dateien dazu, falls vorhanden. Danach folgen genau **zwei Umsetzungs-Commits**, einer je Aufgabe. Zusammen mit den Korrekturen aus dem Plan-Review (ein eigener Commit, siehe »Review-Stand«) sind das vier Commits auf dem Branch, bei einem Fix aus dem Abschluss-Review fünf.
 - Die Anker sind **Funktionsnamen**, keine Zeilennummern. Passt ein Anker nicht mehr, hält der Umsetzer an und meldet es.
 - **Geprüft vor dem Schreiben:** Der Code und die Tests dieses Plans wurden in einer Scratch-Kopie von `main@1e486b6` ausgeführt. Ohne die Umsetzung: 8 der neuen Tests FAIL, 2 PASS (sie halten bestehendes Verhalten fest). Mit der Umsetzung: alle 10 PASS, Gesamtsuite `1133 passed, 5 skipped, 0 failed`. Ohne den angepassten Test aus Aufgabe 1, Schritt 4 sind es zwei ERRORs; die Gründe stehen dort.
 
