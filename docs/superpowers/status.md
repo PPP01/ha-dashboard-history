@@ -31,6 +31,7 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | O | Sections als Einheit – Zuordnung von außen nach innen, ein Undo-Schritt je Ansicht (Issue #31) | Erledigt (2026-09-26) | `specs/2026-09-25-sections-als-einheit-design.md`, `plans/2026-09-26-sections-als-einheit.md` |
 | P | `analyze.py` aufteilen – Komplexitäts-Sperrklinke und Importverträge, Paket mit fünf Modulen, `plan_undo` als Planer je Art (Issue #41) | Erledigt (2026-09-27) | `specs/2026-09-27-analyze-aufteilen-design.md`, `plans/2026-09-27-analyze-aufteilen.md` |
 | — | Ganze entfernte Section parken – Issue #39 | Erledigt (2026-09-29) | `specs/2026-09-29-abschnitt-parken-design.md`, `plans/2026-09-29-abschnitt-parken.md` |
+| — | Ungespeicherte Änderungen in der Dashboard-Liste – oranger Streifen und Zähler (Issue #49). Regel: ein Dashboard zählt 0, wenn sein neuester Stand einer seiner Versionen gleicht (wie die Karte »Right now«) | Umgesetzt auf Branch `issue-49-unversioned-marker` (2026-10-01); Sichtprüfung und Merge stehen aus | `plans/2026-10-01-ungespeicherte-aenderungen-in-der-liste.md` (mit Nachtrag zur geänderten Regel), `reviews/2026-10-01-issue-49-*.md` |
 
 ## Laufzeit `forget` (Versionsmarken in einem Zug)
 

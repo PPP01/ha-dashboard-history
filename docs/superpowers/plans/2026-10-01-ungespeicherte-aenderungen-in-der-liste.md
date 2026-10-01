@@ -14,6 +14,8 @@
 
 ## Entscheidungen, die dieser Plan trifft (und warum)
 
+> **Nachtrag vom 2026-10-01:** Die Regel in der ersten Entscheidung unten wurde nach der Umsetzung geändert, sie widersprach der Karte »Right now«. Siehe den Abschnitt »Nachtrag« am Ende dieses Plans.
+
 - **Definition von »untidy«: die neueste aufgezeichnete Änderung des Dashboards trägt keine Version.** Das ist dieselbe Frage, die die »Right now«-Karte stellt (»The dashboard has changed since vX«). Eine Sonderregel für automatische Versionen gibt es nicht und braucht es nicht: Eine Tagesmarke wird beim ersten Speichern des *folgenden* Tages auf den letzten Stand des *Vortags* gesetzt (`milestones.py::_async_mark_day`, `versions.py::end_of_previous_day`), liegt also nie auf dem neuesten Stand. Das initiale `v1.0.0` (der »Floor«) sitzt auf dem ältesten Stand; ein Dashboard mit genau diesem einen Stand ist aufgeräumt, jede weitere Änderung macht es orange.
 - **Der Zähler zählt aufgezeichnete Änderungen, nicht Netto-Unterschiede.** Eine Karte fünfmal hoch und runter geschoben ergibt 5. Das ist dieselbe Zählung, nach der die History-Liste Zeilen zeigt. Der Zähler ist die Position der neuesten versionierten Änderung in `index.by_key[key]` (neueste zuerst); ohne jede Version ist es die Gesamtzahl.
 - **Gelöschte Dashboards bekommen nie Streifen oder Chip** (`exists` ist falsch → 0). Dashboards unter »Not in the sidebar« bekommen sie, denn sie sind genauso unversioniert.
@@ -821,3 +823,14 @@ Das Ergebnis bleibt im Handover **offen**, bis der Nutzer es bestätigt hat; Gem
 - **Namenskonsistenz:** `unversioned_counts`, `dashboard_listing`, `_count_unversioned`, `_marked_revisions`, `_tag_targets`, Feld `unversioned`, Klasse `untidy`, Chip-Klasse `pending` – in Aufgabe 1, 2 und den Tests gleich geschrieben.
 - **Bekannte Grenze (bewusst):** Eine Änderung hinter dem Rücken von Home Assistant (von Hand editierte Storage-Datei) taucht erst mit dem nächsten Start in der Historie auf und färbt das Dashboard erst dann orange; der Vergleich der Live-Konfiguration mit HEAD wäre je Dashboard ein Laden der Live-Config und gehört nicht in dieses Ticket.
 - **Einarbeitung der Reviews:** kritisch (Rennen mit `forget`, alle vier Läufe) → Rennschutz plus `dashboard_listing`, Beweis durch zwei Hook-Tests, deren Aussagekraft Aufgabe 1 Schritt 6 ausdrücklich prüft; wichtig (Integrationsprüfung zu schwach, leeres Repository, `.sr`) → Schritt 8, `test_a_repository_without_a_commit_answers_nothing`, `test_the_chip_is_read_out_in_words`; Hinweis (Cache-Regression, CSS-Tests in `test_panel_assets.py`, `remove_version`-Vorbehalt) → `test_an_unchanged_version_is_not_read_again`, verschoben beziehungsweise gestrichen.
+
+---
+
+## Nachtrag: nach der Umsetzung geändert (2026-10-01)
+
+Der Plan wurde wie beschrieben umgesetzt (`982cf95`, `51dee57`). Zwei Änderungen kamen danach als weitere Commits auf demselben Branch dazu; der Text oben bleibt als Stand der Planung stehen.
+
+1. **`b7206a3` – die Liste lädt auch bei einem unfertigen `forget`.** Der Rennschutz aus Aufgabe 1 hängte die ganze Dashboard-Liste an eine Prüfung, die bei einem laufenden `forget` oder einem nach einem Absturz liegen gebliebenen Checkpoint mit `RuntimeError` aufgibt. Die Zähler sind nur eine Zusatzanzeige. `dashboard_listing` fängt den Fehler jetzt ab und antwortet mit den Namen und ohne Zähler. Im Panel ist der Hauptpfad ohnehin gesperrt; es ging um zwei Randfälle (siehe `reviews/2026-10-01-issue-49-umsetzung-review.md`, Nachtrag).
+2. **`fe87406` – die Regel für »unversioniert« ist geändert.** Oben, in der ersten Entscheidung, steht: »die neueste aufgezeichnete Änderung des Dashboards trägt keine Version«, und dazu die Behauptung, das sei dieselbe Frage wie die der Karte »Right now«. Das war falsch. Die Karte ist blau, wenn der aktuelle Inhalt byte-gleich dem einer Version ist, auch nach Änderungen dazwischen. Auf der Testinstanz widersprachen sich Liste und Karte bei 18 von 29 markierten Dashboards. **Die jetzt geltende Regel:** Ein Dashboard, dessen neuester Stand byte-gleich dem Stand einer seiner eigenen Versionen ist, zählt 0 (kein Streifen, kein Chip). Sonst bleibt es bei der Zahl der Änderungen seit der neuesten Version. Verglichen wird per Blob-ID, gecacht je (Revision, Dashboard). Gemessen im Container gegen die Prüfbank: 104 ms für den ersten Lauf, 30 ms jeder weitere; markiert sind 11 statt 29 von 51 Dashboards.
+
+Geändert hat sich nichts an der Zählung selbst, am Panel und an den Zielen des Tickets. Die Sichtprüfung (Aufgabe 3, Schritt 4) steht mit der neuen Regel noch aus.
