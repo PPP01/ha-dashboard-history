@@ -536,6 +536,14 @@ async def run(access: str) -> None:
             len(keys) >= 10,
             f"{len(keys)} dashboards",
         )
+        check(
+            "every listed dashboard says how many changes no version carries",
+            all(
+                isinstance(d.get("unversioned"), int) and d["unversioned"] >= 0
+                for d in listed["dashboards"]
+            ),
+            f"{[d.get('unversioned') for d in listed['dashboards']][:10]}",
+        )
 
         target = TARGET
         history = await socket.call("dashboard_history/history", dashboard=target)
@@ -750,7 +758,8 @@ async def run_lifecycle(access: str) -> None:
             "the panel offers it, under the name it last had",
             entry is not None
             and entry["exists"] is False
-            and entry["title"] == renamed_title,
+            and entry["title"] == renamed_title
+            and entry["unversioned"] == 0,
             f"{entry}",
         )
 
@@ -3805,6 +3814,10 @@ async def run_remove_version(access: str) -> None:
                 **extra,
             )
 
+        async def unversioned() -> int:
+            listing = await socket.call("dashboard_history/dashboards")
+            return next(d["unversioned"] for d in listing["dashboards"] if d["key"] == key)
+
         changes = (await socket.call("dashboard_history/history", dashboard=key))[
             "changes"
         ]
@@ -3822,6 +3835,12 @@ async def run_remove_version(access: str) -> None:
         name = made.get("created")
         if not check("a version to remove was made", bool(name), str(made)):
             return
+
+        check(
+            "the newest state carries the version just made, so nothing is unversioned",
+            await unversioned() == 0,
+            str(await unversioned()),
+        )
 
         # The preview: the words, and nothing changed by asking.
         facts = await remove(name)
@@ -3876,6 +3895,18 @@ async def run_remove_version(access: str) -> None:
             name not in after,
             name,
         )
+        remaining = {v["revision"] for v in await listed()}
+        expected = next(
+            (at for at, c in enumerate(changes) if c["revision"] in remaining), None
+        )
+        # None: no remaining version sits within the page of changes read
+        # above, so the true count is beyond it and cannot be told here.
+        if expected is not None:
+            check(
+                "taking the version away counts the changes in front of the next one",
+                await unversioned() == expected,
+                f"{await unversioned()} vs {expected}",
+            )
         check(
             "and the bench is as it was found",
             set(after) == before,

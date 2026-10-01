@@ -407,11 +407,14 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
     """Every dashboard the panel can offer, live ones and deleted ones.
 
     A deleted dashboard is listed too, and marked as such. That is not a
-    courtesy: it is the one somebody opens this tool to find.
+    courtesy: it is the one somebody opens this tool to find. Each entry
+    reports how many changes it holds since the newest version
+    (`unversioned`).
     """
-    # One executor hop for the store's whole answer: every name, which
-    # are live, and what each was last called. See `HistoryStore.survey`.
-    found = await hass.async_add_executor_job(store.survey)
+    # One call for the names and the counts: two would leave a gap for a
+    # `forget` to run through (decision 24). Not part of `survey` alone,
+    # which is cached by HEAD while a version does not move HEAD.
+    found, unversioned = await hass.async_add_executor_job(store.dashboard_listing)
     known = await async_known_keys(hass)
     meta = await async_get_all_meta(hass)
 
@@ -430,6 +433,10 @@ async def async_dashboards(hass: HomeAssistant, store: HistoryStore) -> dict:
                 "title": info.get("title") or key,
                 "icon": info.get("icon"),
                 "exists": exists,
+                # Changes no version carries. A dashboard that is gone has
+                # nothing left to put a version on, and the panel marks
+                # only live ones.
+                "unversioned": unversioned.get(key, 0) if exists else 0,
             }
         )
     return {"dashboards": dashboards}

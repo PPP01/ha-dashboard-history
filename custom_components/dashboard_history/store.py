@@ -104,6 +104,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
+from typing import TypeVar
 
 try:  # Two load paths, and this module has to work under both.
     # Home Assistant imports this as part of the package; plain pytest
@@ -122,6 +123,8 @@ from dulwich.file import FileLocked
 from dulwich.repo import Repo
 
 _LOGGER = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _IDENTITY = b"Dashboard History <dashboard-history@localhost>"
 
@@ -642,6 +645,16 @@ class HistoryStore:
         # the survey on every recorded change, and each one is a walk over
         # the whole history.
         self._survey: tuple[str, Survey] | None = None
+        # Where each tag points, keyed by the tag object's own sha. A
+        # sha names one immutable object, so an entry can never go
+        # stale - it can only stop being asked for, and
+        # `_marked_revisions` rebuilds the whole mapping from the refs
+        # that exist on every call, which drops those. Read once per
+        # tag instead of once per call: loading every tag object costs
+        # 492 ms at 3650 tags (see `_each_tag`), and the panel asks on
+        # every recorded change. Replaced as a whole, never mutated, so
+        # two executor threads at worst both rebuild it.
+        self._tag_targets: dict[bytes, str] = {}
         # Which commits touched which dashboard, and where each commit
         # sits in the one order the walk hands them back. See
         # `_revision_index` for why this exists at all.
@@ -2521,8 +2534,8 @@ class HistoryStore:
         return self._checkpoint_path().exists()
 
     def _retrying_a_forget_race(
-        self, repo: Repo, build: Callable[[], list[Change]]
-    ) -> list[Change]:
+        self, repo: Repo, build: Callable[[], _T]
+    ) -> _T:
         """Run `build`, rebuilding it whole if it raced a `forget`.
 
         `build` must read everything it needs itself, fresh, every time
@@ -3440,6 +3453,104 @@ class HistoryStore:
         found = Survey(sorted(names), live, last_meta)
         self._survey = (head, found)
         return found
+
+    def _marked_revisions(self, repo: Repo) -> dict[str, set[str]]:
+        """Which commits carry a version, by the dashboard the version names.
+
+        The owner is read off the ref name, split from the right like
+        `_versions_by_key`: a key may hold a slash itself. A tag
+        without a slash belongs to no dashboard and is left out.
+
+        The commit a tag points at needs the tag object, which is read
+        once per tag and then remembered in `_tag_targets`. A
+        lightweight tag is the ref straight to the commit, an annotated
+        one points at a tag object whose `object` is the commit - the
+        same two shapes `_version_from` tells apart.
+        """
+        known = self._tag_targets
+        current: dict[bytes, str] = {}
+        marked: dict[str, set[str]] = {}
+        for ref, sha in repo.refs.as_dict(b"refs/tags").items():
+            if b"/" not in ref:
+                continue
+            target = known.get(sha)
+            if target is None:
+                try:
+                    found = repo[sha]
+                except KeyError:
+                    # Listed a moment ago and gone now: a `forget` is
+                    # rewriting the tags. Same skip as `_each_tag`.
+                    continue
+                target = _as_text(
+                    found.object[1] if hasattr(found, "object") else found.id
+                )
+            current[sha] = target
+            owner = ref.rsplit(b"/", 1)[0].decode()
+            marked.setdefault(owner, set()).add(target)
+        self._tag_targets = current
+        return marked
+
+    def _count_unversioned(self, repo: Repo) -> dict[str, int]:
+        """The count itself, with no protection against a `forget`.
+
+        Two reads, the index and then the tag refs, and a `forget` that
+        completes between them leaves the first holding commits from
+        before the rewrite while the second sees tags already pointing
+        at the new ones: nothing matches, and every change counts. Only
+        ever called from inside `_retrying_a_forget_race`, which is what
+        notices and reads both again.
+        """
+        index = self._revision_index(repo)
+        if index is None:
+            return {}
+        marked = self._marked_revisions(repo)
+        counts: dict[str, int] = {}
+        for key, revisions in index.by_key.items():
+            carrying = marked.get(key, set())
+            counts[key] = next(
+                (at for at, revision in enumerate(revisions) if revision in carrying),
+                len(revisions),
+            )
+        return counts
+
+    def unversioned_counts(self) -> dict[str, int]:
+        """How many changes each dashboard holds that no version carries.
+
+        The position of the newest version-bearing change in the
+        dashboard's own revisions, which the index keeps newest first -
+        so 0 means the newest change carries a version, and a dashboard
+        with no version at all counts every change it has. The question
+        the panel's "Right now" card asks, answered for all dashboards
+        at once.
+
+        Not cached by HEAD, unlike `survey`: a new or removed version
+        does not move HEAD. The revisions come from the index, which is
+        cached by HEAD; the tags are listed by ref on every call and
+        only their targets are remembered.
+
+        Empty where there is no repository, or nothing recorded yet and
+        so no HEAD to build an index at.
+        """
+        repo = self._repo()
+        if repo is None:
+            return {}
+        return self._retrying_a_forget_race(repo, lambda: self._count_unversioned(repo))
+
+    def dashboard_listing(self) -> tuple[Survey, dict[str, int]]:
+        """`survey` and `unversioned_counts` out of one generation.
+
+        Two calls would leave a gap between them for a `forget` to run
+        through: names from before the rewrite next to counts from
+        after, or the other way round, and no error anywhere. Decision
+        24. One attempt reads both, and `_retrying_a_forget_race` reads
+        both again if HEAD moved or a `forget` was still unfinished.
+        """
+        repo = self._repo()
+        if repo is None:
+            return Survey([], set(), {}), {}
+        return self._retrying_a_forget_race(
+            repo, lambda: (self.survey(), self._count_unversioned(repo))
+        )
 
     @_naming_a_forget_race
     def measure(self) -> Measurement:
