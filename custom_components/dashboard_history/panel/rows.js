@@ -105,10 +105,13 @@ export function someNames(names) {
  * above an otherwise ordinary section. It adds the heading, the badge
  * and the date; it takes away the now-redundant "same state as now"
  * and the button that would only ever open on "No difference."
+ *
+ * `saveAnother` is for the first crowned box only: one state gets one
+ * button, however many versions are stacked on it.
  */
 export function versionHead({
   version, here, top, count, exists = true, compareMode = false, compareChecked = false,
-  crowned = false,
+  crowned = false, saveAnother = false,
 }) {
   const auto = version.automatic
     ? `<span class="auto">saved automatically</span>`
@@ -170,6 +173,7 @@ export function versionHead({
         ${bin(version)}
       </span>
       ${version.description ? `<p class="why typed">${escape(version.description)}</p>` : ""}
+      ${saveAnother ? `<span class="acts">${saveButton({ another: true })}</span>` : ""}
     </summary>`;
 }
 

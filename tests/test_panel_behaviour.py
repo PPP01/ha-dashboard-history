@@ -4828,9 +4828,9 @@ console.log(JSON.stringify({
   matched: {
     noDrift: !matched.includes("has changed since"),
     matches: matched.includes("the same state as") && matched.includes('title="v1.0.0"'),
+    anotherButton: matched.includes("Save this as another version"),
     // No way back is offered onto a state already known to be held
     // somewhere - the same rule a version's own row follows.
-    noSaveButton: !matched.includes('data-version="now"'),
     noUndoButton: !matched.includes("Undo / Go back to"),
   },
   cleanBox: {
@@ -4885,10 +4885,10 @@ def test_a_named_match_wins_over_the_drift_sentence(advanced_now_box):
     # Either/or, the same choice the simple mode's own box makes: a
     # named match already accounts for the content, so there is
     # nothing left to explain about drifting, and nowhere left to
-    # offer a way back to.
+    # offer a way back to - offering the way to a second name instead (#50).
     assert advanced_now_box["matched"]["noDrift"] is True
     assert advanced_now_box["matched"]["matches"] is True
-    assert advanced_now_box["matched"]["noSaveButton"] is True
+    assert advanced_now_box["matched"]["anotherButton"] is True
     assert advanced_now_box["matched"]["noUndoButton"] is True
 
 
@@ -4901,6 +4901,153 @@ def test_the_boxed_row_carries_no_second_current_state_chip(advanced_now_box):
 def test_the_boxed_rows_are_indented_like_a_versions_own(advanced_now_box):
     assert advanced_now_box["cleanBox"]["innerClass"] is True
     assert advanced_now_box["cleanBox"]["noVbody"] is False
+
+
+
+_ADVANCED_SAVE_ANOTHER = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._mode = "advanced";
+const count = (text, needle) => text.split(needle).length - 1;
+const ANOTHER = "Save this as another version";
+
+// Crowned: the newest change carries a version and is what the dashboard
+// holds right now - that version's own section is the "Right now" box.
+el._changes = [
+  { revision: "a", message: "1 card added",
+    versions: [{ name: "dash/v1.0.0", title: "First", timestamp: 1 }],
+    same_as_now: true, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "a" },
+];
+el._matching = [];
+const crowned = el._renderMain();
+
+// Two versions on the same newest commit: two stacked crowned boxes.
+el._changes = [
+  { revision: "a", message: "1 card added",
+    versions: [
+      { name: "dash/v1.0.0", title: "First", timestamp: 1 },
+      { name: "dash/v1.0.1", title: "Second", timestamp: 2 },
+    ],
+    same_as_now: true, timestamp: 2 },
+];
+el._versions = [
+  { name: "dash/v1.0.1", title: "Second", same_as_now: true, revision: "a" },
+  { name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "a" },
+];
+const stacked = el._renderMain();
+
+// Reverted: nothing crowned, an older version holds the same content.
+el._changes = [
+  { revision: "b", message: "2 cards moved", versions: [], same_as_now: true, timestamp: 2 },
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "a" },
+];
+el._matching = [{ name: "dash/v1.0.0" }];
+const reverted = el._renderMain();
+
+// Banner behind a tag, named: the newest change carries a version but
+// is not what the dashboard holds (a change at Home Assistant's back),
+// and an OLDER version holds exactly what the dashboard holds now.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.1.0" }],
+    same_as_now: false, timestamp: 3 },
+  { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._versions = [
+  { name: "dash/v1.1.0", title: "Second", same_as_now: false, revision: "a" },
+  { name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "b" },
+];
+el._matching = [{ name: "dash/v1.0.0" }];
+const namedBanner = el._renderMain();
+
+// Unsettled: the wording stays plain, as before.
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
+    same_as_now: false, timestamp: 1 },
+];
+el._matching = [];
+const unsettled = el._renderMain();
+
+// Not yet loaded: no buttons at all, as before.
+el._versionsLoaded = false;
+const loading = el._renderMain();
+
+console.log(JSON.stringify({
+  crowned: { another: count(crowned, ANOTHER), plain: count(crowned, ">Save this as a version<") },
+  stacked: { another: count(stacked, ANOTHER), boxes: count(stacked, 'class="ver now"') },
+  reverted: {
+    another: count(reverted, ANOTHER),
+    plain: count(reverted, ">Save this as a version<"),
+    noUndo: !reverted.includes("Undo / Go back to"),
+  },
+  namedBanner: {
+    banner: namedBanner.includes('class="now-panel now-head named"'),
+    another: count(namedBanner, ANOTHER),
+    plain: count(namedBanner, ">Save this as a version<"),
+    noUndo: !namedBanner.includes("Undo / Go back to"),
+  },
+  unsettled: {
+    plain: count(unsettled, ">Save this as a version<"),
+    another: count(unsettled, ANOTHER),
+  },
+  loading: { buttons: count(loading, 'data-version="now"') },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def advanced_save_another(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "advanced_save_another", _ADVANCED_SAVE_ANOTHER)
+
+
+def test_a_crowned_version_box_offers_another_version(advanced_save_another):
+    assert advanced_save_another["crowned"]["another"] == 1
+    assert advanced_save_another["crowned"]["plain"] == 0
+
+
+def test_only_the_first_of_several_stacked_boxes_carries_the_button(
+    advanced_save_another,
+):
+    # Two versions on one commit draw two crowned boxes; one button for
+    # one state, in the first box.
+    assert advanced_save_another["stacked"]["boxes"] == 2
+    assert advanced_save_another["stacked"]["another"] == 1
+
+
+def test_a_reverted_state_offers_another_version_and_no_undo(advanced_save_another):
+    assert advanced_save_another["reverted"]["another"] == 1
+    assert advanced_save_another["reverted"]["plain"] == 0
+    assert advanced_save_another["reverted"]["noUndo"] is True
+
+
+def test_a_named_banner_behind_a_tag_offers_another_version_and_no_undo(
+    advanced_save_another,
+):
+    # The newest change carries a version but is not the live state, and
+    # an older version holds the live content: settled, though drawn as
+    # the bodyless banner rather than a crowned section or a folded box.
+    assert advanced_save_another["namedBanner"]["banner"] is True
+    assert advanced_save_another["namedBanner"]["another"] == 1
+    assert advanced_save_another["namedBanner"]["plain"] == 0
+    assert advanced_save_another["namedBanner"]["noUndo"] is True
+
+
+def test_an_unsettled_advanced_box_keeps_the_plain_wording(advanced_save_another):
+    assert advanced_save_another["unsettled"]["plain"] == 1
+    assert advanced_save_another["unsettled"]["another"] == 0
+
+
+def test_no_save_button_before_the_versions_have_loaded(advanced_save_another):
+    assert advanced_save_another["loading"]["buttons"] == 0
 
 
 # -- each row gets the brand icon's own node-on-a-strand connector ----------

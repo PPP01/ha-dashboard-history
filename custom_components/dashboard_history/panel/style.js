@@ -1054,6 +1054,8 @@ export const STYLE = `
      rather than under the marker - the same reasoning .vsum .why
      follows in the simple mode. */
   details.ver > summary .why { margin: 4px 0 0 19px; }
+  details.ver > summary .acts { display: flex; flex-wrap: wrap; gap: 8px;
+    margin: 10px 0 0 19px; }
   /* The crowned section's own "Right now" line, drawn by the same
      heading class the boxes below use - and the same override their
      chip needs, widened past .standing so this one is not read

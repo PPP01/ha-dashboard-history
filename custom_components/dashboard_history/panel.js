@@ -3561,7 +3561,7 @@ class DashboardHistoryPanel extends HTMLElement {
     return this._matching.map((v) => shortName(v.name));
   }
 
-  _renderVersionHead(section, version, crowned = false) {
+  _renderVersionHead(section, version, crowned = false, another = false) {
     const top = section.rows[0];
     const dashboard = (this._dashboards ?? []).find((d) => d.key === this._selected);
     return versionHead({
@@ -3573,6 +3573,7 @@ class DashboardHistoryPanel extends HTMLElement {
       compareMode: this._compareMode,
       compareChecked: this._compareSelection.some((s) => s.revision === version.name),
       crowned,
+      saveAnother: another,
     });
   }
 
@@ -3779,11 +3780,11 @@ class DashboardHistoryPanel extends HTMLElement {
       // the one place a section doubles as the right-now element.
       const crowned = sectionIndex === 0 && Boolean(this._changes[0]?.same_as_now);
       const now = crowned ? " now" : "";
-      return section.versions.map((version) => {
+      return section.versions.map((version, position) => {
         const key = version.name;
         return `<details class="ver${now}" data-key="${escape(key)}"
                 ${this._verOpen.has(key) ? "open" : ""}>
-                ${this._renderVersionHead(section, version, crowned)}
+                ${this._renderVersionHead(section, version, crowned, crowned && position === 0)}
                 <div class="inner">${rows}</div>
               </details>`;
       });
@@ -3831,19 +3832,21 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
-   * The two buttons the simple mode's own "right now" box always
-   * offers where nothing recorded matches - saving the live state as a
-   * version, and undoing back to the last one there is. Reused here
-   * rather than redrawn, because a person switching modes mid-task
-   * should find the same way out in both.
+   * The buttons the simple mode's own "right now" box offers where
+   * nothing recorded matches - saving the live state as a version, and
+   * undoing back to the last one there is. Reused here rather than
+   * redrawn, because a person switching modes mid-task should find the
+   * same way out in both.
+   *
+   * Where something recorded does match, the state is already named and
+   * there is nothing to undo to: only the second name is on offer, here
+   * and not in the simple mode (GitHub #50).
    */
   _nowActs(matching) {
-    if (matching.length) return "";
+    if (matching.length)
+      return `<span class="acts">${saveButton({ another: true })}</span>`;
     const undo = this._versions.length ? undoButton(this._versions[0]) : "";
-    return `<span class="acts">
-        <button class="act ghost" data-version="now">Save this as a version</button>
-        ${undo}
-      </span>`;
+    return `<span class="acts">${saveButton()}${undo}</span>`;
   }
 
   /**
