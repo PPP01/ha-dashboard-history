@@ -596,6 +596,16 @@ class ForgetRaceError(KeyError):
         )
 
 
+class ForgetRaceExhausted(RuntimeError):
+    """`_retrying_a_forget_race` used its whole budget without a trusted answer.
+
+    A `RuntimeError` still, so a caller that caught the bare one keeps
+    working. Its own type so that a caller who can do without the answer
+    catches this and nothing else: a plain `RuntimeError` from anywhere
+    below would pass for it.
+    """
+
+
 def _naming_a_forget_race(read):
     """Make a best-effort read point at an unfinished `forget`.
 
@@ -2576,7 +2586,8 @@ class HistoryStore:
         undoing everything the checks above exist for. A concurrent
         `forget` that keeps racing every single attempt, including the
         last, is rare enough to raise on rather than design a quiet
-        fallback for.
+        fallback for here; a caller that can do without the answer
+        catches `ForgetRaceExhausted` and decides for itself.
 
         Commit shas are content hashes over tree and parents, so HEAD
         can never cycle back to a value already seen; combined with
@@ -2601,7 +2612,7 @@ class HistoryStore:
         moved = self._current_head(repo)
         if moved == head and not self.forget_in_progress():
             return found
-        raise RuntimeError(
+        raise ForgetRaceExhausted(
             "a concurrent forget kept racing this read past all "
             f"{_FORGET_RACE_RETRIES} attempts"
         )
@@ -3497,19 +3508,29 @@ class HistoryStore:
         return marked
 
     def _count_unversioned(self, repo: Repo) -> dict[str, int]:
-        """The count itself, with no protection against a `forget`.
+        """How many changes each dashboard holds that no version carries.
 
-        Two reads, the index and then the tag refs, and a `forget` that
+        The position of the newest version-bearing change in the
+        dashboard's own revisions, which the index keeps newest first -
+        so 0 means the newest change carries a version, and a dashboard
+        with no version at all counts every change it has. Not cached
+        by HEAD, unlike `survey`: a new or removed version does not
+        move HEAD. The revisions come from the index, which is, and the
+        tags are listed by ref on every call with only their targets
+        remembered.
+
+        No protection against a `forget`. Two reads, the index and then the tag refs, and a `forget` that
         completes between them leaves the first holding commits from
         before the rewrite while the second sees tags already pointing
         at the new ones: nothing matches, and every change counts. Only
         ever called from inside `_retrying_a_forget_race`, which is what
         notices and reads both again.
 
-        A change count above zero is then taken back to zero where the
-        newest state holds exactly what one of the dashboard's versions
-        holds: the "Right now" card says "same state as v1.0.0" there,
-        and a list that still marked it would contradict the card.
+        A count above zero is then taken back to zero where the newest
+        state holds exactly what one of the dashboard's versions holds:
+        the "Right now" card says "same state as v1.0.0" there, and a
+        list that still marked it would contradict the card. Empty where
+        nothing is recorded yet and so no HEAD to build an index at.
         """
         index = self._revision_index(repo)
         if index is None:
@@ -3564,33 +3585,8 @@ class HistoryStore:
         current = blob(newest)
         return current is not None and any(blob(rev) == current for rev in carrying)
 
-    def unversioned_counts(self) -> dict[str, int]:
-        """How many changes each dashboard holds that no version carries.
-
-        The position of the newest version-bearing change in the
-        dashboard's own revisions, which the index keeps newest first -
-        so 0 means the newest change carries a version, and a dashboard
-        with no version at all counts every change it has. Also 0 where
-        the newest state is byte-identical to one of the dashboard's
-        versions, however many changes lie between: the question the
-        panel's "Right now" card asks, answered for all dashboards at
-        once.
-
-        Not cached by HEAD, unlike `survey`: a new or removed version
-        does not move HEAD. The revisions come from the index, which is
-        cached by HEAD; the tags are listed by ref on every call and
-        only their targets are remembered.
-
-        Empty where there is no repository, or nothing recorded yet and
-        so no HEAD to build an index at.
-        """
-        repo = self._repo()
-        if repo is None:
-            return {}
-        return self._retrying_a_forget_race(repo, lambda: self._count_unversioned(repo))
-
     def dashboard_listing(self) -> tuple[Survey, dict[str, int]]:
-        """`survey` and `unversioned_counts` out of one generation.
+        """`survey` and the counts of `_count_unversioned` out of one generation.
 
         Two calls would leave a gap between them for a `forget` to run
         through: names from before the rewrite next to counts from
@@ -3600,8 +3596,8 @@ class HistoryStore:
 
         The counts are a decoration on the list, the names are the list.
         Where no attempt can be trusted - a `forget` still running, or
-        a checkpoint a crash left behind - the retry gives up with a
-        `RuntimeError`, and then the list answers as it did before the
+        a checkpoint a crash left behind - the retry gives up with
+        `ForgetRaceExhausted`, and then the list answers as it did before the
         counts existed: the names, with none of them. A stripe that
         does not show is a smaller loss than a list that does not load.
         """
@@ -3612,7 +3608,7 @@ class HistoryStore:
             return self._retrying_a_forget_race(
                 repo, lambda: (self.survey(), self._count_unversioned(repo))
             )
-        except RuntimeError:
+        except ForgetRaceExhausted:
             _LOGGER.debug("No counts for the list: a forget is unfinished")
             return self.survey(), {}
 

@@ -2,7 +2,7 @@
 
 import pytest
 from dulwich.repo import Repo
-from store import HistoryStore
+from store import ForgetRaceExhausted, HistoryStore
 
 
 @pytest.fixture
@@ -12,34 +12,36 @@ def store(tmp_path):
     return s
 
 
+def counts(store):
+    """The counts as the panel gets them: out of the listing."""
+    return store.dashboard_listing()[1]
+
+
 def test_a_store_without_a_repository_answers_nothing(tmp_path):
-    nothing = HistoryStore(tmp_path / "nothing")
-    assert nothing.unversioned_counts() == {}
-    survey, counts = nothing.dashboard_listing()
+    survey, found = HistoryStore(tmp_path / "nothing").dashboard_listing()
     assert survey.names == [] and survey.live == set()
-    assert counts == {}
+    assert found == {}
 
 
 def test_a_repository_without_a_commit_answers_nothing(store):
     # `ensure()` made the repository, nothing has been recorded yet: no
     # HEAD, so no index to read. Not the same case as no repository.
-    assert store.unversioned_counts() == {}
-    survey, counts = store.dashboard_listing()
-    assert survey.names == [] and counts == {}
+    survey, found = store.dashboard_listing()
+    assert survey.names == [] and found == {}
 
 
 def test_without_any_version_every_change_counts(store):
     store.write_snapshot("home", "a: 1\n", "first")
     store.write_snapshot("home", "a: 2\n", "second")
     store.write_snapshot("home", "a: 3\n", "third")
-    assert store.unversioned_counts() == {"home": 3}
+    assert counts(store) == {"home": 3}
 
 
 def test_a_version_on_the_newest_change_leaves_nothing_unversioned(store):
     store.write_snapshot("home", "a: 1\n", "first")
     newest = store.write_snapshot("home", "a: 2\n", "second")
     store.create_version("home/v1.0.0", "First", "", newest)
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
 
 
 def test_only_changes_newer_than_the_newest_version_count(store):
@@ -51,7 +53,7 @@ def test_only_changes_newer_than_the_newest_version_count(store):
     store.create_version("home/v1.0.1", "Second", "", second)
     # Two states sit in front of the newest version, not three: the
     # older version does not add to it.
-    assert store.unversioned_counts() == {"home": 2}
+    assert counts(store) == {"home": 2}
 
 
 def test_dashboards_are_counted_apart(store):
@@ -59,7 +61,7 @@ def test_dashboards_are_counted_apart(store):
     store.write_snapshot("other", "b: 1\n", "first")
     store.write_snapshot("other", "b: 2\n", "second")
     store.create_version("home/v1.0.0", "First", "", home)
-    assert store.unversioned_counts() == {"home": 0, "other": 2}
+    assert counts(store) == {"home": 0, "other": 2}
 
 
 def test_another_dashboards_version_does_not_tidy_this_one(store):
@@ -67,7 +69,7 @@ def test_another_dashboards_version_does_not_tidy_this_one(store):
     store.write_snapshot("other", "b: 1\n", "first")
     # A tag belongs to the key in its name, wherever it points.
     store.create_version("other/v1.0.0", "Odd", "", home)
-    assert store.unversioned_counts()["home"] == 1
+    assert counts(store)["home"] == 1
 
 
 def test_two_versions_on_one_state_count_once(store):
@@ -75,33 +77,33 @@ def test_two_versions_on_one_state_count_once(store):
     newest = store.write_snapshot("home", "a: 2\n", "second")
     store.create_version("home/v1.0.0", "One", "", newest)
     store.create_version("home/v1.0.1", "Two", "", newest)
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
 
 
 def test_a_new_version_is_seen_on_the_next_call(store):
     store.write_snapshot("home", "a: 1\n", "first")
     newest = store.write_snapshot("home", "a: 2\n", "second")
-    assert store.unversioned_counts() == {"home": 2}
+    assert counts(store) == {"home": 2}
     # HEAD did not move between the two calls: a tag does not move it.
     store.create_version("home/v1.0.0", "First", "", newest)
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
 
 
 def test_a_removed_version_is_noticed_on_the_next_call(store):
     store.write_snapshot("home", "a: 1\n", "first")
     newest = store.write_snapshot("home", "a: 2\n", "second")
     store.create_version("home/v1.0.0", "First", "", newest)
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
     store.remove_version("home", "home/v1.0.0")
-    assert store.unversioned_counts() == {"home": 2}
+    assert counts(store) == {"home": 2}
 
 
 def test_a_change_after_the_version_is_counted(store):
     first = store.write_snapshot("home", "a: 1\n", "first")
     store.create_version("home/v1.0.0", "First", "", first)
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
     store.write_snapshot("home", "a: 2\n", "second")
-    assert store.unversioned_counts() == {"home": 1}
+    assert counts(store) == {"home": 1}
 
 
 def test_an_unchanged_version_is_not_read_again(store, monkeypatch):
@@ -111,7 +113,7 @@ def test_an_unchanged_version_is_not_read_again(store, monkeypatch):
     # every test above; this one is what fails.
     first = store.write_snapshot("home", "a: 1\n", "first")
     store.create_version("home/v1.0.0", "First", "", first)
-    store.unversioned_counts()  # fills the cache
+    counts(store)  # fills the cache
     tags = set(Repo(str(store.path)).refs.as_dict(b"refs/tags").values())
     assert tags
     looked_up = []
@@ -122,7 +124,7 @@ def test_an_unchanged_version_is_not_read_again(store, monkeypatch):
         return original(self, name)
 
     monkeypatch.setattr(Repo, "__getitem__", spying)
-    store.unversioned_counts()
+    counts(store)
     # The spy is live (commits are still looked up through it) and the
     # tag objects are not among what it saw.
     assert looked_up
@@ -146,25 +148,14 @@ def _forget_once_between_the_two_reads(store, forgotten):
     store._marked_revisions = interrupted
 
 
-def test_a_forget_between_the_two_reads_cannot_mix_generations(store):
-    store.write_snapshot("gone", "a: 1\n", "gone")
-    home = store.write_snapshot("home", "a: 1\n", "home")
-    store.create_version("home/v1.0.0", "First", "", home)
-    _forget_once_between_the_two_reads(store, "gone")
-    # Without the retry this is {"gone": 1, "home": 1}: the index still
-    # holds the commits from before the rewrite, the tags already point
-    # at the new ones, and nothing matches.
-    assert store.unversioned_counts() == {"home": 0}
-
-
 def test_the_listing_never_mixes_names_and_counts_of_two_generations(store):
     store.write_snapshot("gone", "a: 1\n", "gone")
     home = store.write_snapshot("home", "a: 1\n", "home")
     store.create_version("home/v1.0.0", "First", "", home)
     _forget_once_between_the_two_reads(store, "gone")
-    survey, counts = store.dashboard_listing()
+    survey, found = store.dashboard_listing()
     assert survey.names == ["home"]
-    assert counts == {"home": 0}
+    assert found == {"home": 0}
 
 
 def test_an_unfinished_forget_costs_the_listing_its_counts_not_its_names(store):
@@ -175,11 +166,25 @@ def test_an_unfinished_forget_costs_the_listing_its_counts_not_its_names(store):
     store.write_snapshot("home", "a: 1\n", "first")
     store._checkpoint_path().write_text("{}")
     assert store.forget_in_progress()
-    with pytest.raises(RuntimeError):
-        store.unversioned_counts()
-    survey, counts = store.dashboard_listing()
+    repo = store._repo()
+    with pytest.raises(ForgetRaceExhausted):
+        store._retrying_a_forget_race(repo, lambda: store._count_unversioned(repo))
+    survey, found = store.dashboard_listing()
     assert survey.names == ["home"]
-    assert counts == {}
+    assert found == {}
+
+
+def test_a_fault_in_the_count_is_not_mistaken_for_an_unfinished_forget(store):
+    # Only an exhausted retry is made up for. A RuntimeError from
+    # anywhere below it is a fault, and the list must say so.
+    store.write_snapshot("home", "a: 1\n", "first")
+
+    def broken(repo):
+        raise RuntimeError("a fault in the count")
+
+    store._count_unversioned = broken
+    with pytest.raises(RuntimeError, match="a fault in the count"):
+        store.dashboard_listing()
 
 
 def test_a_state_that_is_a_versions_content_again_is_not_unversioned(store):
@@ -190,7 +195,7 @@ def test_a_state_that_is_a_versions_content_again_is_not_unversioned(store):
     store.create_version("home/v1.0.0", "First", "", first)
     store.write_snapshot("home", "a: 2\n", "moved out")
     store.write_snapshot("home", "a: 1\n", "moved home")
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
 
 
 def test_going_back_to_an_older_version_is_not_unversioned(store):
@@ -201,7 +206,7 @@ def test_going_back_to_an_older_version_is_not_unversioned(store):
     store.create_version("home/v1.0.0", "First", "", first)
     store.create_version("home/v1.0.1", "Second", "", second)
     store.write_snapshot("home", "a: 1\n", "went back")
-    assert store.unversioned_counts() == {"home": 0}
+    assert counts(store) == {"home": 0}
 
 
 def test_a_state_no_version_holds_is_still_counted(store):
@@ -209,7 +214,7 @@ def test_a_state_no_version_holds_is_still_counted(store):
     store.create_version("home/v1.0.0", "First", "", first)
     store.write_snapshot("home", "a: 2\n", "second")
     store.write_snapshot("home", "a: 3\n", "third")
-    assert store.unversioned_counts() == {"home": 2}
+    assert counts(store) == {"home": 2}
 
 
 def test_another_dashboards_version_with_the_same_text_does_not_count(store):
@@ -218,7 +223,7 @@ def test_another_dashboards_version_with_the_same_text_does_not_count(store):
     store.write_snapshot("home", "a: 1\n", "first")
     other = store.write_snapshot("other", "a: 1\n", "first")
     store.create_version("other/v1.0.0", "First", "", other)
-    assert store.unversioned_counts() == {"home": 1, "other": 0}
+    assert counts(store) == {"home": 1, "other": 0}
 
 
 def test_a_state_read_once_is_not_read_again(store, monkeypatch):
@@ -235,9 +240,9 @@ def test_a_state_read_once_is_not_read_again(store, monkeypatch):
         return original(repo, path, revision)
 
     monkeypatch.setattr(store, "_blob_at", counting)
-    assert store.unversioned_counts() == {"home": 1}
+    assert counts(store) == {"home": 1}
     # The spy is live: the first call did have to read.
     assert asked
     asked.clear()
-    assert store.unversioned_counts() == {"home": 1}
+    assert counts(store) == {"home": 1}
     assert asked == []

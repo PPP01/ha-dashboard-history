@@ -3205,12 +3205,9 @@ class DashboardHistoryPanel extends HTMLElement {
     // is never marked, whatever the record says. A record without the
     // count (an older server) reads as zero and is not marked either.
     const pending = d.exists ? Number(d.unversioned) || 0 : 0;
+    const unsaved = `${pending === 1 ? "change" : "changes"} not saved as a version yet`;
     const chip = pending
-      ? `<span class="pending" title="${pending} ${
-          pending === 1 ? "change" : "changes"
-        } not saved as a version yet">${pending}<span class="sr"> ${
-          pending === 1 ? "change" : "changes"
-        } not saved as a version yet</span></span>`
+      ? `<span class="pending" title="${pending} ${unsaved}">${pending}<span class="sr"> ${unsaved}</span></span>`
       : "";
     return `
         <button class="dash${d.exists ? "" : " deleted"}${pending ? " untidy" : ""}" data-key="${escape(d.key)}"
