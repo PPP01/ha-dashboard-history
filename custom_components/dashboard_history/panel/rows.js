@@ -248,6 +248,24 @@ export function saveButton({ another = false } = {}) {
 }
 
 /**
+ * Whether `saveButton` can keep its word: "now" is handed to the server
+ * as the newest *recorded* entry, because a version can only mark a
+ * recorded state. That is the live state exactly when the newest entry
+ * says `same_as_now`.
+ *
+ * It does not, between a recording that failed and the next save or
+ * start that repairs it. There the button tagged an entry the box was
+ * not describing - one that already carried a version, as often as not
+ * - and called that saving "this". Measured on the test instance on
+ * 2026-10-01. Every place that draws the button asks this first; undo
+ * stays, because a restore records the live state before it writes, or
+ * refuses (decision 23).
+ */
+export function liveIsRecorded(changes) {
+  return Boolean(changes?.[0]?.same_as_now);
+}
+
+/**
  * One change, as a row.
  *
  * The word "state" in both chips is load-bearing, and it was missing.

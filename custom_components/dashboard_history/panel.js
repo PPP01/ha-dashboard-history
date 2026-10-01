@@ -70,7 +70,7 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, whenRange, joinNames;
-let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton;
+let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton, liveIsRecorded;
 let DIALOGS;
 let renderSimple, steps, spanOf;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -85,7 +85,7 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, whenRange, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton, liveIsRecorded } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple, steps, spanOf } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
@@ -3890,12 +3890,16 @@ class DashboardHistoryPanel extends HTMLElement {
    * Where something recorded does match, the state is already named and
    * there is nothing to undo to: only the second name is on offer, here
    * and not in the simple mode (GitHub #50).
+   *
+   * Neither save button while the live state is not recorded - see
+   * `liveIsRecorded`. Undo stays.
    */
   _nowActs(matching) {
+    const save = liveIsRecorded(this._changes);
     if (matching.length)
-      return `<span class="acts">${saveButton({ another: true })}</span>`;
+      return save ? `<span class="acts">${saveButton({ another: true })}</span>` : "";
     const undo = this._versions.length ? undoButton(this._versions[0]) : "";
-    return `<span class="acts">${saveButton()}${undo}</span>`;
+    return `<span class="acts">${save ? saveButton() : ""}${undo}</span>`;
   }
 
   /**

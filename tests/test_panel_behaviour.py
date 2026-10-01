@@ -3965,7 +3965,8 @@ el._mode = "simple";
 el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
 const marked = { revision: "c", message: "3 cards removed",
                  versions: [{ name: "dash/v1.2.0" }], timestamp: 3 };
-const since = { revision: "a", message: "1 card added", versions: [], timestamp: 4 };
+const since = { revision: "a", message: "1 card added", versions: [], same_as_now: true,
+                timestamp: 4 };
 const version = (name, same, revision) => ({
   name, title: name, description: "", revision, same_as_now: same, timestamp: 1,
 });
@@ -4742,12 +4743,13 @@ el._render = () => {};
 el._selected = "dash";
 el._mode = "advanced";
 
-// The dashboard has changed at Home Assistant's back since the last
-// recorded change, and nothing recorded holds what it holds now. The
-// box has to appear here too, not only when the state happens to be
-// clean - that is the whole point of aligning it with the simple mode.
+// The dashboard has changed since the last version, and nothing a
+// version holds is what it holds now. The box has to appear here too,
+// not only when the state happens to be named - that is the whole
+// point of aligning it with the simple mode. The newest entry is the
+// live state; where it is not, see `_SAVE_ONLY_WHAT_IS_RECORDED`.
 el._changes = [
-  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "a", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
   { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
     same_as_now: false, timestamp: 1 },
 ];
@@ -4878,7 +4880,9 @@ def test_a_tagged_but_drifted_newest_change_still_says_so(advanced_now_box):
     assert advanced_now_box["behindTag"]["div"] is True
     assert advanced_now_box["behindTag"]["sentence"] is True
     assert advanced_now_box["behindTag"]["verNow"] is False
-    assert advanced_now_box["behindTag"]["saveButton"] is True
+    # The newest entry carries the tag and is not the live state, so a
+    # "save this" would tag that entry rather than what the box says.
+    assert advanced_now_box["behindTag"]["saveButton"] is False
 
 
 def test_a_named_match_wins_over_the_drift_sentence(advanced_now_box):
@@ -4888,7 +4892,10 @@ def test_a_named_match_wins_over_the_drift_sentence(advanced_now_box):
     # offer a way back to - offering the way to a second name instead (#50).
     assert advanced_now_box["matched"]["noDrift"] is True
     assert advanced_now_box["matched"]["matches"] is True
-    assert advanced_now_box["matched"]["anotherButton"] is True
+    # The front is not the live state here, so there is no "another
+    # version" on offer either: it would land on the front, not on the
+    # state the sentence names (see `liveIsRecorded`).
+    assert advanced_now_box["matched"]["anotherButton"] is False
     assert advanced_now_box["matched"]["noUndoButton"] is True
 
 
@@ -4970,7 +4977,7 @@ const namedBanner = el._renderMain();
 
 // Unsettled: the wording stays plain, as before.
 el._changes = [
-  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "a", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
   { revision: "b", message: "2 cards moved", versions: [{ name: "dash/v1.0.0" }],
     same_as_now: false, timestamp: 1 },
 ];
@@ -5029,14 +5036,16 @@ def test_a_reverted_state_offers_another_version_and_no_undo(advanced_save_anoth
     assert advanced_save_another["reverted"]["noUndo"] is True
 
 
-def test_a_named_banner_behind_a_tag_offers_another_version_and_no_undo(
+def test_a_named_banner_behind_a_tag_offers_no_version_and_no_undo(
     advanced_save_another,
 ):
     # The newest change carries a version but is not the live state, and
     # an older version holds the live content: settled, though drawn as
     # the bodyless banner rather than a crowned section or a folded box.
+    # No "another version": the button would tag the newest entry, which
+    # is not the state the banner names (see `liveIsRecorded`).
     assert advanced_save_another["namedBanner"]["banner"] is True
-    assert advanced_save_another["namedBanner"]["another"] == 1
+    assert advanced_save_another["namedBanner"]["another"] == 0
     assert advanced_save_another["namedBanner"]["plain"] == 0
     assert advanced_save_another["namedBanner"]["noUndo"] is True
 
@@ -5048,6 +5057,124 @@ def test_an_unsettled_advanced_box_keeps_the_plain_wording(advanced_save_another
 
 def test_no_save_button_before_the_versions_have_loaded(advanced_save_another):
     assert advanced_save_another["loading"]["buttons"] == 0
+
+
+# -- no "save this" while the live state is not recorded --------------------
+
+_SAVE_ONLY_WHAT_IS_RECORDED = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+const SAVE = 'data-version="now"';
+const UNDO = "Undo / Go back to ";
+const v100 = { name: "dash/v1.0.0", title: "First", revision: "b", timestamp: 1 };
+const v110 = { name: "dash/v1.1.0", title: "Second", revision: "a", timestamp: 2 };
+
+// A recording failed: the dashboard holds something no entry holds,
+// so the newest entry is not the live state (`same_as_now` false).
+// The button would tag that newest entry - not what the box describes.
+const untaggedGap = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [v100], same_as_now: false, timestamp: 1 },
+];
+const taggedGap = [
+  { revision: "a", message: "1 card added", versions: [v110], same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [v100], same_as_now: false, timestamp: 1 },
+];
+
+el._mode = "advanced";
+
+// The banner behind a tag, named: an older version holds the live state.
+el._changes = taggedGap;
+el._versions = [{ ...v110, same_as_now: false }, { ...v100, same_as_now: true }];
+el._matching = [{ name: "dash/v1.0.0" }];
+const namedBanner = el._renderMain();
+
+// The banner behind a tag, not named: nothing holds the live state.
+el._versions = [{ ...v110, same_as_now: false }, { ...v100, same_as_now: false }];
+el._matching = [];
+const plainBanner = el._renderMain();
+
+// The untagged front in the same situation - no question would even be
+// asked there, the stale entry would simply be tagged.
+el._changes = untaggedGap;
+el._versions = [{ ...v100, same_as_now: false }];
+el._matching = [];
+const untaggedFront = el._renderMain();
+
+// The ordinary case the button exists for: the untagged front is live.
+el._changes = [{ ...untaggedGap[0], same_as_now: true }, untaggedGap[1]];
+const recordedFront = el._renderMain();
+
+el._mode = "simple";
+
+// The simple box over the same gap.
+el._changes = untaggedGap;
+el._versions = [{ ...v100, same_as_now: false }];
+const simpleGap = el._renderMain();
+
+// And with no version yet at all.
+el._changes = [untaggedGap[0]];
+el._versions = [];
+const simpleNoneGap = el._renderMain();
+
+console.log(JSON.stringify({
+  namedBanner: { save: namedBanner.includes(SAVE) },
+  plainBanner: { save: plainBanner.includes(SAVE), undo: plainBanner.includes(UNDO) },
+  untaggedFront: { save: untaggedFront.includes(SAVE), undo: untaggedFront.includes(UNDO) },
+  recordedFront: { save: recordedFront.includes(SAVE) },
+  simpleGap: { save: simpleGap.includes(SAVE), undo: simpleGap.includes(UNDO) },
+  simpleNoneGap: { save: simpleNoneGap.includes(SAVE) },
+}));
+"""
+
+
+@pytest.fixture(scope="session")
+def save_only_what_is_recorded(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "save_only_what_is_recorded", _SAVE_ONLY_WHAT_IS_RECORDED
+    )
+
+
+def test_no_save_button_on_a_banner_whose_live_state_is_not_recorded(
+    save_only_what_is_recorded,
+):
+    # The button would tag the newest recorded entry, which already
+    # carries a version and is not what the dashboard holds - measured
+    # against a real instance on 2026-10-01: the box said "same state as
+    # v0.0.1", the question "already carries v0.0.2", and the new
+    # version landed beside v0.0.2.
+    assert save_only_what_is_recorded["namedBanner"]["save"] is False
+    assert save_only_what_is_recorded["plainBanner"]["save"] is False
+
+
+def test_an_unrecorded_untagged_front_offers_no_save_button_either(
+    save_only_what_is_recorded,
+):
+    # The same wrong target, silently: nothing names the stale entry,
+    # so no question is asked before it is tagged.
+    assert save_only_what_is_recorded["untaggedFront"]["save"] is False
+
+
+def test_undo_stays_where_the_live_state_is_not_recorded(save_only_what_is_recorded):
+    # Undo is a restore, and a restore records the live state first or
+    # refuses (decision 23) - it is the one way out that cannot land
+    # anywhere wrong.
+    assert save_only_what_is_recorded["plainBanner"]["undo"] is True
+    assert save_only_what_is_recorded["untaggedFront"]["undo"] is True
+    assert save_only_what_is_recorded["simpleGap"]["undo"] is True
+
+
+def test_a_recorded_front_keeps_its_save_button(save_only_what_is_recorded):
+    assert save_only_what_is_recorded["recordedFront"]["save"] is True
+
+
+def test_the_simple_mode_offers_no_save_button_over_an_unrecorded_state(
+    save_only_what_is_recorded,
+):
+    assert save_only_what_is_recorded["simpleGap"]["save"] is False
+    assert save_only_what_is_recorded["simpleNoneGap"]["save"] is False
 
 
 # -- each row gets the brand icon's own node-on-a-strand connector ----------
