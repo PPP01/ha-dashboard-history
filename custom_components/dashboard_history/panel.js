@@ -2198,8 +2198,12 @@ class DashboardHistoryPanel extends HTMLElement {
    * standing stays standing, contradicting a question that is
    * supposed to be about nothing but the write itself.
    */
-  async _confirmOverride(dialog, message) {
-    dialog.querySelector("h2").textContent = "Write anyway?";
+  async _confirmOverride(
+    dialog,
+    message,
+    { title = "Write anyway?", apply = "Write anyway", cancel = "Cancel" } = {},
+  ) {
+    dialog.querySelector("h2").textContent = title;
     dialog.querySelector(".body").innerHTML = `<p>${escape(message)}</p>`;
     dialog.querySelector(".note").textContent = "";
     this._sayFootnote(dialog, "", []);
@@ -2211,11 +2215,34 @@ class DashboardHistoryPanel extends HTMLElement {
     if (why) why.textContent = "";
     const applyButton = dialog.querySelector('.actions button[value="apply"]');
     applyButton.hidden = false;
-    applyButton.textContent = "Write anyway";
-    dialog.querySelector('.actions button[value="cancel"]').textContent = "Cancel";
+    applyButton.textContent = apply;
+    dialog.querySelector('.actions button[value="cancel"]').textContent = cancel;
     dialog.returnValue = "";
     dialog.showModal();
     return (await this._answerFrom(dialog)) === "apply";
+  }
+
+  /**
+   * The question in front of the create dialog, where the state is
+   * already named: whether a second name for the same content is really
+   * wanted. Not a refusal - the FAQ calls it a legitimate move - only a
+   * decision where there used to be a click-through, because the line the
+   * create dialog carries about it sits under the number choice and was
+   * read straight past (GitHub #51).
+   *
+   * Reuses the confirmation dialog through `_confirmOverride`, which
+   * takes the sentence and the three labels. Looked up fresh here: the
+   * caller has not rendered since it read its own dialog, but this is
+   * the one place in `_createVersion` that opens a dialog before a
+   * `_guard`, and a lookup by name costs nothing.
+   */
+  _askAnother(named) {
+    const dialog = this.shadowRoot.querySelector("dialog.confirm");
+    return this._confirmOverride(
+      dialog,
+      `${named} Save another version for the same content anyway?`,
+      { title: "Save another version?", apply: "Save anyway" },
+    );
   }
 
   /**
@@ -2792,6 +2819,11 @@ class DashboardHistoryPanel extends HTMLElement {
   async _createVersion(revision) {
     const change = this._changeAt(revision);
     if (!change) return;
+    // Asked before anything is fetched or drawn: a "no" costs nothing,
+    // and a modal question leaves the selection where it was, so the
+    // dashboard captured below is still the one that was asked about.
+    const named = this._alreadyNamed(change);
+    if (named && !(await this._askAnother(named))) return;
     // Fetched before the dialog is touched: _guard re-renders, and a
     // re-render replaces the dialog element along with everything else.
     //
