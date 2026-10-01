@@ -36,6 +36,7 @@ Simple view is designed for quick, everyday recovery (*"put it back to how it wa
 - At the top, the **Current state** box shows where you stand:
   - If you are on a named version, it displays the version number, title, and date.
   - If changes were made since the last version, it displays **Undo / Go back to &lt;version&gt;** and **Save this as a version**.
+  - Once the dashboard stands on a version, the box offers neither: to give the same state a second name, switch to the advanced view.
   - Clicking a version's **Go back to this version** button opens the restore preview dialog.
 
 <picture>
@@ -50,6 +51,7 @@ Advanced view exposes every single recorded change:
 - Version headers divide the changes into logical sections.
 - Every row shows the automatic change summary (e.g. *"living-room: 1 removed"*), the timestamp, and the short commit hash.
 - Click any row to expand its details and access the action bar.
+- The **Right now** box carries **Save this as a version** while the dashboard has changed since the last version, and **Save this as another version** while it stands on one — the simple view only has the first.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/05-history-overview-dark.png">
