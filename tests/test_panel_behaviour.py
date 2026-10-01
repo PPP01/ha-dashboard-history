@@ -9244,8 +9244,27 @@ const defaults = {
 confirmBox().close("apply");
 const defaultAnswer = await plain;
 
+// 9. The same dialog, asked twice: the first answer is "yes" and leaves
+// "apply" standing as its return value; the second is dismissed with
+// Escape, which hands over no value. Without the reset before the dialog
+// opens, the old "apply" would be read as a "yes" to a question nobody
+// answered. A browser leaves the dialog in place after a "no" - nothing
+// renders - so this is a reachable state, not a thought experiment.
+el.shadowRoot = node();
+const sharedBox = confirmBox();
+const firstAsk = el._confirmOverride(sharedBox, "First.");
+await settle();
+sharedBox.close("apply");
+const firstAnswer = await firstAsk;
+const secondAsk = el._confirmOverride(sharedBox, "Second.");
+await settle();
+sharedBox.close();
+const secondAnswer = await secondAsk;
+const asTwice = { first: firstAnswer, second: secondAnswer };
+
 console.log(JSON.stringify({
   carried, escaped, yes, alike, olderRow, foundHit, unnamed, hostile, defaults, defaultAnswer,
+  asTwice,
 }));
 """
 
@@ -9322,6 +9341,14 @@ def test_a_state_nothing_names_goes_straight_to_the_dialog(another_version_asked
 def test_a_version_name_in_the_question_is_text_not_markup(another_version_asked):
     assert "<i>" not in another_version_asked["hostile"]
     assert "&lt;i&gt;x" in another_version_asked["hostile"]
+
+
+def test_a_dismissed_question_is_not_answered_by_the_one_before_it(
+    another_version_asked,
+):
+    # Escape hands over no value, so whatever the dialog still holds from
+    # its last use would decide. `_confirmOverride` clears it first.
+    assert another_version_asked["asTwice"] == {"first": True, "second": False}
 
 
 def test_the_override_helper_keeps_its_own_wording_for_other_callers(
