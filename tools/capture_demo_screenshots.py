@@ -192,6 +192,19 @@ async def main():
     token = read_token()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Demo instance: {BASE}   images: {OUTPUT_DIR}")
+    chrome_env = dict(os.environ)
+    # Headless Chrome ignores --lang=en-US when the host's LANG/LC_ALL
+    # points elsewhere: navigator.language stayed "de-DE" and rendered
+    # Home Assistant's sidebar in German. Measured on 2026-10-02;
+    # overriding LANGUAGE and LC_ALL in Chrome's environment forces it
+    # to en-US even if that locale is not generated on the host.
+    chrome_env.update(
+        {
+            "LANGUAGE": "en_US",
+            "LC_ALL": "en_US.UTF-8",
+            "LANG": "en_US.UTF-8",
+        }
+    )
     chrome = subprocess.Popen(
         [
             "google-chrome",
@@ -218,6 +231,7 @@ async def main():
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=chrome_env,
     )
 
     try:
