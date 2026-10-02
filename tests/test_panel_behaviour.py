@@ -9826,3 +9826,65 @@ def test_a_declined_question_leaves_no_error_from_the_early_fetch(
 def test_a_failed_early_fetch_falls_back_to_the_guarded_one(another_version_handover):
     assert another_version_handover["fallback"]["fetches"] == 2
     assert another_version_handover["fallback"]["versionOpen"] is True
+
+
+_HARNESS_RECONNECT = """
+// A panel opened while Home Assistant restarts: the library rejects with
+// the bare number 3, and later fires "ready" on the connection.
+const listeners = {};
+const connection = {
+  addEventListener(name, fn) { listeners[name] = fn; },
+  removeEventListener(name, fn) { if (listeners[name] === fn) delete listeners[name]; },
+  subscribeEvents: () => new Promise(() => {}),
+};
+const el = new Panel();
+el._render = () => {};
+el._loadSidebar = async () => {};
+el._select = async () => {};
+el._hass = { connection };
+let up = false;
+el._call = async (type) => {
+  if (!up) throw 3;
+  return { dashboards: [{ key: "dash" }] };
+};
+el._listen();
+await el._loadDashboards();
+const down = { error: el._error, dashboards: el._dashboards };
+
+up = true;
+listeners.ready();
+await settle();
+const back = { error: el._error, dashboards: el._dashboards?.length };
+
+// Once loaded, a further "ready" must not load again.
+let again = 0;
+el._call = async () => { again += 1; return { dashboards: [] }; };
+listeners.ready();
+await settle();
+
+// Leaving the panel takes the listener off.
+el._unlisten();
+console.log(JSON.stringify({ down, back, again, listening: "ready" in listeners }));
+"""
+
+
+@pytest.fixture(scope="module")
+def reconnect(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "reconnect", _HARNESS_RECONNECT)
+
+
+def test_a_dropped_connection_is_said_in_words_not_as_a_number(reconnect):
+    assert "Lost the connection" in reconnect["down"]["error"]
+    assert reconnect["down"]["dashboards"] is None
+
+
+def test_the_list_loads_by_itself_once_the_connection_is_back(reconnect):
+    assert reconnect["back"] == {"error": None, "dashboards": 1}
+
+
+def test_a_loaded_panel_does_not_reload_on_every_reconnect(reconnect):
+    assert reconnect["again"] == 0
+
+
+def test_leaving_the_panel_removes_the_reconnect_listener(reconnect):
+    assert reconnect["listening"] is False

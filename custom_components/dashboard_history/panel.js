@@ -130,6 +130,29 @@ function storedMode() {
   return "simple";
 }
 
+// home-assistant-js-websocket's ERR_CONNECTION_LOST. A request that falls
+// into the gap of a dropped connection is rejected with the bare number,
+// not an Error (checked in the 2026.8.3 frontend bundle: `throw 3`); one
+// already in flight gets `{code: 3, message: "Connection lost"}`.
+const ERR_CONNECTION_LOST = 3;
+
+const CONNECTION_LOST_MESSAGE =
+  "Lost the connection to Home Assistant. " +
+  "The history loads again once it is back.";
+
+/**
+ * One sentence for whatever a failed request threw.
+ *
+ * `err?.message || String(err)` printed a lone red "3" while Home
+ * Assistant restarted, because the library throws a number there.
+ */
+function describeError(err) {
+  if (err === ERR_CONNECTION_LOST || err?.code === ERR_CONNECTION_LOST) {
+    return CONNECTION_LOST_MESSAGE;
+  }
+  return err?.message || String(err);
+}
+
 // The same spelling the automatic versions use, so a list of them reads
 // as one list. Built by hand rather than with toLocaleDateString, which
 // follows the browser's language: two people in one house would
@@ -742,6 +765,7 @@ class DashboardHistoryPanel extends HTMLElement {
   _listen() {
     if (this._sub || !this._hass?.connection) return;
     this._sub = "pending";
+    this._retryOnReconnect(this._hass.connection);
     this._hass.connection
       .subscribeEvents((event) => this._onForgetting(event), EVENT_FORGETTING)
       .then(
@@ -771,7 +795,30 @@ class DashboardHistoryPanel extends HTMLElement {
       );
   }
 
+  /**
+   * Load again when the connection comes back, if the first load failed.
+   *
+   * The library re-establishes the subscriptions on its own, but a
+   * one-off request is rejected for good - so a panel opened while Home
+   * Assistant restarts would sit on its error. "ready" fires after every
+   * reconnect, not just the first. Only a panel that never got its list
+   * reacts: one that has it is kept current by the subscriptions, and
+   * `!_busy` keeps this from doubling a load that is already running.
+   * No timer: polling a restarting Home Assistant is how its IP ban
+   * locks the developer out.
+   */
+  _retryOnReconnect(connection) {
+    if (this._readyOff) return;
+    const retry = () => {
+      if (this._dashboards === null && !this._busy) this._loadDashboards();
+    };
+    connection.addEventListener?.("ready", retry);
+    this._readyOff = () => connection.removeEventListener?.("ready", retry);
+  }
+
   _unlisten() {
+    this._readyOff?.();
+    this._readyOff = null;
     const off = this._sub;
     this._sub = null;
     if (typeof off === "function") off();
@@ -1168,7 +1215,7 @@ class DashboardHistoryPanel extends HTMLElement {
       await this._refresh();
       return null;
     } catch (err) {
-      const why = err?.message || String(err);
+      const why = describeError(err);
       return `${done}, but the page could not be reloaded: ${why}`;
     } finally {
       this._busy -= 1;
@@ -1195,7 +1242,7 @@ class DashboardHistoryPanel extends HTMLElement {
     note.textContent =
       "Dashboard History could not load part of itself. Reload the page; " +
       "if that does not help, restart Home Assistant. " +
-      (err?.message || String(err));
+      describeError(err);
     this.shadowRoot.replaceChildren(note);
   }
 
@@ -1220,7 +1267,7 @@ class DashboardHistoryPanel extends HTMLElement {
       return await work();
     } catch (err) {
       if (stillWanted === null || stillWanted()) {
-        this._error = err?.message || String(err);
+        this._error = describeError(err);
       }
       return null;
     } finally {
@@ -1809,7 +1856,7 @@ class DashboardHistoryPanel extends HTMLElement {
       .catch((err) => {
         if (!mine()) return;
         this._loadingDetail = null;
-        this._error = err?.message || String(err);
+        this._error = describeError(err);
         this._render();
       });
 
@@ -1835,7 +1882,7 @@ class DashboardHistoryPanel extends HTMLElement {
         // Only where the line is still free: if the explanation
         // failed as well, that is the cause worth reading, and this
         // one would be standing on top of it.
-        if (!this._error) this._error = err?.message || String(err);
+        if (!this._error) this._error = describeError(err);
       })
       .finally(() => {
         if (!mine()) return;
@@ -4251,7 +4298,7 @@ class DashboardHistoryPanel extends HTMLElement {
         <button class="reload" data-refresh="1" title="Reload the history"
                 aria-label="Reload the history">\u21bb</button>
       </div>
-      ${this._error ? `<div class="banner"><span class="grow">${escape(this._error)}</span></div>` : ""}
+      ${this._error ? `<div class="banner${this._error === CONNECTION_LOST_MESSAGE ? " notice" : ""}"><span class="grow">${escape(this._error)}</span></div>` : ""}
       <div class="layout">
         <div class="side">${this._renderSide()}</div>
         <div class="mainwrap">

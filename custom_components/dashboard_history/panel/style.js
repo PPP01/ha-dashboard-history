@@ -494,6 +494,24 @@ export const STYLE = `
     color: #fff;
   }
   .banner .grow { flex: 1 1 auto; }
+  /* Not a fault of this panel: the dark of Home Assistant's own
+     "connection lost" snackbar, standing right above it so the two read
+     as one message. The snackbar is centred at the bottom of the window
+     and about 48px high; 96px leaves a gap. Colours are the toast's own
+     variables, with the dark it shows today as fallback. */
+  .banner.notice {
+    position: fixed;
+    left: 50%;
+    bottom: 96px;
+    transform: translateX(-50%);
+    z-index: 10;
+    margin: 0;
+    max-width: min(560px, calc(100vw - 32px));
+    box-sizing: border-box;
+    background: var(--ha-color-neutral-10, #323232);
+    color: var(--ha-color-on-neutral-loud, #fff);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .3);
+  }
   .banner button.act { background: #fff; color: var(--error-color, #db4437); }
   .banner button.act.ghost {
     background: none;
