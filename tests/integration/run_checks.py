@@ -4803,8 +4803,8 @@ async def wait_until_settled(access: str, key: str, quiet: int = 6,
     return False
 
 
-def entity_ids(access: str) -> dict[str, str]:
-    """This integration's readings, by the key in their unique id.
+def entity_registry_rows(access: str) -> dict[str, dict]:
+    """This integration's registry rows, by the key in their unique id.
 
     Through the entity registry rather than by writing the ids out,
     because an entity_id is derived from the entity's *name* and not
@@ -4815,8 +4815,8 @@ def entity_ids(access: str) -> dict[str, str]:
 
     `config/entity_registry/list` does carry `unique_id`, although the
     websocket module never mentions the word - the field comes out of
-    `RegistryEntry.as_partial_dict`. Checked against 2026.8.3 rather
-    than grepped for.
+    `RegistryEntry.as_partial_dict`, together with `entity_category`
+    and `device_id`. Checked against 2026.8.3 rather than grepped for.
     """
     identifier = entry_id(access)
 
@@ -4826,11 +4826,16 @@ def entity_ids(access: str) -> dict[str, str]:
 
     prefix = f"{identifier}_"
     return {
-        row["unique_id"][len(prefix):]: row["entity_id"]
+        row["unique_id"][len(prefix):]: row
         for row in asyncio.run(ask())
         if row.get("config_entry_id") == identifier
         and str(row.get("unique_id", "")).startswith(prefix)
     }
+
+
+def entity_ids(access: str) -> dict[str, str]:
+    """This integration's readings, by the key in their unique id."""
+    return {key: row["entity_id"] for key, row in entity_registry_rows(access).items()}
 
 
 def _state(access: str, entity_id: str) -> dict:
@@ -4849,6 +4854,42 @@ def entity_state(access: str, entity_id: str) -> str | None:
 
 def entity_attributes(access: str, entity_id: str) -> dict:
     return _state(access, entity_id).get("attributes", {})
+
+
+def _seconds(value) -> float | None:
+    """A state or attribute as seconds, or None if it is not a number."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def check_startup_time(access: str, readings: dict[str, str], when: str) -> None:
+    """The startup sensor holds seconds, and the index build fits inside them.
+
+    `index_build` must be a number here, not `null`: the bench always
+    has a history, so the survey that closes the start has built an
+    index, and `null` would mean it did not run. It is part of the
+    startup time, never more; both are rounded to a tenth, hence the
+    slack of one.
+    """
+    entity = readings.get("startup")
+    seconds = _seconds(entity_state(access, entity)) if entity else None
+    index = (
+        _seconds(entity_attributes(access, entity).get("index_build"))
+        if entity
+        else None
+    )
+    check(
+        f"the startup time is a number of seconds ({when})",
+        seconds is not None and seconds >= 0,
+        f"state={seconds}",
+    )
+    check(
+        f"the index build fits inside the startup time ({when})",
+        seconds is not None and index is not None and 0 <= index <= seconds + 0.1,
+        f"startup={seconds} index_build={index}",
+    )
 
 
 def count_entities(access: str, prefix: str) -> int:
@@ -5017,12 +5058,26 @@ if __name__ == "__main__":
     # reading whose key is `revisions` is called "Recorded states" and
     # therefore lives at `sensor.dashboard_history_recorded_states`. Writing
     # the ids out by hand means renaming a label silently breaks the checks.
-    readings = entity_ids(access)
+    rows = entity_registry_rows(access)
+    readings = {key: row["entity_id"] for key, row in rows.items()}
     check(
-        "all five readings are registered",
-        set(readings) == {"last_capture", "size", "revisions", "dashboards", "versions"},
+        "all six readings are registered",
+        set(readings)
+        == {"last_capture", "size", "revisions", "dashboards", "versions", "startup"},
         f"got {sorted(readings)}",
     )
+    # Its own class, not a `Reading`, so the category and the device are
+    # set in a second place - checked against a reading that has them.
+    startup_row = rows.get("startup", {})
+    check(
+        "the startup reading is diagnostic and on the readings' device",
+        startup_row.get("entity_category") == "diagnostic"
+        and startup_row.get("device_id") is not None
+        and startup_row.get("device_id") == rows.get("versions", {}).get("device_id"),
+        f'category={startup_row.get("entity_category")} '
+        f'device={startup_row.get("device_id")}',
+    )
+    check_startup_time(access, readings, "after the start")
 
     # The secret is observed through its effect, not read out: no API hands
     # out `entry.data`. `stored_daily_versions` had to learn the same thing
@@ -5136,10 +5191,14 @@ if __name__ == "__main__":
     # failed on.
     standing = count_entities(access, "sensor.dashboard_history")
     check(
-        "a reload leaves exactly the five readings, none orphaned",
-        set(after) == set(readings) and standing == 5,
+        "a reload leaves exactly the six readings, none orphaned",
+        set(after) == set(readings) and standing == 6,
         f"{sorted(after)} / {standing}",
     )
+    # After the wait above, and that is enough: `_async_open` sets the
+    # startup time before the first measurement, so a `revisions` that
+    # is no longer `unknown` means the startup time is in too.
+    check_startup_time(access, after, "after a reload")
     check(
         "the ids survive a reload unchanged",
         entity_attributes(access, after["dashboards"]).get("ids", {}) == before_ids,
