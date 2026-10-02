@@ -224,7 +224,7 @@ laut Grep auch (Stand 2026-09-19), seit Vorhaben P zusätzlich von `lint-imports
 | `config_flow.py` | Einrichtung: eine Bestätigung, ein Schalter danach |
 | `const.py` | Konstanten |
 | `coordinator.py` | DataUpdateCoordinator für periodische Messung (15 min) und Event-Entprellung |
-| `sensor.py` | Fünf Diagnose-Sensoren (Größe, Stände, Dashboards, Versionen, Zeitstempel) |
+| `sensor.py` | Sechs Diagnose-Sensoren (Größe, Stände, Dashboards, Versionen, Zeitstempel, Startdauer) |
 | `diagnostics.py` | Downloadbarer Diagnose-Bericht über Home Assistants Standardpfad |
 | `__init__.py` | Einstiegspunkt der Integration |
 

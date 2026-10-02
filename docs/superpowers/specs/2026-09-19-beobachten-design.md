@@ -82,7 +82,7 @@ Zwei neue HA-freie Module und zwei dünne Schichten darüber. Die Regel aus `CLA
 
 ## Schlüssel-Entscheidungen
 
-### B1 – Fünf Sensoren, Detailzahlen als Attribute
+### B1 – Sechs Sensoren, Detailzahlen als Attribute
 
 | Entität | Zustand | Klassen | Attribute |
 |---|---|---|---|
@@ -91,8 +91,9 @@ Zwei neue HA-freie Module und zwei dünne Schichten darüber. Die Regel aus `CLA
 | `sensor.dashboard_history_revisions` | Anzahl | `measurement` | meiste je Dashboard, Median, ältester Stand |
 | `sensor.dashboard_history_dashboards` | Anzahl lebender | `measurement` | gelöschte, je gesehene gesamt, **ID-Zuordnung** (siehe B8) |
 | `sensor.dashboard_history_versions` | Anzahl Marken | `measurement` | Tagesversionen an/aus |
+| `sensor.dashboard_history_startup_time` | Sekunden bis zur Indizierung beim letzten Start (seit #52, siehe Nachtrag 2026-10-02) | `duration` | Dauer des ersten vollen Indexbaus (`index_build`) |
 
-Alle fünf tragen `entity_category: diagnostic` und hängen an einem Dienst-Gerät »Dashboard History«, damit sie auf der Integrationsseite beieinanderstehen – derselben Seite, auf der auch der Diagnose-Knopf sitzt.
+Alle sechs tragen `entity_category: diagnostic` und hängen an einem Dienst-Gerät »Dashboard History«, damit sie auf der Integrationsseite beieinanderstehen – derselben Seite, auf der auch der Diagnose-Knopf sitzt.
 
 **Warum Attribute und nicht mehr Entitäten:** Fünf Entitäten sind eine Geräteseite, die man liest; fünfzehn sind eine, die man überfliegt. Die Detailzahlen gehören zu ihrer Kennzahl und nicht neben sie.
 
@@ -283,7 +284,7 @@ Dies ist der `data`-Block; darum liegt der Umschlag aus B6.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "measured_at": "2026-09-19T12:03:21+00:00",
   "stale": false,
   "environment": {
@@ -292,6 +293,10 @@ Dies ist der `data`-Block; darum liegt der Umschlag aus B6.
   },
   "settings": {
     "daily_versions": true
+  },
+  "startup": {
+    "seconds": 13.4,
+    "index_build": 9.5
   },
   "totals": {
     "dashboards_live": 45,
@@ -325,7 +330,8 @@ Dies ist der `data`-Block; darum liegt der Umschlag aus B6.
 | `measured_at` | UTC, ISO 8601, oder `null`, wenn nie erfolgreich gemessen wurde. Die einzige Uhrzeit im ganzen Bericht. |
 | `stale` | `true`, wenn die Zahlen aus einer früheren Messung stammen (siehe B10). |
 | alle `bytes_*` | Ganzzahlen, **Bytes**, nie KiB oder MB. Umrechnen darf die Auswertung. |
-| `bytes_allocated` | `null` auf Plattformen ohne `st_blocks` (siehe B2). Alle anderen Zahlfelder sind nie `null`. |
+| `bytes_allocated` | `null` auf Plattformen ohne `st_blocks` (siehe B2). Alle anderen Zahlfelder außer denen in `startup` sind nie `null`. |
+| `startup` | Sekunden, auf eine Zehntel gerundet. `seconds`: von Beginn `async_setup_entry` bis `survey()` nach dem Opening pass zurückkehrt, also bis die Historie für das Panel indiziert ist. `index_build`: Dauer des ersten vollen Indexbaus dieses Starts, ein Teil von `seconds`. Beide `null`, solange der Start nicht abgeschlossen ist oder nicht gemessen werden konnte: Aufzeichnung nicht startbar (Repository nicht anlegbar, Abonnieren gescheitert), Opening pass mit einer Ausnahme abgebrochen oder `survey()` gescheitert. Fehler, die der Pass je Dashboard protokolliert und übergeht, verhindern die Zahlen nicht – gemessen wird die Indizierung, nicht der Erfolg der Aufzeichnung. `index_build` außerdem `null` auf einer Historie ohne Commit. |
 | alle Datumsangaben | **tagesgenau**, `YYYY-MM-DD`, UTC. Auch `newest`, obwohl der Sensor lokal den vollen Zeitstempel führt: Eine Uhrzeit sagt über die Größe nichts und über die Gewohnheiten des Testers einiges. |
 | `oldest`, `newest` | `null` bei leerer Historie. |
 | `dashboards` | absteigend nach `revisions`; leere Liste bei leerer Historie. |
@@ -360,11 +366,11 @@ Dies ist der `data`-Block; darum liegt der Umschlag aus B6.
 
 **In `tests/integration/run_checks.py`, gegen eine laufende Anlage** – weil es strukturell nicht anders geht:
 
-- Die fünf Entitäten entstehen, tragen `diagnostic` und hängen am selben Gerät.
+- Die sechs Entitäten entstehen, tragen `diagnostic` und hängen am selben Gerät.
 - Der Zeitstempel rückt nach einer erfassten Änderung vor.
 - **Der Datenschutz-Test an der heruntergeladenen Datei.** Die Datei wirklich über `/api/diagnostics/config_entry/<id>` holen und darin nach den Dashboard-Schlüsseln der Anlage suchen. Der `pytest`-Fall oben kann den Umschlag aus B6 nicht sehen – er existiert dort nicht –, und der Umschlag ist genau das, was der erste Entwurf übersehen hat. Ein Test, der nur das prüft, was man selbst gebaut hat, hätte diesen Fehler nicht gefunden.
 - **Sensoren und Bericht zeigen denselben Stand** (B10): Nach dem Download stimmen die Entitätszustände mit den Zahlen in der Datei überein.
-- **Ein Reload.** Den Config-Eintrag neu laden und danach prüfen: weiterhin genau fünf Entitäten, keine verwaisten, und der Zeitstempel rückt nach der nächsten Änderung immer noch vor – also hängt kein zweiter Listener am alten Store (B4).
+- **Ein Reload.** Den Config-Eintrag neu laden und danach prüfen: weiterhin genau sechs Entitäten, keine verwaisten, und der Zeitstempel rückt nach der nächsten Änderung immer noch vor – also hängt kein zweiter Listener am alten Store (B4).
 - **Das Secret entsteht beim ersten Bedarf und bleibt dann gleich.** Ausdrücklich nicht »beim ersten Bericht«: Die ID-Zuordnung am Sensor braucht es schon beim ersten Refresh, also lange vor jedem Download. Geprüft wird, dass es nach dem ersten Refresh da ist und nach dem Download dasselbe ist.
 
 ## Was gemessen wurde
@@ -386,3 +392,11 @@ Erhoben am 2026-09-19 im Test-Container, auf der Prüfbank mit **7518 Commits, 6
 - **Der Bericht sagt nichts über den Aufbau der Dashboards**, nur über die Bytes ihres jüngsten Stands mit Inhalt. Ob ein Dashboard aus vielen kleinen Views oder wenigen großen besteht, bleibt unsichtbar. Bewusst: Die Frage, auf die C wartet, ist »wie viel Platz«, nicht »wie gebaut«.
 - **Der Umschlag lässt sich nicht beschneiden.** `custom_components` und `timezone` kommen von Home Assistant und stehen in jeder Diagnosedatei jeder Integration; diese Integration kann sie nicht entfernen, ohne den Standardweg zu verlassen. Ob das für alle Tester annehmbar ist, ist unbelegt. Falls jemand es ablehnt, wäre die Antwort kein zweiter Ausgabeweg, sondern der Hinweis, dass er den `data`-Block von Hand herauskopieren und allein schicken kann – der trägt alles, worauf es hier ankommt.
 - **Ob Tester den Diagnose-Knopf finden**, ist unbelegt. Falls nicht, ist die Antwort ein Satz in der README mit einem Bild, kein zweiter Ausgabeweg.
+
+## Nachtrag 2026-10-02: Startdauer als sechster Sensor (#52)
+
+Seit #52 sind es sechs Sensoren; B1, der Vertrag des Berichts und der Test-Plan sind an Ort und Stelle angepasst. Der sechste, »Startup time«, misst von Beginn `async_setup_entry` bis `survey()` nach dem Opening pass zurückkehrt, und trägt die Dauer des ersten vollen Indexbaus als Attribut `index_build`. Das abschließende `survey()` ist nötig, weil der Opening pass den Index nicht für den HEAD seines letzten Schreibvorgangs bereitstellt und auf einer frischen Historie gar nicht baut. Die Zahl ist eine obere Grenze für die Wartezeit des Panels beim Start, solange kein gleichzeitiges `forget` die Historie umschreibt; ein `forget`, das einen Schreibvorgang des Passes überlappt, wird mitgezählt, eines, das nur den Abschluss überlappt, nicht. Gemessen wird die Indizierung, nicht der Erfolg der Aufzeichnung: Fehler, die der Pass je Dashboard übergeht, verhindern die Zahl nicht. Begründung und Review-Befunde: `plans/2026-10-02-startdauer-sensor.md`, `reviews/2026-10-02-startdauer-sensor-review-1-*.md` und `…-review-2-fable.md`.
+
+Der sechste Sensor ist bewusst kein `Reading`: Seine Zahl stammt nicht aus `store.measure()`. Er bleibt deshalb verfügbar, wenn eine Messung scheitert – abweichend von »`measure()` wirft« unter »Fehler- und Randfälle«, das für die fünf Messwerte gilt. Ein Start, dessen Aufzeichnung nicht starten konnte, wird nicht gemessen. Die Begründung unter B1 (»Fünf Entitäten sind eine Geräteseite, die man liest; fünfzehn …«) und ihr Gegenstück im Docstring von `Reading` bleiben bewusst stehen: Sie meinen die Größenordnung, und mit sechs gilt dasselbe.
+
+Der Bericht trägt dieselben zwei Zahlen als Block `startup`; `schema` steigt dafür von 1 auf 2.
