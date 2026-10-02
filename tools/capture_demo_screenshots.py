@@ -192,6 +192,19 @@ async def main():
     token = read_token()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Demo instance: {BASE}   images: {OUTPUT_DIR}")
+    chrome_env = dict(os.environ)
+    # Headless Chrome ignores --lang=en-US when the host's LANG/LC_ALL
+    # points elsewhere: navigator.language stayed "de-DE" and rendered
+    # Home Assistant's sidebar in German. Measured on 2026-10-02;
+    # overriding LANGUAGE and LC_ALL in Chrome's environment forces it
+    # to en-US even if that locale is not generated on the host.
+    chrome_env.update(
+        {
+            "LANGUAGE": "en_US",
+            "LC_ALL": "en_US.UTF-8",
+            "LANG": "en_US.UTF-8",
+        }
+    )
     chrome = subprocess.Popen(
         [
             "google-chrome",
@@ -218,6 +231,7 @@ async def main():
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=chrome_env,
     )
 
     try:
@@ -330,6 +344,22 @@ async def main():
             print("Capturing 02-diff-expanded-light.png...")
             await page.shot("02-diff-expanded-light.png")
 
+            # The replace dialog needs a change that actually offers replace candidates.
+            # On a clean instance built via API, _changes[0] has same_as_now: true and its
+            # previous state is identical to what Undo writes, so _replaceCandidates
+            # deliberately omits both candidates and renders no [data-replace] button.
+            # _changes[1] is an older change that is not same_as_now, so its detail
+            # card renders the replace button. Measured on 2026-10-02.
+            expand_rev2_js = f"""(async () => {{
+                const p = {ELEMENT};
+                const rev2 = p._changes[1].revision;
+                await p._expand(rev2);
+            }})()"""
+            await page.js(expand_rev2_js)
+            await page.settle(
+                f'!!{PANEL}.querySelector(".detail .action-bar [data-replace]")'
+            )
+
             # 3. Replace Dialog Light
             print("3. Opening replace dialog...")
             await page.js(
@@ -394,7 +424,10 @@ async def main():
                 await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
 
             await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
-            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
+            # Clicking data-compare-restore already exited compare mode in panel.js.
+            # Only toggle manually if restore was not used. Measured on 2026-10-02.
+            if not has_restore:
+                await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
             await asyncio.sleep(0.5)
 
             # 4. Simple Mode Light
@@ -483,6 +516,10 @@ async def main():
             await page.shot("06-diff-expanded-dark.png")
 
             # 8. Replace Dialog Dark
+            await page.js(expand_rev2_js)
+            await page.settle(
+                f'!!{PANEL}.querySelector(".detail .action-bar [data-replace]")'
+            )
             print("8. Opening replace dialog (Dark)...")
             await page.js(
                 f'(() => {{ const btn = {PANEL}.querySelector(".detail .action-bar [data-replace]"); '
@@ -544,7 +581,9 @@ async def main():
                 await page.js(f'{PANEL}.querySelector("dialog.confirm").close("cancel")')
 
             await page.js(f'{PANEL}.querySelector("dialog.compare").close("cancel")')
-            await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
+            # Same as in light mode: only toggle if compare mode was not already exited.
+            if not has_restore_dark:
+                await page.js(f"{PANEL}.querySelector('[data-compare-toggle]').click()")
 
             # The narrow pass. Last, and not by preference: turning touch
             # emulation off does not bring the hover branch back in the
