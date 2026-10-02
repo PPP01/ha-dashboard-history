@@ -60,3 +60,34 @@ and removes a ref wherever the target is `None`.
 
 **Before writing any loop over refs, in this project or a neighbouring
 one:** check whether the batch form would do it as well.
+
+## Headless Chrome ignores `--lang` when the host locale disagrees
+
+`--lang=en-US` on headless Chrome does not reliably override
+`navigator.language` when the process' own `LANG`/`LC_ALL` points
+elsewhere. Measured on 2026-10-02 on a machine with `LANG=de_DE.UTF-8`
+against Chrome 153: with only `--lang=en-US`, `navigator.language` came
+back `de-DE` (`navigator.languages`: `de-DE,de,en-US,en`); with
+`LANGUAGE=en_US`, `LC_ALL=en_US.UTF-8` and `LANG=en_US.UTF-8` also set on
+the subprocess' environment, it came back `en-US` — even though
+`en_US.UTF-8` was not a locale generated on that machine (glibc warns
+about it, the result is unaffected). Home Assistant's own frontend
+chrome — the sidebar, not just a panel's own content — follows
+`navigator.language` whenever no per-user `frontend/get_user_data`
+language is set, so a screenshot tool built on headless Chrome silently
+renders the *browser host's* language, not the one passed as a flag.
+
+A `--user-data-dir` profile also persists whichever language it first
+negotiated (`Default/Preferences`, under `intl`). Fixing the environment
+variables for a later run does not retroactively change a profile
+already written under the wrong locale — delete the profile directory
+once after changing them, or the stale preference keeps winning.
+
+`tools/capture_demo_screenshots.py` sets `LANGUAGE`/`LC_ALL`/`LANG` on
+the `google-chrome` subprocess' environment since this finding.
+
+**Before scripting headless Chrome for a screenshot or any other
+locale-sensitive capture, in this project or a sibling one:** set
+`LANGUAGE`/`LC_ALL`/`LANG` explicitly on the subprocess' own
+environment, not just `--lang`, and wipe any existing `--user-data-dir`
+profile after changing them.
