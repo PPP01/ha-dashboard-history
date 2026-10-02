@@ -51,4 +51,8 @@ async def async_get_config_entry_diagnostics(
         # old measuring time is usable; one that hides its age is worse
         # than none.
         stale=not coordinator.last_update_success,
+        # Taken once, when the start was indexed - independent of
+        # whether the refresh above worked.
+        startup_seconds=coordinator.startup_seconds,
+        startup_index_seconds=coordinator.startup_index_seconds,
     )

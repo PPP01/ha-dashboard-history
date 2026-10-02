@@ -29,17 +29,38 @@ FACTS = Measurement(
 
 
 def built(**kwargs):
-    settings = dict(daily_versions=True, measured_at=1758196800.0, stale=False)
+    settings = dict(
+        daily_versions=True,
+        measured_at=1758196800.0,
+        stale=False,
+        startup_seconds=12.34,
+        startup_index_seconds=9.87,
+    )
     settings.update(kwargs)
     return report.build(FACTS, SECRET, **settings)
 
 
-def test_the_four_blocks_are_all_there():
+def test_the_blocks_are_all_there():
     body = built()
     assert set(body) == {
         "schema", "measured_at", "stale",
-        "environment", "settings", "totals", "dashboards",
+        "environment", "settings", "startup", "totals", "dashboards",
     }
+
+
+def test_the_schema_counts_the_startup_block():
+    # The shape changed, so the number did: reports from both versions
+    # end up in the same issue threads and must stay apart.
+    assert built()["schema"] == 2
+
+
+def test_the_startup_time_is_reported_to_a_tenth():
+    assert built()["startup"] == {"seconds": 12.3, "index_build": 9.9}
+
+
+def test_a_start_not_yet_timed_reports_nulls():
+    body = built(startup_seconds=None, startup_index_seconds=None)
+    assert body["startup"] == {"seconds": None, "index_build": None}
 
 
 def test_totals_carry_every_field_of_the_contract():
@@ -69,18 +90,32 @@ def test_measured_at_is_the_only_timestamp_and_is_utc():
 
 def test_an_empty_history_reports_honest_zeros():
     body = report.build(
-        Measurement(), SECRET, daily_versions=False, measured_at=1758196800.0, stale=False
+        Measurement(),
+        SECRET,
+        daily_versions=False,
+        measured_at=1758196800.0,
+        stale=False,
+        startup_seconds=0.4,
+        startup_index_seconds=None,
     )
     assert body["dashboards"] == []
     assert body["totals"]["revisions"] == 0
     assert body["totals"]["dashboards_ever"] == 0
     assert body["totals"]["oldest"] is None
     assert body["environment"]["dulwich"]
+    # No commit, no index to build - but the start was still timed.
+    assert body["startup"] == {"seconds": 0.4, "index_build": None}
 
 
 def test_never_measured_is_not_the_same_as_measured_and_empty():
     body = report.build(
-        None, SECRET, daily_versions=False, measured_at=None, stale=True
+        None,
+        SECRET,
+        daily_versions=False,
+        measured_at=None,
+        stale=True,
+        startup_seconds=12.34,
+        startup_index_seconds=9.87,
     )
     assert body["measured_at"] is None
     assert body["stale"] is True
@@ -91,6 +126,8 @@ def test_never_measured_is_not_the_same_as_measured_and_empty():
     # The two fields that answer something even here.
     assert body["environment"]["dulwich"]
     assert "yaml_c_loader" in body["environment"]
+    # A start is timed whether or not the measurement after it worked.
+    assert body["startup"] == {"seconds": 12.3, "index_build": 9.9}
 
 
 def test_dashboards_are_sorted_by_revisions_and_flag_the_gone_ones():

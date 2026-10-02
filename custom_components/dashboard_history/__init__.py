@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,7 +15,7 @@ from .const import DOMAIN, EVENT_HISTORY_UPDATED, PLATFORMS, REPO_DIRNAME
 from .coordinator import MeasurementCoordinator
 from .milestones import Milestones
 from .services import async_register
-from .store import HistoryStore
+from .store import ForgetRaceError, HistoryStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +26,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     Nothing here may raise: a broken history is an inconvenience, a broken
     Home Assistant start is not.
     """
+    # Taken first, so the startup sensor counts everything this entry
+    # does before its history is usable - and nothing Home Assistant did
+    # before it got here. None below if the recording could not start -
+    # no repository, or no subscription: such a start is not timed.
+    started: float | None = time.monotonic()
     store = HistoryStore(Path(hass.config.path(REPO_DIRNAME)))
     capture = HistoryCapture(hass, store)
     milestones = Milestones(hass, store, entry)
@@ -71,6 +77,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         capture.async_start()
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not start recording")
+        # A survey of a store without a repository answers an empty
+        # list rather than raising, so the closing step could not tell.
+        started = None
 
     # The slow half, off the start. Measured on the test bench on
     # 2026-09-07 over 45 dashboards and 4454 commits: the opening pass
@@ -86,7 +95,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # working tree exactly so that an interrupted run repairs itself.
     entry.async_create_background_task(
         hass,
-        _async_open(hass, entry, store, capture, milestones, coordinator),
+        _async_open(hass, entry, store, capture, milestones, coordinator, started),
         f"{DOMAIN} opening pass",
     )
 
@@ -101,6 +110,7 @@ async def _async_open(
     capture: HistoryCapture,
     milestones: Milestones,
     coordinator: MeasurementCoordinator,
+    started: float | None,
 ) -> None:
     """The opening pass and the first versions, off the start.
 
@@ -132,6 +142,9 @@ async def _async_open(
         await capture.async_opening_pass()
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not start recording")
+    else:
+        if started is not None:
+            await _async_time_the_start(hass, store, coordinator, started)
 
     # Its own guard, separate from the recorder's: a repository that
     # could not be created leaves nothing to mark, but a recorder that
@@ -179,6 +192,43 @@ async def _async_open(
     entry.async_on_unload(hass.bus.async_listen(EVENT_HISTORY_UPDATED, _remeasure))
 
     _LOGGER.debug("Dashboard History finished its opening pass")
+
+
+async def _async_time_the_start(
+    hass: HomeAssistant,
+    store: HistoryStore,
+    coordinator: MeasurementCoordinator,
+    started: float,
+) -> None:
+    """Index the history for the panel, then say how long the start took.
+
+    The opening pass does not leave the index ready on its own: it asks
+    `_has_history` before each write, so the last write moves HEAD past
+    the index, and a fresh history, one with only deleted dashboards or
+    a pass that could not read the configurations never builds it at
+    all. `survey` is what the panel asks for its list. Run here, the
+    panel finds it cached, and the time taken after it is an upper bound
+    for the panel's wait at start. A `forget` overlapping a write of the
+    opening pass is counted in; one overlapping only this survey leaves
+    the number unset. See #52.
+    """
+    try:
+        await hass.async_add_executor_job(store.survey)
+    except ForgetRaceError:
+        _LOGGER.warning(
+            "Dashboard History did not time its start: "
+            "a forget rewrote the history meanwhile"
+        )
+        return
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Dashboard History could not index its history")
+        return
+    coordinator.startup_seconds = time.monotonic() - started
+    coordinator.startup_index_seconds = store.first_index_build()
+    # The number does not come from a measurement, so it must not wait
+    # for one: after two failed refreshes in a row the coordinator would
+    # not notify its listeners at all.
+    coordinator.async_update_listeners()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

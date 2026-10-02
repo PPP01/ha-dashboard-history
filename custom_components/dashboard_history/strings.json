@@ -40,6 +40,9 @@
       },
       "versions": {
         "name": "Versions"
+      },
+      "startup": {
+        "name": "Startup time"
       }
     }
   }

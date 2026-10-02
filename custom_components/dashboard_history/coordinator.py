@@ -77,6 +77,19 @@ class MeasurementCoordinator(DataUpdateCoordinator[Measurement]):
         # `self.data`, which a failed refresh leaves alone. Moving it
         # would date old numbers to now.
         self.measured_at: float | None = None
+        # How long this entry took from the start of `async_setup_entry`
+        # until its history was indexed for the panel, and how long the
+        # first full build of the revision index took within that. Set
+        # once by `_async_open`, before the first measurement, so the
+        # refresh that follows writes them to the entities.
+        #
+        # None until then, and None for good if the start could not be
+        # timed - recording that could not start, an opening pass that
+        # raised, or a closing survey that failed. Errors the pass logs
+        # and skips per dashboard do not count: this times the indexing,
+        # not the recording.
+        self.startup_seconds: float | None = None
+        self.startup_index_seconds: float | None = None
 
     async def _async_update_data(self) -> Measurement:
         """Measure, off the event loop.

@@ -32,6 +32,7 @@ Die Spec vergibt seit 2026-09-02 einen Buchstaben je größerem Vorhaben
 | P | `analyze.py` aufteilen – Komplexitäts-Sperrklinke und Importverträge, Paket mit fünf Modulen, `plan_undo` als Planer je Art (Issue #41) | Erledigt (2026-09-27) | `specs/2026-09-27-analyze-aufteilen-design.md`, `plans/2026-09-27-analyze-aufteilen.md` |
 | — | Ganze entfernte Section parken – Issue #39 | Erledigt (2026-09-29) | `specs/2026-09-29-abschnitt-parken-design.md`, `plans/2026-09-29-abschnitt-parken.md` |
 | — | Ungespeicherte Änderungen in der Dashboard-Liste – oranger Streifen und Zähler (Issue #49). Regel: ein Dashboard zählt 0, wenn sein neuester Stand einer seiner Versionen gleicht (wie die Karte »Right now«) | Umgesetzt auf Branch `issue-49-unversioned-marker` (2026-10-01); Sichtprüfung und Merge stehen aus | `plans/2026-10-01-ungespeicherte-aenderungen-in-der-liste.md` (mit Nachtrag zur geänderten Regel), `reviews/2026-10-01-issue-49-*.md` |
+| — | Startdauer als sechster Diagnose-Sensor »Startup time« mit Bauzeit des Revisionsindex als Attribut, dazu Block `startup` im Diagnose-Bericht (Schema 2) (Issue #52) | Umgesetzt auf Branch `startup-duration-sensor` (2026-10-02); Merge steht aus | `plans/2026-10-02-startdauer-sensor.md`, `reviews/2026-10-02-startdauer-sensor-review-*.md` |
 
 ## Laufzeit `forget` (Versionsmarken in einem Zug)
 
@@ -224,7 +225,7 @@ laut Grep auch (Stand 2026-09-19), seit Vorhaben P zusätzlich von `lint-imports
 | `config_flow.py` | Einrichtung: eine Bestätigung, ein Schalter danach |
 | `const.py` | Konstanten |
 | `coordinator.py` | DataUpdateCoordinator für periodische Messung (15 min) und Event-Entprellung |
-| `sensor.py` | Fünf Diagnose-Sensoren (Größe, Stände, Dashboards, Versionen, Zeitstempel) |
+| `sensor.py` | Sechs Diagnose-Sensoren (Größe, Stände, Dashboards, Versionen, Zeitstempel, Startdauer) |
 | `diagnostics.py` | Downloadbarer Diagnose-Bericht über Home Assistants Standardpfad |
 | `__init__.py` | Einstiegspunkt der Integration |
 

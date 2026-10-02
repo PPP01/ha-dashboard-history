@@ -1,4 +1,8 @@
-"""What the history costs and holds, as five diagnostic entities."""
+"""What the history costs and holds, and how long it took to start.
+
+Six diagnostic entities: five readings of a measurement, and the time
+the last start took until the history was indexed.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory, UnitOfInformation
+from homeassistant.const import EntityCategory, UnitOfInformation, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -128,12 +132,26 @@ READINGS: tuple[Reading, ...] = (
 )
 
 
+def _device_info(entry: ConfigEntry) -> DeviceInfo:
+    """The one device every entity of this integration hangs off."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="Dashboard History",
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback
 ) -> None:
-    """Put the five readings up."""
+    """Put the six readings up."""
     coordinator: MeasurementCoordinator = hass.data[DOMAIN]["coordinator"]
-    add(HistoryReading(coordinator, entry, reading) for reading in READINGS)
+    add(
+        [
+            *(HistoryReading(coordinator, entry, reading) for reading in READINGS),
+            StartupTime(coordinator, entry),
+        ]
+    )
 
 
 class HistoryReading(CoordinatorEntity[MeasurementCoordinator], SensorEntity):
@@ -153,11 +171,7 @@ class HistoryReading(CoordinatorEntity[MeasurementCoordinator], SensorEntity):
         self.entity_description = reading
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{reading.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Dashboard History",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = _device_info(entry)
 
     @property
     def native_value(self):
@@ -180,3 +194,47 @@ class HistoryReading(CoordinatorEntity[MeasurementCoordinator], SensorEntity):
             self.coordinator.secret,
             self._entry.options.get(OPTION_DAILY_VERSIONS, True),
         )
+
+
+class StartupTime(CoordinatorEntity[MeasurementCoordinator], SensorEntity):
+    """How long this start took until the history was indexed.
+
+    Not a `Reading`: those read a `Measurement`, which `store.measure()`
+    takes on a timer. A start is timed once, by `_async_open`, and the
+    measurement has no part in it - a field on `Measurement` would be
+    carried along by every measurement without being measured by any.
+    """
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "startup"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: MeasurementCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_startup"
+        self._attr_device_info = _device_info(entry)
+
+    @property
+    def available(self) -> bool:
+        """Always.
+
+        The other readings go unavailable with a failed measurement,
+        because their numbers come from it. This one does not, and a
+        start that was timed stays timed.
+        """
+        return True
+
+    @property
+    def native_value(self) -> float | None:
+        """Seconds until the history was indexed, or None before that."""
+        seconds = self.coordinator.startup_seconds
+        return None if seconds is None else round(seconds, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """The first index build's share - whether it is the main cost."""
+        index = self.coordinator.startup_index_seconds
+        return {"index_build": None if index is None else round(index, 1)}

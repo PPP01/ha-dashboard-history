@@ -4423,3 +4423,67 @@ def test_building_the_index_is_logged_with_its_size_and_time(store, caplog):
     with caplog.at_level(logging.INFO):
         store.survey()  # cached: nothing to say
     assert not [r for r in caplog.records if "revision index" in r.getMessage()]
+
+
+def test_the_store_keeps_how_long_its_first_full_build_took(store):
+    """For the startup sensor: the log line says it once, this keeps it."""
+    assert store.first_index_build() is None
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.survey()
+    took = store.first_index_build()
+    assert took is not None and took >= 0
+
+
+def test_extending_the_index_leaves_the_build_time_alone(store):
+    """A write after the build only extends the index, and costs no start."""
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.survey()
+    took = store.first_index_build()
+    store.write_snapshot("home", "a: 2\n", "home second")
+    store.survey()
+    assert store.first_index_build() == took
+
+
+def test_a_later_full_rebuild_leaves_the_first_build_time_alone(
+    store, monkeypatch, caplog
+):
+    """A `forget` drops the cache and the next reader builds again.
+
+    That rebuild is the forget's cost, not the start's. The second build
+    is slowed down so that its time cannot coincide with the first.
+    """
+    import logging
+    import time
+
+    store.write_snapshot("home", "a: 1\n", "home first")
+    store.survey()
+    first = store.first_index_build()
+    real = store._built_index
+
+    def slow(repo, head):
+        time.sleep(0.05)
+        return real(repo, head)
+
+    monkeypatch.setattr(store, "_built_index", slow)
+    # What `forget` does to the cache before it rewrites (store.py:1808).
+    store._index = None
+    # `list_changes`, not `survey`: the survey has a cache of its own,
+    # keyed by HEAD, and would answer from it without touching the index.
+    with caplog.at_level(logging.INFO):
+        store.list_changes("home", limit=1)
+    assert any("Built the revision index" in r.getMessage() for r in caplog.records)
+    assert store.first_index_build() == first
+
+
+def test_a_fresh_history_gets_its_index_from_the_survey_after_its_first_write(store):
+    """The opening pass on a fresh history with one dashboard.
+
+    `_has_history` runs before the write, finds no HEAD and builds
+    nothing; nothing reads after the write. Only the survey that
+    `_async_open` runs after the pass builds the index the panel needs.
+    """
+    assert store.list_changes("home", limit=1) == []
+    store.write_snapshot("home", "a: 1\n", "home first")
+    assert store.first_index_build() is None
+    store.survey()
+    assert store.first_index_build() is not None

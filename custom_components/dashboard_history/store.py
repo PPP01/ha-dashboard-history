@@ -686,6 +686,11 @@ class HistoryStore:
         # True while the index is being built from nothing. Read by the
         # panel, without a lock, to say "warming up" instead of nothing.
         self._index_warming = False
+        # How long the first full build of `_index` took, in seconds, or
+        # None before it. Set once and never again: a rebuild after a
+        # `forget` is that forget's cost, and the startup sensor wants
+        # this start's. See `_revision_index`.
+        self._first_index_build: float | None = None
 
     # -- writing -------------------------------------------------------
 
@@ -2730,13 +2735,19 @@ class HistoryStore:
             found = None
             if cached is not None:
                 found = self._extended_index(repo, cached, head)
+            took = None
             if found is None:
-                found = self._timed_build(repo, head)
+                found, took = self._timed_build(repo, head)
+            # Before `_index` is published, not after: the fast path above
+            # hands the index out without the gate, so a reader can see it
+            # the moment it is set - and the time must be there by then.
+            if took is not None and self._first_index_build is None:
+                self._first_index_build = took
             self._index = found
             return found
 
-    def _timed_build(self, repo: Repo, head: str) -> RevisionIndex:
-        """The full build, said aloud and flagged while it runs.
+    def _timed_build(self, repo: Repo, head: str) -> tuple[RevisionIndex, float]:
+        """The full build, said aloud, flagged while it runs, and timed.
 
         Once per start on an installation nobody has rewritten, and it is
         the slowest thing the panel waits for: the line is what tells a
@@ -2748,17 +2759,22 @@ class HistoryStore:
             found = self._built_index(repo, head)
         finally:
             self._index_warming = False
+        took = time.monotonic() - started
         _LOGGER.info(
             "Built the revision index: %d commits, %d dashboards in %.1f s",
             len(found.order),
             len(found.by_key),
-            time.monotonic() - started,
+            took,
         )
-        return found
+        return found, took
 
     def index_warming(self) -> bool:
         """Whether the revision index is being built from nothing right now."""
         return self._index_warming
+
+    def first_index_build(self) -> float | None:
+        """Seconds the first full build of the revision index took, or None."""
+        return self._first_index_build
 
     @staticmethod
     def _built_index(repo: Repo, head: str) -> RevisionIndex:
