@@ -1,0 +1,25 @@
+# A disposable Home Assistant instance for capturing screenshots shown in
+# documentation and the README.
+#
+# Unlike the test bench in docker/compose.yaml, which is strictly pinned to
+# the production installation's version, this demo instance runs on a modern
+# Home Assistant release (2026.9.4) so public screenshots reflect current UI
+# appearance rather than a specific test bench version.
+#
+# The configuration directory lives OUTSIDE this repository: it holds the
+# access token and .storage. Never move it inside.
+name: dashboard-history-demo
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.9.4
+    container_name: dashboard-history-demo
+    restart: unless-stopped
+    ports:
+      # Localhost only. See docker/README.md for binding rationale.
+      - "127.0.0.1:8125:8123"
+    volumes:
+      - ${HA_DEMO_CONFIG:-../../ha-dashboard-history-demo/config}:/config
+      - ../custom_components/dashboard_history:/config/custom_components/dashboard_history:ro
+    environment:
+      TZ: Europe/Berlin
