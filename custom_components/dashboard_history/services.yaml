@@ -355,7 +355,9 @@ create_version:
           multiline: true
     revision:
       description: >-
-        Which recorded state to mark. Defaults to the most recent one.
+        Which recorded state to mark. Defaults to the most recent one,
+        and is refused where that one is not what the dashboard holds
+        right now - after a recording failed.
       selector:
         text:
 

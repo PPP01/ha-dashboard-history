@@ -527,6 +527,14 @@ def _sections_part(count: int, verb: str) -> str:
 
 
 
+# The `reason` a state recorded through "Record it now" carries. Not an
+# outside change: somebody looked at the state and asked for it, after a
+# recording that should have caught it failed. So it is summarised the
+# way a save is - the counts are the difference to the last recorded
+# state, whatever caused it, and stay a count line `message_adds` reads.
+RECORDED_BY_HAND = "by hand"
+
+
 def change_message(
     name: str,
     old: dict | None,
@@ -543,7 +551,8 @@ def change_message(
     whose dashboard nobody touched is an accusation, not a note.
 
     `old` is None when nothing was recorded yet. `reason` is "save" for a
-    change Home Assistant announced, and anything else for one found by
+    change Home Assistant announced, `RECORDED_BY_HAND` for a state
+    somebody asked to have recorded, and anything else for one found by
     comparison, where nobody can say what caused it.
     """
     if old is None:
@@ -555,7 +564,7 @@ def change_message(
         # its title, its icon - or nothing did and only metadata was
         # recorded for the first time. Either way: no outside change.
         return f"{name}: {_meta_detail(old_meta, new_meta)}"
-    if reason != "save":
+    if reason not in ("save", RECORDED_BY_HAND):
         # Changed while nobody was listening: a restored backup, a
         # hand-edited storage file, another tool. Recording that as an
         # ordinary save would hide it.

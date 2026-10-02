@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from dulwich.errors import MissingCommitError
 
 from .analyze import (
+    RECORDED_BY_HAND,
     explain_change,
     explain_effect,
     find_removed,
@@ -594,6 +595,19 @@ async def async_history(
         # it without a second `"restarted" in result`.
         "restarted": False,
         "matching_versions": matching_versions,
+        # The live state is known and the newest entry does not hold it:
+        # a recording failed and nothing has caught up yet. Said here
+        # rather than read off `same_as_now` in the panel, because that
+        # is false as well wherever the live state cannot be read - a
+        # deleted dashboard, a configuration Home Assistant will not
+        # hand out - and nothing is missing there. Only on the first
+        # page, the one whose top row is the newest entry.
+        "unrecorded": bool(
+            before is None
+            and live is not None
+            and rendered
+            and not rendered[0]["same_as_now"]
+        ),
         # The installation's own today, not the browser's. Read at the
         # moment of answering and through the same function the
         # automatic versions use, so a title somebody accepts unchanged
@@ -602,6 +616,52 @@ async def async_history(
             int(dt_util.utcnow().timestamp()), dt_util.DEFAULT_TIME_ZONE
         ),
     }
+
+
+async def async_record_now(
+    hass: HomeAssistant, store: HistoryStore, key: str
+) -> dict:
+    """Record what one dashboard holds right now, where the history lacks it.
+
+    The repair for `unrecorded` in `async_history`: a recording that
+    failed and has not been caught up with yet by a save, a restart or a
+    reconcile. The same capture a restore runs first in
+    `_keep_the_live_state`, asked for by hand.
+
+    No `confirm`. It writes an entry into the history, not a dashboard -
+    the recorder does exactly this on every save without asking - and
+    the entry it writes is the state on the screen (decision 7).
+
+    `recorded` is checked, not assumed, for the reason
+    `_keep_the_live_state` gives: `async_capture` swallows its own
+    failures by design, so only asking the store whether its newest
+    entry now holds the live state answers the question. False where it
+    does not - the cause is in the log - and where there is no live state
+    to record at all.
+
+    The live state is read *after* the capture, not before it. A save
+    landing in between is recorded by the capture, and compared against
+    what was read first it came back as a failure that sent somebody to
+    the log for nothing (review of 2026-10-02).
+    """
+    capture = hass.data.get(DOMAIN, {}).get("capture")
+    if capture is not None:
+        try:
+            await capture.async_capture(key=key, reason=RECORDED_BY_HAND)
+        except Exception:  # noqa: BLE001 - answered below, never raised
+            # Worded so the panel's pointer ("Could not record dashboard
+            # <key>") finds this line too, not only capture.py's own.
+            _LOGGER.exception("Could not record dashboard %s by hand", key)
+    live = await async_get_config(hass, key)
+    if live is None:
+        return {"recorded": False}
+    newest = await hass.async_add_executor_job(store.list_changes, key, 1)
+    if not newest:
+        return {"recorded": False}
+    same = await hass.async_add_executor_job(
+        _same_as_live, store, key, [newest[0].revision], live
+    )
+    return {"recorded": newest[0].revision in same}
 
 
 async def _retrying_a_forget_race(
@@ -1166,6 +1226,26 @@ async def async_create_version(
         if not newest:
             return {"created": None, "error": f"no recorded state for {key}"}
         revision = newest[0].revision
+        # "The most recent one" is meant as the state the dashboard is in,
+        # and after a recording failed the newest entry is not that state:
+        # a version made here named one the dashboard had already left.
+        # Refused rather than recorded first, because the gap is the
+        # unusual case and `record_now` is its repair; an explicit
+        # revision is unaffected - an older state is a legitimate choice.
+        # Where the live state cannot be read at all, nothing says the
+        # newest entry is stale, and it stays the answer it always was.
+        live = await async_get_config(hass, key)
+        if live is not None and revision not in await hass.async_add_executor_job(
+            _same_as_live, store, key, [revision], live
+        ):
+            return {
+                "created": None,
+                "error": (
+                    "the state the dashboard holds right now is not recorded "
+                    "yet, so it cannot be named; record it first, or name a "
+                    "revision"
+                ),
+            }
     # Both ways in end here, so the fence holds for the button and for the
     # service alike. The same separation `_state_at` makes: an unknown
     # revision is a statement about the input, an absent state one about

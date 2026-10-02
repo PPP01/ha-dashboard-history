@@ -9,7 +9,7 @@ import analyze
 
 INTERFACE = {
     # used by operations.py, capture.py and restore.py
-    "RemovedItem", "UndoPlan", "UndoStep", "change_message", "explain_change",
+    "RECORDED_BY_HAND", "RemovedItem", "UndoPlan", "UndoStep", "change_message", "explain_change",
     "explain_effect", "find_removed", "message_adds", "plan_undo", "same_config",
     # used by the tests
     "card_containers", "match_badges", "match_cards", "match_sections",

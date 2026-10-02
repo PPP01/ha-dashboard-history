@@ -21,6 +21,7 @@ file holds no logic; it names what callers reach as `analyze.<name>`.
 from __future__ import annotations
 
 from .explain import (
+    RECORDED_BY_HAND,
     _ENTRY_LIMIT,
     _counts,
     change_message,
@@ -51,6 +52,7 @@ from .removed import find_removed
 from .undo import _POSITION_REFUSAL, _SECTIONS_AND_CARDS_REFUSAL, _plan_sections, plan_undo
 
 __all__ = [
+    "RECORDED_BY_HAND",
     "RemovedItem",
     "UndoPlan",
     "UndoStep",

@@ -82,6 +82,12 @@ _COMMANDS = (
         },
     ),
     _command(
+        f"{DOMAIN}/record_now",
+        _DASHBOARD,
+        operations.async_record_now,
+        lambda msg: {"key": msg["dashboard"]},
+    ),
+    _command(
         f"{DOMAIN}/search",
         {
             **_DASHBOARD,

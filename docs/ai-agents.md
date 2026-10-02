@@ -27,6 +27,11 @@ Two details that are easy to miss:
 - `create_version` needs no `confirm`. It only tags an already-recorded
   state; nothing on the dashboard changes because of it. It does need an
   admin-level token, like every other action here.
+- Without a `revision`, `create_version` refuses with "not recorded yet"
+  when the most recent recorded state is not what the dashboard holds —
+  the recording of your change failed. Save the same configuration once
+  more and try again; the Home Assistant log says why it failed
+  ("Could not record dashboard …").
 - `dashboard` always means the dashboard's `url_path`, never its visible
   title. Run `dashboard_history.debug_snapshot` first if you don't know
   it.

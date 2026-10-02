@@ -106,12 +106,14 @@ export function someNames(names) {
  * and the date; it takes away the now-redundant "same state as now"
  * and the button that would only ever open on "No difference."
  *
- * `saveAnother` is for the first crowned box only: one state gets one
- * button, however many versions are stacked on it.
+ * `saveRevision` is for the first crowned box only: one state gets one
+ * button, however many versions are stacked on it. It is the revision of
+ * the entry the box stands for, which the button carries (see
+ * `saveButton`); "" draws none.
  */
 export function versionHead({
   version, here, top, count, exists = true, compareMode = false, compareChecked = false,
-  crowned = false, saveAnother = false,
+  crowned = false, saveRevision = "",
 }) {
   const auto = version.automatic
     ? `<span class="auto">saved automatically</span>`
@@ -173,7 +175,9 @@ export function versionHead({
         ${bin(version)}
       </span>
       ${version.description ? `<p class="why typed">${escape(version.description)}</p>` : ""}
-      ${saveAnother ? `<span class="acts">${saveButton({ another: true })}</span>` : ""}
+      ${saveRevision
+      ? `<span class="acts">${saveButton({ another: true, revision: saveRevision })}</span>`
+      : ""}
     </summary>`;
 }
 
@@ -241,10 +245,41 @@ export function undoButton(version) {
  * state nothing holds is a decision about a name; on a state a version
  * holds, it is a second name for the same content, and the word says
  * so before the dialog has to (GitHub #50).
+ *
+ * `revision` is the entry the box was drawn for, carried by the button
+ * the way a row's own "Version up to here" carries its row. It used to
+ * say `"now"` and leave the click to look the newest entry up, and
+ * `_refresh` replaces the entries before it draws them: a click on the
+ * button for one state in that window tagged the next. `data-now` only
+ * tells this button apart from the rows'.
  */
-export function saveButton({ another = false } = {}) {
-  return `<button class="act ghost" data-version="now"
+export function saveButton({ another = false, revision }) {
+  return `<button class="act ghost" data-now data-version="${escape(revision)}"
                >Save this as ${another ? "another" : "a"} version</button>`;
+}
+
+/**
+ * What the "right now" box says where the server reports the live state
+ * missing from the history (`unrecorded` in `history`): a chip, one
+ * line, and the button that records it. Short on purpose - the button
+ * is the repair, so the box need not explain the other ways to it. Why
+ * a recording failed is only news once this one has failed too, and
+ * then the error banner says where to look.
+ *
+ * `saveButton` is left out wherever this is drawn. "Now" is handed to
+ * the server as the newest *recorded* entry, because a version can only
+ * mark a recorded state, and here that entry is not what the box
+ * describes. Undo stays: a restore records the live state before it
+ * writes, or refuses (decision 23).
+ */
+export const UNRECORDED = "This state is not in the history yet.";
+
+export function unrecordedChip() {
+  return `<span class="chip unrecorded">not recorded</span>`;
+}
+
+export function recordButton() {
+  return `<button class="act ghost" data-record-now>Record it now</button>`;
 }
 
 /**

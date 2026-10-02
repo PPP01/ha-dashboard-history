@@ -66,6 +66,24 @@ CONFIG = pathlib.Path(
 TOKEN_FILE = CONFIG.parent / "token.txt"
 
 
+def _clear_stale_lock() -> None:
+    """Remove an `index.lock` an interrupted run of a lock check left behind.
+
+    Bounds the one failure nothing here can prevent: a crash - a power
+    loss being the sharpest case - between `_lock_repository` creating
+    the lock and removing it again. Left in place, it would block every
+    write to every dashboard, forever, not only the next check's own
+    attempt.
+    """
+    stale_lock = CONFIG / REPO_DIRNAME / ".git" / "index.lock"
+    if stale_lock.exists():
+        print(
+            f"  note: removing a leftover {stale_lock} from an earlier, "
+            "interrupted run before continuing"
+        )
+        stale_lock.unlink()
+
+
 def _lock_repository(locked: bool) -> None:
     """Make new commits to the repository fail, without touching reads.
 
@@ -4356,18 +4374,7 @@ async def check_an_unrecorded_state_is_refused_and_can_be_overridden(access):
     come back through the real WebSocket door, plus once through the
     real service door.
     """
-    stale_lock = CONFIG / REPO_DIRNAME / ".git" / "index.lock"
-    if stale_lock.exists():
-        # Bounds the one failure nothing here can prevent: a crash -
-        # a power loss being the sharpest case - between this file
-        # creating the lock and removing it again. Left in place, it
-        # would block every write to every dashboard, forever, not
-        # only this check's own next attempt.
-        print(
-            f"  note: removing a leftover {stale_lock} from an earlier, "
-            "interrupted run before continuing"
-        )
-        stale_lock.unlink()
+    _clear_stale_lock()
 
     key = "dh-unrecorded-gap"
 
@@ -4514,6 +4521,107 @@ async def check_an_unrecorded_state_is_refused_and_can_be_overridden(access):
             )
         finally:
             _lock_repository(locked=False)
+
+
+async def check_record_now_closes_an_unrecorded_gap(access):
+    """`unrecorded` in `history` and `record_now`, against the real thing.
+
+    The same lock as the check above, for the same reason: it is the one
+    way to make a real recording fail. Proves that `history` says so
+    while the gap stands, that `record_now` answers False for as long as
+    the cause does - the panel's cue to point at the log - and that it
+    closes the gap once the cause is gone, without waiting for a save,
+    a restart or a reconcile.
+    """
+    _clear_stale_lock()
+    key = "dh-record-now"
+
+    def cfg(text: str) -> dict:
+        return {"views": [{"title": "Home", "cards": [{"type": "markdown", "content": text}]}]}
+
+    async with Socket(access) as socket:
+        listed = (await socket.call("lovelace/dashboards/list")) or []
+        if not any(entry.get("url_path") == key for entry in listed):
+            await socket.call("lovelace/dashboards/create", url_path=key, title=key)
+            # Creating a dashboard runs a reconcile RECONCILE_DELAY later,
+            # and one landing after the unlock below would close the gap
+            # before `record_now` got the chance to.
+            await asyncio.sleep(RECONCILE_WAIT)
+        await socket.call("lovelace/config/save", url_path=key, config=cfg("# recorded"))
+        before = await _wait_until_recorded(socket, key)
+        history = await socket.call("dashboard_history/history", dashboard=key)
+        check("a recorded dashboard reports no gap", history.get("unrecorded") is False,
+              str(history.get("unrecorded")))
+        idle = await socket.call("dashboard_history/record_now", dashboard=key)
+        after_idle = await socket.call("dashboard_history/history", dashboard=key)
+        check(
+            "recording by hand with nothing missing writes nothing",
+            idle == {"recorded": True}
+            and after_idle["changes"][0]["revision"] == before[0]["revision"],
+            str(idle),
+        )
+
+        _lock_repository(locked=True)
+        try:
+            await socket.call("lovelace/config/save", url_path=key, config=cfg("# missed"))
+            await asyncio.sleep(3)
+            gap = await socket.call("dashboard_history/history", dashboard=key)
+            check("a failed recording is reported as a gap", gap.get("unrecorded") is True,
+                  str(gap.get("unrecorded")))
+            stuck = await socket.call("dashboard_history/record_now", dashboard=key)
+            check("recording by hand says so while the cause stands",
+                  stuck == {"recorded": False}, str(stuck))
+
+            # "The most recent one" would be the entry the dashboard has
+            # left. Both doors refuse it, and nothing is tagged; an
+            # explicit revision is not asked here, because every run
+            # would leave one more version behind on this dashboard.
+            versions_before = await socket.call("dashboard_history/versions", dashboard=key)
+            refused = await socket.call(
+                "dashboard_history/create_version", dashboard=key, title="should never exist"
+            )
+            answer = requests.post(
+                f"{BASE}/api/services/dashboard_history/create_version?return_response",
+                headers={"Authorization": f"Bearer {access}"},
+                json={"dashboard": key, "title": "should never exist"},
+                timeout=30,
+            )
+            served = answer.json().get("service_response", {})
+            versions_after = await socket.call("dashboard_history/versions", dashboard=key)
+            check(
+                "a version without a revision is refused while the newest entry is not live",
+                refused.get("created") is None
+                and "not recorded yet" in (refused.get("error") or "")
+                and served.get("created") is None
+                and "not recorded yet" in (served.get("error") or "")
+                and len(versions_after["versions"]) == len(versions_before["versions"]),
+                f"{refused} {served}",
+            )
+        finally:
+            _lock_repository(locked=False)
+
+        closed = await socket.call("dashboard_history/record_now", dashboard=key)
+        after = await socket.call("dashboard_history/history", dashboard=key)
+        check(
+            "and closes the gap once the cause is gone",
+            closed == {"recorded": True}
+            and after.get("unrecorded") is False
+            and after["changes"][0]["same_as_now"] is True,
+            f"{closed} {after.get('unrecorded')}",
+        )
+        check(
+            "and words the entry like a save, not as an outside change",
+            after["changes"][0]["message"] == f"{key}: 1 removed, 1 added",
+            after["changes"][0]["message"],
+        )
+
+        # No dashboard by that name at all - the same answer a deleted
+        # one gets: there is no live state to record.
+        absent = await socket.call(
+            "dashboard_history/record_now", dashboard="dh-record-now-absent"
+        )
+        check("recording a dashboard that does not exist answers False",
+              absent == {"recorded": False}, str(absent))
 
 
 async def run_panel_fields(access: str) -> None:
@@ -4896,6 +5004,8 @@ if __name__ == "__main__":
     asyncio.run(run_keep_as_version(access))
     print("\n  -- Ein nicht aufgezeichneter Stand wird verweigert --")
     asyncio.run(check_an_unrecorded_state_is_refused_and_can_be_overridden(access))
+    print("\n  -- Ein nicht aufgezeichneter Stand laesst sich nachholen --")
+    asyncio.run(check_record_now_closes_an_unrecorded_gap(access))
     print("\n  -- Was die Seite nicht selbst ausrechnen darf --")
     asyncio.run(run_panel_fields(access))
     print("\n  -- Das Beobachten: Sensoren und Bericht --")

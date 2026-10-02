@@ -171,6 +171,19 @@ def test_a_save_is_summarised():
     )
 
 
+def test_a_state_recorded_by_hand_is_summarised_like_a_save():
+    # "Record it now" in the panel, after a recording failed. Somebody
+    # looked at this state and asked for it, so "changed outside Home
+    # Assistant" would be a claim nobody can back. The counts are the
+    # difference to the last recorded state, whatever caused it - and a
+    # pure count line, so `message_adds` still reads it.
+    message = analyze.change_message(
+        "home", _config([A]), _config([A, B]), analyze.RECORDED_BY_HAND
+    )
+    assert message == "home: 1 added"
+    assert analyze.message_adds(message) is True
+
+
 def test_the_first_recorded_state_says_so():
     assert (
         analyze.change_message("home", None, _config([A]), "startup")
