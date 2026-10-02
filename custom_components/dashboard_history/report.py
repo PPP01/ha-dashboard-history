@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 
 import yaml
 
-SCHEMA = 1
+SCHEMA = 2
 
 
 def new_secret() -> str:
@@ -87,6 +87,17 @@ def _environment() -> dict:
     }
 
 
+def _startup(seconds: float | None, index_seconds: float | None) -> dict:
+    """How long the start took until indexed, and the first build's share.
+
+    To a tenth of a second: what a start costs, not when it happened.
+    """
+    return {
+        "seconds": None if seconds is None else round(seconds, 1),
+        "index_build": None if index_seconds is None else round(index_seconds, 1),
+    }
+
+
 def build(
     measurement,
     secret: str,
@@ -94,6 +105,8 @@ def build(
     daily_versions: bool,
     measured_at: float | None,
     stale: bool,
+    startup_seconds: float | None,
+    startup_index_seconds: float | None,
 ) -> dict:
     """The `data` block, built field by field.
 
@@ -119,6 +132,7 @@ def build(
             "stale": True,
             "environment": _environment(),
             "settings": {"daily_versions": daily_versions},
+            "startup": _startup(startup_seconds, startup_index_seconds),
             "totals": {},
             "dashboards": [],
         }
@@ -144,6 +158,7 @@ def build(
         "stale": stale,
         "environment": _environment(),
         "settings": {"daily_versions": daily_versions},
+        "startup": _startup(startup_seconds, startup_index_seconds),
         "totals": {
             "dashboards_live": measurement.live,
             "dashboards_gone": measurement.gone,

@@ -5112,10 +5112,17 @@ if __name__ == "__main__":
     downloaded = diagnostics(access)
     body = downloaded.get("data", {})
 
+    # The exact set, not a subset: a missing block is what a subset
+    # check lets through, and the schema has to move with the shape.
     check(
-        "the report carries all four blocks",
-        {"environment", "settings", "totals", "dashboards"} <= set(body),
-        f"got {sorted(body)}",
+        "the report carries exactly its blocks, schema 2",
+        set(body)
+        == {
+            "schema", "measured_at", "stale",
+            "environment", "settings", "startup", "totals", "dashboards",
+        }
+        and body.get("schema") == 2,
+        f"got {sorted(body)} schema={body.get('schema')}",
     )
 
     # Two checks, because the two halves of this file carry two different
@@ -5163,6 +5170,22 @@ if __name__ == "__main__":
         and str(body["totals"]["dashboards_live"]) == states["dashboards"],
         f'report={body["totals"]["revisions"]}/{body["totals"]["dashboards_live"]} '
         f'sensors={states["revisions"]}/{states["dashboards"]}',
+    )
+
+    startup_entity = readings.get("startup")
+    startup_state = (
+        _seconds(entity_state(access, startup_entity)) if startup_entity else None
+    )
+    startup_index = (
+        _seconds(entity_attributes(access, startup_entity).get("index_build"))
+        if startup_entity
+        else None
+    )
+    check(
+        "the report carries the startup time the sensor shows",
+        startup_state is not None
+        and body.get("startup") == {"seconds": startup_state, "index_build": startup_index},
+        f'report={body.get("startup")} sensor={startup_state}/{startup_index}',
     )
 
     # -- and what a reload leaves behind ------------------------------------
