@@ -15,7 +15,7 @@ from .const import DOMAIN, EVENT_HISTORY_UPDATED, PLATFORMS, REPO_DIRNAME
 from .coordinator import MeasurementCoordinator
 from .milestones import Milestones
 from .services import async_register
-from .store import HistoryStore
+from .store import ForgetRaceError, HistoryStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -208,16 +208,27 @@ async def _async_time_the_start(
     a pass that could not read the configurations never builds it at
     all. `survey` is what the panel asks for its list. Run here, the
     panel finds it cached, and the time taken after it is an upper bound
-    for the panel's wait at start - unless a `forget` rewrites the
-    history meanwhile, which is then counted in. See #52.
+    for the panel's wait at start. A `forget` overlapping a write of the
+    opening pass is counted in; one overlapping only this survey leaves
+    the number unset. See #52.
     """
     try:
         await hass.async_add_executor_job(store.survey)
+    except ForgetRaceError:
+        _LOGGER.warning(
+            "Dashboard History did not time its start: "
+            "a forget rewrote the history meanwhile"
+        )
+        return
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Dashboard History could not index its history")
         return
     coordinator.startup_seconds = time.monotonic() - started
     coordinator.startup_index_seconds = store.first_index_build()
+    # The number does not come from a measurement, so it must not wait
+    # for one: after two failed refreshes in a row the coordinator would
+    # not notify its listeners at all.
+    coordinator.async_update_listeners()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
