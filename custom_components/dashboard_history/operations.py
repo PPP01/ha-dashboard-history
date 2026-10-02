@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from dulwich.errors import MissingCommitError
 
 from .analyze import (
+    RECORDED_BY_HAND,
     explain_change,
     explain_effect,
     find_removed,
@@ -594,6 +595,19 @@ async def async_history(
         # it without a second `"restarted" in result`.
         "restarted": False,
         "matching_versions": matching_versions,
+        # The live state is known and the newest entry does not hold it:
+        # a recording failed and nothing has caught up yet. Said here
+        # rather than read off `same_as_now` in the panel, because that
+        # is false as well wherever the live state cannot be read - a
+        # deleted dashboard, a configuration Home Assistant will not
+        # hand out - and nothing is missing there. Only on the first
+        # page, the one whose top row is the newest entry.
+        "unrecorded": bool(
+            before is None
+            and live is not None
+            and rendered
+            and not rendered[0]["same_as_now"]
+        ),
         # The installation's own today, not the browser's. Read at the
         # moment of answering and through the same function the
         # automatic versions use, so a title somebody accepts unchanged
@@ -602,6 +616,47 @@ async def async_history(
             int(dt_util.utcnow().timestamp()), dt_util.DEFAULT_TIME_ZONE
         ),
     }
+
+
+async def async_record_now(
+    hass: HomeAssistant, store: HistoryStore, key: str
+) -> dict:
+    """Record what one dashboard holds right now, where the history lacks it.
+
+    The repair for `unrecorded` in `async_history`: a recording that
+    failed and has not been caught up with yet by a save, a restart or a
+    reconcile. The same capture a restore runs first in
+    `_keep_the_live_state`, asked for by hand.
+
+    No `confirm`. It writes an entry into the history, not a dashboard -
+    the recorder does exactly this on every save without asking - and
+    the entry it writes is the state on the screen (decision 7).
+
+    `recorded` is checked, not assumed, for the reason
+    `_keep_the_live_state` gives: `async_capture` swallows its own
+    failures by design, so only asking the store whether its newest
+    entry now holds the live state answers the question. False where it
+    does not - the cause is in the log - and where there is no live state
+    to record at all.
+    """
+    live = await async_get_config(hass, key)
+    if live is None:
+        return {"recorded": False}
+    capture = hass.data.get(DOMAIN, {}).get("capture")
+    if capture is not None:
+        try:
+            await capture.async_capture(key=key, reason=RECORDED_BY_HAND)
+        except Exception:  # noqa: BLE001 - answered below, never raised
+            # Worded so the panel's pointer ("Could not record dashboard
+            # <key>") finds this line too, not only capture.py's own.
+            _LOGGER.exception("Could not record dashboard %s by hand", key)
+    newest = await hass.async_add_executor_job(store.list_changes, key, 1)
+    if not newest:
+        return {"recorded": False}
+    same = await hass.async_add_executor_job(
+        _same_as_live, store, key, [newest[0].revision], live
+    )
+    return {"recorded": newest[0].revision in same}
 
 
 async def _retrying_a_forget_race(

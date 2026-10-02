@@ -70,7 +70,8 @@ const DETAILS_KEPT = PAGE;
 // ninety seconds, with no error anywhere to say why.
 let STYLE;
 let escape, renderDiff, renderPlain, when, whenRange, joinNames;
-let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton, liveIsRecorded;
+let sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton;
+let UNRECORDED, unrecordedChip, recordButton;
 let DIALOGS;
 let renderSimple, steps, spanOf;
 let splitBySidebar, defaultPanelPath, arrangementFrom;
@@ -85,7 +86,8 @@ const partsReady = Promise.all([
 ]).then(([style, render, rows, dialogs, simple, sidebar]) => {
   STYLE = style.STYLE;
   ({ escape, renderDiff, renderPlain, when, whenRange, joinNames } = render);
-  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton, liveIsRecorded } = rows);
+  ({ sections, someNames, renderRow, versionHead, currentStateRow, nowChip, undoButton, saveButton } = rows);
+  ({ UNRECORDED, unrecordedChip, recordButton } = rows);
   ({ DIALOGS } = dialogs);
   ({ renderSimple, steps, spanOf } = simple);
   ({ splitBySidebar, defaultPanelPath, arrangementFrom } = sidebar);
@@ -219,6 +221,9 @@ class DashboardHistoryPanel extends HTMLElement {
     // and a version below that window is precisely the one that must
     // still be named.
     this._matching = [];
+    // Whether the live state is missing from the history - a recording
+    // that failed. The server's answer; see `unrecorded` in `history`.
+    this._unrecorded = false;
     // Whether `_versions`/`_matching` above are known to belong to the
     // dashboard `_changes` is currently showing. `_select` clears both
     // synchronously, before the fetch that would refill them, while
@@ -1078,6 +1083,7 @@ class DashboardHistoryPanel extends HTMLElement {
       // and cheap, and the alternative is a list nobody can trust.
       this._cursor = history.next_cursor ?? null;
       this._matching = history.matching_versions || [];
+      this._unrecorded = Boolean(history.unrecorded);
       this._serverToday = history.today ?? null;
       this._versions = versions.versions || [];
       // An expanded row keeps its place, but not its answers: after a
@@ -1427,6 +1433,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._historyRestarted = false;
     this._versions = [];
     this._matching = [];
+    this._unrecorded = false;
     this._versionsLoaded = false;
     this._query = "";
     // Whether somebody has asked for the whole history for this
@@ -1459,6 +1466,7 @@ class DashboardHistoryPanel extends HTMLElement {
     this._cursor = history ? history.next_cursor ?? null : null;
     this._cursorGeneration = history ? history.generation ?? null : null;
     this._matching = history ? history.matching_versions || [] : [];
+    this._unrecorded = Boolean(history?.unrecorded);
     this._serverToday = history ? history.today ?? null : null;
     this._versions = versions ? versions.versions || [] : [];
     this._versionsLoaded = true;
@@ -1510,6 +1518,9 @@ class DashboardHistoryPanel extends HTMLElement {
       if (!mine() || !result) return;
       if (result.restarted) {
         this._changes = result.changes || [];
+        // A fresh first page, so its answer about the newest entry is the
+        // one that counts now.
+        this._unrecorded = Boolean(result.unrecorded);
       } else {
         this._changes = this._changes.concat(result.changes || []);
       }
@@ -2808,6 +2819,44 @@ class DashboardHistoryPanel extends HTMLElement {
   }
 
   /**
+   * Record what the dashboard holds right now, where the history lacks
+   * it. No question first: it writes an entry into the history, not a
+   * dashboard, and the entry is the state somebody is looking at
+   * (decision 7, first side).
+   *
+   * Success needs no sentence - the box redraws without its chip, and
+   * the save button is back. Failure does, and only failure points at
+   * the log: the recorder swallows its errors by design, so the reason
+   * is written there and nowhere else.
+   */
+  async _recordNow() {
+    const asked = this._selected;
+    // Armed before the write, as in `_confirm`: the recorder announces
+    // what it wrote, and an announcement nobody waits for starts a
+    // refresh of its own beside the reload below.
+    const recorded = this._recorded();
+    const done = await this._guard(
+      async () => {
+        const result = await this._call("record_now", { dashboard: asked });
+        if (result?.recorded) await recorded;
+        return result;
+      },
+      () => this._selected === asked,
+    );
+    if (!done) return;
+    if (!done.recorded) {
+      this._sayAbout(
+        asked,
+        "The state could not be recorded. The Home Assistant log says why - " +
+          `look for "Could not record dashboard ${asked}".`,
+      );
+      return;
+    }
+    const stale = await this._reloadAfterWrite("the state was recorded");
+    if (stale) this._sayAbout(asked, stale);
+  }
+
+  /**
    * Three buttons carrying the finished numbers, patch preselected.
    *
    * The number is never typed. A tag name has ref rules - no spaces, no
@@ -3744,6 +3793,7 @@ class DashboardHistoryPanel extends HTMLElement {
           versions: this._versions,
           shown: this._matchingVersions(),
           changes: this._changes,
+          unrecorded: this._unrecorded,
           searching: Boolean(query),
           // The same set the advanced mode's sections use, keyed the
           // same way. A version opened in one mode is open in the
@@ -3891,15 +3941,16 @@ class DashboardHistoryPanel extends HTMLElement {
    * there is nothing to undo to: only the second name is on offer, here
    * and not in the simple mode (GitHub #50).
    *
-   * Neither save button while the live state is not recorded - see
-   * `liveIsRecorded`. Undo stays.
+   * Where the server reports the live state unrecorded, the button that
+   * records it stands in for either save button - see `UNRECORDED`.
+   * Undo stays.
    */
   _nowActs(matching) {
-    const save = liveIsRecorded(this._changes);
-    if (matching.length)
-      return save ? `<span class="acts">${saveButton({ another: true })}</span>` : "";
-    const undo = this._versions.length ? undoButton(this._versions[0]) : "";
-    return `<span class="acts">${save ? saveButton() : ""}${undo}</span>`;
+    const named = Boolean(matching.length);
+    const buttons =
+      (this._unrecorded ? recordButton() : saveButton({ another: named })) +
+      (!named && this._versions.length ? undoButton(this._versions[0]) : "");
+    return buttons ? `<span class="acts">${buttons}</span>` : "";
   }
 
   /**
@@ -3926,10 +3977,14 @@ class DashboardHistoryPanel extends HTMLElement {
     if (!this._versionsLoaded) return { chip: "", namedClass: " loading", body: "" };
     const matching = this._versionsMatchingNow();
     const named = Boolean(matching.length);
+    const gap = this._unrecorded;
     return {
-      chip: nowChip(named),
+      chip: nowChip(named) + (gap ? unrecordedChip() : ""),
       namedClass: named ? " named" : "",
-      body: this._nowSentence(matching) + this._nowActs(matching),
+      body:
+        this._nowSentence(matching) +
+        (gap ? `<p class="why unrecorded">${UNRECORDED}</p>` : "") +
+        this._nowActs(matching),
     };
   }
 
@@ -4320,6 +4375,11 @@ class DashboardHistoryPanel extends HTMLElement {
       // recorded state. Everything else names a revision.
       const which = element.dataset.version;
       this._createVersion(which === "now" ? this._changes[0]?.revision : which);
+    });
+    onClick("[data-record-now]", (element, event) => {
+      // As with the version button: the click must not fold the box.
+      event.stopPropagation();
+      this._recordNow();
     });
     onClick("[data-mode]", (element, event) => {
       event.stopPropagation();

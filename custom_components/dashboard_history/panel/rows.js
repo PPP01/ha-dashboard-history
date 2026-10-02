@@ -248,21 +248,27 @@ export function saveButton({ another = false } = {}) {
 }
 
 /**
- * Whether `saveButton` can keep its word: "now" is handed to the server
- * as the newest *recorded* entry, because a version can only mark a
- * recorded state. That is the live state exactly when the newest entry
- * says `same_as_now`.
+ * What the "right now" box says where the server reports the live state
+ * missing from the history (`unrecorded` in `history`): a chip, one
+ * line, and the button that records it. Short on purpose - the button
+ * is the repair, so the box need not explain the other ways to it. Why
+ * a recording failed is only news once this one has failed too, and
+ * then the error banner says where to look.
  *
- * It does not, between a recording that failed and the next save or
- * start that repairs it. There the button tagged an entry the box was
- * not describing - one that already carried a version, as often as not
- * - and called that saving "this". Measured on the test instance on
- * 2026-10-01. Every place that draws the button asks this first; undo
- * stays, because a restore records the live state before it writes, or
- * refuses (decision 23).
+ * `saveButton` is left out wherever this is drawn. "Now" is handed to
+ * the server as the newest *recorded* entry, because a version can only
+ * mark a recorded state, and here that entry is not what the box
+ * describes. Undo stays: a restore records the live state before it
+ * writes, or refuses (decision 23).
  */
-export function liveIsRecorded(changes) {
-  return Boolean(changes?.[0]?.same_as_now);
+export const UNRECORDED = "This state is not in the history yet.";
+
+export function unrecordedChip() {
+  return `<span class="chip unrecorded">not recorded</span>`;
+}
+
+export function recordButton() {
+  return `<button class="act ghost" data-record-now>Record it now</button>`;
 }
 
 /**

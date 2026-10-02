@@ -4771,6 +4771,8 @@ el._versions = [
   { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "a" },
 ];
 el._matching = [];
+// Reached through a recording that failed, which the server reports.
+el._unrecorded = true;
 const behindTag = el._renderMain();
 
 // The front is drifted (nothing recorded is provably current) *and*
@@ -4800,6 +4802,7 @@ el._versions = [
   { name: "dash/v1.0.0", title: "First", same_as_now: false, revision: "b" },
 ];
 el._matching = [];
+el._unrecorded = false;
 const cleanBox = el._renderMain();
 
 console.log(JSON.stringify({
@@ -4894,7 +4897,7 @@ def test_a_named_match_wins_over_the_drift_sentence(advanced_now_box):
     assert advanced_now_box["matched"]["matches"] is True
     # The front is not the live state here, so there is no "another
     # version" on offer either: it would land on the front, not on the
-    # state the sentence names (see `liveIsRecorded`).
+    # state the sentence names (see `unrecorded` in `history`).
     assert advanced_now_box["matched"]["anotherButton"] is False
     assert advanced_now_box["matched"]["noUndoButton"] is True
 
@@ -4973,7 +4976,9 @@ el._versions = [
   { name: "dash/v1.0.0", title: "First", same_as_now: true, revision: "b" },
 ];
 el._matching = [{ name: "dash/v1.0.0" }];
+el._unrecorded = true;
 const namedBanner = el._renderMain();
+el._unrecorded = false;
 
 // Unsettled: the wording stays plain, as before.
 el._changes = [
@@ -5043,7 +5048,7 @@ def test_a_named_banner_behind_a_tag_offers_no_version_and_no_undo(
     # an older version holds the live content: settled, though drawn as
     # the bodyless banner rather than a crowned section or a folded box.
     # No "another version": the button would tag the newest entry, which
-    # is not the state the banner names (see `liveIsRecorded`).
+    # is not the state the banner names (see `unrecorded` in `history`).
     assert advanced_save_another["namedBanner"]["banner"] is True
     assert advanced_save_another["namedBanner"]["another"] == 0
     assert advanced_save_another["namedBanner"]["plain"] == 0
@@ -5072,8 +5077,9 @@ const v100 = { name: "dash/v1.0.0", title: "First", revision: "b", timestamp: 1 
 const v110 = { name: "dash/v1.1.0", title: "Second", revision: "a", timestamp: 2 };
 
 // A recording failed: the dashboard holds something no entry holds,
-// so the newest entry is not the live state (`same_as_now` false).
-// The button would tag that newest entry - not what the box describes.
+// so the newest entry is not the live state (`same_as_now` false), and
+// the server says so (`unrecorded`). The button would tag that newest
+// entry - not what the box describes.
 const untaggedGap = [
   { revision: "a", message: "1 card added", versions: [], same_as_now: false, timestamp: 2 },
   { revision: "b", message: "2 cards moved", versions: [v100], same_as_now: false, timestamp: 1 },
@@ -5084,6 +5090,7 @@ const taggedGap = [
 ];
 
 el._mode = "advanced";
+el._unrecorded = true;
 
 // The banner behind a tag, named: an older version holds the live state.
 el._changes = taggedGap;
@@ -5104,10 +5111,18 @@ el._matching = [];
 const untaggedFront = el._renderMain();
 
 // The ordinary case the button exists for: the untagged front is live.
+el._unrecorded = false;
 el._changes = [{ ...untaggedGap[0], same_as_now: true }, untaggedGap[1]];
 const recordedFront = el._renderMain();
 
+// The live state cannot be read at all - Home Assistant will not hand
+// the configuration out - so nothing is `same_as_now`, and yet nothing
+// is missing either: the server reports no gap, and the button stays.
+el._changes = untaggedGap;
+const unreadable = el._renderMain();
+
 el._mode = "simple";
+el._unrecorded = true;
 
 // The simple box over the same gap.
 el._changes = untaggedGap;
@@ -5124,6 +5139,7 @@ console.log(JSON.stringify({
   plainBanner: { save: plainBanner.includes(SAVE), undo: plainBanner.includes(UNDO) },
   untaggedFront: { save: untaggedFront.includes(SAVE), undo: untaggedFront.includes(UNDO) },
   recordedFront: { save: recordedFront.includes(SAVE) },
+  unreadable: { save: unreadable.includes(SAVE) },
   simpleGap: { save: simpleGap.includes(SAVE), undo: simpleGap.includes(UNDO) },
   simpleNoneGap: { save: simpleNoneGap.includes(SAVE) },
 }));
@@ -5170,11 +5186,127 @@ def test_a_recorded_front_keeps_its_save_button(save_only_what_is_recorded):
     assert save_only_what_is_recorded["recordedFront"]["save"] is True
 
 
+def test_an_unreadable_live_state_is_no_gap_and_keeps_the_save_button(
+    save_only_what_is_recorded,
+):
+    # One rule for one fact: the server's `unrecorded`, not `same_as_now`
+    # read off the newest row, which is false here for another reason.
+    assert save_only_what_is_recorded["unreadable"]["save"] is True
+
+
 def test_the_simple_mode_offers_no_save_button_over_an_unrecorded_state(
     save_only_what_is_recorded,
 ):
     assert save_only_what_is_recorded["simpleGap"]["save"] is False
     assert save_only_what_is_recorded["simpleNoneGap"]["save"] is False
+
+
+# -- saying so, and the button that closes the gap --------------------------
+
+_UNRECORDED_NOTE = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+const CHIP = ">not recorded<";
+const LINE = "This state is not in the history yet.";
+const BUTTON = "data-record-now";
+const v100 = { name: "dash/v1.0.0", title: "First", revision: "b", timestamp: 1 };
+const gap = [
+  { revision: "a", message: "1 card added", versions: [{ name: "dash/v1.1.0" }],
+    same_as_now: false, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [v100], same_as_now: false, timestamp: 1 },
+];
+const seen = (html) => ({
+  chip: html.includes(CHIP), line: html.includes(LINE), button: html.includes(BUTTON),
+});
+const out = {};
+
+el._changes = gap;
+el._versions = [
+  { name: "dash/v1.1.0", title: "Second", revision: "a", same_as_now: false },
+  { ...v100, same_as_now: true },
+];
+for (const [mode, matching] of [["advanced", [{ name: "dash/v1.0.0" }]], ["advanced", []]]) {
+  el._mode = mode;
+  el._matching = matching;
+  el._unrecorded = true;
+  out[`${mode}${matching.length ? "Named" : "Plain"}`] = seen(el._renderMain());
+}
+el._mode = "simple";
+el._unrecorded = true;
+out.simple = seen(el._renderMain());
+
+// The server says nothing is missing: nothing is shown, in either mode.
+el._unrecorded = false;
+out.simpleRecorded = seen(el._renderMain());
+el._mode = "advanced";
+out.advancedRecorded = seen(el._renderMain());
+
+// The button: a refusal names the log line, a success says nothing and
+// reloads.
+const calls = [];
+let reloads = 0;
+el._refresh = async () => { reloads += 1; };
+// No recorder here to announce anything; its 3 s fallback would only
+// slow the test down.
+el._recorded = () => Promise.resolve();
+let reply = { recorded: false };
+el._call = (type, extra) => { calls.push({ type, extra }); return Promise.resolve(reply); };
+await el._recordNow();
+out.failed = { calls: calls.splice(0), error: el._error, reloads };
+reply = { recorded: true };
+await el._recordNow();
+out.worked = { calls: calls.splice(0), error: el._error, reloads };
+
+// Paging that a forget restarted hands back a fresh first page, whose
+// answer about the newest entry replaces the old one.
+el._unrecorded = false;
+el._cursor = "b";
+el._call = () => Promise.resolve({
+  changes: gap, restarted: true, unrecorded: true, next_cursor: null, generation: 2,
+});
+await el._loadOlder();
+out.restarted = el._unrecorded;
+
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="session")
+def unrecorded_note(tmp_path_factory):
+    return _run_in_node(tmp_path_factory, "unrecorded_note", _UNRECORDED_NOTE)
+
+
+@pytest.mark.parametrize("box", ["advancedNamed", "advancedPlain", "simple"])
+def test_an_unrecorded_live_state_is_said_and_offered_a_way_in(unrecorded_note, box):
+    assert unrecorded_note[box] == {"chip": True, "line": True, "button": True}
+
+
+@pytest.mark.parametrize("box", ["advancedRecorded", "simpleRecorded"])
+def test_nothing_is_said_where_the_server_reports_no_gap(unrecorded_note, box):
+    assert unrecorded_note[box] == {"chip": False, "line": False, "button": False}
+
+
+def test_recording_by_hand_asks_for_the_selected_dashboard(unrecorded_note):
+    assert unrecorded_note["failed"]["calls"] == [
+        {"type": "record_now", "extra": {"dashboard": "dash"}}
+    ]
+
+
+def test_a_failed_recording_points_at_the_log_line(unrecorded_note):
+    # Only here: as long as nothing has failed yet, the log is not news.
+    assert "Could not record dashboard dash" in unrecorded_note["failed"]["error"]
+    assert unrecorded_note["failed"]["reloads"] == 0
+
+
+def test_a_successful_recording_says_nothing_and_reloads(unrecorded_note):
+    assert unrecorded_note["worked"]["error"] is None
+    assert unrecorded_note["worked"]["reloads"] == 1
+
+
+def test_a_restarted_page_brings_its_own_answer_about_the_gap(unrecorded_note):
+    assert unrecorded_note["restarted"] is True
 
 
 # -- each row gets the brand icon's own node-on-a-strand connector ----------

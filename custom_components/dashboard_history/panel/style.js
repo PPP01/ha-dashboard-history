@@ -623,6 +623,12 @@ export const STYLE = `
      below for why it is one fact and not two. */
   .chip.now { background: var(--accent-color, #ff9800); color: #fff; }
   .chip.now.named { background: var(--primary-color, #03a9f4); }
+  /* The live state missing from the history. A fixed tone rather than
+     --warning-color, for the contrast reason given at
+     button.act.replace-confirm below: white on Home Assistant's default
+     warning colour is about 2:1. */
+  .chip.unrecorded { background: #b3541e; color: #fff; }
+  .why.unrecorded { margin-top: 4px; }
   .chip.sameas {
     background: var(--secondary-background-color, #eee);
     color: var(--secondary-text-color, #727272);
