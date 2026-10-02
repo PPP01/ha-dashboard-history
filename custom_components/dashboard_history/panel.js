@@ -801,16 +801,24 @@ class DashboardHistoryPanel extends HTMLElement {
    * The library re-establishes the subscriptions on its own, but a
    * one-off request is rejected for good - so a panel opened while Home
    * Assistant restarts would sit on its error. "ready" fires after every
-   * reconnect, not just the first. Only a panel that never got its list
-   * reacts: one that has it is kept current by the subscriptions, and
-   * `!_busy` keeps this from doubling a load that is already running.
+   * reconnect, not just the first. A panel that never got its list loads
+   * it; one that has it reacts only while it is showing the lost-connection
+   * notice, because otherwise the subscriptions keep it current. `_busy`
+   * keeps this from doubling a load that is already running.
    * No timer: polling a restarting Home Assistant is how its IP ban
    * locks the developer out.
    */
   _retryOnReconnect(connection) {
     if (this._readyOff) return;
     const retry = () => {
-      if (this._dashboards === null && !this._busy) this._loadDashboards();
+      if (this._busy) return;
+      if (this._dashboards === null) {
+        this._loadDashboards();
+      } else if (this._error === CONNECTION_LOST_MESSAGE) {
+        // The notice promises a reload, so it is kept. `_guard` shows a
+        // failure of its own and clears the notice when it starts.
+        this._guard(() => this._refresh());
+      }
     };
     connection.addEventListener?.("ready", retry);
     this._readyOff = () => connection.removeEventListener?.("ready", retry);

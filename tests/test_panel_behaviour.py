@@ -9862,9 +9862,30 @@ el._call = async () => { again += 1; return { dashboards: [] }; };
 listeners.ready();
 await settle();
 
-// Leaving the panel takes the listener off.
-el._unlisten();
-console.log(JSON.stringify({ down, back, again, listening: "ready" in listeners }));
+// A request already in flight is rejected with an object, not the number;
+// the panel already has its list, and the notice must still be reloaded.
+el._error = null;
+let refreshes = 0;
+el._refresh = async () => { refreshes += 1; };
+await el._guard(async () => { throw { code: 3, message: "Connection lost" }; });
+const objectForm = el._error;
+listeners.ready();
+await settle();
+const afterObject = { refreshes, error: el._error };
+
+// Any other error is not the notice and is left alone.
+el._error = "Something else";
+listeners.ready();
+await settle();
+const otherError = { refreshes, error: el._error };
+
+// Leaving the panel takes the listener off - through the lifecycle hook.
+el.isConnected = false;
+el.disconnectedCallback();
+console.log(JSON.stringify({
+  down, back, again, objectForm, afterObject, otherError,
+  listening: "ready" in listeners,
+}));
 """
 
 
@@ -9888,3 +9909,15 @@ def test_a_loaded_panel_does_not_reload_on_every_reconnect(reconnect):
 
 def test_leaving_the_panel_removes_the_reconnect_listener(reconnect):
     assert reconnect["listening"] is False
+
+
+def test_the_object_form_of_the_error_reads_the_same(reconnect):
+    assert "Lost the connection" in reconnect["objectForm"]
+
+
+def test_a_loaded_panel_refreshes_when_it_shows_the_lost_notice(reconnect):
+    assert reconnect["afterObject"] == {"refreshes": 1, "error": None}
+
+
+def test_any_other_banner_is_left_alone_on_reconnect(reconnect):
+    assert reconnect["otherError"] == {"refreshes": 1, "error": "Something else"}
