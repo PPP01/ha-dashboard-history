@@ -638,10 +638,12 @@ async def async_record_now(
     entry now holds the live state answers the question. False where it
     does not - the cause is in the log - and where there is no live state
     to record at all.
+
+    The live state is read *after* the capture, not before it. A save
+    landing in between is recorded by the capture, and compared against
+    what was read first it came back as a failure that sent somebody to
+    the log for nothing (review of 2026-10-02).
     """
-    live = await async_get_config(hass, key)
-    if live is None:
-        return {"recorded": False}
     capture = hass.data.get(DOMAIN, {}).get("capture")
     if capture is not None:
         try:
@@ -650,6 +652,9 @@ async def async_record_now(
             # Worded so the panel's pointer ("Could not record dashboard
             # <key>") finds this line too, not only capture.py's own.
             _LOGGER.exception("Could not record dashboard %s by hand", key)
+    live = await async_get_config(hass, key)
+    if live is None:
+        return {"recorded": False}
     newest = await hass.async_add_executor_job(store.list_changes, key, 1)
     if not newest:
         return {"recorded": False}
@@ -1221,6 +1226,26 @@ async def async_create_version(
         if not newest:
             return {"created": None, "error": f"no recorded state for {key}"}
         revision = newest[0].revision
+        # "The most recent one" is meant as the state the dashboard is in,
+        # and after a recording failed the newest entry is not that state:
+        # a version made here named one the dashboard had already left.
+        # Refused rather than recorded first, because the gap is the
+        # unusual case and `record_now` is its repair; an explicit
+        # revision is unaffected - an older state is a legitimate choice.
+        # Where the live state cannot be read at all, nothing says the
+        # newest entry is stale, and it stays the answer it always was.
+        live = await async_get_config(hass, key)
+        if live is not None and revision not in await hass.async_add_executor_job(
+            _same_as_live, store, key, [revision], live
+        ):
+            return {
+                "created": None,
+                "error": (
+                    "the state the dashboard holds right now is not recorded "
+                    "yet, so it cannot be named; record it first, or name a "
+                    "revision"
+                ),
+            }
     # Both ways in end here, so the fence holds for the button and for the
     # service alike. The same separation `_state_at` makes: an unknown
     # revision is a statement about the input, an absent state one about

@@ -2831,16 +2831,14 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   async _recordNow() {
     const asked = this._selected;
-    // Armed before the write, as in `_confirm`: the recorder announces
-    // what it wrote, and an announcement nobody waits for starts a
-    // refresh of its own beside the reload below.
-    const recorded = this._recorded();
+    // Not `_recorded()`, unlike `_confirm`: whether anything is announced
+    // is not known in advance - a recording that finds nothing new writes
+    // nothing and says nothing - and a waiter left armed would swallow
+    // somebody else's announcement. The refresh that announcement starts
+    // beside the reload below is harmless: `_refresh` drops the older of
+    // the two answers.
     const done = await this._guard(
-      async () => {
-        const result = await this._call("record_now", { dashboard: asked });
-        if (result?.recorded) await recorded;
-        return result;
-      },
+      () => this._call("record_now", { dashboard: asked }),
       () => this._selected === asked,
     );
     if (!done) return;
@@ -3671,7 +3669,7 @@ class DashboardHistoryPanel extends HTMLElement {
       compareMode: this._compareMode,
       compareChecked: this._compareSelection.some((s) => s.revision === version.name),
       crowned,
-      saveAnother: another,
+      saveRevision: another ? this._changes[top]?.revision || "" : "",
     });
   }
 
@@ -3947,8 +3945,11 @@ class DashboardHistoryPanel extends HTMLElement {
    */
   _nowActs(matching) {
     const named = Boolean(matching.length);
+    const front = this._changes[0]?.revision;
     const buttons =
-      (this._unrecorded ? recordButton() : saveButton({ another: named })) +
+      (this._unrecorded
+        ? recordButton()
+        : front ? saveButton({ another: named, revision: front }) : "") +
       (!named && this._versions.length ? undoButton(this._versions[0]) : "");
     return buttons ? `<span class="acts">${buttons}</span>` : "";
   }
@@ -4371,10 +4372,9 @@ class DashboardHistoryPanel extends HTMLElement {
     onClick("[data-version]", (element, event) => {
       // Otherwise the click reaches the row underneath and collapses it.
       event.stopPropagation();
-      // "now" is the simple mode's button, which means the newest
-      // recorded state. Everything else names a revision.
-      const which = element.dataset.version;
-      this._createVersion(which === "now" ? this._changes[0]?.revision : which);
+      // Every one of them names its revision, the "right now" box's own
+      // included - see `saveButton`.
+      this._createVersion(element.dataset.version);
     });
     onClick("[data-record-now]", (element, event) => {
       // As with the version button: the click must not fold the box.

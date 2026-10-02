@@ -247,6 +247,10 @@ export function renderSimple({
   searching = false,
   open = new Set(),
 }) {
+  // Carrying the entry it was drawn for - see `saveButton`. None where
+  // nothing is recorded to name.
+  const front = changes?.[0]?.revision;
+  const save = front ? saveButton({ revision: front }) : "";
   if (!shown.length)
     // Two different reasons for an empty list, and each gets its own
     // sentence: while searching, an empty list means "no match" - the
@@ -261,7 +265,7 @@ export function renderSimple({
       // unrecorded, the button that records it stands in - see
       // `UNRECORDED`.
       `<p class="empty muted">This dashboard has no versions yet.</p>
-         ${unrecorded ? `<p>${UNRECORDED}</p>${recordButton()}` : saveButton()}
+         ${unrecorded ? `<p>${UNRECORDED}</p>${recordButton()}` : save}
          ${HINT}`;
 
   // The one place you are standing, said in the only vocabulary this
@@ -370,7 +374,7 @@ export function renderSimple({
   // `UNRECORDED`. Undo stays.
   const buttons =
     (unrecorded ? recordButton() : "") +
-    (standingOn ? "" : `${unrecorded ? "" : saveButton()}${undo}`);
+    (standingOn ? "" : `${unrecorded ? "" : save}${undo}`);
   const acts = buttons ? `<span class="acts">${buttons}</span>` : "";
   // What the block says with itself shut. The chip is the advanced
   // mode's - the same function, not the same words typed again - and

@@ -3994,15 +3994,15 @@ el._changes = [since];
 const none = el._renderMain();
 
 console.log(JSON.stringify({
-  settledOnNewest: { button: settledOnNewest.includes('data-version="now"') },
-  settledOnOlder: { button: settledOnOlder.includes('data-version="now"') },
+  settledOnNewest: { button: settledOnNewest.includes('data-now') },
+  settledOnOlder: { button: settledOnOlder.includes('data-now') },
   unsettled: {
-    button: unsettled.includes('data-version="now"'),
+    button: unsettled.includes('data-now'),
     plain: unsettled.includes(">Save this as a version<"),
     noAnother: !unsettled.includes("another version"),
   },
   none: {
-    button: none.includes('data-version="now"'),
+    button: none.includes('data-now'),
     plain: none.includes(">Save this as a version<"),
   },
 }));
@@ -4816,7 +4816,7 @@ console.log(JSON.stringify({
     count: drifted.includes('<span class="count">1 change</span>'),
     // The two buttons the simple mode's own box offers wherever
     // nothing recorded matches - reused rather than redrawn.
-    saveButton: drifted.includes('data-version="now"'),
+    saveButton: drifted.includes('data-now'),
     undoButton: drifted.includes('data-state="dash/v1.0.0"')
       && drifted.includes("Undo / Go back to v1.0.0"),
   },
@@ -4824,7 +4824,7 @@ console.log(JSON.stringify({
     div: behindTag.includes('class="now-panel now-head"'),
     sentence: behindTag.includes("The dashboard has changed since v1.0.0"),
     verNow: behindTag.includes('class="ver now"'),
-    saveButton: behindTag.includes('data-version="now"'),
+    saveButton: behindTag.includes('data-now'),
   },
   // The either/or the simple mode's own box already draws: a named
   // match wins outright, and there is nothing left to explain about a
@@ -5011,7 +5011,7 @@ console.log(JSON.stringify({
     plain: count(unsettled, ">Save this as a version<"),
     another: count(unsettled, ANOTHER),
   },
-  loading: { buttons: count(loading, 'data-version="now"') },
+  loading: { buttons: count(loading, 'data-now') },
 }));
 """
 
@@ -5071,7 +5071,7 @@ const el = new Panel();
 el._render = () => {};
 el._selected = "dash";
 el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
-const SAVE = 'data-version="now"';
+const SAVE = 'data-now';
 const UNDO = "Undo / Go back to ";
 const v100 = { name: "dash/v1.0.0", title: "First", revision: "b", timestamp: 1 };
 const v110 = { name: "dash/v1.1.0", title: "Second", revision: "a", timestamp: 2 };
@@ -5248,16 +5248,19 @@ out.advancedRecorded = seen(el._renderMain());
 const calls = [];
 let reloads = 0;
 el._refresh = async () => { reloads += 1; };
-// No recorder here to announce anything; its 3 s fallback would only
-// slow the test down.
-el._recorded = () => Promise.resolve();
 let reply = { recorded: false };
 el._call = (type, extra) => { calls.push({ type, extra }); return Promise.resolve(reply); };
+const started = Date.now();
 await el._recordNow();
-out.failed = { calls: calls.splice(0), error: el._error, reloads };
+// Nothing left waiting for an announcement: one that comes later is
+// somebody else's and needs its own refresh (review of 2026-10-02).
+out.failed = { calls: calls.splice(0), error: el._error, reloads, waiting: el._awaiting !== null && el._awaiting !== undefined };
 reply = { recorded: true };
 await el._recordNow();
-out.worked = { calls: calls.splice(0), error: el._error, reloads };
+out.worked = { calls: calls.splice(0), error: el._error, reloads, waiting: el._awaiting !== null && el._awaiting !== undefined };
+// Neither waits out a recorder that never announces - a recording that
+// found nothing new to write announces nothing.
+out.quick = Date.now() - started < 1000;
 
 // Paging that a forget restarted hands back a fresh first page, whose
 // answer about the newest entry replaces the old one.
@@ -5305,8 +5308,92 @@ def test_a_successful_recording_says_nothing_and_reloads(unrecorded_note):
     assert unrecorded_note["worked"]["reloads"] == 1
 
 
+@pytest.mark.parametrize("outcome", ["failed", "worked"])
+def test_recording_by_hand_leaves_nothing_waiting_for_an_announcement(
+    unrecorded_note, outcome
+):
+    # A waiter left armed swallowed the next announcement - an unrelated
+    # save got no refresh - and one with nothing announced held the page
+    # busy for its whole three-second fallback.
+    assert unrecorded_note[outcome]["waiting"] is False
+    assert unrecorded_note["quick"] is True
+
+
 def test_a_restarted_page_brings_its_own_answer_about_the_gap(unrecorded_note):
     assert unrecorded_note["restarted"] is True
+
+
+# -- the save button names the entry it was drawn for -----------------------
+
+_SAVE_CARRIES_ITS_REVISION = """
+const el = new Panel();
+el._render = () => {};
+el._selected = "dash";
+el._dashboards = [{ key: "dash", title: "Dash", exists: true }];
+el._unrecorded = false;
+// The revision every save button on the page should carry - the one the
+// box speaks for - or "" where there is no save button at all.
+const target = (html) => {
+  const tag = html.match(/<button[^>]*data-now[^>]*>/);
+  return tag ? (tag[0].match(/data-version="([^"]*)"/) || [, "?"])[1] : "";
+};
+const v100 = { name: "dash/v1.0.0", title: "First", timestamp: 1 };
+const out = {};
+
+el._mode = "advanced";
+// Untagged front, live: "Save this as a version".
+el._changes = [
+  { revision: "a", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [v100], same_as_now: false, timestamp: 1 },
+];
+el._versions = [{ ...v100, revision: "b", same_as_now: false }];
+el._matching = [];
+out.front = target(el._renderMain());
+// Reverted: an older version holds the live front - "another version".
+el._matching = [{ name: "dash/v1.0.0" }];
+out.reverted = target(el._renderMain());
+// Crowned: the version sits on the live newest entry.
+el._changes = [{ revision: "c", message: "1 card added", versions: [v100],
+                 same_as_now: true, timestamp: 2 }];
+el._versions = [{ ...v100, revision: "c", same_as_now: true }];
+el._matching = [{ name: "dash/v1.0.0" }];
+out.crowned = target(el._renderMain());
+
+el._mode = "simple";
+el._changes = [
+  { revision: "d", message: "1 card added", versions: [], same_as_now: true, timestamp: 2 },
+  { revision: "b", message: "2 cards moved", versions: [v100], same_as_now: false, timestamp: 1 },
+];
+el._versions = [{ ...v100, revision: "b", same_as_now: false }];
+out.simple = target(el._renderMain());
+el._changes = [{ revision: "e", message: "first", versions: [], same_as_now: true, timestamp: 1 }];
+el._versions = [];
+out.simpleNone = target(el._renderMain());
+
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="session")
+def save_carries_its_revision(tmp_path_factory):
+    return _run_in_node(
+        tmp_path_factory, "save_carries_its_revision", _SAVE_CARRIES_ITS_REVISION
+    )
+
+
+@pytest.mark.parametrize(
+    "box, revision",
+    [("front", "a"), ("reverted", "a"), ("crowned", "c"), ("simple", "d"), ("simpleNone", "e")],
+)
+def test_the_save_button_carries_the_revision_it_was_drawn_for(
+    save_carries_its_revision, box, revision
+):
+    # Found by the review of 2026-10-02 (Astra): `"now"` was turned into
+    # `_changes[0]` at the moment of the click, and `_refresh` replaces
+    # `_changes` before it draws - with a row open it waits for that
+    # row's detail in between. A click on the button for A in that window
+    # tagged B. Carrying the revision binds the click to what was drawn.
+    assert save_carries_its_revision[box] == revision
 
 
 # -- each row gets the brand icon's own node-on-a-strand connector ----------
@@ -5405,7 +5492,7 @@ console.log(JSON.stringify({
     // those come from `_changes` alone and are not stale.
     noChip: !loading.includes('class="chip now'),
     noSentence: !loading.includes("has changed since"),
-    noButtons: !loading.includes('data-version="now"'),
+    noButtons: !loading.includes('data-now'),
     heading: loading.includes('<p class="heading">Right now'),
     count: loading.includes('<span class="count">1 change</span>'),
     row: loading.includes("1 card added"),
@@ -5418,7 +5505,7 @@ console.log(JSON.stringify({
   },
   loaded: {
     sentence: loaded.includes("The dashboard has changed since v1.0.0"),
-    buttons: loaded.includes('data-version="now"'),
+    buttons: loaded.includes('data-now'),
     noLoadingClass: !loaded.includes("loading"),
   },
 }));

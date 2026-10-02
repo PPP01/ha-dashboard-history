@@ -4571,6 +4571,32 @@ async def check_record_now_closes_an_unrecorded_gap(access):
             stuck = await socket.call("dashboard_history/record_now", dashboard=key)
             check("recording by hand says so while the cause stands",
                   stuck == {"recorded": False}, str(stuck))
+
+            # "The most recent one" would be the entry the dashboard has
+            # left. Both doors refuse it, and nothing is tagged; an
+            # explicit revision is not asked here, because every run
+            # would leave one more version behind on this dashboard.
+            versions_before = await socket.call("dashboard_history/versions", dashboard=key)
+            refused = await socket.call(
+                "dashboard_history/create_version", dashboard=key, title="should never exist"
+            )
+            answer = requests.post(
+                f"{BASE}/api/services/dashboard_history/create_version?return_response",
+                headers={"Authorization": f"Bearer {access}"},
+                json={"dashboard": key, "title": "should never exist"},
+                timeout=30,
+            )
+            served = answer.json().get("service_response", {})
+            versions_after = await socket.call("dashboard_history/versions", dashboard=key)
+            check(
+                "a version without a revision is refused while the newest entry is not live",
+                refused.get("created") is None
+                and "not recorded yet" in (refused.get("error") or "")
+                and served.get("created") is None
+                and "not recorded yet" in (served.get("error") or "")
+                and len(versions_after["versions"]) == len(versions_before["versions"]),
+                f"{refused} {served}",
+            )
         finally:
             _lock_repository(locked=False)
 
@@ -4588,6 +4614,14 @@ async def check_record_now_closes_an_unrecorded_gap(access):
             after["changes"][0]["message"] == f"{key}: 1 removed, 1 added",
             after["changes"][0]["message"],
         )
+
+        # No dashboard by that name at all - the same answer a deleted
+        # one gets: there is no live state to record.
+        absent = await socket.call(
+            "dashboard_history/record_now", dashboard="dh-record-now-absent"
+        )
+        check("recording a dashboard that does not exist answers False",
+              absent == {"recorded": False}, str(absent))
 
 
 async def run_panel_fields(access: str) -> None:
