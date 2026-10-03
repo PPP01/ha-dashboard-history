@@ -1,0 +1,31 @@
+name: Share diagnostics
+description: Hand over an anonymized diagnostics report — no bug needed.
+labels: ["diagnostics"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This isn't for reporting a problem — it's for helping me see what
+        installations other than mine actually look like (dashboard
+        counts, history size, startup time). See
+        [CONTRIBUTING.md](https://github.com/PPP01/ha-dashboard-history/blob/main/CONTRIBUTING.md#help-me-understand-what-real-dashboards-look-like)
+        for what the report contains and what it deliberately doesn't.
+
+        Get it from **Settings → Devices & Services → Dashboard History →
+        ⋮ → Download diagnostics**, then drag the downloaded file in
+        below or paste its contents.
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything notable about this installation?
+      description: >-
+        Optional — e.g. "this dashboard has a lot of nested stacks" or
+        "this one is years old". Not required.

@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement or something new.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea — half-formed is fine, I'd rather hear it
+        early than not at all.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem or missing piece?
+      description: What are you trying to do that's awkward or not possible right now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to happen instead?
+      description: A rough idea is fine — it doesn't need to be a full design.
+    validations:
+      required: true

@@ -1,0 +1,74 @@
+name: Bug report
+description: Something isn't working the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. Please don't paste
+        dashboard contents here, or a screenshot of one — see
+        [CONTRIBUTING.md](https://github.com/PPP01/ha-dashboard-history/blob/main/CONTRIBUTING.md#found-a-bug-or-have-an-idea)
+        for why, and for when the anonymized diagnostics report below is
+        worth attaching instead.
+
+        Not reporting a problem, just willing to share a diagnostics
+        report? Use the ["Share diagnostics"
+        template](https://github.com/PPP01/ha-dashboard-history/issues/new?template=diagnostics_report.yml)
+        instead — that's the more useful one for that.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: How do you run Home Assistant?
+      options:
+        - Home Assistant OS
+        - Home Assistant Container
+        - Home Assistant Supervised
+        - Home Assistant Core
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: e.g. 2026.9.4
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install Dashboard History?
+      options:
+        - HACS
+        - Manual
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics report (optional)
+      description: >-
+        Worth attaching if this might depend on the shape of your
+        dashboards (size, card count, how old the history is) — less so
+        for a plain code mistake. Settings → Devices & Services →
+        Dashboard History → ⋮ → Download diagnostics. Drag the downloaded
+        file in here, or paste its contents. Counts and sizes only,
+        nothing about your dashboards' content.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else?
+      description: Logs, how often it happens, anything that seems relevant.
