@@ -1,5 +1,71 @@
 # Changelog
 
+## v0.11.0
+
+The dashboard list now shows which dashboards hold changes no version
+carries, a state the history failed to record can be recorded from the
+panel, and the startup time is a sensor of its own. No change to the
+Home Assistant version floor — still **2024.11 or newer**.
+
+### Unsaved changes show in the dashboard list (#49)
+
+- Every dashboard that holds changes no version carries gets an orange
+  stripe and a count in the list on the left, in both views, so you no
+  longer have to open each one to find out. The stripe stays orange
+  when the row is selected.
+- A dashboard counts as clean when its newest state is byte-identical to
+  the state of one of its own versions, however many changes lie between
+  — the same rule the "Right now" box uses. After a card moved out and
+  home again, the list and the box used to disagree.
+- Dashboards that were deleted in Home Assistant are never marked.
+- If counting fails while a `forget` is unfinished, the list still loads
+  with its names and without counts, instead of failing as a whole.
+
+### Another version of the same state — asked first (#50, #51)
+
+- The simple view's "Right now" box no longer offers "Save this as a
+  version" once the dashboard already stands on one; a button that saved
+  the same state again was an offer the dialog then had to walk back.
+- The advanced view offers it as **Save this as another version**, and
+  the panel asks once whether you really want a second name for the same
+  state before the dialog opens. Two versions on one state stays
+  allowed.
+
+### A state the history lacks can be recorded (#51)
+
+- When a recording failed, the box used to hide "Save this as a version"
+  and say nothing. It now says **not recorded** and offers **Record it
+  now**, which writes the live state into the history. Only if that fails
+  too does the message point at the line to look for in the Home
+  Assistant log. A version can only name a recorded state, so no save
+  button is offered in either view until then.
+- While the live state is unrecorded, a version could previously land on
+  the newest *recorded* entry — a different state from the one on the
+  screen. `create_version` without a `revision` now refuses in that gap,
+  and the panel's save button carries the revision it was drawn for
+  instead of looking the newest one up at click time.
+- The history answers `unrecorded` for this itself, and a
+  `dashboard_history/record_now` WebSocket command (administrators only)
+  does the recording.
+
+### Startup time as a sensor (#52)
+
+- A sixth diagnostic sensor, **Startup time**, says how long the start
+  took until the history was ready to answer the panel; the time the
+  revision index took to build is an attribute. The diagnostics report
+  carries both, rounded to a tenth of a second, in a new `startup` block
+  (report schema 2).
+
+### Fixed
+
+- A panel opened while Home Assistant restarts showed a bare red "3" and
+  stayed on "Reading the history…" for good. The lost connection is now
+  said in words, and the panel loads the history once the connection is
+  back — also when it was lost later, say on picking a dashboard.
+- Line breaks typed into a version's description are kept where the
+  description is shown; two lines used to run together into one
+  paragraph (#48).
+
 ## v0.10.2
 
 The panel no longer takes three times as long as it has to when it is
@@ -215,6 +281,8 @@ to the Home Assistant version floor — still **2024.11 or newer**.
 
 ## v0.8.0
 
+*Never tagged or released on its own: it first reached anyone as part of v0.8.1.*
+
 What the history costs is visible now, in Home Assistant's own
 diagnostics. And three ways it could quietly lose or block work under
 pressure — a crash in the middle of forgetting a dashboard, a
@@ -287,6 +355,8 @@ Assistant version floor — still **2024.11 or newer**.
   error.
 
 ## v0.7.1
+
+*Never tagged or released on its own: it first reached anyone as part of v0.8.1.*
 
 Forgetting a deleted dashboard was slow and said nothing while it was.
 On a history of 7400 commits it took 26.6 seconds, and the panel showed
