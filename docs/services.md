@@ -36,6 +36,41 @@ Dashboards are identified by their **key**:
 | `dashboard_history.forget` | Permanently deletes the Git history of a deleted dashboard. | Yes (`confirm: true` to apply) |
 | `dashboard_history.debug_snapshot` | Returns internal state and recognized dashboard keys. | Read-only |
 
+Every action answers with data rather than just doing something, so in a script or automation use `response_variable` to read the answer. In **Developer Tools → Actions** the answer is shown below the button.
+
+---
+
+## Fields
+
+`dashboard` is always the dashboard's key (see above). `revision` is a revision hash from `history`, or — for `restore_state` — a version name such as `living-room/v1.2.0`.
+
+| Action | Fields |
+| :--- | :--- |
+| `history` | `dashboard` (required); `limit` (default 50, at most 500) |
+| `search` | `dashboard`, `text` (both required); `limit` (default 50, at most 1000) — the answer says whether there were more matches |
+| `explain` | `dashboard`, `revision` (both required) — the change itself, not the state before it |
+| `compare` | `dashboard` (required); `revision_a`, `revision_b` — a side left out means the current live state, and at least one of the two must be a revision |
+| `deleted_since` | `dashboard`, `revision` (both required) — every item in the answer carries a `position` for `restore_deleted` |
+| `restore_deleted` | `dashboard`, `revision`, `position` (all required); `confirm`; `override_unrecorded_state`; `allow_parking` |
+| `undo_change` | `dashboard`, `revision` (both required); `confirm`; `override_unrecorded_state`; `allow_parking` |
+| `restore_state` | `dashboard`, `revision` (both required); `confirm`; `override_unrecorded_state`; `keep_as_version` (`title` required inside it; `level`, `description` optional) |
+| `describe` | `revision` (required); `text` (an empty text removes the note). No `dashboard`: a revision identifies the change on its own |
+| `versions` | `dashboard` (optional; left out, it lists every dashboard's versions) |
+| `next_versions` | `dashboard` (required) |
+| `create_version` | `dashboard`, `title` (both required); `level` (`patch` by default, `minor`, `major`); `description`; `revision` (default: the most recent recorded state) |
+| `retitle_version` | `dashboard`, `name`, `title` (all required); `description` — `name` is the full version name as `versions` reports it, e.g. `living-room/v1.0.0`; the title cannot be emptied |
+| `remove_version` | `dashboard`, `name` (both required); `confirm` |
+| `forget` | `dashboard`, `confirm` — only for a dashboard that Home Assistant no longer has |
+| `debug_snapshot` | none |
+
+Three fields come up on more than one action:
+
+- **`confirm`** — default `false`. Without it a write action only answers with a preview (see below).
+- **`allow_parking`** — default `false`. `undo_change` and `restore_deleted` refuse where a card cannot be proven to belong in its old section any more. With `allow_parking: true` they place it instead in the view's "Imported cards" area (the view's own `cards:` list), and a removed whole section is appended as the last section of its view. This is what the asterisk on the panel's button stands for; the answer lists what would be parked.
+- **`override_unrecorded_state`** — default `false`. Every restore first records the state it is about to replace. If that recording cannot be made — the repository was unreadable or unwritable at that moment — the write is refused. Setting this to `true` writes anyway, at the cost of the one state that could not be recorded. This is the "Write anyway?" of the panel; see the [FAQ](../FAQ.md#what-does-write-anyway-mean-when-a-restore-is-refused).
+
+`create_version` without a `revision` is also refused while the state the dashboard holds right now has not been recorded (after a recording failed), because the most recent *recorded* state is then not the one you see. Pass a `revision` explicitly, or save the dashboard once more.
+
 ---
 
 ## Safety & Previews: Two-Step Write Pattern

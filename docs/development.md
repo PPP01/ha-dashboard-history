@@ -22,6 +22,7 @@ flowchart TD
         Analyze["analyze/ (card matching, explanation, undo planning)"]
         Restore["restore.py (Surgical Undo & Replacement Planner)"]
         Store["store.py (Dulwich Git Commit & Tree Management)"]
+        Report["report.py (Diagnostics Report Builder)"]
         Versions["versions.py (Milestone Tags & Automatic Versioning Rules)"]
         Keys["keys.py (Dashboard Key Normalization & Slugs)"]
         YamlIO["yaml_io.py (YAML Round-Trip & Formatting)"]
@@ -31,11 +32,12 @@ flowchart TD
 ```
 
 ### Pure Python Modules (No HA Imports)
-The following six modules contain zero `import homeassistant` statements:
+The following seven modules contain zero `import homeassistant` statements:
 - `analyze/`: Package (`model`, `matching`, `removed`, `explain`, `undo`) for card diffs, moves, additions, deletions, explanations, and undo planning.
 - `restore.py`: Generates surgical undo patches, conflict detection, and replacement previews.
 - `store.py`: Dulwich-based repository storage, commit creation, and tree management.
 - `versions.py`: Named milestone tags and the rules behind the automatic ones (initial baseline, daily marks).
+- `report.py`: The anonymized `data` block of the diagnostics download — counts and sizes only.
 - `keys.py`: Canonical dashboard key normalization (`lovelace.xxx` vs `_default` vs slug).
 - `yaml_io.py`: Deterministic YAML parsing and serialisation.
 
@@ -116,7 +118,7 @@ docker exec -i dashboard-history-test python3 - < tests/integration/run_day_mark
 
 ## 5. Capturing Demo & Documentation Screenshots
 
-High-resolution retina screenshots for the documentation are generated automatically using Playwright:
+High-resolution retina screenshots for the documentation are generated automatically with headless Chrome (`google-chrome` has to be on the PATH):
 
 ```bash
 # Start the demo container on port 8125

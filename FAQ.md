@@ -5,6 +5,8 @@ with the reasoning behind them, not just the rule. Where I decided
 something deliberately, I say what it buys and what it costs, so you
 can tell a design decision from something I never got round to.
 
+Figures I quote are measured on my own installation at the time I wrote the answer. They differ between answers, and from the other documents, because the installation was in a different state each time; read them as an order of magnitude.
+
 The README is the place to start; this picks up where it leaves off —
 whether you need this at all beside a backup or a git repository, and
 the things you only wonder about once you are using it.
@@ -245,7 +247,7 @@ recorder already heard the save, and there is nothing left to do.
 The one time it does not is the one this question is for: the
 repository could not be read or written at that exact moment —
 briefly, a full disk being the case I actually built it for. Until
-v0.8.0 the restore went ahead anyway and only told you afterwards,
+v0.8.1 the restore went ahead anyway and only told you afterwards,
 once the state it could not record was already gone. It refuses
 instead now, before writing anything at all — and "Write anyway?" is
 the one door left that will still let it through, because refusing a
@@ -297,7 +299,7 @@ can watch it move instead of guessing.
 
 *(The version marks used to be the expensive part by far — 58 % of the
 whole operation, because each one was written to disk on its own. Since
-v0.7.1 they go in a single batch, which is where most of the former
+v0.8.1 they go in a single batch, which is where most of the former
 26.6 seconds went.)*
 
 ### Why is the whole panel locked while one dashboard is forgotten?

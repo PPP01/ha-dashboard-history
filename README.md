@@ -23,6 +23,13 @@ Home Assistant only offers undo *while* you are editing. Close the editor or nav
   <source media="(prefers-color-scheme: light)" srcset="docs/images/01-history-overview-light.png">
   <img alt="Dashboard History Overview" src="docs/images/01-history-overview-light.png" width="100%">
 </picture>
+  
+
+
+> [!IMPORTANT]
+> **Where this stands.** I run Dashboard History on my own live Home Assistant, and I love it! I have deleted, edited, restored and brought back plenty of dashboards and states with it. That is real use, but it is one installation, and I can't promise it works the same on yours. No guarantee, as the [license](LICENSE) says.
+>
+> **This is not a backup, and it is not going to become one.** It only keeps dashboards, and it lives on the same disk as your Home Assistant. If that disk dies, the history dies with it. Keep your backups.
 
 ---
 
@@ -71,6 +78,12 @@ The panel is designed for fast, daily troubleshooting as well as deep forensic i
 
 👉 **Read the full [User Guide](docs/user-guide.md)** for detailed walkthroughs, searching, versioning, and deleted dashboard recovery.
 
+### Watching what the history costs
+
+The integration reports on itself, so you can see what it uses before it becomes a problem:
+- **Six diagnostic sensors** — *Size*, *Recorded states*, *Dashboards*, *Versions*, *Last capture* and *Startup time* — refreshed every 15 minutes and after every save. They are diagnostic entities, grouped under one Dashboard History device.
+- **A downloadable diagnostics report** under **Settings → Devices & Services → Dashboard History → ⋮ → Download diagnostics**: counts and sizes only, nothing from inside your dashboards. If you are willing to share it, [CONTRIBUTING.md](CONTRIBUTING.md) explains how and what it contains.
+
 ---
 
 ## 4. Capabilities & Limitations
@@ -101,7 +114,7 @@ The panel is designed for fast, daily troubleshooting as well as deep forensic i
 | :--- | :--- |
 | 📖 **[User Guide](docs/user-guide.md)** | Step-by-step panel usage, Simple/Advanced mode, Compare mode, search, and deleted dashboards |
 | ⚙️ **[How It Works](docs/how-it-works.md)** | Architecture, 4-pass card matching without IDs, container model, mathematical undo safety |
-| ⚠️ **[Limitations](docs/limitations.md)** | Complete 14-situation empirical matrix, edge cases, and design refusals — with a full case-by-case appendix for anyone who wants to go deeper |
+| ⚠️ **[Limitations](docs/limitations.md)** | Complete empirical matrix, edge cases, and design refusals — with a full case-by-case appendix for anyone who wants to go deeper |
 | ⚡ **[HA Actions (Services)](docs/services.md)** | Automation reference for all 16 `dashboard_history.*` actions with YAML examples |
 | 🤖 **[AI Agents](docs/ai-agents.md)** | How an AI agent changing dashboards through the API (e.g. via MCP) should use `create_version` and `describe` afterwards |
 | 🛠️ **[Development & Testing](docs/development.md)** | Test runner, throwaway Docker instance, real-storage fixtures, and architecture invariants |
@@ -111,7 +124,7 @@ The panel is designed for fast, daily troubleshooting as well as deep forensic i
 
 ## Testing & Development
 
-Six core modules carry no `import homeassistant` and run under plain `pytest`:
+Seven core modules carry no `import homeassistant` and run under plain `pytest`:
 
 ```bash
 python3 -m pytest tests/ -v
@@ -128,6 +141,14 @@ German. Nothing in it is needed to use this integration or to find your
 way around the code; if you want the reasoning behind a particular
 decision and don't read German, open an issue and ask — answering in
 English is easy.
+
+### A note on documentation
+
+Programming is fun. So is pushing the integration forward, building new things and improving them bit by bit — even digging through dashboard forensics is fun (in parts).
+
+Keeping the documentation up to date is the exact opposite. It's a pain in the ass, and even with Claude, Codex and Gemini it stays tedious, because I have to read all of it, understand it and, oh boy, often enough correct it myself.
+
+So if you find inconsistencies in the docs, please [open an issue](https://github.com/PPP01/ha-dashboard-history/issues/new/choose). I'll fix them, depending on how bad they are.
 
 ---
 

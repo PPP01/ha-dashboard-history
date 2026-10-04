@@ -15,6 +15,11 @@ body:
         ⋮ → Download diagnostics**, then drag the downloaded file in
         below or paste its contents.
 
+        Look through the file first: Home Assistant adds its own
+        envelope (version, installation type, time zone and the list of
+        your installed custom integrations). Remove anything you would
+        rather not publish.
+
   - type: textarea
     id: diagnostics
     attributes:

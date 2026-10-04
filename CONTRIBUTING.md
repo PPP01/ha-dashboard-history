@@ -18,7 +18,9 @@ I’d like to see real-world numbers from other installations. To make the right
 This is where you can lend a huge hand. The integration can generate an **anonymized diagnostics report** via:  
 **Settings → Devices & Services → Dashboard History → ⋮ → Download diagnostics**.
 
-It contains raw counts and sizes, and strictly nothing about what is actually inside your dashboards. No dashboard names, no card configs, no entity IDs, and no titles. That promise is backed by automated tests (`tests/test_report.py`), not just empty words in a README.
+The part this integration writes contains raw counts and sizes, and strictly nothing about what is actually inside your dashboards. No dashboard names, no card configs, no entity IDs, and no titles. That promise is backed by automated tests (`tests/test_report.py`), not just empty words in a README.
+
+One thing to know before you post it: Home Assistant wraps its own envelope around that part. It lists your Home Assistant version, installation type and time zone, and **every custom integration you have installed**. That envelope is outside what this integration controls, so have a look at the file and remove anything you would rather not publish.
 
 If you’re willing to share yours, please [open an issue with the "Share diagnostics" template](https://github.com/PPP01/ha-dashboard-history/issues/new?template=diagnostics_report.yml) - anytime, whether everything is running smoothly or not. It’s genuinely the single most useful thing you can send my way.
 

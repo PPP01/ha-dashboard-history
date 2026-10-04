@@ -2,6 +2,9 @@
 
 This document explains the technical architecture, algorithms, and design choices behind **Dashboard History**.
 
+> [!NOTE]
+> The figures quoted in this document (cards, sections, views, dashboards, commits) are snapshots of the author's own installation, each taken at a different point in its development. They differ from one place to the next because the installation had a different state each time — they illustrate the order of magnitude, they are not one consistent data set.
+
 ---
 
 ## 1. Recognising Cards Without Identifiers
@@ -58,14 +61,17 @@ A card has no identifier either way (§1) — that half of the problem is identi
 
 A view usually has an escape hatch a section never gets: a `path`, stable across reorderings, deletions elsewhere, anything. A section has nothing equivalent — Home Assistant assigns it neither a path nor an ID, ever. It is addressed purely by where it sits in the list, which is exactly the kind of address that stops meaning the same thing the moment a neighbouring section is added, removed, or reordered.
 
-### Why this is currently a problem
+### How sections are handled
 
-The card-matching algorithm in §1 operates on cards, full stop — it never treats a section as a comparable unit of its own. Concretely: matching flattens every card of a view into one pool, sections included, and pairs cards by content **regardless of which section they sit in**. This has two consequences, one of them narrowed on 2026-09-24, the other still open:
+Because a section has no identity of its own, it is matched the way cards are — by content — but **before** its cards, and as a whole block. A section is paired with its counterpart when it stands at the same index with identical bytes, when identical bytes turn up elsewhere in the row, or — at the same index only — when the same cards sit under changed settings or the same settings sit over changed cards. Only then are the cards inside matched, and a card's old place is followed to wherever its section went ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)).
 
-- **A section that moves as a whole, unchanged block is still reported as N individual card moves**, one line per card, rather than as the one event it actually is — the matcher has no concept of "this whole section relocated," only of "these cards each ended up somewhere else." This is unaffected by the fix below; closing it needs sections matched as units, not a safety check.
-- **The one safety check that exists for this — comparing each section's own settings between the states being compared (`_section_drift` in `analyze/matching.py`, since 2026-09-25 per view rather than per dashboard) — used to be blind to the common case**, because until 2026-09-24 it only read the section's own `title` field, and Home Assistant's editor never sets one (0 of 80, above). Two sections that carried no title were indistinguishable to the check even when they carried different settings (`column_span` and the like), so a change that swapped two such sections could pass the check and offer an exact-looking *Undo* that wrote cards back to the right place while leaving section-level settings behind at the old position ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). The guard now compares every field of a section but its `cards`, so a swap where the settings differ is refused instead of written silently. Since 2026-09-26 sections are also matched as whole blocks before their cards, so a swap reads as one move and is undone as one ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). See [Limitations & Boundaries](limitations.md#sections-in-detail) for the measured cases, including the ones this leaves unresolved.
+What that buys:
 
-Since 2026-09-25, the integration takes the same way out Home Assistant's own editor already uses for the related problem of *where a card belongs* (Decision 26 in the design journal): when a card's section inside a sections view cannot be proven any more — because the sections were rearranged after the change — it is parked in the view's own `cards:` list, the "Imported cards" area Home Assistant shows in edit mode. The undo's button then reads *Undo this change\**. A change that rearranged the sections itself is undone as a whole row since 2026-09-26 ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)); parking is for sections rearranged after the change ([issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30)).
+- **A section that moves as a whole is one event.** Swapping two sections reads *section 2 was moved*, not a string of card moves, and *Undo this change* writes the view's whole section list back in one step, in the order it had before the change, section settings included.
+- **A section's own settings are compared, not just its cards** — everything but `cards`, `title` included (`_section_drift` in `analyze/matching.py`, per view). Home Assistant's editor never sets a `title`, so without this two untitled sections would be indistinguishable even when their settings (`column_span` and the like) differ, and an undo could write cards back to the right place while leaving section settings behind at the old position ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). Two sections that agree on every setting still cannot be told apart; that residual is spelled out in [Limitations & Boundaries](limitations.md#sections-in-detail).
+- **What cannot be proven is refused or parked, never guessed.** A section moved *and* edited in the same save is refused. When a card's section can no longer be proven because the sections were rearranged after the change, the card is parked in the view's own `cards:` list — the "Imported cards" area Home Assistant's editor itself uses for a card it cannot place (Decision 26 in the design journal) — and the button reads *Undo this change\** ([issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30)). A whole removed section whose place is gone comes back as the last section of its view, marked the same way.
+
+See [Limitations & Boundaries](limitations.md#sections-in-detail) for the measured cases, including the ones this leaves unresolved.
 
 ### Views without URL paths
 

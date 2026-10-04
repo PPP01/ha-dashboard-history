@@ -64,8 +64,11 @@ body:
         dashboards (size, card count, how old the history is) — less so
         for a plain code mistake. Settings → Devices & Services →
         Dashboard History → ⋮ → Download diagnostics. Drag the downloaded
-        file in here, or paste its contents. Counts and sizes only,
-        nothing about your dashboards' content.
+        file in here, or paste its contents. The part this integration
+        writes is counts and sizes only, nothing about your dashboards'
+        content; Home Assistant adds its own envelope (version, time
+        zone, installed custom integrations), so look through the file
+        before you post it.
 
   - type: textarea
     id: additional

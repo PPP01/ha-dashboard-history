@@ -13,6 +13,7 @@ Once installed, **Dashboard History** appears in the Home Assistant sidebar. Pic
 The dashboard list reflects your personal sidebar, in your sidebar's order:
 - An arrangement you dragged into place is personal to your user profile; Dashboard History honors that exact order.
 - Dashboards that are hidden from the sidebar (either globally or for your user) are folded away at the bottom under **Not in the sidebar (N)**.
+- A dashboard that holds changes no version carries yet shows an **orange count** (and stripe) in the list, so you can see which ones are worth a version without opening each. A dashboard whose newest state equals one of its versions counts as clean.
 - If you rearrange your sidebar in another tab, click the **reload icon** in the top right to refresh the list.
 - The default, untouched **Overview** dashboard does not appear at all — it has no stored configuration to read until you edit it once yourself. See [Limitations & Boundaries](limitations.md#dashboards-that-never-appear).
 
@@ -37,7 +38,7 @@ Simple view is designed for quick, everyday recovery (*"put it back to how it wa
   - If you are on a named version, it displays the version number, title, and date.
   - If changes were made since the last version, it displays **Undo / Go back to &lt;version&gt;** and **Save this as a version**.
   - Once the dashboard stands on a version, the box offers neither: to give the same state a second name, switch to the advanced view.
-  - Clicking a version's **Go back to this version** button opens the restore preview dialog.
+  - Clicking a version's **Back to this version** button opens the restore preview dialog.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/08-simple-mode-versions-dark.png">
@@ -73,7 +74,7 @@ A search box sits above the history list:
 Clicking any change in the Advanced view expands it to reveal:
 
 1. **Plain-language summary:** Describes what changed in human terms (e.g. *"In the view Living Room: tile: Ceiling Light was moved to Kitchen"*).
-2. **Technical details pill:** A collapsible `<summary><span class="glyph">&lt;/&gt;</span> Technical details</summary>` element containing the exact unified YAML diff.
+2. **Technical details:** A collapsible **Technical details** section (marked with a `</>` glyph) containing the exact unified YAML diff.
 3. **The Action Bar:** A unified toolbar at the bottom of the expanded card with three core actions:
 
 <picture>
@@ -106,8 +107,8 @@ Tags the exact state of the dashboard after this change as a named version.
 
 Replaces the current dashboard entirely with an earlier state:
 - Opens a dedicated overlay offering a choice:
-  - **(•) Before this change:** Restores the dashboard to the state right before this save took place.
-  - **( ) After this change:** Restores the dashboard to the state resulting from this save.
+  - **(•) State before this change:** Restores the dashboard to the state right before this save took place.
+  - **( ) State after this change:** Restores the dashboard to the state resulting from this save.
 - Previews for both options are fetched in parallel so toggling between them is instantaneous.
 - Includes a checkbox: **Save the state you are leaving as a version**. When checked, the state you are leaving is safely tagged with a version before the older state is written — ticked by default in Simple view, since a state with no name is, to that view, gone. The box is hidden when the state you are leaving already holds a version of its own.
 
@@ -163,7 +164,7 @@ Versions are dashboard-scoped annotated git tags (e.g. `living-room/v1.2.0`). Be
 ### Automatic versions
 
 Two kinds of versions are created for you automatically:
-- **`v1.0.0` (Initial baseline):** Created the first time Dashboard History encounters a dashboard.
+- **`v1.0.0`:** A dashboard that has no version yet gets one when Home Assistant starts. It marks the oldest recorded state, so there is always an earlier state to go back to, and is titled with that state's date like a daily milestone.
 - **Daily milestones:** If a dashboard contains unversioned changes from previous days, the next edit automatically generates a new version. This version captures the state immediately prior to the new changes and is tagged with the date of the last modification (e.g. `14 September 2026`). Days without changes receive no tag.
 
 > [!TIP]

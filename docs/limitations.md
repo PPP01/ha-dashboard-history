@@ -6,6 +6,9 @@ This document lists the exact, measured boundaries of **Dashboard History**, whe
 > **No state is ever unrecoverable.**
 > The whole-state restore writes the recorded YAML verbatim and bypasses card-matching logic entirely. What these limits affect is the **precision of the surgical tools** (Undo and Put back), not your ability to recover your dashboard.
 
+> [!NOTE]
+> Some of the cases below are complicated, and even harder to put into words. Many of them took me hours, days, sometimes weeks to understand and to trace through the code. I may well have misunderstood or misread some of them. That would change how a case is explained here, but not the decisions built on it: what Dashboard History restores, and what it refuses. If something looks wrong, or you have a question, please [open an issue](https://github.com/PPP01/ha-dashboard-history/issues/new/choose). Corrections are even better.
+
 ---
 
 ## Dashboards That Never Appear
@@ -22,21 +25,21 @@ The same is technically true of any dashboard you create yourself before its ver
 
 Every row below was empirically verified against the live codebase.
 
+The real-world figures quoted here and elsewhere in the documentation (how many cards, sections or views were counted) are snapshots of the author's own installation at different points in time. They differ from one place to the next because the installation was in a different state each time, so read them as an order of magnitude, not as one consistent data set.
+
 | Situation | What the history says | Undo this change | Put back (Compare Mode) | Whole-state restore |
 | :--- | :--- | :--- | :--- | :--- |
 | **Card with nothing to recognise it by**, edited | `1 removed, 1 added` | **Exact** | Offered (would duplicate) | **Works** |
 | **Card moved and edited** in one save | `1 removed, 1 added` | **Exact** | Offered (would duplicate) | **Works** |
 | **Badge** added, edited, moved or deleted | Named, e.g. *the badge entity: sun.sun was added* | **Exact** while the badge is unchanged since | Not offered | **Works** |
 | **View or dashboard setting** changed (`icon`, `strategy:` key, …) | Named, e.g. *the setting "icon" was changed* | **Exact** while the value is unchanged since | Not offered | **Works** |
-| **Section renamed** | `no card changes`, diff shows change | **Refuses** | Not offered | **Works** |
-| **Whole section deleted** | Cards named one by one | **Refuses** | **Restores section as one unit** | **Works** |
-| **Section added** | Cards shown as added | **Refuses** if this change added it; later additions park cards (see below) | — | **Works** |
+| **Section settings changed** (`title`, `column_span`, …) | Named, e.g. *section "X": the setting "title" was changed …* | **Exact** while the section is unchanged since | Not offered | **Works** |
+| **Section added** | `1 section added` | **Exact** while the section is unchanged since; refuses if the sections around it were rearranged since | — | **Works** |
+| **Whole section deleted** (one with at least one card) | `1 section removed` | **Exact**; if the sections around it were rearranged or deleted since, it comes back as the **last** section of the view and the button shows an asterisk | Offered as one item; parks the same way | **Works** |
+| **Several whole sections deleted** in one save | Their cards, one line each | **Refuses** | Parks the cards in "Imported cards" | **Works** |
+| **Sections swapped or moved** as whole blocks, titled or not, nothing else changed | `1 section moved` — one line per section, named by its heading if it has one | **Exact** — the whole row of sections is written back in one step, settings included; refuses if the sections around them were rearranged since | Nothing missing, nothing offered | **Works** |
 | **Sections rearranged after the change**, card edited or deleted by it | Correct | **Parks** the card in "Imported cards" — button shows *Undo this change\** — except sections alike in every setting, which still write silently to the old index (see below) | Parks in "Imported cards", same exception | **Works** |
-| **Titled sections reordered** | Correct | **Refuses** | **Refuses** | **Works** |
-| **Sections swapped or moved** as whole blocks, nothing else changed | `1 section moved` — one line per section, named by its heading | **Exact** — the whole row of sections is written back in one step, settings included | Refuses (nothing missing) | **Works** |
-| **Section added or deleted** whole (a deleted one with at least one card) | `1 section added` / `1 section removed` | **Exact** while that section and the sections around it are unchanged since | Deleted: offered as one item | **Works** |
-| **Section moved and edited in the same save** | Its cards, one line each | **Refuses** — nothing proves it is the same section | Refuses | **Works** |
-| **Untitled sections reordered**, and a card also edited in the same save | Correct | Writes positionally (see below) | **Parks in "Imported cards"** | **Works** |
+| **Section moved and edited in the same save**, or sections reordered together with a card edit | Its cards, one line each | **Refuses** — nothing proves it is the same section | Parks in "Imported cards" | **Works** |
 | **View without URL path** shifts position | May name an untouched view | **Refuses** | **Refuses** | **Works** |
 | …and was edited in the same save | Same | **Refuses** | Adds older copy as duplicate | **Works** |
 | …and another view occupies its index | Same | **Refuses** | Writes into other view | **Works** |
@@ -58,7 +61,7 @@ If you edit one of these (e.g. changing an `iframe` URL), the algorithm cannot p
 
 ### 2. Badges are matched in a world of their own
 
-Home Assistant stores badges beside the view's card list, and like cards they carry no identifier. Since 2026-09-25 they are matched the way cards are, but never paired with a card — an `entity` badge and an `entity` card can be byte-identical ([issue #29](https://github.com/PPP01/ha-dashboard-history/issues/29)). As a result:
+Home Assistant stores badges beside the view's card list, and like cards they carry no identifier. They are matched the way cards are, but never paired with a card — an `entity` badge and an `entity` card can be byte-identical ([issue #29](https://github.com/PPP01/ha-dashboard-history/issues/29)). As a result:
 - A badge change is named in the explanation (*the badge entity: sun.sun was added*) and counted in the history line (`1 badge changed`).
 - *Undo this change* takes it back while the badge is unchanged since. The same badge commonly stands on several views, so it is looked for on the whole dashboard and then in the view the change left it in; where neither settles it, the undo refuses.
 - A deleted badge counts as already back only if its own view has more of it today than the change left — a copy on another view is not it.
@@ -69,8 +72,8 @@ Home Assistant stores badges beside the view's card list, and like cards they ca
 Home Assistant assigns sections **no unique identifier and no URL path**. A section is known only by its positional index in the row.
 
 - **Cards inside sections:** Fully supported. Moving, editing, and deleting cards within sections works exactly like regular views.
-- **Deleting a whole section:** Dashboard History restores the section as a complete unit into the gap it left (provided neighboring sections were not modified).
-- **Reordering sections:** Since 2026-09-26 sections are matched as whole blocks before their cards ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). A section swapped, moved, added or deleted in one save reads as one line — *section "Heizung" was moved* — and *Undo this change* writes the whole row of sections back in one step, own settings included. It refuses where it cannot prove that: a section moved **and** edited in the same save, two sections deleted at once, or the sections around it rearranged since.
+- **Deleting a whole section:** Dashboard History restores the section as a complete unit into the gap it left. If the sections around it were rearranged since, it comes back as the last section of the view instead, and the button shows an asterisk.
+- **Reordering sections:** Sections are matched as whole blocks before their cards ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). A section swapped, moved, added or deleted in one save reads as one line — *section "Heizung" was moved* — and *Undo this change* writes the whole row of sections back in one step, own settings included. It refuses where it cannot prove that: a section moved **and** edited in the same save, two sections deleted at once, or the sections around a moved or added one rearranged since.
 
 > [!TIP]
 > **When a section cannot be recognised, the card is parked, not guessed.**
@@ -151,27 +154,18 @@ A missed offer is worse than one you can decline.
 
 ### Badges
 
-Since 2026-09-25, a view's badges are matched like cards, in a world of
+A view's badges are matched like cards, in a world of
 their own — see section 2 above. What remains is *Put back*: it never
 offers a badge. A deleted badge comes back through *Undo this change*,
 or by setting the dashboard back to a state that had it.
 
 ### Sections in detail
 
-This is the weakest part of the tool, so here is every case, measured
-rather than reasoned about. The pattern is simple once you see it:
-**what sits *inside* a section is handled well; the section itself is
-barely handled at all.**
+This is the weakest part of the tool, so here is every case, reproduced against the code. The pattern is simple once you see it: **what sits *inside* a section is handled well; the section itself is handled as a whole block, but only as long as its neighbours stay put.**
 
-A section as Home Assistant's editor writes it has no path and no
-identifier — there is no equivalent of a view's URL path one level
-down. All the integration has to work with is the section's index in
-the row, cross-checked against its own settings - and, for *Put back*,
-against the cards that stood beside the one being restored. A title
-would help, but is optional and in practice absent: 0 of 101 sections
-on the installation this was developed against carry one. Where the
-check fails, the card is parked in "Imported cards" rather than
-guessed into a section.
+A section as Home Assistant's editor writes it has no path and no identifier — there is no equivalent of a view's URL path one level down. All the integration has to work with is the section's index in the row, cross-checked against its own settings and, for *Put back*, against the cards that stood beside the one being restored. A title would help, but is optional and in practice absent: 0 of 101 sections on the installation this was developed against carry one. Where the check fails, the card is parked in "Imported cards" rather than guessed into a section.
+
+Sections are matched before their cards, as whole blocks ([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)). That is why a swap reads as one move and not as a handful of card moves.
 
 **Works, and works exactly:**
 
@@ -180,148 +174,38 @@ guessed into a section.
 | Deleted a card in a section | `1 removed`, names the card | into the right section | exact |
 | Edited a card in a section | `1 edited`, names the card | — | exact |
 | Dragged a card to another section | `1 moved`, *"was moved to another section"* | — | exact |
-| Deleted a whole section | its cards, named one by one | the section, into the gap it left | **refuses** |
+| Deleted a whole section | *section 2 was removed* | the section, into the gap it left | exact |
+| Added a whole section | *section 3 was added* | — | exact |
+| Swapped or moved sections | *section "C" was moved* | — | exact — the whole row is written back in one step |
+| Changed a section's settings (`title`, `column_span`, …) | *the setting "title" was changed from "X" to "Y"* | — | exact |
 
-*Reached through compare mode, not as a button on the row itself.*
-
-One thing the last row does not change: the *words*. A deleted section
-is offered back as one thing, but the entry in the history still lists
-the cards that were on it, one by one — the explanation speaks in cards
-and was not touched here. What became one item is the way back, not
-the sentence above it.
-
-So the everyday case is sound. As long as the row of sections is as it
-was, cards inside them are recognised and recoverable like any others.
+*Put back* for a whole section is reached through compare mode, not as a button on the row itself. In every row, "exact" holds while what the change left is still there unchanged: a section edited again since refuses with *was changed again after this*.
 
 **Refuses, honestly, and writes nothing:**
 
 | What you did | Why it refuses |
 | --- | --- |
-| Deleted a whole section, and a neighbouring section changed since | The proof *Put back* works from is that today's sections are the ones this one stood beside — then the gap is the only place it fits. An edit next door takes that away, and the undo refuses regardless: a section has no path to recognise it by. |
-| Added, deleted or reordered sections in the change being undone, **and** the sections around them were added, deleted or reordered since | The row of sections is written back in one piece, in the order it had before the change; that order only means the same thing while the sections around it still stand as the change left them. Card edits in other sections since do not refuse. |
-| Converted a view's layout (masonry to sections, typically) | Home Assistant adds an empty grid section on conversion, which used to be blamed on "the sections" — `_SECTION_REFUSAL` fired because the section list changed, not because it actually shifted. Fixed 2026-09-24: the conversion is now detected directly and named as the reason. [GitHub issue #32](https://github.com/PPP01/ha-dashboard-history/issues/32). The history entry itself named nothing at all before this — `type` is not a card, so a save that only converts a view had no entry to show. It now reads "the view … was converted from masonry to sections." |
+| Moved a section **and** edited it in the same save — or reordered sections and edited a card in the same save | Nothing proves the edited section is the same one. *Put back* parks the cards in "Imported cards" instead. |
+| Deleted two or more whole sections in one save | Each would have to go back to a place nothing identifies. *Put back* parks the cards. |
+| Moved or added sections, **and** the sections around them were added, deleted or reordered since | The row of sections is written back in one piece, in the order it had before the change; that order only means the same thing while the sections around it still stand as the change left them. Card edits in other sections since do not refuse. |
+| Converted a view's layout (masonry to sections, typically) | Home Assistant adds an empty grid section on conversion; the undo names the conversion as the reason ([issue #32](https://github.com/PPP01/ha-dashboard-history/issues/32)). The history entry reads "the view … was converted from masonry to sections." |
 
-A refusal is the correct outcome for all five — Home Assistant's own
-data does not contain the answer, and the design forbids guessing. What
-it costs is precision, not content: the whole-state restore recovers
-every one of these in full, and a deleted section can also come back on
-its own as long as the sections beside it are untouched. Where the
-sections were only added or reordered *after* the change, the two rows
-on adding and reordering do not apply: a card that has to go back into
-a section there is parked in "Imported cards" instead of refused (the
-top table's *Sections rearranged after the change* row) — except when
-the sections involved agree on every setting, the residual gap
-discussed below, which still writes to the old index silently instead
-of parking. A whole section is never parked — it has no parking place
-of its own.
+A refusal is the correct outcome for all four — Home Assistant's own data does not contain the answer, and the design forbids guessing. What it costs is precision, not content: the whole-state restore recovers every one of these in full.
 
-**Writes something nobody asked for — four cases, plus one that was closed.**
-A fifth was found on 2026-09-23, the sharpest of the five: unlike the
-other four, it needed no edit alongside the trigger, only a plain
-reorder. It was fixed the next day.
+Where sections were only rearranged or deleted *after* the change, nothing is refused: a card that has to go back into a section there is parked in "Imported cards", and a deleted whole section comes back as the last section of its view, with an asterisk on the button ([issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30)). The one exception is below.
 
-**The one that was closed, because it needed the least to happen.**
-Swap two **untitled** sections and change nothing else — no card
-touched. Until 2026-09-24, the guard `_sections_lie` compared only the
-number of sections and their `title` fields; two untitled sections
-swapping places changed neither, so the check passed while telling it
-nothing. *Undo this change* was then offered as **exact** and wrote the
-cards back correctly — but a section's own settings (`column_span`, and
-anything else that is not a card) sit at the section's *position*, not
-with its cards, and those stayed where they were. The result was a
-dashboard that resembled the state before the swap but was not it,
-presented as an exact undo.
-[GitHub issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)
-— the guard now compares every field of a section but its `cards`, so a
-swap where the settings differ is refused instead of written silently.
+**Writes something nobody asked for — four cases.** In all four a narrow tool writes into a place that is not the card's own:
 
-**Closed on 2026-09-26.** Sections are now matched as units
-([issue #31](https://github.com/PPP01/ha-dashboard-history/issues/31)):
-a whole-section swap reads as one move and is undone as one, settings
-included. What remains is what no matching without an identity chain
-can close: a section moved and edited in the same save is refused
-rather than guessed.
+- **A section alike in every setting stands at the old index since,** whether by a reorder or because the original was deleted and an identical one created in its place. Neither the guard nor the anchor can tell such sections apart — a swap is not required, a single deletion and a single, coincidentally identical section are enough. *Undo this change* puts an edited or deleted card back at its old index — where it was on screen, but inside whichever section stands there now, and without an asterisk. *Put back* does the same only where no card beside the restored one is left to tell the sections apart, typically when the section now at that index is empty; where a neighbour of the card now stands in another section alike in every setting, it parks instead. Needs sections that differ in nothing but their cards — a plain `type: grid`, the editor's default.
+- **A URL path freed and handed to a new view.** An ordinary thing to do — delete a view, make another with the same path. The old cards are then written into the new view, because a path is unique at any one moment but not across a history.
+- **A pathless view shifted and edited in the same save.** *Put back* adds it a second time, in its older form. The refusal below works by looking for the view as it was; an edited one no longer looks like itself. Needs a view without a URL path, which eight of 67 are, on the installation this was measured against.
+- **A pathless view whose position another view has taken.** Then the item goes into that other view. Needs the same kind of pathless view, plus a neighbour that fits — rare, and the only one of the four this integration has never been able to catch.
 
-The original case, reordering untitled sections **together with** a
-card edit, used to head the list below: *Put back* filed the
-edited-away card into whichever section then occupied the old index.
-Since 2026-09-25 it no longer does. A card's anchor now checks the
-section's own settings and the cards that should still stand beside
-it, and where that fails the card is parked in "Imported cards" — in a
-view with a URL path; in one without, *Put back* refuses. *Undo this
-change* refuses the same case where the sections' settings differ and
-is exact where they do not, because every card then goes back to its
-old position. What is left in its place is narrower, and in all four
-cases below a narrow tool writes into a place that is not the card's
-own:
+The first case needs a **reordering** after the change, not an edit, and sections that agree on every setting. Anything that sets them apart — a `column_span`, or a title of its own — turns the same situation into a parked card with an asterisk. That is what is left of the old advice to give sections titles: it closes this last case for sections that would otherwise be identical.
 
-- **A section alike in every setting stands at the old index since,
-  whether by a reorder or because the original was deleted and an
-  identical one created in its place.** Neither the guard nor the
-  anchor can tell such sections apart — a swap is not required, a
-  single deletion and a single, coincidentally identical section are
-  enough. *Undo this change* puts an edited or deleted card back at
-  its old index — where it was on screen, but inside whichever section
-  stands there now, and without an asterisk. *Put back* does the same
-  only where no card beside the restored one is left to tell the
-  sections apart, typically when the section now at that index is
-  empty.
-  Since 2026-09-26 *Put back* parks instead where a neighbour of the card
-  now stands in another section alike in every setting — the one shape
-  of this in which a swap and a drag across leave the same bytes.
-  Needs sections that differ in nothing but their cards — a
-  plain `type: grid`, the editor's default. This is the residual from
-  #31, not a new gap.
-- **A URL path freed and handed to a new view.** Also an ordinary thing
-  to do — delete a view, make another with the same path. The old
-  cards are then written into the new view, because a path is unique
-  at any one moment but not across a history.
-- **A pathless view shifted and edited in the same save.** *Put back*
-  adds it a second time, in its older form. The refusal below works by
-  looking for the view as it was; an edited one no longer looks like
-  itself. Needs a view without a URL path, which eight of 67 are, on
-  the installation this was measured against.
-- **A pathless view whose position another view has taken.** Then the
-  item goes into that other view. Needs the same kind of pathless
-  view, plus a neighbour that fits — rare, and the only one of the
-  four this integration has never been able to catch.
+**What would fix it properly, and its status:** an identity chain of the integration's own — matching each save's views and sections against the previous one (by path, then identical content, then similarity) and committing that mapping as a third track beside the dashboard and its metadata. It is computable retroactively, since every intermediate state is already a commit. **This is an idea and nothing more** — not designed, not planned, not built. Nothing here is a commitment.
 
-Two things bound the first case: the trigger is a **reordering**
-after the change, not an edit, and the sections involved have to agree
-on every setting. Anything that sets them apart — a `column_span`, or
-a title of its own — turns the same situation into a parked card with
-an asterisk. That is what is left of the old advice to give sections
-titles: no longer the single most useful safety step, since parking
-now closes most of what titles used to, but still the one thing that
-closes this last case for sections that would otherwise be identical.
-
-**What would fix it properly, and its status:** an identity chain of
-the integration's own — matching each save's views and sections against
-the previous one (by path, then identical content, then similarity)
-and committing that mapping as a third track beside the dashboard and
-its metadata. It is computable retroactively, since every intermediate
-state is already a commit. **This is an idea and nothing more** — not
-designed, not planned, not built. Nothing here is a commitment.
-
-Writing identifiers into *your* dashboards was considered and ruled
-out: Home Assistant offers no extension point before a save, so the
-only routes would be replacing its WebSocket command (forbidden by this
-project's own rules) or writing back after the event (changes other
-people's dashboards, doubles the history, and loses the race against an
-open editor).
-
-A separate, narrower idea addresses a different cost of the same
-missing identity: the *refusals* in the table above, not the one case
-above that silently does not refuse. Where a card's exact position in
-a sections view cannot be proven, Home Assistant's own editor already
-parks it rather than guessing — the "Imported cards" area it shows
-after converting a masonry view to sections. Decision 26 in the design
-journal proposes the same fallback here: park such a card in the
-view's own `cards:` list instead of refusing outright. **Built on
-2026-09-25** —
-[GitHub issue #30](https://github.com/PPP01/ha-dashboard-history/issues/30).
-The undo's button then reads *Undo this change\**, and the dialog
-lists every card that only becomes available.
+Writing identifiers into *your* dashboards was considered and ruled out: Home Assistant offers no extension point before a save, so the only routes would be replacing its WebSocket command (forbidden by this project's own rules) or writing back after the event (changes other people's dashboards, doubles the history, and loses the race against an open editor).
 
 ### Views without a URL path
 
