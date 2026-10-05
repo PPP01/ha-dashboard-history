@@ -16,9 +16,10 @@ body:
         below or paste its contents.
 
         Look through the file first: Home Assistant adds its own
-        envelope (version, installation type, time zone and the list of
-        your installed custom integrations). Remove anything you would
-        rather not publish.
+        envelope (version, installation type, time zone, architecture,
+        operating system, Supervisor and Docker versions, and the list
+        of your installed custom integrations). Remove anything you
+        would rather not publish.
 
   - type: textarea
     id: diagnostics
