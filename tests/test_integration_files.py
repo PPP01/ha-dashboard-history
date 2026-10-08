@@ -90,3 +90,16 @@ def test_every_registered_service_has_words_in_services_yaml():
     # that no longer exists - a promise in the interface with nothing
     # behind it.
     assert described - registered == set()
+
+
+def test_the_manifest_is_what_home_assistant_needs_to_find_the_integration():
+    # v0.11.2 shipped an empty manifest.json. Home Assistant skips an
+    # integration whose manifest it cannot read, without a word, so the
+    # integration was missing from "Add integration" and nothing in the
+    # Python suite noticed - none of it reads this file.
+    manifest = json.loads((PACKAGE / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["domain"] == PACKAGE.name
+    assert manifest["config_flow"] is True
+    assert manifest["version"].count(".") == 2
+    assert manifest["documentation"] and manifest["issue_tracker"]
+    assert manifest["requirements"]
