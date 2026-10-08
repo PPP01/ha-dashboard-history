@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.11.1
+
+Documentation only; the integration itself is unchanged. HACS shows the
+README of the latest release, so the README fixes below reach the HACS
+page only with a release.
+
+- The README images now load inside HACS: they use absolute URLs and a
+  plain `<img>` instead of `<picture>`, which HACS' renderer turned into
+  text. Only the light screenshots are referenced.
+- The README carries an "Open in HACS" button, at the top and in the
+  installation steps.
+- The issue templates, `CONTRIBUTING.md` and the bug report now list
+  what Home Assistant adds to the diagnostics.
+
 ## v0.11.0
 
 The dashboard list now shows which dashboards hold changes no version
