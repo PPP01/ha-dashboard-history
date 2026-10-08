@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.3
+
+Fixes v0.11.2, whose `manifest.json` was empty by mistake: Home Assistant
+could not find the integration, so it did not appear in the list of
+integrations to add. **Do not use v0.11.2**; update straight to this
+release. Nothing else changed.
+
 ## v0.11.2
 
 Documentation only; the integration itself is unchanged. The README is
