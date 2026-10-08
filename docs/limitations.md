@@ -19,6 +19,8 @@ Dashboard History reads dashboards straight from Home Assistant's in-memory Love
 
 The same is technically true of any dashboard you create yourself before its very first save — but in practice you save a custom dashboard within moments of creating it, while the default **Overview** is the one dashboard many installations never edit at all, so it is the case this actually shows up in. The moment you edit it once, in Home Assistant's own dashboard editor, Home Assistant writes its first configuration, and from then on it is tracked exactly like any dashboard you created — with full history starting from that first save. Nothing from before that edit can be recovered, because nothing before it was ever written down.
 
+Built-in pages such as Energy, Activity, History, Media and To-do are not dashboards at all: they ship with Home Assistant itself and have no dashboard configuration to read, so they never appear in the list and never will. Only dashboards that carry a stored configuration do.
+
 ---
 
 ## Measured Behaviour Across Edge Cases

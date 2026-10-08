@@ -100,6 +100,7 @@ The integration reports on itself, so you can see what it uses before it becomes
 - **Lovelace badges are never offered by *Put back*.** A change to a view's badges is named in the history and can be undone; a deleted badge comes back through *Undo this change* or a whole-dashboard restore.
 - **Pure YAML dashboards** (`configuration.yaml` mode) generate no save events and are already under the user's own Git control, so they are outside this integration's scope.
 - **The default "Overview" dashboard, before you've edited it.** Home Assistant assembles it on the fly and stores no configuration for it until you save a change yourself — only then does Dashboard History start tracking it, same as any dashboard you create.
+- **Built-in pages are not dashboards.** Energy, Activity, History, Media and To-do ship with Home Assistant itself and carry no dashboard configuration, so they never appear in the list. Only dashboards that hold a stored configuration do.
 - **Live in-memory cache:** Edits made directly to `.storage/lovelace.*` while Home Assistant is running are not picked up until the next restart — Home Assistant itself doesn't see them either.
 - **No guessing:** Where the exact card a change produced can no longer be found unambiguously (edited again since, or duplicated), Undo refuses and explains why, rather than risking a wrong restore.
 
