@@ -18,6 +18,8 @@ Home Assistant only offers undo *while* you are editing. Close the editor or nav
 - **Milestone versioning:** Bookmark important configurations with named versions before making major layout changes.
 - **Full safety net:** Before any restore, the current state is confirmed to be in the recorded history — caught up automatically if the recorder missed it — and a restore that cannot confirm this is refused by default, so a rollback can always itself be undone.
 
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=PPP01&repository=ha-dashboard-history&category=integration)
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/05-history-overview-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/images/01-history-overview-light.png">
@@ -41,6 +43,11 @@ Home Assistant only offers undo *while* you are editing. Close the editor or nav
 - Administrator privileges in Home Assistant
 
 ### Option A: HACS (Recommended)
+
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=PPP01&repository=ha-dashboard-history&category=integration)
+
+Or add it by hand:
+
 1. Open **HACS** in your Home Assistant sidebar.
 2. Click the three dots in the top right corner and choose **Custom repositories**.
 3. Add repository: `https://github.com/PPP01/ha-dashboard-history` with type **Integration**.
