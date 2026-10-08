@@ -1,8 +1,9 @@
 # Dashboard History
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg)](https://www.home-assistant.io/)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/PPP01/ha-dashboard-history?style=for-the-badge&color=green)](https://github.com/PPP01/ha-dashboard-history/releases)
+[![License: MIT](https://img.shields.io/github/license/PPP01/ha-dashboard-history?style=for-the-badge)](https://github.com/PPP01/ha-dashboard-history/blob/main/LICENSE)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.11%2B-blue.svg?style=for-the-badge)](https://www.home-assistant.io/)
 
 Automated change history, milestone versioning, and instant restore for Home Assistant dashboards.
 
@@ -20,7 +21,7 @@ Home Assistant only offers undo *while* you are editing. Close the editor or nav
 
 [![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=PPP01&repository=ha-dashboard-history&category=integration)
 
-<img alt="Dashboard History Overview" src="https://raw.githubusercontent.com/PPP01/ha-dashboard-history/main/docs/images/01-history-overview-light.png" width="100%">
+<img alt="Dashboard History Overview" src="https://raw.githubusercontent.com/PPP01/ha-dashboard-history/main/docs/images/01-history-overview-light.png" width="800">
   
 
 
@@ -65,7 +66,7 @@ Or add it by hand:
 
 The panel is designed for fast, daily troubleshooting as well as deep forensic inspection:
 
-<img alt="Visual Diff Inspection" src="https://raw.githubusercontent.com/PPP01/ha-dashboard-history/main/docs/images/02-diff-expanded-light.png" width="100%">
+<img alt="Visual Diff Inspection" src="https://raw.githubusercontent.com/PPP01/ha-dashboard-history/main/docs/images/02-diff-expanded-light.png" width="800">
 
 - **Simple vs. Advanced view:** Simple view shows only the named versions — pick this for *"put it back to how it was on Tuesday."* Advanced view lists every recorded change chronologically, with its commit hash, full-text search, and the raw diff.
 - **Inspect changes:** Click any history entry to expand a plain-language explanation of what it did, with the diff one click further in.

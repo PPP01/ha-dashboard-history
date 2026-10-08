@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.2
+
+Documentation only; the integration itself is unchanged. The README is
+tidied up for the HACS page, which shows the README of the latest
+release.
+
+- The screenshots are 800 px wide instead of filling the whole page.
+- The badges use the larger `for-the-badge` style, and a release badge
+  joins them. The license badge links to the `LICENSE` file by its full
+  address and takes its text from GitHub, since the badge showed up as
+  a broken image in HACS.
+
 ## v0.11.1
 
 Documentation only; the integration itself is unchanged. HACS shows the
