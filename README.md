@@ -20,11 +20,7 @@ Home Assistant only offers undo *while* you are editing. Close the editor or nav
 
 [![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=PPP01&repository=ha-dashboard-history&category=integration)
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/05-history-overview-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/01-history-overview-light.png">
-  <img alt="Dashboard History Overview" src="docs/images/01-history-overview-light.png" width="100%">
-</picture>
+<img alt="Dashboard History Overview" src="https://raw.githubusercontent.com/PPP01/ha-dashboard-history/main/docs/images/01-history-overview-light.png" width="100%">
   
 
 
@@ -69,11 +65,7 @@ Or add it by hand:
 
 The panel is designed for fast, daily troubleshooting as well as deep forensic inspection:
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/06-diff-expanded-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/02-diff-expanded-light.png">
-  <img alt="Visual Diff Inspection" src="docs/images/02-diff-expanded-light.png" width="100%">
-</picture>
+<img alt="Visual Diff Inspection" src="https://raw.githubusercontent.com/PPP01/ha-dashboard-history/main/docs/images/02-diff-expanded-light.png" width="100%">
 
 - **Simple vs. Advanced view:** Simple view shows only the named versions — pick this for *"put it back to how it was on Tuesday."* Advanced view lists every recorded change chronologically, with its commit hash, full-text search, and the raw diff.
 - **Inspect changes:** Click any history entry to expand a plain-language explanation of what it did, with the diff one click further in.
